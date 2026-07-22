@@ -1,0 +1,31 @@
+/* A terminal rendered inside a dockview panel body: control bar on top, xterm filling the rest. */
+.kt-term-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+.kt-term-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.kt-term-bar .btn-sm {
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+.kt-term-shell {
+  flex: 0 0 auto;
+  width: 74px;
+}
+
+.kt-term-screen {
+  flex: 1 1 auto;
+  min-height: 0;
+}

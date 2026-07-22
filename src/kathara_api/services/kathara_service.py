@@ -1,0 +1,1013 @@
+"""Adapter that wraps the singleton Kathara facade for the REST API.
+
+Design notes:
+- The Kathara facade and ``Setting`` are process-wide singletons and Kathara is not safe for
+  concurrent *independent* mutating calls, so all state-changing operations are serialized behind
+  a single re-entrant lock. Read-only operations (stats, exec, reconstruction) run concurrently.
+- All facade calls block; routers invoke these methods from FastAPI's threadpool (sync handlers)
+  or via ``iterate_in_threadpool`` for streams.
+- Most Kathara settings are read fresh at the point of use by the framework itself, so
+  ``update_settings`` can change them at any time. ``manager_type`` is the one exception:
+  ``Kathara.get_instance()`` picks the concrete manager class exactly once and Kathara has no
+  supported way to swap it out afterward for the life of the process, so changing it once the
+  facade has been instantiated is rejected rather than silently doing nothing.
+"""
+
+import io
+import logging
+import posixpath
+import shlex
+import threading
+from typing import Any, BinaryIO, Callable, Generator, Optional, Union
+
+from Kathara.exceptions import (
+    InvocationError,
+    LabNotFoundError,
+    MachineNotFoundError,
+    MachineNotRunningError,
+    NotSupportedError,
+)
+from Kathara.manager.Kathara import Kathara
+from Kathara.model.Lab import Lab
+from Kathara.model.Machine import Machine
+from Kathara.setting.Setting import Setting
+
+from ..config import get_settings
+from ..errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError, SettingsLockedError
+from ..schemas.lab import LabCreate
+from ..schemas.lab_import import LabImportPreview, PendingMachineFiles
+from ..schemas.machine import MachineCreate
+from . import lab_builder, lab_import, lab_store
+from .docker_tty import SHELL_PATHS
+from .lab_store import LabStore
+from .registry import LabRegistry
+
+logger = logging.getLogger("kathara_api")
+
+
+class KatharaService:
+    """Thread-safe wrapper around ``Kathara.get_instance()``."""
+
+    def __init__(self, store: Optional[LabStore] = None) -> None:
+        self._instance: Optional[Kathara] = None
+        self._mutate_lock = threading.RLock()
+        self._init_lock = threading.Lock()
+        self.registry = LabRegistry()
+        self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
+        # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
+        # restart. Safe at import time: builds model objects only (no facade/Docker), and reads
+        # nothing if the storage root does not exist yet.
+        self._reload_from_disk()
+
+    # -- lifecycle / settings -------------------------------------------------
+
+    def _facade(self) -> Kathara:
+        if self._instance is None:
+            with self._init_lock:
+                if self._instance is None:
+                    self._instance = Kathara.get_instance()
+        return self._instance
+
+    def apply_startup_settings(self, settings: dict[str, Any]) -> None:
+        """Apply settings before the facade is created (used at app startup)."""
+        if settings:
+            Setting.get_instance().load_from_dict(settings)
+
+    def update_settings(self, settings: dict[str, Any]) -> None:
+        """Override settings at runtime.
+
+        Every setting except ``manager_type`` is read fresh by the Kathara framework at the
+        point of use, so it's safe to change any of them at any time. ``manager_type`` picks the
+        concrete manager class exactly once, inside ``Kathara.get_instance()``'s constructor, and
+        there's no supported way to swap it out afterward for the life of this process — so an
+        actual change to it is rejected once the facade has been instantiated, rather than
+        silently accepted but never taking effect.
+        """
+        if self._instance is not None and "manager_type" in settings:
+            current = Setting.get_instance().manager_type
+            if settings["manager_type"] != current:
+                raise SettingsLockedError(
+                    "`manager_type` cannot be changed after the Kathara manager has been "
+                    "initialized for this backend session — restart the backend to switch "
+                    "managers. Other settings can still be updated freely."
+                )
+        Setting.get_instance().load_from_dict(settings)
+
+    def get_settings_view(self) -> dict[str, Any]:
+        setting = Setting.get_instance()
+        # _to_dict() holds core settings; addons.merge() adds manager-specific ones.
+        return setting.addons.merge(setting._to_dict())
+
+    def system_info(self) -> dict[str, Any]:
+        facade = self._facade()
+        return {
+            "manager": facade.get_formatted_manager_name(),
+            "version": facade.get_release_version(),
+            "available_managers": Kathara.get_available_managers_name(),
+        }
+
+    def check_image(self, image: str) -> None:
+        self._facade().check_image(image)
+
+    def wipe(self) -> None:
+        with self._mutate_lock:
+            self._facade().wipe(all_users=False)
+
+    # -- lab lifecycle --------------------------------------------------------
+
+    def _build_and_register(self, spec: LabCreate, lab_dir) -> Lab:
+        """Build an OS-backed Lab rooted at ``lab_dir`` (which must already exist) and register it.
+
+        Every lab is OS-backed (``Lab(path=lab_dir)``) rather than the in-memory ``mem://`` fs, so
+        Kathara's own deploy machinery (``Machine.pack_data``) packs real files/startup scripts
+        into containers over the Docker API.
+        """
+        lab = lab_builder.build_lab(spec, path=str(lab_dir))
+        if not self.registry.add_if_absent(lab):
+            raise LabAlreadyRegisteredError(f"Lab `{spec.name}` already exists.")
+        return lab
+
+    @staticmethod
+    def _pending_targets(
+        lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
+    ) -> Generator[tuple[str, PendingMachineFiles, Machine], None, None]:
+        """Yield ``(name, spec, machine)`` for each target with both a queued spec and a live Machine."""
+        for machine_name in target_names:
+            spec = pending.get(machine_name)
+            machine = lab.machines.get(machine_name)
+            if spec is None or machine is None:
+                continue
+            yield machine_name, spec, machine
+
+    def _materialize_pending_to_fs(
+        self, lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
+    ) -> None:
+        """Write queued files/dirs/startup for ``target_names`` onto the lab's real (osfs) fs.
+
+        Kathara's ``Machine.pack_data`` reads a machine's files straight off ``machine.fs`` and a
+        machine's ``<name>.startup`` straight off ``lab.fs`` at deploy time, so writing them here
+        before a deploy is what lets native deploy apply this state directly. ``shared/`` files
+        are already merged into each target machine's own file map by
+        ``lab_import.translate_lab_files`` rather than relying on Kathara's own ``/shared`` bind
+        mount (disabled — see ``lab_builder.build_lab``).
+        """
+        for machine_name, spec, machine in self._pending_targets(lab, pending, target_names):
+            if spec.dirs:
+                if machine.fs is None:
+                    machine.fs = lab.fs.makedir(machine_name, recreate=True)
+                for rel_dir in spec.dirs:
+                    if rel_dir and rel_dir.strip():
+                        machine.fs.makedirs(rel_dir, recreate=True)
+
+            for path, content in spec.files.items():
+                machine.create_file_from_string(content, path)
+
+            if spec.startup.strip():
+                lab.create_file_from_string(spec.startup, f"{machine_name}.startup")
+
+    def _persist_new_lab(self, lab: Lab, lab_dir, t: lab_import.LabImportTranslation) -> None:
+        """Register + persist a freshly-built lab's parsed state: queue the pending files, materialize
+        them onto the real fs immediately (so the import survives a restart even before the first
+        deploy — not only at deploy time), and (re)generate its lab.conf."""
+        self.registry.set_pending(lab.name, t.pending)
+        self._materialize_pending_to_fs(lab, t.pending, set(t.pending.keys()))
+        self.store.write_lab_conf(lab_dir, lab)
+
+    def create_lab(self, spec: LabCreate) -> Lab:
+        lab_dir = self.store.ensure_lab_dir(spec.name)
+        lab = self._build_and_register(spec, lab_dir)
+        # JSON-created labs have no source lab.conf, so one is generated from the model —
+        # written directly here since the directory was just created and nothing else has
+        # touched it yet (no atomic swap needed, unlike LabStore.write_lab/extract_zip).
+        self.store.write_lab_conf(lab_dir, lab)
+        return lab
+
+    def export_lab_zip(self, name: str) -> io.BytesIO:
+        """Return an in-memory .zip of the lab's on-disk directory (raises 404 if unknown)."""
+        return self.store.zip_lab(name)
+
+    @staticmethod
+    def _compact_interfaces(machine: Machine) -> None:
+        """Drop ``None`` interface slots left by Kathara's ``Machine.remove_interface`` (it nulls a
+        slot to preserve numbering). Those ``None`` slots crash a later ``update_lab_from_api``
+        (``x.link`` on ``None``), so we compact after any disconnect/removal — an in-our-layer
+        workaround for that upstream behavior (the sibling repo is left untouched)."""
+        machine.interfaces = {num: iface for num, iface in machine.interfaces.items() if iface is not None}
+
+    def _translate_lab_dir(self, name: str) -> Optional[lab_import.LabImportTranslation]:
+        """Read a stored lab directory and parse it into a translation, or None if the directory is
+        missing (reconstruct-only lab) or its lab.conf can't be parsed (logged)."""
+        lab_dir = self.store.lab_dir(name)
+        if not lab_dir.exists():
+            return None
+        files, dirs = self.store.read_lab(lab_dir)
+        t = lab_import.translate_lab_files(files, name, dirs)
+        if t.errors:
+            logger.warning("Cannot load lab `%s` from disk: %s", name, "; ".join(t.errors))
+            return None
+        return t
+
+    def _config_lab_from_disk(self, name: str) -> Optional[Lab]:
+        """Build an in-memory Lab from the *on-disk* ``lab.conf`` — the configuration source of
+        truth, free of any runtime interface changes that sit in the live registry model.
+
+        The live model is shared for a lab: Kathara's runtime ``connect_machine_to_link`` calls
+        ``Machine.add_interface`` (see DockerManager), so a running device's live interfaces end up
+        in ``machine.interfaces`` too. Serializing that model would leak runtime edits into
+        ``lab.conf``. Rebuilding from disk instead keeps offline (lab.conf) edits isolated from
+        runtime ones. Returns None if the lab has no on-disk directory (reconstruct-only labs).
+        """
+        t = self._translate_lab_dir(name)
+        if t is None:
+            return None
+        # path=None: in-memory fs — this Lab is only serialized back to lab.conf, never deployed,
+        # so it must not touch (or contend for) the live lab's on-disk directory.
+        return lab_builder.build_lab(t.payload)
+
+    def _persist_config_lab_conf(self, name: str, mutate: Callable[[Lab], None]) -> None:
+        """Regenerate on-disk ``lab.conf`` from the *config* (on-disk lab.conf), applying only the
+        explicit offline edit via ``mutate``. Deliberately ignores the live registry model so a
+        concurrently-running device's runtime interface changes never leak into the saved config.
+        """
+        config_lab = self._config_lab_from_disk(name)
+        if config_lab is None:
+            return
+        mutate(config_lab)
+        self.store.write_lab_conf(self.store.lab_dir(name), config_lab)
+
+    def _reload_from_disk(self) -> None:
+        """Rebuild the registry (and pending state) from the stored lab directories."""
+        for name in self.store.lab_names():
+            try:
+                t = self._translate_lab_dir(name)
+                if t is None:
+                    continue
+                # Re-associate the lab with its real, already-populated directory (machines whose
+                # subfolder already exists on disk automatically pick up machine.fs — see
+                # Kathara's Machine.__init__), so a redeployed/reloaded lab stays OS-backed.
+                lab = lab_builder.build_lab(t.payload, path=str(self.store.lab_dir(name)))
+                self.registry.add_if_absent(lab)
+                self.registry.set_pending(name, t.pending)
+            except Exception:
+                logger.warning("Failed to reload lab `%s` from disk", name, exc_info=True)
+
+    def _reload_lab_from_disk(self, name: str) -> bool:
+        """Rebuild a single lab's model + pending from its on-disk lab.conf, *replacing* the registry
+        entry. Used after a full undeploy to drop runtime-only model changes (e.g. interfaces added
+        live) and restore the saved configuration topology. Returns False if the lab has no on-disk
+        directory (reconstruct-only labs) or the stored lab.conf can't be parsed.
+        """
+        t = self._translate_lab_dir(name)
+        if t is None:
+            return False
+        lab = lab_builder.build_lab(t.payload, path=str(self.store.lab_dir(name)))
+        self.registry.add(lab)
+        self.registry.set_pending(name, t.pending)
+        return True
+
+    # -- lab.conf / folder import ----------------------------------------------
+
+    def preview_import(
+        self,
+        name: str,
+        files: dict[str, str],
+        dirs: Optional[list[str]] = None,
+        skipped: Optional[list[str]] = None,
+    ) -> LabImportPreview:
+        """Dry-run parse of a lab directory, without creating anything."""
+        t = lab_import.translate_lab_files(files, name or "lab", dirs, skipped)
+        return LabImportPreview(
+            machine_count=t.machine_count, domains=t.domains, warnings=t.warnings, errors=t.errors
+        )
+
+    def import_lab(
+        self,
+        name: str,
+        files: dict[str, str],
+        dirs: Optional[list[str]] = None,
+        skipped: Optional[list[str]] = None,
+    ) -> tuple[Lab, list[str]]:
+        """Parse a lab directory, create the lab, and queue its files/startup for deploy."""
+        t = lab_import.translate_lab_files(files, name, dirs, skipped)
+        if t.errors:
+            raise ApiError("; ".join(t.errors))
+        lab_dir = self.store.ensure_lab_dir(name)
+        lab = self._build_and_register(t.payload, lab_dir)
+        self._persist_new_lab(lab, lab_dir, t)
+        return lab, t.warnings
+
+    def upload_lab(self, name: str, zip_data: BinaryIO, deploy: bool = False) -> tuple[Lab, list[str]]:
+        """Create (and optionally deploy) a lab from an uploaded .zip archive.
+
+        Binary-safe (unlike ``import_lab``, whose ``files`` are JSON/text-only): the archive is
+        extracted to disk as-is, then parsed the same way as a JSON-described import. Machine
+        subfolders that already exist on disk after extraction are picked up automatically as
+        ``machine.fs`` (see ``Machine.__init__``), so any binary files travel to the deployed
+        container via Kathara's native ``pack_data`` even though the pending-files model (which
+        only round-trips text) can't represent them.
+        """
+        clean_name = lab_store.sanitize_lab_name(name)
+        if self.registry.get(clean_name) is not None:
+            raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+
+        lab_dir = self.store.extract_zip(clean_name, zip_data)
+        try:
+            files, dirs = self.store.read_lab(lab_dir)
+            t = lab_import.translate_lab_files(files, clean_name, dirs)
+            if t.errors:
+                raise ApiError("; ".join(t.errors))
+            lab = self._build_and_register(t.payload, lab_dir)
+            self._persist_new_lab(lab, lab_dir, t)
+            # shared.startup's content is now folded into each machine's own <machine>.startup by
+            # _persist_new_lab; remove the standalone file(s) the raw archive may have contained so
+            # Kathara's native pack_data (which also auto-picks up a literal shared.startup at the
+            # lab root) doesn't run it a second time.
+            for stray in ("shared.startup", "shared.shutdown"):
+                stray_path = lab_dir / stray
+                if stray_path.exists():
+                    stray_path.unlink()
+        except Exception:
+            if self.registry.get(clean_name) is None:
+                self.store.delete_lab(clean_name)  # roll back the extracted directory
+            raise
+
+        if deploy:
+            lab = self.deploy_lab(clean_name)
+        return lab, t.warnings
+
+    def update_lab_conf(self, name: str, content: str) -> Lab:
+        """Rebuild a **non-deployed** lab from an edited ``lab.conf`` (topology + device metadata).
+
+        The edited ``lab.conf`` supplies machines/links; existing on-disk device files and startup
+        scripts are preserved by re-reading the lab directory and overriding only ``lab.conf`` before
+        re-parsing. Rejected with 409 while the lab is deployed (rebuilding would desync running
+        containers) — undeploy first. Binary device files aren't representable in the text merge and
+        would be dropped; they belong to the Runtime FS flow instead.
+        """
+        clean = lab_store.sanitize_lab_name(name)
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(clean)  # raises LabNotFoundError if unknown
+            if any(m.api_object is not None for m in lab.machines.values()):
+                raise LabConfLockedError(
+                    f"Cannot edit lab.conf while `{clean}` is deployed. Undeploy it first."
+                )
+            lab_dir = self.store.ensure_lab_dir(clean)
+            files, dirs = self.store.read_lab(lab_dir)
+            files["lab.conf"] = content
+            t = lab_import.translate_lab_files(files, clean, dirs)
+            if t.errors:
+                raise ApiError("; ".join(t.errors))
+            # Rebuild under the same name, replacing the previous registration/model.
+            self.registry.remove(clean)
+            new_lab = self._build_and_register(t.payload, lab_dir)
+            self._persist_new_lab(new_lab, lab_dir, t)
+            return new_lab
+
+    def get_pending(self, lab_name: str) -> dict[str, PendingMachineFiles]:
+        """Return the queued files/dirs/startup per machine (survives a page reload)."""
+        return self.registry.get_pending(lab_name)
+
+    def update_pending_files(
+        self,
+        lab_name: str,
+        machine_name: str,
+        files: Optional[dict[str, str]] = None,
+        dirs: Optional[list[str]] = None,
+        startup: Optional[str] = None,
+    ) -> PendingMachineFiles:
+        updated = self.registry.update_pending_machine(lab_name, machine_name, files=files, dirs=dirs, startup=startup)
+        # Write through to the lab's real (osfs) fs immediately — not just at next deploy — so an
+        # edit made before ever deploying still survives a server restart. This only keeps the
+        # on-disk source of truth current; pushing the edit into an already-running container is
+        # a separate, caller-driven step.
+        lab = self.get_lab_or_reconstruct(lab_name)
+        self._materialize_pending_to_fs(lab, {machine_name: updated}, {machine_name})
+        return updated
+
+    def update_shared_pending_files(
+        self,
+        lab_name: str,
+        files: Optional[dict[str, str]] = None,
+        dirs: Optional[list[str]] = None,
+    ) -> dict[str, PendingMachineFiles]:
+        """Queue files/dirs for every machine currently known in the lab (``shared/`` semantics)."""
+        lab = self.get_lab_or_reconstruct(lab_name)
+        for machine_name in lab.machines:
+            self.registry.update_pending_machine(lab_name, machine_name, files=files, dirs=dirs)
+        pending = self.registry.get_pending(lab_name)
+        self._materialize_pending_to_fs(lab, pending, set(lab.machines.keys()))
+        return pending
+
+    def get_lab_or_reconstruct(self, name: str) -> Lab:
+        """Return the registered Lab (refreshed from the backend) or reconstruct it.
+
+        Raises LabNotFoundError if the lab is neither registered nor running.
+        """
+        lab = self.registry.get(name)
+        if lab is not None:
+            try:
+                self._facade().update_lab_from_api(lab)
+            except LabNotFoundError:
+                # Some managers raise when nothing is running under this name; the Docker manager
+                # instead enriches with whatever containers exist (none) and never raises. Either
+                # way, keep the registered (config) model as-is.
+                pass
+            return lab
+
+        # Not registered: try to rebuild from the running backend state.
+        try:
+            reconstructed = self._facade().get_lab_from_api(lab_name=name)
+        except LabNotFoundError as exc:
+            raise LabNotFoundError(f"Lab `{name}` not found.") from exc
+
+        # get_lab_from_api returns an empty Lab when nothing is running under that name.
+        if not reconstructed.machines:
+            raise LabNotFoundError(f"Lab `{name}` not found.")
+        return reconstructed
+
+    def list_labs(self) -> list[Lab]:
+        labs = self.registry.all()
+        for lab in labs:
+            try:
+                self._facade().update_lab_from_api(lab)
+            except LabNotFoundError:
+                pass
+        return labs
+
+    def _clear_undeployed_state(
+        self,
+        lab: Lab,
+        machine_names: set[str],
+        link_names: Optional[set[str]] = None,
+    ) -> None:
+        """Clear stale ``api_object`` references after an undeploy.
+
+        Kathara's Docker manager never resets ``api_object`` on the in-memory Machine/Link
+        objects when a container/network goes down — it only *sets* it for still-running ones
+        on resync (``update_lab_from_api``). Without this, ``deployed``/``running`` (derived from
+        ``api_object is not None``) would keep reporting the pre-undeploy state forever. This
+        mirrors the manager's own rule for collision domains: a link only actually goes down once
+        none of its attached devices are still running.
+        """
+        for name in machine_names:
+            machine = lab.machines.get(name)
+            if machine is not None:
+                machine.api_object = None
+
+        candidate_links = (
+            [lab.links[n] for n in link_names if n in lab.links]
+            if link_names is not None
+            else list(lab.links.values())
+        )
+        for link in candidate_links:
+            if not any(m.api_object is not None for m in link.machines.values()):
+                link.api_object = None
+
+    @staticmethod
+    def _resolve_targets(
+        all_names: set[str], selected: Optional[set[str]], excluded: Optional[set[str]]
+    ) -> set[str]:
+        """Resolve a target name set: ``selected`` wins over ``excluded``; neither means everything."""
+        if selected is not None:
+            return selected
+        if excluded is not None:
+            return all_names - excluded
+        return all_names
+
+    def deploy_lab(
+        self,
+        name: str,
+        selected_machines: Optional[set[str]] = None,
+        excluded_machines: Optional[set[str]] = None,
+    ) -> Lab:
+        if selected_machines and excluded_machines:
+            raise InvocationError("You can either select or exclude devices.")
+
+        lab = self.get_lab_or_reconstruct(name)
+        all_names = set(lab.machines.keys())
+
+        # Mirror the facade's own validation (it would otherwise never run for this call, since
+        # below we always pass it a freshly-computed `selected_machines`, not the caller's raw
+        # selected/excluded_machines).
+        for label, requested in (("selected", selected_machines), ("excluded", excluded_machines)):
+            if requested is not None and not requested <= all_names:
+                missing = requested - all_names
+                raise MachineNotFoundError(f"The following devices are not in the network scenario: {missing}.")
+
+        target_names = self._resolve_targets(all_names, selected_machines, excluded_machines)
+
+        # Already-running machines can't be recreated — Kathara's facade raises
+        # MachineAlreadyExistsError for them — so only machines about to be *freshly* created are
+        # passed to it. Their pending state must be on disk first: Kathara's own deploy machinery
+        # (Machine.pack_data) packs whatever sits on the real (osfs) fs into the container over
+        # the Docker API. Already-running targets instead get any queued update pushed live via
+        # ``_apply_pending``, the only way to reach a container that already exists.
+        pending = self.registry.get_pending(name)
+        pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
+        fresh_names = target_names - pre_running
+        already_running = target_names & pre_running
+
+        if fresh_names & pending.keys():
+            self._materialize_pending_to_fs(lab, pending, fresh_names & pending.keys())
+
+        if fresh_names:
+            with self._mutate_lock:
+                self._facade().deploy_lab(lab, selected_machines=fresh_names)
+
+        if already_running & pending.keys():
+            self._apply_pending(name, lab, pending, already_running & pending.keys())
+        return lab
+
+    def _apply_pending(
+        self, name: str, lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
+    ) -> None:
+        """Live-push queued files/dirs/startup into machines that were *already running*.
+
+        Native deploy (``Machine.pack_data``, see ``deploy_lab``) already applies pending state
+        for machines freshly created by this deploy call, so this is scoped to only the subset
+        that was already running before it: a redeploy can't recreate a running container
+        (Kathara raises ``MachineAlreadyExistsError``), so pushing files/exec'ing the startup
+        script live is the only way to update one. Order matches the Kathara CLI's own:
+        filesystem first, then the startup script.
+        """
+        for machine_name, spec, machine in self._pending_targets(lab, pending, target_names):
+            if machine.api_object is None:
+                continue
+
+            if spec.dirs:
+                quoted = " ".join(shlex.quote(d) for d in spec.dirs if d and d.strip())
+                if quoted:
+                    self._exec_checked(name, machine_name, f"mkdir -p {quoted}", action_label="mkdir")
+
+            files = dict(spec.files)
+            has_startup = bool(spec.startup.strip())
+            if has_startup:
+                files["/tmp/.kathara_boot.sh"] = spec.startup
+            if files:
+                self.copy_files(name, machine_name, files)
+            if has_startup:
+                self.exec_command(name, machine_name, "sh /tmp/.kathara_boot.sh", wait=False)
+
+    def undeploy_lab(
+        self,
+        name: str,
+        selected_machines: Optional[set[str]] = None,
+        excluded_machines: Optional[set[str]] = None,
+        selected_links: Optional[set[str]] = None,
+    ) -> None:
+        lab = self.registry.get(name)
+        with self._mutate_lock:
+            self._facade().undeploy_lab(
+                lab_name=name,
+                selected_machines=selected_machines,
+                excluded_machines=excluded_machines,
+                selected_links=selected_links,
+            )
+        if lab is not None:
+            machine_names = self._resolve_targets(set(lab.machines.keys()), selected_machines, excluded_machines)
+            self._clear_undeployed_state(lab, machine_names, selected_links)
+
+        # A full undeploy brings the whole lab down, so restore the topology to the saved
+        # configuration (lab.conf) — discarding any runtime-only model changes such as interfaces
+        # added/removed live. Skipped for a partial undeploy, which must not disturb the machines
+        # left running (and their live state).
+        full_undeploy = selected_machines is None and excluded_machines is None and selected_links is None
+        if full_undeploy:
+            self._reload_lab_from_disk(name)
+
+    def delete_lab(self, name: str) -> None:
+        with self._mutate_lock:
+            self._facade().undeploy_lab(lab_name=name)
+        self.registry.remove(name)
+        self.store.delete_lab(name)
+
+    # -- machines -------------------------------------------------------------
+
+    def get_machine(self, lab_name: str, machine_name: str) -> Machine:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        return lab.get_machine(machine_name)
+
+    def get_machine_api_object(self, lab_name: str, machine_name: str):
+        """Return backend-native API object for a running machine.
+
+        Used by features that require manager-specific low-level capabilities
+        (for example interactive TTY websocket bridging on Docker).
+        """
+        self._get_running_machine(lab_name, machine_name)
+        getter = getattr(self._facade(), "get_machine_api_object", None)
+        if not callable(getter):
+            raise NotSupportedError("Live TTY is not supported by the current Kathara manager.")
+        return getter(machine_name, lab_name=lab_name)
+
+    def available_shells(self, lab_name: str, machine_name: str) -> list[str]:
+        """Return the supported shells actually present (executable) in the *running* device, in
+        canonical order — used to populate the live-terminal shell picker. Falls back to the full
+        supported set if the device can't be probed."""
+        self._get_running_machine(lab_name, machine_name)  # 409 if the device isn't running
+        # One probe: echo the name of each known shell whose resolved binary is executable — the same
+        # path the live-TTY session would exec (see docker_tty.resolve_shell_path).
+        probe = "".join(f"[ -x {path} ] && echo {name}\n" for name, path in SHELL_PATHS.items())
+        try:
+            stdout, _, _ = self.exec_command(lab_name, machine_name, ["sh", "-lc", probe], wait=False)
+        except Exception:
+            stdout = None
+        found = {ln.strip() for ln in (stdout or b"").decode("utf-8", "replace").splitlines() if ln.strip()}
+        available = [name for name in SHELL_PATHS if name in found]
+        return available or list(SHELL_PATHS)
+
+    def add_machine(self, lab_name: str, spec: MachineCreate) -> Machine:
+        # Adding a device is a *configuration* edit, so it's written to lab.conf (unlike runtime
+        # interface changes, which stay live-only). It is deployed live only when the lab is already
+        # running — mirroring interface edits (config on a stopped lab, runtime on a live one).
+        lab = self.get_lab_or_reconstruct(lab_name)
+        lab_deployed = any(m.api_object is not None for m in lab.machines.values())
+        machine = lab_builder.build_machine(lab, spec)
+        with self._mutate_lock:
+            if lab_deployed:
+                self._facade().deploy_machine(machine)
+            # Persist from the on-disk config (adding the same device there) so a running sibling's
+            # runtime interface changes aren't captured into lab.conf.
+            self._persist_config_lab_conf(lab_name, lambda cfg: lab_builder.build_machine(cfg, spec))
+        return machine
+
+    def remove_machine(self, lab_name: str, machine_name: str, keep_links: bool = False) -> None:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        machine = lab.get_machine(machine_name)
+        link_names = {iface.link.name for iface in machine.interfaces.values() if iface is not None}
+        with self._mutate_lock:
+            self._facade().undeploy_machine(machine, keep_links=keep_links)
+            # link_names=None means "check every link in the lab" to _clear_undeployed_state, so a
+            # kept link set must be the empty set (not None) to mean "check none of them".
+            self._clear_undeployed_state(lab, {machine_name}, set() if keep_links else link_names)
+            # The facade only undeploys — it leaves the device in the model, so it kept reappearing
+            # in the topology/devices forever. Actually drop it from the Lab (and its on-disk files).
+            # Guard against None interface slots (a known upstream disconnect bug can leave them, and
+            # Lab.remove_machine dereferences interface.link without a None check).
+            self._compact_interfaces(machine)
+            # delete_fs=False: Kathara's own delete_fs uses removedir(), which fails on a non-empty
+            # device folder — clean the fs ourselves recursively (see _remove_machine_fs).
+            lab.remove_machine(name=machine_name, delete_fs=False)
+            self._remove_machine_fs(lab, machine_name)
+            self._drop_pending_machine(lab_name, machine_name)
+            # Regenerate the persisted lab.conf from the on-disk config (not the live model) so the
+            # device is gone on reload too — without baking a running sibling's runtime interfaces in.
+            def _drop(cfg: Lab) -> None:
+                if machine_name in cfg.machines:
+                    cfg.remove_machine(name=machine_name, delete_fs=False)
+
+            self._persist_config_lab_conf(lab_name, _drop)
+
+    @staticmethod
+    def _remove_machine_fs(lab: Lab, machine_name: str) -> None:
+        """Recursively delete a device's on-disk files: its ``<name>.startup``/``.shutdown`` scripts
+        and its ``<name>/`` folder (Kathara's own ``delete_fs`` can't — it uses ``removedir``, which
+        fails on a non-empty folder)."""
+        for fname in (f"{machine_name}.startup", f"{machine_name}.shutdown"):
+            if lab.fs.exists(fname):
+                lab.fs.remove(fname)
+        if lab.fs.exists(machine_name):
+            lab.fs.removetree(machine_name)
+
+    def _drop_pending_machine(self, lab_name: str, machine_name: str) -> None:
+        """Drop a single device's queued pending state (the registry only removes whole labs)."""
+        pending = self.registry.get_pending(lab_name)
+        if pending.pop(machine_name, None) is not None:
+            self.registry.set_pending(lab_name, pending)
+
+    def connect_machine(
+        self,
+        lab_name: str,
+        machine_name: str,
+        link_name: str,
+        interface_number: Optional[int] = None,
+        mac_address: Optional[str] = None,
+    ) -> Machine:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        machine = lab.get_machine(machine_name)
+        link = lab.get_or_new_link(link_name)
+
+        # For stopped devices, update the topology model directly so interfaces can be
+        # prepared before deploy (supports explicit interface numbering). This is a "static" edit —
+        # persist it to lab.conf so it survives a reload / is applied on the next deploy.
+        if machine.api_object is None:
+            with self._mutate_lock:
+                machine.add_interface(link, number=interface_number, mac_address=mac_address)
+
+                # Persist from the on-disk config (not the live model) so a running sibling's
+                # runtime interfaces can't leak into lab.conf. Apply the same add to that config Lab.
+                def _add(cfg: Lab) -> None:
+                    if machine_name in cfg.machines:
+                        cfg.connect_machine_to_link(
+                            machine_name,
+                            link_name,
+                            machine_iface_number=interface_number,
+                            mac_address=mac_address,
+                        )
+
+                self._persist_config_lab_conf(lab_name, _add)
+            return machine
+
+        if interface_number is not None:
+            raise NotSupportedError(
+                "Explicit interface_number is only supported when the device is not running."
+            )
+
+        with self._mutate_lock:
+            self._facade().connect_machine_to_link(
+                machine,
+                link,
+                mac_address=mac_address,
+            )
+        return machine
+
+    def disconnect_machine(
+        self, lab_name: str, machine_name: str, link_name: str, keep_link: bool = False
+    ) -> None:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        machine = lab.get_machine(machine_name)
+        link = lab.get_link(link_name)
+
+        # For stopped devices, update the topology model only (a "static" lab.conf edit) and persist.
+        if machine.api_object is None:
+            with self._mutate_lock:
+                machine.remove_interface(link)
+                self._compact_interfaces(machine)
+
+                # Persist from the on-disk config (not the live model) — see connect_machine.
+                def _remove(cfg: Lab) -> None:
+                    cfg_machine = cfg.machines.get(machine_name)
+                    cfg_link = cfg.links.get(link_name)
+                    if cfg_machine is None or cfg_link is None:
+                        return
+                    cfg_machine.remove_interface(cfg_link)
+                    self._compact_interfaces(cfg_machine)
+
+                self._persist_config_lab_conf(lab_name, _remove)
+            return
+
+        # Running device: live disconnect. Compact the None slot Kathara leaves behind so subsequent
+        # reads don't crash (runtime change — not persisted to lab.conf).
+        with self._mutate_lock:
+            self._facade().disconnect_machine_from_link(machine, link, keep_link=keep_link)
+            self._compact_interfaces(machine)
+
+    def copy_files(self, lab_name: str, machine_name: str, files: dict[str, str]) -> None:
+        machine = self._get_running_machine(lab_name, machine_name)
+        guest_to_host = {path: io.BytesIO(content.encode("utf-8")) for path, content in files.items()}
+        with self._mutate_lock:
+            self._facade().copy_files(machine, guest_to_host)
+
+    def normalize_guest_path(self, path: str) -> str:
+        """Return a canonical absolute path for runtime filesystem operations."""
+        if not path or not path.strip():
+            raise ApiError("Path cannot be empty.")
+        cleaned = path.strip()
+        if not cleaned.startswith("/"):
+            cleaned = f"/{cleaned}"
+        normalized = posixpath.normpath(cleaned)
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        return normalized
+
+    def _get_running_machine(self, lab_name: str, machine_name: str) -> Machine:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        machine = lab.get_machine(machine_name)
+        if machine.api_object is None:
+            # MachineNotRunningError formats its own "Device `<name>` is not running." message.
+            raise MachineNotRunningError(machine_name)
+        return machine
+
+    def _running_guest_path(self, lab_name: str, machine_name: str, path: str) -> tuple[Machine, str]:
+        """Assert the device is running and return ``(machine, normalized_guest_path)`` — the common
+        preamble of every ``fs_*`` runtime-filesystem method."""
+        machine = self._get_running_machine(lab_name, machine_name)
+        return machine, self.normalize_guest_path(path)
+
+    def _exec_checked(
+        self,
+        lab_name: str,
+        machine_name: str,
+        command: Union[str, list[str]],
+        *,
+        wait: bool = True,
+        action_label: str,
+    ) -> tuple[bytes, bytes]:
+        stdout, stderr, exit_code = self.exec_command(lab_name, machine_name, command, wait=wait)
+        # Some backends can return None for empty streams; normalize so callers can decode safely.
+        stdout = stdout if stdout is not None else b""
+        stderr = stderr if stderr is not None else b""
+        if exit_code != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            raise ApiError(f"{action_label} failed on `{machine_name}`: {err or f'exit code {exit_code}'}")
+        return stdout, stderr
+
+    def fs_list_directory(self, lab_name: str, machine_name: str, path: str) -> list[dict[str, Any]]:
+        _, normalized = self._running_guest_path(lab_name, machine_name, path)
+        quoted = shlex.quote(normalized)
+        cmd = (
+            f"find {quoted} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%Y\\t%s\\t%m\\t%T@\\n' "
+            "| LC_ALL=C sort"
+        )
+        stdout, _ = self._exec_checked(
+            lab_name,
+            machine_name,
+            ["sh", "-lc", cmd],
+            wait=False,
+            action_label=f"List directory `{normalized}`",
+        )
+
+        entries: list[dict[str, Any]] = []
+        for raw_line in stdout.decode("utf-8", errors="replace").splitlines():
+            if not raw_line.strip():
+                continue
+            parts = raw_line.split("\t", 5)
+            if len(parts) != 6:
+                continue
+            name, kind, target_kind, size_raw, mode, mtime_raw = parts
+            child_path = f"/{name}" if normalized == "/" else f"{normalized}/{name}"
+            entry: dict[str, Any] = {
+                "name": name,
+                "path": child_path,
+                # Treat symlinks to directories as directories for UI navigation.
+                "is_dir": kind == "d" or (kind == "l" and target_kind == "d"),
+                "mode": mode,
+            }
+            try:
+                entry["size"] = int(size_raw)
+            except ValueError:
+                entry["size"] = None
+            try:
+                entry["mtime"] = float(mtime_raw)
+            except ValueError:
+                entry["mtime"] = None
+            entries.append(entry)
+        return entries
+
+    def fs_read_bytes(self, lab_name: str, machine_name: str, path: str) -> bytes:
+        _, normalized = self._running_guest_path(lab_name, machine_name, path)
+        _, _, is_dir_exit = self.exec_command(lab_name, machine_name, ["test", "-d", normalized], wait=False)
+        if is_dir_exit == 0:
+            raise ApiError(f"Path `{normalized}` is a directory. Use list to navigate it.")
+        stdout, _ = self._exec_checked(
+            lab_name,
+            machine_name,
+            ["cat", normalized],
+            wait=False,
+            action_label=f"Read file `{normalized}`",
+        )
+        return stdout
+
+    def fs_read_text(self, lab_name: str, machine_name: str, path: str) -> str:
+        raw = self.fs_read_bytes(lab_name, machine_name, path)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ApiError("File is not UTF-8 text. Use download for binary files.") from exc
+
+    def fs_write_text(self, lab_name: str, machine_name: str, path: str, content: str) -> int:
+        _, normalized = self._running_guest_path(lab_name, machine_name, path)
+        self.copy_files(lab_name, machine_name, {normalized: content})
+        return len(content.encode("utf-8"))
+
+    def fs_upload_bytes(self, lab_name: str, machine_name: str, path: str, content: bytes) -> int:
+        machine, normalized = self._running_guest_path(lab_name, machine_name, path)
+        with self._mutate_lock:
+            self._facade().copy_files(machine, {normalized: io.BytesIO(content)})
+        return len(content)
+
+    def fs_mkdir(self, lab_name: str, machine_name: str, path: str) -> None:
+        _, normalized = self._running_guest_path(lab_name, machine_name, path)
+        self._exec_checked(
+            lab_name,
+            machine_name,
+            ["mkdir", "-p", normalized],
+            wait=False,
+            action_label=f"Create directory `{normalized}`",
+        )
+
+    def fs_move(self, lab_name: str, machine_name: str, source_path: str, destination_path: str) -> None:
+        _, source = self._running_guest_path(lab_name, machine_name, source_path)
+        destination = self.normalize_guest_path(destination_path)
+        self._exec_checked(
+            lab_name,
+            machine_name,
+            ["mv", "--", source, destination],
+            wait=False,
+            action_label=f"Move `{source}`",
+        )
+
+    def fs_delete(self, lab_name: str, machine_name: str, path: str, recursive: bool = False) -> None:
+        _, normalized = self._running_guest_path(lab_name, machine_name, path)
+        if recursive:
+            self._exec_checked(
+                lab_name,
+                machine_name,
+                ["rm", "-rf", "--", normalized],
+                wait=False,
+                action_label=f"Delete `{normalized}`",
+            )
+            return
+        # Non-recursive delete supports files and empty directories.
+        quoted = shlex.quote(normalized)
+        cmd = f"rm -f -- {quoted} || rmdir -- {quoted}"
+        self._exec_checked(
+            lab_name,
+            machine_name,
+            ["sh", "-lc", cmd],
+            wait=False,
+            action_label=f"Delete `{normalized}`",
+        )
+
+    # -- links ----------------------------------------------------------------
+
+    def add_link(self, lab_name: str, link_name: str, external: Optional[list[str]] = None):
+        lab = self.get_lab_or_reconstruct(lab_name)
+        link = lab.get_or_new_link(link_name)
+        if external:
+            for iface in external:
+                link.external.append(lab_builder.build_external_link(iface))
+        with self._mutate_lock:
+            self._facade().deploy_link(link)
+        return link
+
+    def remove_link(self, lab_name: str, link_name: str) -> None:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        link = lab.get_link(link_name)
+        with self._mutate_lock:
+            self._facade().undeploy_link(link)
+
+            # Keep the in-memory model consistent with the operation: drop all
+            # interfaces attached to this collision domain and remove the link
+            # from the lab map so it no longer appears in topology/list views.
+            for machine_name in list(link.machines.keys()):
+                machine = lab.machines.get(machine_name)
+                if machine is not None:
+                    try:
+                        machine.remove_interface(link)
+                    except Exception:
+                        # If backend state changed first, best effort to keep going.
+                        pass
+
+            lab.links.pop(link_name, None)
+
+    # -- exec -----------------------------------------------------------------
+
+    def exec_command(
+        self,
+        lab_name: str,
+        machine_name: str,
+        command: Union[str, list[str]],
+        wait: bool = False,
+    ) -> tuple[bytes, bytes, int]:
+        return self._facade().exec(
+            machine_name, command, lab_name=lab_name, wait=wait, stream=False
+        )
+
+    def exec_stream(
+        self,
+        lab_name: str,
+        machine_name: str,
+        command: Union[str, list[str]],
+        wait: bool = False,
+    ):
+        return self._facade().exec(
+            machine_name, command, lab_name=lab_name, wait=wait, stream=True
+        )
+
+    # -- stats ----------------------------------------------------------------
+
+    def machines_stats_stream(self, lab_name: str) -> Generator[list, None, None]:
+        for stats_dict in self._facade().get_machines_stats(lab_name=lab_name):
+            yield list(stats_dict.values())
+
+    @staticmethod
+    def _first_sample(gen, default=None):
+        """Pull the first item from a lazy stats generator, always closing it afterwards. Returns
+        ``default`` when the generator is empty (``StopIteration``)."""
+        try:
+            return next(gen)
+        except StopIteration:
+            return default
+        finally:
+            gen.close()
+
+    def machines_stats_snapshot(self, lab_name: str) -> list:
+        sample = self._first_sample(self._facade().get_machines_stats(lab_name=lab_name))
+        return list(sample.values()) if sample is not None else []
+
+    def machine_stats_snapshot(self, lab_name: str, machine_name: str):
+        # get_machine_stats *yields None* (it doesn't stop) for a device that isn't running, so guard
+        # the None sentinel as well as an empty generator — both mean "no live device".
+        sample = self._first_sample(self._facade().get_machine_stats(machine_name, lab_name=lab_name))
+        if sample is None:
+            # MachineNotRunningError formats its own "Device `<name>` is not running." message.
+            raise MachineNotRunningError(machine_name)
+        return sample
+
+    def links_stats_stream(self, lab_name: str) -> Generator[list, None, None]:
+        for stats_dict in self._facade().get_links_stats(lab_name=lab_name):
+            yield list(stats_dict.values())
+
+    def links_stats_snapshot(self, lab_name: str) -> list:
+        sample = self._first_sample(self._facade().get_links_stats(lab_name=lab_name))
+        return list(sample.values()) if sample is not None else []

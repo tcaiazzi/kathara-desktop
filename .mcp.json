@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "type": "stdio",
+      "command": "/home/tommaso/.local/nodejs/node-v20.20.2-linux-arm64/bin/npx",
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--executable-path",
+        "/home/tommaso/.cache/ms-playwright/chromium-1228/chrome-linux/chrome"
+      ],
+      "env": {
+        "PATH": "/home/tommaso/.local/nodejs/node-v20.20.2-linux-arm64/bin:/usr/bin:/bin"
+      }
+    },
+    "context7": {
+      "type": "stdio",
+      "command": "/home/tommaso/.local/nodejs/node-v20.20.2-linux-arm64/bin/npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {
+        "PATH": "/home/tommaso/.local/nodejs/node-v20.20.2-linux-arm64/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}

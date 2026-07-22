@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+*.egg-info
+build
+dist
+old
+docs
+examples
+services/frontend/node_modules
+services/frontend/dist
+data

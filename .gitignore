@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# Local lab storage (KATHARA_API_LABS_DIR default)
+data/
+
+# Playwright MCP verification artifacts
+.playwright-mcp/

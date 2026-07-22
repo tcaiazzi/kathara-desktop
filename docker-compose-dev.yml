@@ -1,0 +1,42 @@
+# Hot-reload local stack: backend runs uvicorn --reload against a bind-mounted ./src, frontend
+# runs the plain Vite dev server. No reverse-proxy — the Vite dev server's own /api proxy
+# (vite.config.ts) plays that role, exactly like running both directly on the host (see
+# README's "Running" section); this just containerizes that same flow.
+#
+# Usage:
+#   docker compose -f docker-compose-dev.yml up --build
+#   -> http://localhost:5173/   (frontend, proxies /api to the backend container)
+#   -> http://localhost:8000/   (backend directly, if needed)
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: services/backend/Dockerfile.dev
+    volumes:
+      - ./src:/app/src
+      - /var/run/docker.sock:/var/run/docker.sock
+      - labs_data:/app/data/labs
+    environment:
+      - KATHARA_API_LABS_DIR=/app/data/labs
+    ports:
+      - "8000:8000"
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./services/frontend:/app
+      - frontend_node_modules:/app/node_modules
+    environment:
+      - VITE_BACKEND_URL=http://backend:8000
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    depends_on:
+      - backend
+
+volumes:
+  frontend_node_modules:
+  # Same lab-storage volume as docker-compose-prod.yml — see its comment for why a plain named
+  # volume (not a bind mount) is sufficient here.
+  labs_data:

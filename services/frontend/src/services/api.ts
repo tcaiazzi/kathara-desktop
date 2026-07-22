@@ -1,0 +1,277 @@
+import type {
+  ErrorResponse,
+  ExecResult,
+  FsListResponse,
+  FsReadTextResponse,
+  FsUploadResponse,
+  LabCreate,
+  LabDetail,
+  LabImportResult,
+  LabSummary,
+  LinkDetail,
+  MachineDetail,
+  Message,
+  PendingMachineFiles,
+  SettingsUpdate,
+  SettingsView,
+  SystemInfo,
+} from "./types";
+
+// All backend routes live under /api. In dev this is proxied to the backend by Vite
+// (vite.config.ts); in production the reverse proxy plays the same role — so this is always a
+// same-origin, relative call, no base URL to configure.
+const API_BASE = "/api";
+
+export class ApiError extends Error {
+  errorType: string;
+  status: number;
+
+  constructor(message: string, errorType: string, status: number) {
+    super(message);
+    this.errorType = errorType;
+    this.status = status;
+  }
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const init: RequestInit = { method, headers: {} };
+  if (body !== undefined) {
+    (init.headers as Record<string, string>)["Content-Type"] = "application/json";
+    init.body = JSON.stringify(body);
+  }
+  const res = await fetch(`${API_BASE}${path}`, init);
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+  if (!res.ok) {
+    const err = data as Partial<ErrorResponse> | null;
+    throw new ApiError(
+      err?.detail || res.statusText || `HTTP ${res.status}`,
+      err?.error_type || `HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return data as T;
+}
+
+// Multipart POST (file upload). Unlike request<T>, this must NOT set Content-Type: the browser
+// sets multipart/form-data plus the boundary itself from the FormData body.
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+  if (!res.ok) {
+    const err = data as Partial<ErrorResponse> | null;
+    throw new ApiError(
+      err?.detail || res.statusText || `HTTP ${res.status}`,
+      err?.error_type || `HTTP ${res.status}`,
+      res.status,
+    );
+  }
+  return data as T;
+}
+
+export const api = {
+  health: () => request<{ status: string }>("GET", "/health"),
+  systemInfo: () => request<SystemInfo>("GET", "/system"),
+  getSettings: () => request<SettingsView>("GET", "/settings"),
+  updateSettings: (payload: SettingsUpdate) => request<SettingsView>("PUT", "/settings", payload),
+
+  listLabs: () => request<LabSummary[]>("GET", "/labs"),
+  getLab: (name: string) => request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`),
+  createLab: (payload: LabCreate) => request<LabDetail>("POST", "/labs", payload),
+  // Binary-safe lab upload (a .zip of a standard Kathara lab directory) — unlike createLab's
+  // JSON payload, this can carry non-text files. `name` is optional; the backend derives one
+  // from the filename when omitted.
+  uploadLab: (file: File, name?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (name && name.trim()) form.append("name", name.trim());
+    return requestForm<LabImportResult>("/labs/upload", form);
+  },
+  // Apply an edited lab.conf to a non-deployed lab (rebuilds its topology). 409 if deployed.
+  updateLabConf: (name: string, content: string) =>
+    request<LabDetail>("PUT", `/labs/${encodeURIComponent(name)}/lab-conf`, { content }),
+  deployLab: (name: string) => request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/deploy`, {}),
+  undeployLab: (name: string) => request<Message>("POST", `/labs/${encodeURIComponent(name)}/undeploy`, {}),
+  // Deploy/undeploy a single device (the backend deploy/undeploy accept a machine subset).
+  deployDevice: (name: string, machine: string) =>
+    request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/deploy`, { selected_machines: [machine] }),
+  undeployDevice: (name: string, machine: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(name)}/undeploy`, { selected_machines: [machine] }),
+  deleteLab: (name: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(name)}`),
+  // Download a lab as a .zip of its on-disk directory. Binary response, so it uses the same
+  // error-checked raw fetch as fsDownload rather than the JSON `request` wrapper.
+  downloadLab: async (name: string) => {
+    const res = await fetch(`${API_BASE}/labs/${encodeURIComponent(name)}/download`, { method: "GET" });
+    if (!res.ok) {
+      const text = await res.text();
+      let data: unknown = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = text;
+        }
+      }
+      const err = data as Partial<ErrorResponse> | null;
+      throw new ApiError(
+        err?.detail || res.statusText || `HTTP ${res.status}`,
+        err?.error_type || `HTTP ${res.status}`,
+        res.status,
+      );
+    }
+    return res.blob();
+  },
+
+  // -- lab file editor/explorer (queued files/dirs/startup + live push to running devices) --
+  getPendingFiles: (labName: string) =>
+    request<Record<string, PendingMachineFiles>>("GET", `/labs/${encodeURIComponent(labName)}/pending-files`),
+  updatePendingFiles: (
+    labName: string,
+    machineName: string,
+    body: { files?: Record<string, string>; dirs?: string[]; startup?: string },
+  ) =>
+    request<PendingMachineFiles>(
+      "PUT",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/pending-files`,
+      body,
+    ),
+  copyFiles: (labName: string, machineName: string, files: Record<string, string>) =>
+    request<Message>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/files`,
+      { files },
+    ),
+  fsList: (labName: string, machineName: string, path: string) =>
+    request<FsListResponse>(
+      "GET",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/list?path=${encodeURIComponent(path)}`,
+    ),
+  fsReadText: (labName: string, machineName: string, path: string) =>
+    request<FsReadTextResponse>(
+      "GET",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/text?path=${encodeURIComponent(path)}`,
+    ),
+  fsWriteText: (labName: string, machineName: string, path: string, content: string) =>
+    request<Message>(
+      "PUT",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/text`,
+      { path, content },
+    ),
+  fsMkdir: (labName: string, machineName: string, path: string) =>
+    request<Message>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/mkdir`,
+      { path },
+    ),
+  fsMove: (labName: string, machineName: string, sourcePath: string, destinationPath: string) =>
+    request<Message>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/move`,
+      { sourcePath, destinationPath },
+    ),
+  fsDelete: (labName: string, machineName: string, path: string, recursive = false) =>
+    request<Message>(
+      "DELETE",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs`,
+      { path, recursive },
+    ),
+  fsUpload: async (labName: string, machineName: string, path: string, file: File) => {
+    const form = new FormData();
+    form.append("path", path);
+    form.append("file", file);
+    return requestForm<FsUploadResponse>(
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/upload`,
+      form,
+    );
+  },
+  fsDownload: async (labName: string, machineName: string, path: string) => {
+    const res = await fetch(
+      `${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/download?path=${encodeURIComponent(path)}`,
+      { method: "GET" },
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      let data: unknown = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = text;
+        }
+      }
+      const err = data as Partial<ErrorResponse> | null;
+      throw new ApiError(
+        err?.detail || res.statusText || `HTTP ${res.status}`,
+        err?.error_type || `HTTP ${res.status}`,
+        res.status,
+      );
+    }
+    return res.blob();
+  },
+  execCommand: (labName: string, machineName: string, command: string | string[], wait = false) =>
+    request<ExecResult>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/exec`,
+      { command, wait },
+    ),
+
+  // Shells actually available in a running device (for the live-terminal picker).
+  listShells: (labName: string, machineName: string) =>
+    request<string[]>(
+      "GET",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/shells`,
+    ),
+
+  ttyWsUrl: (labName: string, machineName: string, shell = "bash") => {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}`;
+  },
+
+  // stats/stream is a GET endpoint, so (unlike exec/stream) the browser's native EventSource
+  // can be used directly against this URL.
+  statsStreamUrl: (labName: string) => `${API_BASE}/labs/${encodeURIComponent(labName)}/stats/stream`,
+
+  // -- topology mutations (add/remove device or domain, connect/disconnect interfaces) --
+  addMachine: (
+    labName: string,
+    payload: { name: string; image?: string; bridged?: boolean; interfaces?: { link: string; number: number }[] },
+  ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labName)}/machines`, payload),
+  removeMachine: (labName: string, machineName: string) =>
+    request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`),
+  // connect/disconnect take query params on the backend (no request body) — see routers/machines.py.
+  // interfaceNumber is only honored for a stopped device (static lab.conf edit); omit it for a
+  // running device so the backend/Kathara auto-assigns the next interface number at runtime.
+  connectMachine: (labName: string, machineName: string, link: string, interfaceNumber?: number, macAddress?: string) => {
+    const q = new URLSearchParams({ link });
+    if (interfaceNumber !== undefined) q.set("interface_number", String(interfaceNumber));
+    if (macAddress) q.set("mac_address", macAddress);
+    return request<MachineDetail>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/connect?${q.toString()}`,
+    );
+  },
+  disconnectMachine: (labName: string, machineName: string, link: string) =>
+    request<Message>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/disconnect?link=${encodeURIComponent(link)}`,
+    ),
+  addLink: (labName: string, name: string, external: string[] = []) =>
+    request<LinkDetail>("POST", `/labs/${encodeURIComponent(labName)}/links`, { name, external }),
+  removeLink: (labName: string, linkName: string) =>
+    request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/links/${encodeURIComponent(linkName)}`),
+};

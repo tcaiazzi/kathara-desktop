@@ -1,0 +1,46 @@
+# Production stack: nginx reverse-proxy in front of the built React frontend and the FastAPI
+# backend. See docs/refactor-plan.md (Track 2, Phase 5).
+#
+# Usage:
+#   docker compose -f docker-compose-prod.yml up --build
+#   -> http://localhost:8080/          (React frontend)
+#   -> http://localhost:8080/docs      (interactive API docs)
+#
+# The backend needs the host's Docker socket to deploy lab devices as sibling containers —
+# same "Docker-outside-of-Docker" pattern the CLI itself relies on. It runs as root in the
+# container for that reason; this stack inherits this repo's own "no auth, local/trusted use
+# only" stance (see README) rather than adding auth here.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: services/backend/Dockerfile
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - labs_data:/app/data/labs
+    environment:
+      - KATHARA_API_LABS_DIR=/app/data/labs
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./services/frontend
+    restart: unless-stopped
+
+  reverse-proxy:
+    build:
+      context: ./services/reverse-proxy
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  # Every lab is persisted here as a real Kathara lab directory (see docs/refactor-plan.md's
+  # persistence entry), so labs survive a container restart. A plain named volume is enough —
+  # Kathara's native `/shared` bind mount is disabled per-lab (lab_builder.build_lab), so nothing
+  # under this volume is ever bind-mounted into a sibling device container; machine files/startup
+  # travel to containers over the Docker API instead (DinD-safe regardless of storage backing).
+  labs_data:

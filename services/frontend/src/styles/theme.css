@@ -1,0 +1,86 @@
+/* Shared design tokens. Reuse Bootstrap's own --bs-* variables (primary, success, border-color,
+   secondary-color, ...) wherever the intent is just "standard semantic color" — most of the app
+   already does. These --kt-* tokens exist only for what Bootstrap has no equivalent for:
+   topology node/edge states, and a "recessed surface" look (one shade off the page background,
+   GitHub-code-block-style) so canvas/console areas still read as distinct from the plain page
+   without inventing a whole second color system. */
+
+:root {
+  --kt-panel-bg: #ffffff;
+  --kt-panel-muted-bg: #f8f9fa;
+  --kt-menu-hover-bg: #f1f3f5;
+
+  --kt-surface-recessed: #f6f8fa;
+  --kt-surface-recessed-border: #d0d7de;
+
+  --kt-node-bg: #ffffff;
+  --kt-node-text: #212529;
+  --kt-node-sub-text: #6c757d;
+  --kt-node-running: var(--bs-success);
+  --kt-node-stopped: #adb5bd;
+
+  --kt-domain-bg: #eef4ff;
+  --kt-domain-border: var(--bs-primary);
+  --kt-domain-external-border: #b45309;
+
+  --kt-edge: #adb5bd;
+  --kt-edge-hi: var(--bs-primary);
+  --kt-edge-label: #6c757d;
+  --kt-edge-label-hi: var(--bs-primary);
+
+  --kt-selected-glow: rgba(13, 110, 253, 0.55);
+
+  --kt-term-bg: var(--kt-surface-recessed);
+  --kt-term-border: var(--kt-surface-recessed-border);
+  --kt-term-text: #24292f;
+  --kt-term-cmd: #0969da;
+  --kt-term-err: #cf222e;
+  --kt-term-exit: #9a6700;
+}
+
+:root[data-kt-theme="dark"] {
+  --kt-panel-bg: #151b23;
+  --kt-panel-muted-bg: #1c232d;
+  --kt-menu-hover-bg: #212a36;
+
+  --kt-surface-recessed: #101722;
+  --kt-surface-recessed-border: #2b3645;
+
+  --kt-node-bg: #17202b;
+  --kt-node-text: #e6edf3;
+  --kt-node-sub-text: #95a3b8;
+  --kt-node-running: #63d297;
+  --kt-node-stopped: #738497;
+
+  --kt-domain-bg: #142238;
+  --kt-domain-border: #7ab7ff;
+  --kt-domain-external-border: #f4b663;
+
+  --kt-edge: #6f8398;
+  --kt-edge-hi: #7ab7ff;
+  --kt-edge-label: #9cafc2;
+  --kt-edge-label-hi: #a6ccff;
+
+  --kt-selected-glow: rgba(122, 183, 255, 0.45);
+
+  --kt-term-bg: #0f1723;
+  --kt-term-border: #2b3645;
+  --kt-term-text: #e6edf3;
+  --kt-term-cmd: #8ad6ff;
+  --kt-term-err: #ff8c8c;
+  --kt-term-exit: #f4d35e;
+}
+
+:root[data-kt-theme="dark"] {
+  color-scheme: dark;
+}
+
+/* App navbar brand: light theme uses the black-wordmark logo, dark theme the white-wordmark one
+   (chosen in AppNavbar) — so no background chip is needed on either navbar. */
+.kt-navbar-brand {
+  display: inline-flex;
+  align-items: center;
+}
+.kt-navbar-brand img {
+  display: block;
+}

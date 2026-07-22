@@ -1,0 +1,588 @@
+/* Light theme, using the shared tokens in src/styles/theme.css.
+   Scoped under .kt-topo-wrap to avoid bleeding into react-bootstrap's own styles. */
+
+.kt-topo-wrap {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+/* Interaction hints ("legend") above the canvas: keycap-style action chips. */
+.kt-topo-hints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--bs-secondary-color);
+}
+.kt-topo-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.kt-topo-hint kbd {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bs-body-color);
+  background: var(--kt-panel-muted-bg);
+  border: 1px solid var(--bs-border-color);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 1px 6px;
+  line-height: 1.4;
+}
+
+.kt-topo-canvas {
+  flex: 1;
+  min-width: 0;
+  background: var(--kt-surface-recessed);
+  border: 1px solid var(--kt-surface-recessed-border);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+  height: 460px;
+}
+/* Dedicated mount point for the imperatively-managed SVG. Do not merge this with a
+   React-rendered parent/sibling — the simulation effect calls replaceChildren() on this node
+   on every rebuild, which would wipe out any React-owned elements sharing it. */
+.kt-topo-svg-mount {
+  width: 100%;
+  height: 100%;
+}
+/* Scope to the graph mount only — NOT `.kt-topo-canvas svg`, which would also match (and blow up to
+   100%) the small inline legend icon SVGs that live inside the canvas. */
+.kt-topo-svg-mount > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.kt-topo-svg-mount > svg.dragging {
+  cursor: grabbing;
+}
+
+.kt-topo-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--bs-secondary-color);
+  pointer-events: none;
+}
+/* Re-enable clicks on the buttons (the overlay itself stays click-through so panning still works). */
+.kt-topo-empty .btn {
+  pointer-events: auto;
+}
+
+.kt-topo-toolbar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 2;
+}
+
+.kt-topo-legend {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 2;
+  background: var(--kt-panel-bg);
+  border: 1px solid var(--kt-surface-recessed-border);
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-size: 11px;
+  /* Wrap into a compact grid (device categories are dynamic, so the list can get long) and never
+     grow past the canvas — scroll instead of clipping in a short panel. */
+  display: flex;
+  flex-flow: column wrap;
+  column-gap: 14px;
+  row-gap: 4px;
+  max-width: calc(100% - 16px);
+  max-height: calc(100% - 16px);
+  overflow: auto;
+  color: var(--bs-secondary-color);
+}
+.kt-topo-legend .lg {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.kt-topo-legend .swatch {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+.kt-topo-legend .swatch.cd {
+  border-radius: 50%;
+}
+/* Legend swatch color classes. */
+.kt-topo-legend .swatch.running {
+  background: var(--kt-node-bg);
+  border: 1.5px solid var(--kt-node-running);
+}
+.kt-topo-legend .swatch.stopped {
+  background: var(--kt-node-bg);
+  border: 1.5px solid var(--kt-node-stopped);
+}
+.kt-topo-legend .swatch.domain {
+  background: var(--kt-domain-bg);
+  border: 1.5px solid var(--kt-domain-border);
+}
+.kt-topo-legend .swatch.domain-external {
+  background: var(--kt-domain-bg);
+  border: 1.5px dashed var(--kt-domain-external-border);
+}
+
+.kt-topo-side {
+  flex: 0 0 240px;
+  background: var(--kt-panel-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12.5px;
+  overflow-y: auto;
+  height: 460px;
+  color: var(--bs-body-color);
+}
+.kt-topo-side h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.kt-topo-side .kv {
+  display: flex;
+  gap: 8px;
+  margin: 3px 0;
+}
+.kt-topo-side .kv .k {
+  color: var(--bs-secondary-color);
+  flex: 0 0 74px;
+}
+.kt-topo-side .kv .v {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  word-break: break-word;
+}
+.kt-topo-side .iface {
+  border-top: 1px solid var(--bs-border-color);
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.kt-topo-side .hint {
+  color: var(--bs-secondary-color);
+}
+.kt-topo-side .kt-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 9px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 11.5px;
+  text-transform: capitalize;
+}
+.kt-topo-side .kt-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.kt-topo-side .kt-state.running {
+  color: var(--kt-node-running);
+  background: color-mix(in srgb, var(--kt-node-running) 16%, transparent);
+}
+.kt-topo-side .kt-state.stopped {
+  color: var(--kt-node-stopped);
+  background: color-mix(in srgb, var(--kt-node-stopped) 20%, transparent);
+}
+.kt-topo-side pre.startup {
+  margin: 6px 0 0;
+  padding: 8px;
+  font-size: 11.5px;
+  line-height: 1.35;
+  background: var(--bs-tertiary-bg);
+  border-radius: 6px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* SVG node styling driven by classes */
+.n-dev rect {
+  fill: var(--kt-node-bg);
+  stroke: var(--kt-node-stopped);
+  stroke-width: 1.5;
+}
+.n-dev.running rect {
+  stroke: var(--kt-node-running);
+}
+.n-dev .n-label {
+  fill: var(--kt-node-text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+.n-dev .n-sub {
+  fill: var(--kt-node-sub-text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9.5px;
+}
+.n-cd circle {
+  fill: var(--kt-domain-bg);
+  stroke: var(--kt-domain-border);
+  stroke-width: 1.5;
+}
+.n-cd.external circle {
+  stroke: var(--kt-domain-external-border);
+  stroke-dasharray: 4 3;
+}
+.n-cd .n-label {
+  fill: var(--kt-domain-border);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+.kt-topo-node {
+  cursor: pointer;
+}
+.kt-topo-node.selected rect,
+.kt-topo-node.selected circle {
+  stroke-width: 3;
+  filter: drop-shadow(0 0 4px var(--kt-selected-glow));
+}
+.kt-topo-edge {
+  stroke: var(--kt-edge);
+  stroke-width: 1.5;
+}
+.kt-topo-edge.hi {
+  stroke: var(--kt-edge-hi);
+  stroke-width: 2.5;
+}
+.kt-topo-edge-label {
+  fill: var(--kt-edge-label);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9px;
+  /* Background halo so the label stays readable over edges/nodes (labels are drawn above nodes). */
+  paint-order: stroke;
+  stroke: var(--kt-surface-recessed);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.kt-topo-edge-label.hi {
+  fill: var(--kt-edge-label-hi);
+}
+.kt-topo-node.dim {
+  opacity: 0.25;
+}
+.kt-topo-edge.dim {
+  opacity: 0.12;
+}
+.kt-topo-edge-label.dim {
+  opacity: 0.12;
+}
+
+/* Per-interface IP shown under the ethN edge label; hidden when the "IPs" toggle is off. */
+.kt-topo-edge-ip {
+  fill: var(--kt-node-sub-text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 8px;
+  paint-order: stroke;
+  stroke: var(--kt-surface-recessed);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.kt-topo-edge-ip.hi {
+  fill: var(--kt-edge-label-hi);
+}
+.kt-topo-edge-ip.dim {
+  opacity: 0.12;
+}
+.kt-topo-hide-ips .kt-topo-edge-ip {
+  display: none;
+}
+
+/* Per-image type icon (SVG line-art) inside the node rect; colored per category via currentColor. */
+.n-icon {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.n-router {
+  color: var(--bs-primary);
+}
+.n-switch {
+  color: #0d9488;
+}
+.n-controller {
+  color: #7c3aed;
+}
+.n-server {
+  color: #4f46e5;
+}
+.n-dns {
+  color: #16a34a;
+}
+.n-security {
+  color: #d97706;
+}
+.n-analyzer {
+  color: #0ea5e9;
+}
+.n-host,
+.n-device {
+  color: var(--kt-node-sub-text);
+}
+
+/* Corner badges (bridged / published-port count). */
+.n-badge circle {
+  stroke: var(--kt-node-bg);
+  stroke-width: 1.5;
+}
+.n-badge text {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  fill: #fff;
+}
+.n-badge.b-bridged circle {
+  fill: var(--kt-domain-external-border);
+}
+.n-badge.b-ports circle {
+  fill: var(--bs-primary);
+}
+
+/* Hover tooltip (HTML overlay inside the canvas). */
+.kt-topo-tooltip {
+  position: absolute;
+  z-index: 3;
+  max-width: 280px;
+  pointer-events: none;
+  background: var(--kt-panel-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.kt-topo-tooltip .tt-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.kt-topo-tooltip .tt-tag {
+  margin-left: 6px;
+  font-weight: 500;
+  font-size: 10px;
+  color: var(--bs-secondary-color);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.kt-topo-tooltip .tt-row {
+  display: flex;
+  gap: 8px;
+}
+.kt-topo-tooltip .tt-k {
+  color: var(--bs-secondary-color);
+  flex: 0 0 58px;
+}
+.kt-topo-tooltip .tt-v {
+  word-break: break-word;
+}
+.kt-topo-tooltip .tt-sec {
+  margin-top: 5px;
+  color: var(--bs-secondary-color);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.kt-topo-tooltip .tt-if {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.kt-topo-tooltip .tt-mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.kt-topo-tooltip .tt-ip {
+  color: var(--bs-secondary-color);
+}
+
+/* Toolbar search + zoom controls. */
+.kt-topo-search {
+  width: 130px;
+}
+.kt-topo-zoom {
+  display: inline-flex;
+}
+.kt-topo-zoom .btn {
+  min-width: 30px;
+  font-weight: 700;
+}
+.kt-topo-zoom .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.kt-topo-zoom .btn:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+/* Legend: per-category SVG icon (same markup as the canvas) + the bridged badge swatch. */
+.kt-legend-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.kt-topo-legend .swatch.badge {
+  border-radius: 50%;
+  background: var(--kt-domain-external-border);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.kt-topo-menu {
+  position: fixed;
+  z-index: 1060;
+  min-width: 220px;
+  background: var(--kt-panel-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+}
+.kt-topo-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--bs-body-color);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.kt-topo-menu button:hover:not(:disabled) {
+  background: var(--kt-menu-hover-bg);
+}
+.kt-topo-menu button.danger {
+  color: var(--bs-danger);
+}
+.kt-topo-menu button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.kt-topo-runtime-modal .modal-content {
+  max-height: min(90vh, 980px);
+}
+
+.kt-topo-runtime-modal .modal-body {
+  overflow-y: auto;
+  padding-top: 8px;
+  padding-bottom: 12px;
+}
+
+.kt-topo-terminal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1058;
+}
+
+.kt-topo-terminal-window {
+  background: var(--kt-panel-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.kt-topo-terminal-head {
+  flex: 0 0 auto;
+  padding: 0.75rem 1rem;
+  background: var(--kt-panel-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+  cursor: move;
+}
+
+.kt-topo-terminal-head .modal-title {
+  font-size: 0.98rem;
+  letter-spacing: 0.01em;
+}
+
+.kt-topo-terminal-head .btn-close {
+  opacity: 0.7;
+}
+
+.kt-topo-terminal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 1rem 1rem;
+}
+
+.kt-topo-terminal-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.kt-topo-terminal-toolbar .form-select {
+  background-color: var(--kt-panel-bg);
+  border-color: var(--bs-border-color);
+  color: var(--bs-body-color);
+}
+
+.kt-topo-terminal-toolbar .form-select:focus {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);
+}
+
+.kt-topo-terminal-screen {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 10px;
+  border: 1px solid var(--kt-term-border);
+  background: var(--kt-term-bg);
+  padding: 10px;
+  /* Without this, xterm's internal rows can render past this box's rounded corners/border,
+     especially right after a resize before FitAddon recalculates. */
+  overflow: hidden;
+  /* A plain 1px border reads as barely-there against a page background of similar lightness
+     (light theme especially) - the shadow gives the box a clear edge/depth regardless of theme. */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+}
+
+.kt-topo-terminal-screen .xterm {
+  height: 100%;
+}

@@ -1,0 +1,13 @@
+.kt-terminal-page {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  background: var(--kt-panel-bg);
+  box-sizing: border-box;
+}
+
+.kt-terminal-page .kt-topo-terminal-screen {
+  flex: 1 1 auto;
+  min-height: 0;
+}
