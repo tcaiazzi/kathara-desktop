@@ -55,8 +55,9 @@ export interface UseForceLayoutCallbacks {
 }
 
 export interface UseForceLayoutOptions {
-  // Seed positions per node id (e.g. a per-lab layout restored from localStorage). When every node has
-  // one, the simulation starts cold so the graph doesn't reshuffle on reload.
+  // Seed positions per node id — a lab's fixed layout (its `lab.layout` file) overlaid with the
+  // local draft in localStorage. Seeded nodes are pinned (see the rebuild effect); when every node
+  // has one, the simulation starts cold so the graph doesn't reshuffle on reload.
   initialPositions?: NodePositions;
   // Called (settle + drag-end) with the current node positions, for the caller to persist.
   onPositionsChange?: (positions: NodePositions) => void;
@@ -171,15 +172,19 @@ export function useForceLayout(
     const n = model.nodes.length;
     const k = Math.min(160, Math.max(64, 0.55 * Math.sqrt((W * H) / n)));
 
-    // Seed positions: restore saved ones where available, else lay out on a jittered circle.
+    // Seed positions: restore saved ones where available, else lay out on a jittered circle. A
+    // restored node is *pinned* (`fixed`): the physics never moves it, so adding one device can no
+    // longer nudge an arranged topology — the newcomer settles around the frozen graph instead.
     const saved = optionsRef.current.initialPositions || {};
     let savedCount = 0;
     const byId: Record<string, TopoNode> = {};
     model.nodes.forEach((nd, i) => {
       const p = saved[nd.id];
+      nd.fixed = false;
       if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
         nd.x = p.x;
         nd.y = p.y;
+        nd.fixed = true;
         savedCount++;
       } else {
         const a = (i / n) * Math.PI * 2;
@@ -193,9 +198,9 @@ export function useForceLayout(
       byId[nd.id] = nd;
     });
     const allSaved = savedCount === n;
-    // Cold start when the whole layout was restored (no reshuffle); a gentle settle when only some
-    // nodes are known (e.g. one was just added); a full settle for a brand-new graph.
-    const temp = allSaved ? 0 : savedCount > 0 ? Math.max(W, H) * 0.04 : Math.max(W, H) * 0.11;
+    // Cold start when the whole layout was restored (nothing left to move); otherwise a full settle
+    // — only the unpinned newcomers actually move, so there is no need to hold the heat back.
+    const temp = allSaved ? 0 : Math.max(W, H) * 0.11;
 
     const adj: Record<string, Set<string>> = {};
     for (const nd of model.nodes) adj[nd.id] = new Set();
@@ -246,7 +251,9 @@ export function useForceLayout(
       edgeIpEls: [],
       nodeEls: {},
       ro: null,
-      autoFit: savedCount === 0,
+      // Always fit once on settle: a layout restored from `lab.layout` may have been arranged on a
+      // differently-sized canvas, and fitEngine only pans/zooms (stored coordinates are untouched).
+      autoFit: true,
       settledOnce: false,
     };
     engineRef.current = engine;
@@ -398,7 +405,7 @@ export function useForceLayout(
         nd.dy += (h / 2 - nd.y) * 0.06;
       }
       for (const nd of nodes) {
-        if (nd === engine.dragging) continue;
+        if (nd === engine.dragging || nd.fixed) continue;
         const d = Math.hypot(nd.dx, nd.dy) || 0.01;
         const lim = Math.min(d, engine.temp);
         nd.x += (nd.dx / d) * lim;
@@ -458,7 +465,10 @@ export function useForceLayout(
         engine.svg.classList.remove("dragging");
         engine.dragging = null;
         if (!engine.moved) selectNode(engine.selected === nd.id ? null : nd.id);
-        else savePositions(); // persist the manual placement
+        else {
+          nd.fixed = true; // a hand-placed node stays where it was dropped
+          savePositions();
+        }
         ensureLoop();
       };
       window.addEventListener("pointermove", move);
@@ -580,8 +590,9 @@ export function useForceLayout(
 
     render();
     if (allSaved) {
-      // Nothing to settle — reflect the restored layout immediately (still fits new/unknown graphs).
+      // Nothing to settle — reflect and fit the restored layout immediately.
       engine.settledOnce = true;
+      fitEngine(engine);
     }
     ensureLoop();
 

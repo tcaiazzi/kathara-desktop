@@ -114,6 +114,14 @@ export interface LabImportResult extends LabDetail {
   warnings: string[];
 }
 
+// A lab's fixed topology layout — the content of its `lab.layout` file (backend schemas/lab.py's
+// LabLayout). Keys are topology node ids (`dev:<machine>` / `cd:<collision domain>`); an empty
+// `nodes` map means the lab has no fixed layout.
+export interface LabLayout {
+  version: number;
+  nodes: Record<string, { x: number; y: number }>;
+}
+
 // The "New lab from JSON" flow accepts a raw JSON blob rather than a full typed form.
 export type LabCreate = Record<string, unknown> & { name: string };
 

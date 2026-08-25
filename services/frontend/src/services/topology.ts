@@ -31,6 +31,8 @@ export interface DeviceNode {
   y: number;
   dx: number;
   dy: number;
+  // Pinned by a fixed layout: the physics never moves it (it still exerts forces on the others).
+  fixed?: boolean;
 }
 
 export interface DomainNode {
@@ -44,6 +46,7 @@ export interface DomainNode {
   y: number;
   dx: number;
   dy: number;
+  fixed?: boolean;
 }
 
 export type TopoNode = DeviceNode | DomainNode;

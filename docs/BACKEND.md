@@ -17,6 +17,11 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   build Kathara model objects, and serialize models back to response schemas.
 - **`errors.py`** — maps Kathara + API exceptions to HTTP status codes (see below); routers stay free of
   try/except.
+- **Fixed topology layout** — a lab may pin its topology-graph node positions in a `lab.layout` file
+  at the lab root (JSON; keys are `dev:<machine>` / `cd:<collision domain>`). It is presentation
+  metadata only: unknown to Kathara and ignored by `lab_import`, so it rides along with the lab
+  directory (zip download/upload, restarts) without affecting the topology itself. An absent or
+  unparseable file simply means "no fixed layout".
 - **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config);
   edits on a **running** device use Kathara's runtime manager APIs (live only, never written to
   `lab.conf`). A full undeploy restores the saved-config topology.
@@ -60,6 +65,9 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
 | GET | `/api/labs/{lab}/download` | Download the lab directory as `.zip` | — | `application/zip` |
 | PUT | `/api/labs/{lab}/lab-conf` | Apply an edited `lab.conf` (rebuilds topology; 409 if deployed) | `{content}` | `LabDetail` |
+| GET | `/api/labs/{lab}/layout` | Fixed topology layout (`lab.layout`); empty `nodes` when the lab has none | — | `LabLayout` |
+| PUT | `/api/labs/{lab}/layout` | Fix the topology layout (writes `lab.layout` into the lab directory) | `LabLayout {version, nodes}` | `LabLayout` |
+| DELETE | `/api/labs/{lab}/layout` | Remove the fixed layout (back to automatic layout) | — | `Message` |
 | GET | `/api/labs/{lab}/pending-files` | Queued files/dirs/startup per machine | — | `{machine: PendingMachineFiles}` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |

@@ -31,10 +31,11 @@ from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
 from Kathara.model.Machine import Machine
 from Kathara.setting.Setting import Setting
+from pydantic import ValidationError
 
 from ..config import get_settings
 from ..errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError, SettingsLockedError
-from ..schemas.lab import LabCreate
+from ..schemas.lab import LabCreate, LabLayout
 from ..schemas.lab_import import LabImportPreview, PendingMachineFiles
 from ..schemas.machine import MachineCreate
 from . import lab_builder, lab_import, lab_store
@@ -185,6 +186,33 @@ class KatharaService:
     def export_lab_zip(self, name: str) -> io.BytesIO:
         """Return an in-memory .zip of the lab's on-disk directory (raises 404 if unknown)."""
         return self.store.zip_lab(name)
+
+    # -- fixed topology layout -------------------------------------------------
+
+    def get_lab_layout(self, name: str) -> LabLayout:
+        """The lab's fixed topology layout, or an empty one when it has none.
+
+        Deliberately not a 404: "this lab has no fixed layout" is the normal case, and an
+        unparseable/hand-broken ``lab.layout`` is ignored the same way (see ``LabStore.read_layout``)
+        rather than breaking the topology view.
+        """
+        data = self.store.read_layout(name)
+        if data is None:
+            return LabLayout()
+        try:
+            return LabLayout.model_validate(data)
+        except ValidationError:
+            logger.warning("Ignoring invalid %s for lab `%s`", lab_store.LAYOUT_FILENAME, name, exc_info=True)
+            return LabLayout()
+
+    def save_lab_layout(self, name: str, layout: LabLayout) -> LabLayout:
+        """Write the lab's fixed topology layout to ``lab.layout`` (404 if the lab has no directory)."""
+        self.store.write_layout(name, layout.model_dump())
+        return layout
+
+    def clear_lab_layout(self, name: str) -> bool:
+        """Delete the lab's ``lab.layout``; returns whether one existed."""
+        return self.store.delete_layout(name)
 
     @staticmethod
     def _compact_interfaces(machine: Machine) -> None:

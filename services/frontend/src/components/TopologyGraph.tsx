@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { Button, Form, Modal } from "react-bootstrap";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
-import { useForceLayout } from "../hooks/useForceLayout";
+import { useBusyAction } from "../hooks/useBusyAction";
+import { useForceLayout, type NodePositions } from "../hooks/useForceLayout";
 import { api } from "../services/api";
 import { HOST_BRIDGE } from "../services/constants";
 import { machineStartupText } from "../services/labfs";
@@ -30,6 +31,17 @@ interface TopologyGraphProps {
   // be dragged/closed like any dock panel); when null (panel closed) the inspector is hidden and the
   // canvas takes the full width.
   nodeInfoHost?: HTMLElement | null;
+}
+
+// Do two position maps describe the same layout? Coordinates are compared as integers (that is what
+// the engine reports and what is stored), so a sub-pixel drift never marks the layout as unsaved.
+function samePositions(a: NodePositions, b: NodePositions | null): boolean {
+  if (!b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(
+    (id) => b[id] && Math.round(a[id].x) === Math.round(b[id].x) && Math.round(a[id].y) === Math.round(b[id].y),
+  );
 }
 
 // Force-directed SVG topology graph (device + collision-domain nodes, edges = interfaces), no
@@ -363,33 +375,117 @@ export function TopologyGraph({
     ];
   }
 
-  // Per-lab node positions persisted to localStorage so the layout stays stable across reloads.
-  // Re-read on lab switch, model change (a device added), and Re-layout (which clears the store).
-  const initialPositions = useMemo(() => {
+  // Node positions come from two places: the lab's *fixed* layout (its `lab.layout` file, shared
+  // with anyone who opens the lab) and a per-browser draft in localStorage holding not-yet-saved
+  // moves. The draft wins while it exists; "Save layout" promotes it to the file and "Re-layout"
+  // throws it away — falling back to the fixed layout when the lab has one.
+  const draftKey = `kt-topo-pos:${labName}`;
+  const readDraft = useCallback((): NodePositions => {
     try {
-      return JSON.parse(localStorage.getItem(`kt-topo-pos:${labName}`) || "{}") as Record<string, { x: number; y: number }>;
+      return JSON.parse(localStorage.getItem(draftKey) || "{}") as NodePositions;
     } catch {
       return {};
     }
-  }, [labName, detail, relayoutNonce]);
+  }, [draftKey]);
+  const clearDraft = useCallback(() => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      /* ignore */
+    }
+  }, [draftKey]);
+
+  const [savedLayout, setSavedLayout] = useState<NodePositions | null>(null);
+  const [layoutNonce, setLayoutNonce] = useState(0);
+  const [savingLayout, setSavingLayout] = useState(false);
+  // Latest positions reported by the engine — what "Save layout" writes to the lab directory.
+  const livePositions = useRef<NodePositions>({});
+  const [dirty, setDirty] = useState(false);
+  const runBusy = useBusyAction();
+
+  // Fetch the lab's fixed layout. It can land after the engine's first build, so bump a nonce to
+  // make the graph rebuild against it (the engine effect reads seeds through a ref).
+  useEffect(() => {
+    let live = true;
+    setSavedLayout(null);
+    api
+      .getLayout(labName)
+      .then((l) => {
+        if (!live) return;
+        setSavedLayout(l.nodes);
+        if (Object.keys(l.nodes).length) setLayoutNonce((v) => v + 1);
+      })
+      .catch((e) => toast.reportError("Load layout", e));
+    return () => {
+      live = false;
+    };
+  }, [labName]);
+
+  // Re-read on lab switch, model change (a device added), Re-layout, and layout arrival.
+  const initialPositions = useMemo(
+    () => ({ ...(savedLayout ?? {}), ...readDraft() }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [labName, detail, relayoutNonce, layoutNonce, savedLayout, readDraft],
+  );
+
   const posTimer = useRef<number | null>(null);
   const savePositions = useCallback(
-    (map: Record<string, { x: number; y: number }>) => {
+    (map: NodePositions) => {
+      livePositions.current = map;
+      // "Unsaved" only means something once the lab *has* a fixed layout to diverge from.
+      const hasFixed = !!savedLayout && Object.keys(savedLayout).length > 0;
+      const matchesFixed = hasFixed && samePositions(map, savedLayout);
+      setDirty(hasFixed && !matchesFixed);
+      if (matchesFixed) {
+        clearDraft(); // the graph is exactly the fixed layout — nothing local left to remember
+        return;
+      }
       if (posTimer.current) window.clearTimeout(posTimer.current);
       posTimer.current = window.setTimeout(() => {
         try {
-          localStorage.setItem(`kt-topo-pos:${labName}`, JSON.stringify(map));
+          localStorage.setItem(draftKey, JSON.stringify(map));
         } catch {
           /* ignore quota/serialization errors */
         }
       }, 400);
     },
-    [labName],
+    [clearDraft, draftKey, savedLayout],
   );
+
+  // Fix the current arrangement in the lab directory (lab.layout), so it travels with the lab.
+  async function handleSaveLayout() {
+    await runBusy(setSavingLayout, "Save layout", async () => {
+      const map = livePositions.current;
+      const { nodes } = await api.saveLayout(labName, map);
+      setSavedLayout(nodes);
+      setDirty(false);
+      clearDraft();
+      toast.show("Layout fixed — saved to the lab's lab.layout file.", "success");
+    });
+  }
+
+  async function handleClearLayout() {
+    const ok = await confirm({
+      title: "Remove the fixed layout?",
+      message: "Deletes lab.layout from the lab directory; the graph goes back to laying itself out.",
+      okLabel: "Remove",
+    });
+    if (!ok) return;
+    await runBusy(setSavingLayout, "Remove layout", async () => {
+      await api.deleteLayout(labName);
+      setSavedLayout({});
+      clearDraft();
+      setDirty(false);
+      setRelayoutNonce((n) => n + 1);
+      toast.show("Fixed layout removed.", "success");
+    });
+  }
 
   const { canvasRef, fit: handleFit, select, zoom, centerOn } = useForceLayout(
     model,
-    relayoutNonce,
+    // Rebuild token: Re-layout bumps one counter, the arrival of the lab's fixed layout the other
+    // (it can resolve after the engine's first build). Both only ever increase.
+    relayoutNonce + layoutNonce,
     {
       onSelect: setSelectedId,
       onDismissContextMenu: () => setContextMenu(null),
@@ -425,14 +521,11 @@ export function TopologyGraph({
     select(selectedId ?? null);
   }, [selectedId, select]);
 
-  // Clear the saved layout and re-run the init effect against the same model, restarting with fresh
-  // randomized positions (and auto-fit).
+  // Drop the local draft and re-run the init effect against the same model. With a fixed layout the
+  // graph snaps back to it (so this doubles as "discard my unsaved moves"); without one it restarts
+  // from fresh randomized positions and auto-fits.
   function handleRelayout() {
-    try {
-      localStorage.removeItem(`kt-topo-pos:${labName}`);
-    } catch {
-      /* ignore */
-    }
+    clearDraft();
     setRelayoutNonce((n) => n + 1);
   }
 
@@ -441,6 +534,7 @@ export function TopologyGraph({
     selectedNode?.type === "dev" ? detail.machines.find((m) => m.name === selectedNode.name) ?? null : null;
   const startupText = selectedMachine ? machineStartupText(selectedMachine, pending[selectedMachine.name]) : "";
   const isEmpty = !model.nodes.length;
+  const hasFixedLayout = !!savedLayout && Object.keys(savedLayout).length > 0;
 
   return (
     <div className="mt-3">
@@ -516,9 +610,42 @@ export function TopologyGraph({
             <Button size="sm" variant="outline-secondary" onClick={handleFit}>
               Fit
             </Button>
-            <Button size="sm" variant="outline-secondary" onClick={handleRelayout}>
+            <Button
+              size="sm"
+              variant="outline-secondary"
+              onClick={handleRelayout}
+              title={
+                hasFixedLayout
+                  ? "Restore the lab's fixed layout, discarding unsaved moves"
+                  : "Lay the graph out again from scratch"
+              }
+            >
               Re-layout
             </Button>
+            <Button
+              size="sm"
+              variant={dirty ? "primary" : "outline-secondary"}
+              onClick={handleSaveLayout}
+              disabled={savingLayout || isEmpty}
+              title={
+                hasFixedLayout
+                  ? "Update the lab's fixed layout (lab.layout in the lab directory)"
+                  : "Fix this layout for the lab — stores it as lab.layout in the lab directory"
+              }
+            >
+              {hasFixedLayout ? (dirty ? "Save layout •" : "Save layout") : "Fix layout"}
+            </Button>
+            {hasFixedLayout && (
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                onClick={handleClearLayout}
+                disabled={savingLayout}
+                title="Remove the lab's fixed layout (lab.layout) and lay the graph out automatically"
+              >
+                Unfix
+              </Button>
+            )}
           </div>
           <div className="kt-topo-legend">
             {legend.categories.map((cat) => (

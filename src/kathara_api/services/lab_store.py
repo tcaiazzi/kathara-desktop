@@ -11,20 +11,29 @@ the same on-disk format as uploaded ones.
 """
 
 import io
+import json
+import logging
 import os
 import re
 import shutil
 import zipfile
 from pathlib import Path
-from typing import BinaryIO, Union
+from typing import Any, BinaryIO, Optional, Union
 
 from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
 from ..errors import ApiError
 
+logger = logging.getLogger("kathara_api")
+
 # Lab names double as directory names, so they must be a safe, single path segment.
 LAB_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+# The fixed topology layout of a lab, stored next to lab.conf/lab.ext/lab.dep so it travels with the
+# lab directory (zip download/upload, git, server restarts). JSON body; unknown to Kathara itself and
+# ignored by this project's lab.conf/folder parser (see lab_import.translate_lab_files).
+LAYOUT_FILENAME = "lab.layout"
 
 # Meta keys handled generically as scalar `machine[key]="value"` lines (in this order).
 _SCALAR_META_ORDER = ("mem", "cpus", "shell", "ipv6", "privileged", "bridged", "num_terms")
@@ -188,6 +197,49 @@ class LabStore:
     def write_lab_conf(self, lab_dir: Path, lab: Lab) -> None:
         """Regenerate and (over)write ``lab_dir/lab.conf`` from ``lab`` (see ``gen_lab_conf``)."""
         (lab_dir / "lab.conf").write_text(gen_lab_conf(lab), encoding="utf-8")
+
+    # -- fixed topology layout (lab.layout) -----------------------------------
+
+    def layout_path(self, name: str) -> Path:
+        return self.lab_dir(name) / LAYOUT_FILENAME  # lab_dir sanitizes the name
+
+    def read_layout(self, name: str) -> Optional[dict[str, Any]]:
+        """Parsed ``lab.layout``, or ``None`` when absent/unreadable/not an object.
+
+        A hand-edited or truncated layout file must never break the topology view, so parse errors
+        are logged and treated the same as "no layout".
+        """
+        path = self.layout_path(name)
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            logger.warning("Ignoring unreadable %s for lab `%s`", LAYOUT_FILENAME, name, exc_info=True)
+            return None
+        if not isinstance(data, dict):
+            logger.warning("Ignoring %s for lab `%s`: not a JSON object", LAYOUT_FILENAME, name)
+            return None
+        return data
+
+    def write_layout(self, name: str, data: dict[str, Any]) -> Path:
+        """Write ``lab.layout`` atomically (tmp file + ``os.replace``), or raise ``LabNotFoundError``."""
+        directory = self.lab_dir(name)  # sanitizes name
+        if not directory.is_dir():
+            raise LabNotFoundError(f"Lab `{name}` not found.")
+        final = directory / LAYOUT_FILENAME
+        tmp = directory / f".{LAYOUT_FILENAME}.tmp"
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, final)
+        return final
+
+    def delete_layout(self, name: str) -> bool:
+        """Remove ``lab.layout`` if present; returns whether a file was actually removed."""
+        path = self.layout_path(name)
+        if not path.is_file():
+            return False
+        path.unlink()
+        return True
 
     def delete_lab(self, name: str) -> None:
         directory = self.lab_dir(name)

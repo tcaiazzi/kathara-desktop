@@ -7,6 +7,7 @@ import type {
   LabCreate,
   LabDetail,
   LabImportResult,
+  LabLayout,
   LabSummary,
   LinkDetail,
   MachineDetail,
@@ -105,6 +106,14 @@ export const api = {
   // Apply an edited lab.conf to a non-deployed lab (rebuilds its topology). 409 if deployed.
   updateLabConf: (name: string, content: string) =>
     request<LabDetail>("PUT", `/labs/${encodeURIComponent(name)}/lab-conf`, { content }),
+
+  // -- fixed topology layout (the lab's `lab.layout` file) --
+  // An empty `nodes` map means the lab has no fixed layout (the graph then auto-lays out).
+  getLayout: (name: string) => request<LabLayout>("GET", `/labs/${encodeURIComponent(name)}/layout`),
+  saveLayout: (name: string, nodes: Record<string, { x: number; y: number }>) =>
+    request<LabLayout>("PUT", `/labs/${encodeURIComponent(name)}/layout`, { version: 1, nodes }),
+  deleteLayout: (name: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(name)}/layout`),
+
   deployLab: (name: string) => request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/deploy`, {}),
   undeployLab: (name: string) => request<Message>("POST", `/labs/${encodeURIComponent(name)}/undeploy`, {}),
   // Deploy/undeploy a single device (the backend deploy/undeploy accept a machine subset).

@@ -12,6 +12,7 @@ from ..schemas.lab import (
     LabConfUpdate,
     LabCreate,
     LabDetail,
+    LabLayout,
     LabSummary,
     UndeployOptions,
 )
@@ -104,6 +105,35 @@ def update_lab_conf(
     """Apply an edited ``lab.conf`` to a non-deployed lab (rebuilds its topology). 409 if deployed."""
     lab = service.update_lab_conf(lab_name, payload.content)
     return serializers.lab_to_detail(lab)
+
+
+@router.get("/{lab_name}/layout", response_model=LabLayout)
+def get_lab_layout(lab_name: str, service: KatharaService = Depends(get_service)) -> LabLayout:
+    """Return the lab's fixed topology layout (``lab.layout``).
+
+    An empty ``nodes`` map means the lab has no fixed layout — the graph then falls back to its
+    force-directed layout.
+    """
+    return service.get_lab_layout(lab_name)
+
+
+@router.put("/{lab_name}/layout", response_model=LabLayout)
+def save_lab_layout(
+    lab_name: str, payload: LabLayout, service: KatharaService = Depends(get_service)
+) -> LabLayout:
+    """Fix the lab's topology layout by storing it as ``lab.layout`` in the lab directory.
+
+    Presentation metadata only, so — unlike ``lab.conf`` — it stays editable while the lab is deployed.
+    """
+    return service.save_lab_layout(lab_name, payload)
+
+
+@router.delete("/{lab_name}/layout", response_model=Message)
+def clear_lab_layout(lab_name: str, service: KatharaService = Depends(get_service)) -> Message:
+    """Remove the lab's fixed layout, restoring the automatic force-directed one."""
+    existed = service.clear_lab_layout(lab_name)
+    detail = "Fixed layout removed." if existed else f"Lab `{lab_name}` has no fixed layout."
+    return Message(detail=detail)
 
 
 @router.get("/{lab_name}/pending-files", response_model=dict[str, PendingMachineFiles])
