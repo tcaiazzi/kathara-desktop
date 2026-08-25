@@ -1,5 +1,9 @@
-import type { ReactNode } from "react";
-import { Button, Form } from "react-bootstrap";
+import { lazy, Suspense, type ReactNode } from "react";
+import { Button } from "react-bootstrap";
+import type { EditorLanguage } from "../services/editorLanguage";
+
+// Lazy so CodeMirror lands in its own chunk, out of the initial app bundle.
+const CodeEditor = lazy(() => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })));
 
 interface EditorPaneProps {
   pathLabel: ReactNode;
@@ -10,10 +14,12 @@ interface EditorPaneProps {
   onSave: () => void;
   saveDisabled: boolean;
   extraActions?: ReactNode;
+  // Syntax mode for the code editor. Defaults to plaintext; callers pass languageForPath(path).
+  language?: EditorLanguage;
 }
 
 // Right-hand pane shared by LabExplorer and RuntimeFilesystemEditor: a path/placeholder header
-// with a Save button (plus any caller-specific actions), and a monospace textarea below.
+// with a Save button (plus any caller-specific actions), and a CodeMirror editor below.
 export function EditorPane({
   pathLabel,
   value,
@@ -23,6 +29,7 @@ export function EditorPane({
   onSave,
   saveDisabled,
   extraActions,
+  language = "plaintext",
 }: EditorPaneProps) {
   return (
     <div className="flex-grow-1 d-flex flex-column">
@@ -35,15 +42,15 @@ export function EditorPane({
           </Button>
         </div>
       </div>
-      <Form.Control
-        as="textarea"
-        className="font-monospace flex-grow-1"
-        style={{ minHeight: 360 }}
-        disabled={disabled}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
+      <Suspense fallback={<div className="flex-grow-1" style={{ minHeight: 360 }} />}>
+        <CodeEditor
+          language={language}
+          value={value}
+          onChange={onChange}
+          readOnly={disabled}
+          placeholder={placeholder}
+        />
+      </Suspense>
     </div>
   );
 }

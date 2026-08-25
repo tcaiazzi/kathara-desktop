@@ -6,6 +6,7 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { useConfirmDiscard } from "../hooks/useConfirmDiscard";
 import { useSaveShortcut } from "../hooks/useSaveShortcut";
 import { api } from "../services/api";
+import { languageForPath } from "../services/editorLanguage";
 import { buildFileTree, buildVirtualFs, fileIcon, type TreeNode } from "../services/labfs";
 import type { LabDetail, PendingMachineFiles } from "../services/types";
 import { EditorPane } from "./EditorPane";
@@ -313,6 +314,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       </div>
       <EditorPane
         pathLabel={selected || "Select a file from the tree"}
+        language={languageForPath(selected)}
         value={editorText}
         onChange={setEditorText}
         disabled={!selected || (selected === "lab.conf" && detail.deployed)}

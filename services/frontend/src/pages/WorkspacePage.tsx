@@ -26,6 +26,7 @@ import { UploadLabModal } from "../components/UploadLabModal";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
+import { useKtTheme } from "../hooks/useKtTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError } from "../services/api";
 import { HOST_BRIDGE } from "../services/constants";
@@ -33,19 +34,6 @@ import { saveBlob } from "../services/download";
 import { openTerminalWindow } from "../services/terminalWindow";
 import type { LabDetail, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
-
-// Track the app theme (set on <html data-kt-theme> by the navbar toggle) so the dock re-themes.
-function useKtTheme(): "light" | "dark" {
-  const read = () => (document.documentElement.getAttribute("data-kt-theme") === "dark" ? "dark" : "light");
-  const [theme, setTheme] = useState<"light" | "dark">(read);
-  useEffect(() => {
-    const el = document.documentElement;
-    const obs = new MutationObserver(() => setTheme(read()));
-    obs.observe(el, { attributes: true, attributeFilter: ["data-kt-theme"] });
-    return () => obs.disconnect();
-  }, []);
-  return theme;
-}
 
 // --- Dock panels (each reads live lab data from WorkspaceContext) ---
 function TopologyPanel() {

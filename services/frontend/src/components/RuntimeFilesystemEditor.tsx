@@ -7,6 +7,7 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { useConfirmDiscard } from "../hooks/useConfirmDiscard";
 import { useSaveShortcut } from "../hooks/useSaveShortcut";
 import { api } from "../services/api";
+import { languageForPath } from "../services/editorLanguage";
 import { saveBlob } from "../services/download";
 import { baseName, isSubPath, normalizeDir } from "../services/paths";
 import type { FsEntry, LabDetail } from "../services/types";
@@ -486,6 +487,7 @@ export function RuntimeFilesystemEditor({
 
       <EditorPane
         pathLabel={selectedPath || "Select a runtime file from the left"}
+        language={languageForPath(selectedPath)}
         value={editorText}
         onChange={setEditorText}
         disabled={!selectedPath}
