@@ -90,6 +90,7 @@ export function TopologyGraph({
     openDisconnect,
     openRuntimeFs,
     openTerminalPopup,
+    openWorkspaceTerminal,
     machineNames,
   } = useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOpenTerminal, onOpenRuntimeFs });
 
@@ -457,6 +458,11 @@ export function TopologyGraph({
                 </div>
               )}
               <div className="d-flex gap-2 mt-2 flex-wrap">
+                {selectedNode.running && (
+                  <Button size="sm" variant="dark" onClick={() => openWorkspaceTerminal(selectedNode)}>
+                    Open terminal
+                  </Button>
+                )}
                 {selectedNode.running && (
                   <Button size="sm" variant="dark" onClick={() => openTerminalPopup(selectedNode)}>
                     Open terminal popup
