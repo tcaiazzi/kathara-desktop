@@ -13,6 +13,10 @@ export interface WorkspaceCtx {
   openFilesPanel: () => void;
   /** Open a live terminal for a device as a new dockview panel. */
   openTerminal: (machine: string) => void;
+  /** Switch to the Runtime Filesystem dock panel, preselecting `machine`. */
+  openRuntimeFsPanel: (machine: string) => void;
+  /** The machine the Runtime Filesystem panel should preselect (set by openRuntimeFsPanel). */
+  runtimeFsPreferredMachine: string | null;
   /** DOM node of the "Node info" dock panel, or null when that panel is closed. The topology
    *  portals its inspector into it, so node info lives in a draggable/closable dock panel. */
   nodeInfoHost: HTMLElement | null;

@@ -499,19 +499,12 @@
 .kt-topo-menu button.danger {
   color: var(--bs-danger);
 }
+.kt-topo-menu button.success {
+  color: var(--bs-success);
+}
 .kt-topo-menu button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.kt-topo-runtime-modal .modal-content {
-  max-height: min(90vh, 980px);
-}
-
-.kt-topo-runtime-modal .modal-body {
-  overflow-y: auto;
-  padding-top: 8px;
-  padding-bottom: 12px;
 }
 
 .kt-topo-terminal-backdrop {

@@ -4,6 +4,7 @@ export interface ContextMenuItem {
   label: string;
   action: () => void;
   danger?: boolean;
+  success?: boolean;
   disabled?: boolean;
   title?: string;
 }
@@ -45,7 +46,7 @@ export function TopologyContextMenu({ menu, onClose }: TopologyContextMenuProps)
         <button
           key={i}
           type="button"
-          className={item.danger ? "danger" : undefined}
+          className={item.danger ? "danger" : item.success ? "success" : undefined}
           disabled={item.disabled}
           title={item.title}
           onClick={() => {

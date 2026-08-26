@@ -20,18 +20,18 @@ import { NewLabModal } from "../components/NewLabModal";
 import { RuntimeFilesystemEditor } from "../components/RuntimeFilesystemEditor";
 import { StatsPanel } from "../components/StatsPanel";
 import { TerminalPanel } from "../components/TerminalPanel";
-import { TopologyContextMenu, type ContextMenuItem, type ContextMenuState } from "../components/TopologyContextMenu";
+import { TopologyActionModal } from "../components/TopologyActionModal";
+import { TopologyContextMenu, type ContextMenuState } from "../components/TopologyContextMenu";
 import { TopologyGraph } from "../components/TopologyGraph";
 import { UploadLabModal } from "../components/UploadLabModal";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
-import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
+import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useKtTheme } from "../hooks/useKtTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError } from "../services/api";
 import { HOST_BRIDGE } from "../services/constants";
 import { saveBlob } from "../services/download";
-import { openTerminalWindow } from "../services/terminalWindow";
 import type { LabDetail, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
 
@@ -45,6 +45,8 @@ function TopologyPanel() {
         detail={ws.detail}
         onRefresh={ws.onRefresh}
         onEditFiles={ws.openFilesPanel}
+        onOpenTerminal={ws.openTerminal}
+        onOpenRuntimeFs={ws.openRuntimeFsPanel}
         selectedId={ws.selectedId}
         onSelectId={ws.setSelectedId}
         nodeInfoHost={ws.nodeInfoHost}
@@ -86,7 +88,7 @@ function RuntimeFsPanel() {
   const ws = useWorkspace();
   return (
     <div className="kt-ws-panel">
-      <RuntimeFilesystemEditor labName={ws.labName} detail={ws.detail} />
+      <RuntimeFilesystemEditor labName={ws.labName} detail={ws.detail} preferredMachine={ws.runtimeFsPreferredMachine} />
     </div>
   );
 }
@@ -299,7 +301,6 @@ export function WorkspacePage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
-  const confirm = useConfirm();
   const ktTheme = useKtTheme();
   const { deployToggle, deleteLab } = useLabLifecycleActions();
 
@@ -386,6 +387,12 @@ export function WorkspacePage() {
     dockApiRef.current?.getPanel("files")?.api.setActive();
   }, []);
 
+  const [runtimeFsPreferredMachine, setRuntimeFsPreferredMachine] = useState<string | null>(null);
+  const openRuntimeFsPanel = useCallback((machine: string) => {
+    setRuntimeFsPreferredMachine(machine);
+    dockApiRef.current?.getPanel("runtime-fs")?.api.setActive();
+  }, []);
+
   // Drag the rail's right edge to resize it (persisted). Listeners live on window so the drag keeps
   // tracking even when the pointer moves fast over the dock area.
   const startRailResize = useCallback((e: React.MouseEvent) => {
@@ -429,6 +436,17 @@ export function WorkspacePage() {
           : undefined,
     });
   }, []);
+
+  // Same device actions + context-menu item list as the topology canvas (see useDeviceActions) —
+  // right-clicking a device in the rail means exactly the same thing as right-clicking it there.
+  const { deviceContextItems, findDeviceNode, actionConfig, setActionConfig } = useDeviceActions({
+    labName: name,
+    detail,
+    onRefresh: load,
+    onEditFiles: openFilesPanel,
+    onOpenTerminal: openTerminal,
+    onOpenRuntimeFs: openRuntimeFsPanel,
+  });
 
   // Close terminal panels whose device no longer exists in the lab (matches the old grid behavior).
   useEffect(() => {
@@ -495,52 +513,31 @@ export function WorkspacePage() {
     }
   }
 
-  async function deviceAction(work: () => Promise<unknown>, okMsg: string) {
-    try {
-      await work();
-      toast.show(okMsg, "success");
-      await load();
-      await reloadLabs();
-    } catch (e) {
-      toast.reportError("Device action", e);
-    }
-  }
-
-  function openDeviceMenu(e: React.MouseEvent, machine: string, running: boolean) {
+  // Same menu as a right-click on this device in the topology canvas (useDeviceActions).
+  function openDeviceMenu(e: React.MouseEvent, machine: string) {
     e.preventDefault();
-    const items: ContextMenuItem[] = [];
-    if (running) {
-      items.push({ label: "Open terminal", action: () => openTerminal(machine) });
-      items.push({ label: "Open terminal in new window", action: () => openTerminalWindow(name, machine) });
-    }
-    items.push(
-      running
-        ? { label: "Stop device", action: () => deviceAction(() => api.undeployDevice(name, machine), `Stopped ${machine}.`) }
-        : { label: "Start device", action: () => deviceAction(() => api.deployDevice(name, machine), `Started ${machine}.`) },
-    );
-    items.push({
-      label: "Edit files",
-      action: () => {
-        setSelectedId(`dev:${machine}`);
-        openFilesPanel();
-      },
-    });
-    items.push({
-      label: "Remove device",
-      danger: true,
-      action: async () => {
-        const ok = await confirm({ title: `Remove ${machine}?`, message: "Undeploys and removes it from the lab.", okLabel: "Remove" });
-        if (ok) await deviceAction(() => api.removeMachine(name, machine), `Removed ${machine}.`);
-      },
-    });
-    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+    const nd = findDeviceNode(machine);
+    if (!nd) return;
+    setCtxMenu({ x: e.clientX, y: e.clientY, items: deviceContextItems(nd) });
   }
 
   const deviceMachines = detail?.machines ?? [];
   const visibleLinks = detail?.links.filter((lk) => lk.name !== HOST_BRIDGE) ?? [];
 
   const ctxValue = detail
-    ? { labName: name, detail, onRefresh: load, selectedId, setSelectedId, openFilesPanel, openTerminal, nodeInfoHost, setNodeInfoHost }
+    ? {
+        labName: name,
+        detail,
+        onRefresh: load,
+        selectedId,
+        setSelectedId,
+        openFilesPanel,
+        openTerminal,
+        openRuntimeFsPanel,
+        runtimeFsPreferredMachine,
+        nodeInfoHost,
+        setNodeInfoHost,
+      }
     : null;
 
   const runningMachines = deviceMachines.filter((m) => m.running);
@@ -633,7 +630,7 @@ export function WorkspacePage() {
                       key={m.name}
                       className={`kt-ws-row ${selectedId === `dev:${m.name}` ? "active" : ""}`}
                       onClick={() => setSelectedId(`dev:${m.name}`)}
-                      onContextMenu={(e) => openDeviceMenu(e, m.name, m.running)}
+                      onContextMenu={(e) => openDeviceMenu(e, m.name)}
                       title="Click to select · right-click for actions"
                     >
                       <span className={`kt-ws-dot ${m.running ? "running" : "stopped"}`} />
@@ -770,6 +767,7 @@ export function WorkspacePage() {
       </div>
 
       <TopologyContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} />
+      <TopologyActionModal config={actionConfig} onClose={() => setActionConfig(null)} />
 
       <NewLabModal
         show={showNew}
