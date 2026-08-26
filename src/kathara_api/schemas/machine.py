@@ -2,7 +2,9 @@
 
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from .common import reject_lab_conf_quotes
 
 MACHINE_NAME_PATTERN = r"^[a-z0-9_]{1,30}$"
 
@@ -64,7 +66,28 @@ class MachineCreate(BaseModel):
     bridged: bool = False
     ipv6: Optional[bool] = None
     shell: Optional[str] = None
+    num_terms: Optional[int] = Field(default=None, ge=0)
+    entrypoint: Optional[str] = None
+    args: Optional[str] = None
+    # Options this API doesn't interpret (from an imported lab.conf, or authored directly), passed
+    # to the device unchanged. Never routed through Kathara's `Machine.add_meta` (see
+    # `lab_builder.build_machine`) — only assigned straight into `machine.meta` — so a key like
+    # `volume` can't smuggle a host bind mount in through this side door.
+    metas: dict[str, str] = Field(default_factory=dict)
     interfaces: list[InterfaceAttach] = Field(default_factory=list)
+
+    @field_validator("image", "mem", "shell", "entrypoint", "args")
+    @classmethod
+    def _no_quotes(cls, value: Optional[str]) -> Optional[str]:
+        return value if value is None else reject_lab_conf_quotes(value)
+
+    @field_validator("envs", "sysctls", "metas")
+    @classmethod
+    def _no_quotes_in_values(cls, values: dict) -> dict:
+        for value in values.values():
+            if isinstance(value, str):
+                reject_lab_conf_quotes(value)
+        return values
 
 
 class MachineDetail(BaseModel):
@@ -80,6 +103,9 @@ class MachineDetail(BaseModel):
     exec_commands: list[str] = Field(default_factory=list)
     interfaces: list[InterfaceModel] = Field(default_factory=list)
     bridged: bool = False
+    num_terms: Optional[int] = None
+    entrypoint: Optional[str] = None
+    args: Optional[str] = None
     running: bool = False
     status: Optional[str] = None
 

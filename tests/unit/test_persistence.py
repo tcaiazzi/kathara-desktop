@@ -31,26 +31,26 @@ def test_create_lab_writes_directory(tmp_path):
 
 
 def test_import_lab_materializes_onto_native_fs(tmp_path):
-    """lab.conf is always regenerated from the built model (not written verbatim) — see
-    lab_store.gen_lab_conf — so it stays consistent with the Lab object even when the source
-    lab.conf used options the API doesn't support. `shared/` files are merged into each
-    machine's own tree, not left as a separate top-level `shared/` folder (Kathara's native
-    `/shared` bind mount is disabled — see lab_builder.build_lab).
+    """A machine's own files land under its own directory, and its `<name>.startup` is written
+    verbatim. `shared/` is out of scope for now (see lab_import.translate_lab_files): it is
+    neither merged into any device's tree nor otherwise applied, and is reported as a warning.
     """
     store = LabStore(tmp_path / "labs")
     service = _service(store)
     files = {
         "lab.conf": 'r1[image]="kathara/base"\nr1[0]="A"\n',
         "r1.startup": "ip a\n",
+        "r1/etc/frr/frr.conf": "hostname r1\n",
         "shared/etc/motd": "hi\n",
     }
-    service.import_lab("imported", files, [])
+    lab, warnings = service.import_lab("imported", files, [])
     lab_dir = store.lab_dir("imported")
     assert (lab_dir / "lab.conf").exists()
     assert 'r1[image]="kathara/base"' in (lab_dir / "lab.conf").read_text()
     assert (lab_dir / "r1.startup").read_text().strip() == "ip a"
-    assert (lab_dir / "r1" / "etc" / "motd").read_text() == "hi\n"
-    assert not (lab_dir / "shared").exists()  # merged into r1/, not a separate shared/ folder
+    assert (lab_dir / "r1" / "etc" / "frr" / "frr.conf").read_text() == "hostname r1\n"
+    assert not (lab_dir / "r1" / "etc" / "motd").exists()
+    assert any("shared/" in w for w in warnings)
 
 
 def test_labs_reload_from_disk_on_fresh_service(tmp_path):

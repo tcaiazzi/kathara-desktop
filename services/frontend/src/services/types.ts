@@ -59,6 +59,12 @@ export interface LabMetadata {
   web: string | null;
 }
 
+// Mirrors schemas/lab.py LabConfView — the lab's on-disk lab.conf, verbatim.
+export interface LabConfView {
+  content: string;
+  exists: boolean;
+}
+
 export interface LabSummary {
   name: string | null;
   hash: string;

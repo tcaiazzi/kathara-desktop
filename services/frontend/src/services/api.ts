@@ -4,6 +4,7 @@ import type {
   FsListResponse,
   FsReadTextResponse,
   FsUploadResponse,
+  LabConfView,
   LabCreate,
   LabDetail,
   LabImportResult,
@@ -103,7 +104,11 @@ export const api = {
     if (name && name.trim()) form.append("name", name.trim());
     return requestForm<LabImportResult>("/labs/upload", form);
   },
+  // The lab's real on-disk lab.conf (verbatim: comments/quoting/unmapped options intact).
+  // `exists: false` + empty content means the lab has no lab.conf on disk yet; PUT creates it.
+  getLabConf: (name: string) => request<LabConfView>("GET", `/labs/${encodeURIComponent(name)}/lab-conf`),
   // Apply an edited lab.conf to a non-deployed lab (rebuilds its topology). 409 if deployed.
+  // The submitted text is stored verbatim — a follow-up getLabConf should return it unchanged.
   updateLabConf: (name: string, content: string) =>
     request<LabDetail>("PUT", `/labs/${encodeURIComponent(name)}/lab-conf`, { content }),
 

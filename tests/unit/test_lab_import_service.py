@@ -194,11 +194,16 @@ def test_upload_lab_extracts_and_materializes_binary_and_text(tmp_path):
 
     lab, warnings = service.upload_lab("uploaded", archive)
 
-    assert warnings == []
+    assert any("shared/" in w for w in warnings)
     assert set(lab.machines.keys()) == {"r1", "pc1"}
     lab_dir = service.store.lab_dir("uploaded")
     assert (lab_dir / "r1.startup").read_text().strip() == "ip a"
-    assert (lab_dir / "r1" / "etc" / "motd").read_text() == "hi\n"
+    # extract_zip writes the archive verbatim regardless of what the parser does with it: the
+    # shared/ folder stays exactly where the archive put it...
+    assert (lab_dir / "shared" / "etc" / "motd").read_text() == "hi\n"
+    # ...and is deliberately not applied to (merged into) any device — see
+    # lab_import.translate_lab_files (shared/ is out of scope for now, warned about instead).
+    assert not (lab_dir / "r1" / "etc" / "motd").exists()
     # Binary content isn't representable in the text pending model, but extract_zip preserves it
     # on disk verbatim, and Machine.__init__ auto-discovers the existing r1/ subfolder as
     # machine.fs, so native pack_data still picks it up correctly at deploy time.
@@ -273,18 +278,25 @@ def test_remove_machine_removes_from_model_pending_and_lab_conf(tmp_path):
 
 
 def test_connect_disconnect_stopped_persists_lab_conf(tmp_path):
-    service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
+    from kathara_api.services import lab_import
 
-    # Static (stopped) interface add → persisted to lab.conf.
+    service = _service(tmp_path)
+    original = "pc1[image]=kathara/base\n"
+    service.import_lab("lab1", {"lab.conf": original}, [])
+
+    # Static (stopped) interface add → persisted to lab.conf, surgically. The new interface line
+    # is inserted *before* the device's existing option lines (interfaces-before-options, matching
+    # gen_lab_conf's own device-block convention), copying their unquoted style.
     service.connect_machine("lab1", "pc1", "A", interface_number=0)
     conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
-    assert 'pc1[0]="A"' in conf
+    assert conf == "pc1[0]=A\npc1[image]=kathara/base\n"
+    parsed = lab_import.parse_lab_conf(conf)
+    assert {(i.link, i.number) for i in parsed.machines["pc1"].interfaces} == {("A", 0)}
 
-    # Static (stopped) interface remove → gone from lab.conf.
+    # Static (stopped) interface remove → gone from lab.conf, original line untouched.
     service.disconnect_machine("lab1", "pc1", "A")
     conf2 = (service.store.lab_dir("lab1") / "lab.conf").read_text()
-    assert "pc1[0]" not in conf2
+    assert conf2 == original
 
 
 def test_add_machine_persists_to_lab_conf_and_defers_deploy_when_stopped(tmp_path):
@@ -339,9 +351,67 @@ def test_runtime_interface_change_never_leaks_into_lab_conf(tmp_path):
     # Offline add on the stopped pc2 → persisted, but must NOT capture pc1's runtime interface.
     service.connect_machine("lab1", "pc2", "C", interface_number=1)
     conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
-    assert 'pc2[1]="C"' in conf  # offline edit persisted
+    assert "pc2[1]=C" in conf  # offline edit persisted (unquoted, matching the source file's style)
     assert "pc1[1]" not in conf  # runtime interface never leaked
-    assert 'pc1[0]="A"' in conf and 'pc2[0]="A"' in conf  # original config intact
+    assert "pc1[0]=A" in conf and "pc2[0]=A" in conf  # original config intact, byte-identical
+
+
+def test_disconnect_stopped_device_renumbers_and_lab_still_reloads(tmp_path):
+    """Regression: disconnecting a device's *middle* interface must renumber the survivors, or
+    the resulting gap (e.g. eth0, eth2) is rejected by lab_import.parse_lab_conf and the lab
+    silently disappears from the registry on the next restart (_translate_lab_dir -> None)."""
+    from kathara_api.services import lab_import
+
+    service = _service(tmp_path)
+    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[1]=B\npc1[2]=C\n"}, [])
+
+    service.disconnect_machine("lab1", "pc1", "B")  # remove the middle interface (eth1)
+
+    conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    parsed = lab_import.parse_lab_conf(conf)
+    assert parsed.errors == []
+    assert {(i.link, i.number) for i in parsed.machines["pc1"].interfaces} == {("A", 0), ("C", 1)}
+    # The live model must agree with the file (no gap there either).
+    pc1 = service.registry.get("lab1").machines["pc1"]
+    assert {(iface.link.name, num) for num, iface in pc1.interfaces.items() if iface is not None} == {
+        ("A", 0), ("C", 1),
+    }
+
+    # A brand-new service instance (simulating a restart) must still be able to load the lab.
+    fresh = KatharaService(store=service.store)
+    fresh._instance = _FakeFacade()
+    fresh._reload_from_disk()
+    assert "lab1" in fresh.registry.names()
+
+
+def test_edit_on_folder_based_lab_generates_lab_conf_first(tmp_path):
+    """A lab imported from folders only (no lab.conf) has nothing to preserve verbatim, so its
+    first structural edit legitimately bootstraps one via gen_lab_conf, then applies the edit."""
+    service = _service(tmp_path)
+    service.import_lab("lab1", {"pc1/etc/motd": "hi\n"}, [])
+    assert not (service.store.lab_dir("lab1") / "lab.conf").exists()
+
+    spec = MachineCreate.model_validate({"name": "pc2", "image": "kathara/base"})
+    service.add_machine("lab1", spec)
+
+    conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    assert "pc1[image]" in conf or "pc1" in conf  # pc1 present (folder-derived)
+    assert "pc2[image]" in conf
+
+
+def test_edit_on_lab_without_directory_is_skipped(tmp_path):
+    """An offline structural edit on a lab that has no on-disk directory at all (reconstruct-only)
+    must not create one as a side effect — it's simply not persisted."""
+    service = _service(tmp_path)
+    lab = LabCreate(name="live", machines=[{"name": "pc1", "image": "kathara/base"}])
+    from kathara_api.services import lab_builder
+
+    built = lab_builder.build_lab(lab)
+    service.registry.add_if_absent(built)
+
+    service.add_machine("live", MachineCreate.model_validate({"name": "pc2", "image": "kathara/base"}))
+
+    assert not service.store.lab_dir("live").exists()
 
 
 def test_full_undeploy_restores_configuration_topology(tmp_path):

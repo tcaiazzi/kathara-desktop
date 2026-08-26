@@ -8,7 +8,7 @@ import { useSaveShortcut } from "../hooks/useSaveShortcut";
 import { api } from "../services/api";
 import { languageForPath } from "../services/editorLanguage";
 import { buildFileTree, buildVirtualFs, fileIcon, type TreeNode } from "../services/labfs";
-import type { LabDetail, PendingMachineFiles } from "../services/types";
+import type { LabConfView, LabDetail, PendingMachineFiles } from "../services/types";
 import { EditorPane } from "./EditorPane";
 
 const STARTUP_RE = /^([a-z0-9_]{1,30})\.startup$/;
@@ -35,21 +35,60 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   const [selected, setSelected] = useState<string | null>(null);
   const [editorText, setEditorText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [labConf, setLabConf] = useState<LabConfView | null>(null);
+  // The last lab.conf text the server actually gave us — the baseline for "did it change under
+  // us?" (see the load effect) and for "did the server round-trip what I just saved verbatim?"
+  // (see handleSave — I2: what the user saves must be exactly what lands in the file).
+  const serverConfRef = useRef<string>("");
+  // Set when a lab.conf refresh arrives while the buffer has unsaved edits *and* the server text
+  // actually changed — surfaced as a dismissible "reload?" banner rather than silently clobbering
+  // the user's in-progress edit.
+  const [confConflict, setConfConflict] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const toast = useToast();
   const prompt = usePrompt();
   const confirmDiscard = useConfirmDiscard();
   const runBusy = useBusyAction();
 
+  // Mirrors kept in refs so the load effect doesn't need to depend on (and therefore re-run on
+  // every keystroke of) `selected`/`editorText`.
+  const selectedRef = useRef(selected);
+  const editorTextRef = useRef(editorText);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  useEffect(() => {
+    editorTextRef.current = editorText;
+  }, [editorText]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const p = await api.getPendingFiles(labName);
+        const [p, conf] = await Promise.all([api.getPendingFiles(labName), api.getLabConf(labName)]);
         if (cancelled) return;
         setPending(p);
-        const { files: f, dirs: d } = buildVirtualFs(detail, p);
+        setLabConf(conf);
+
+        const dirty = selectedRef.current === "lab.conf" && editorTextRef.current !== serverConfRef.current;
+        const changed = conf.content !== serverConfRef.current;
+        const nextLabConf = dirty && changed ? editorTextRef.current : conf.content;
+
+        const { files: f, dirs: d } = buildVirtualFs(detail, p, nextLabConf);
         setFiles(f);
         setDirs(d);
+
+        if (dirty && changed) {
+          setConfConflict(conf.content);
+        } else {
+          serverConfRef.current = conf.content;
+          setConfConflict(null);
+          // Clean lab.conf tab and the server text actually changed (e.g. a topology-view action
+          // surgically edited lab.conf): sync the visible editor buffer too, not just `files`/
+          // `serverConfRef`. Safe — "not dirty" here means editorText already equals the old
+          // server text, so there is nothing unsaved to lose.
+          if (selectedRef.current === "lab.conf" && changed) setEditorText(conf.content);
+        }
       } catch (e) {
         if (!cancelled) toast.reportError("Load lab files", e);
       }
@@ -57,10 +96,12 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
     return () => {
       cancelled = true;
     };
-    // detail is refetched by the parent on lifecycle actions; re-synthesizing on every
-    // detail change keeps startup/interfaces in lab.conf's preview current.
+    // detail is refetched by the parent on every lifecycle action that can rewrite lab.conf (add/
+    // remove device, connect/disconnect a stopped device, apply an edited lab.conf) — its identity
+    // changing is exactly the signal to refetch. reloadKey lets the toolbar's ↻ button force a
+    // refetch for out-of-band writes (another tab, a hand edit on disk) with no other state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [labName, detail]);
+  }, [labName, detail, reloadKey]);
 
   const tree = useMemo(() => buildFileTree(files, dirs), [files, dirs]);
 
@@ -96,6 +137,19 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       }
       await runBusy(setBusy, "Apply lab.conf", async () => {
         await api.updateLabConf(labName, content);
+        // Re-read to refresh our "last known server text" baseline — not to recover a
+        // "normalized" version. The backend stores lab.conf verbatim (I2): if what comes back
+        // differs from what was just sent, that is a backend bug, not a client-side detail to
+        // paper over by silently accepting the server's text.
+        const conf = await api.getLabConf(labName);
+        if (conf.content !== content) {
+          toast.show("lab.conf was saved, but the server returned different text than submitted.", "danger");
+        }
+        serverConfRef.current = conf.content;
+        setLabConf(conf);
+        setConfConflict(null);
+        updateLocalFile("lab.conf", conf.content);
+        if (selectedRef.current === "lab.conf") setEditorText(conf.content);
         toast.show("Applied lab.conf — topology updated.", "success");
         await onStructuralChange?.();
       });
@@ -125,7 +179,11 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
           toast.show(`Saved ${selected}; applied to ${machine} on next deploy.`, "success");
         }
       } else {
-        toast.show("Saved.", "success");
+        // A root-level file that's neither lab.conf nor a <machine>.startup (e.g. one created via
+        // "+ File" with a bare name) has nowhere to be persisted — there's no per-machine or
+        // shared destination for it. Say so explicitly instead of claiming a save that never
+        // happened.
+        toast.show("Root-level files can't be saved yet — put the file under a device, e.g. pc1/etc/motd.", "danger");
       }
     });
   }
@@ -240,6 +298,14 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
     setOpen((prev) => new Set(prev).add(clean));
   }
 
+  function acceptConfConflict() {
+    if (confConflict === null) return;
+    serverConfRef.current = confConflict;
+    updateLocalFile("lab.conf", confConflict);
+    if (selectedRef.current === "lab.conf") setEditorText(confConflict);
+    setConfConflict(null);
+  }
+
   function toggleOpen(path: string) {
     setOpen((prev) => {
       const next = new Set(prev);
@@ -308,25 +374,47 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
           <Button size="sm" variant="outline-secondary" disabled={busy} onClick={() => fileInputRef.current?.click()}>
             ⤴ Upload
           </Button>
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            disabled={busy}
+            title="Reload files from disk"
+            onClick={() => setReloadKey((k) => k + 1)}
+          >
+            ↻ Reload
+          </Button>
           <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
         </div>
         {pending == null ? <p className="text-muted small">Loading…</p> : renderNode(tree, 0)}
       </div>
-      <EditorPane
-        pathLabel={selected || "Select a file from the tree"}
-        language={languageForPath(selected)}
-        value={editorText}
-        onChange={setEditorText}
-        disabled={!selected || (selected === "lab.conf" && detail.deployed)}
-        placeholder={selected ? undefined : "Select a file from the tree on the left…"}
-        onSave={handleSave}
-        saveDisabled={!selected || busy || (selected === "lab.conf" && detail.deployed)}
-        extraActions={
-          <Button size="sm" variant="outline-secondary" disabled={!canLoadFromDevice || busy} onClick={handleLoadFromDevice}>
-            ⤵ Load from device
-          </Button>
-        }
-      />
+      <div className="d-flex flex-column flex-grow-1">
+        {selected === "lab.conf" && confConflict !== null && (
+          <div className="alert alert-warning py-1 px-2 mb-2 d-flex justify-content-between align-items-center small">
+            <span>lab.conf changed on disk since you started editing.</span>
+            <Button size="sm" variant="outline-dark" onClick={acceptConfConflict}>
+              Reload from disk (discards your edits)
+            </Button>
+          </div>
+        )}
+        {selected === "lab.conf" && labConf?.exists === false && (
+          <div className="text-muted small mb-1">Not on disk yet — saving will create it.</div>
+        )}
+        <EditorPane
+          pathLabel={selected || "Select a file from the tree"}
+          language={languageForPath(selected)}
+          value={editorText}
+          onChange={setEditorText}
+          disabled={!selected || (selected === "lab.conf" && detail.deployed)}
+          placeholder={selected ? undefined : "Select a file from the tree on the left…"}
+          onSave={handleSave}
+          saveDisabled={!selected || busy || (selected === "lab.conf" && detail.deployed)}
+          extraActions={
+            <Button size="sm" variant="outline-secondary" disabled={!canLoadFromDevice || busy} onClick={handleLoadFromDevice}>
+              ⤵ Load from device
+            </Button>
+          }
+        />
+      </div>
     </div>
   );
 }

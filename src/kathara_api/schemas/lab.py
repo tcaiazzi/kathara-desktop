@@ -6,6 +6,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from .common import reject_lab_conf_quotes
 from .link import LinkCreate, LinkDetail
 from .machine import MachineCreate, MachineDetail
 
@@ -26,6 +27,11 @@ class LabMetadata(BaseModel):
     email: Optional[str] = None
     web: Optional[str] = None
 
+    @field_validator("description", "version", "author", "email", "web")
+    @classmethod
+    def _no_quotes(cls, value: Optional[str]) -> Optional[str]:
+        return value if value is None else reject_lab_conf_quotes(value)
+
 
 class LabCreate(BaseModel):
     """JSON description of a network scenario to create."""
@@ -40,6 +46,18 @@ class LabConfUpdate(BaseModel):
     """Raw ``lab.conf`` text to apply to an existing, non-deployed lab."""
 
     content: str
+
+
+class LabConfView(BaseModel):
+    """A lab's ``lab.conf`` exactly as stored on disk.
+
+    ``exists`` is ``False`` (with empty ``content``) when the lab has no ``lab.conf`` on disk yet
+    — a reconstruct-only running lab, or a folder-based import that hasn't been edited yet. Not an
+    error: ``PUT`` on the same path creates the file.
+    """
+
+    content: str
+    exists: bool = True
 
 
 class LayoutPoint(BaseModel):

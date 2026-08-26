@@ -10,6 +10,7 @@ from ..schemas.common import Message
 from ..schemas.lab import (
     DeployOptions,
     LabConfUpdate,
+    LabConfView,
     LabCreate,
     LabDetail,
     LabLayout,
@@ -98,11 +99,23 @@ def download_lab(lab_name: str, service: KatharaService = Depends(get_service)) 
     return StreamingResponse(buf, media_type="application/zip", headers=headers)
 
 
+@router.get("/{lab_name}/lab-conf", response_model=LabConfView)
+def get_lab_conf(lab_name: str, service: KatharaService = Depends(get_service)) -> LabConfView:
+    """Return the lab's on-disk ``lab.conf`` verbatim — comments, quoting and options this API
+    doesn't interpret all intact.
+
+    ``exists: false`` with empty ``content`` means the lab has no ``lab.conf`` on disk yet; ``PUT``
+    on this path creates one.
+    """
+    return service.read_lab_conf(lab_name)
+
+
 @router.put("/{lab_name}/lab-conf", response_model=LabDetail)
 def update_lab_conf(
     lab_name: str, payload: LabConfUpdate, service: KatharaService = Depends(get_service)
 ) -> LabDetail:
-    """Apply an edited ``lab.conf`` to a non-deployed lab (rebuilds its topology). 409 if deployed."""
+    """Apply an edited ``lab.conf`` to a non-deployed lab (rebuilds its topology), storing the
+    submitted text verbatim. 409 if deployed."""
     lab = service.update_lab_conf(lab_name, payload.content)
     return serializers.lab_to_detail(lab)
 

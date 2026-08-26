@@ -98,3 +98,48 @@ def test_build_lab_wires_external_link_vlan():
     assert len(externals) == 1
     assert externals[0].interface == "eth0"
     assert externals[0].vlan == 100
+
+
+def test_build_machine_routes_num_terms_entrypoint_args():
+    spec = LabCreate.model_validate(
+        {
+            "name": "metalab",
+            "machines": [
+                {"name": "pc1", "num_terms": 2, "entrypoint": "/sbin/init", "args": "--verbose"}
+            ],
+        }
+    )
+    lab = lab_builder.build_lab(spec)
+    pc1 = lab.machines["pc1"]
+    assert pc1.meta["num_terms"] == 2
+    assert pc1.meta["entrypoint"] == "/sbin/init"
+    assert pc1.meta["args"] == "--verbose"
+
+
+def test_build_machine_applies_unknown_pass_through_meta():
+    spec = LabCreate.model_validate(
+        {"name": "metalab", "machines": [{"name": "pc1", "metas": {"frobnicate": "yes"}}]}
+    )
+    lab = lab_builder.build_lab(spec)
+    assert lab.machines["pc1"].meta["frobnicate"] == "yes"
+
+
+def test_build_machine_pass_through_meta_cannot_smuggle_a_volume():
+    # A pass-through meta named "volume" must never reach Machine.add_meta, whose special-case
+    # for "volume" turns a value into a host bind mount — that's exactly the hole `[volume]` in
+    # lab.conf is deliberately kept out of the model for (see lab_import.py).
+    spec = LabCreate.model_validate(
+        {"name": "metalab", "machines": [{"name": "pc1", "metas": {"volume": "/etc|/etc|rw"}}]}
+    )
+    lab = lab_builder.build_lab(spec)
+    assert lab.machines["pc1"].get_volumes() == {}
+
+
+def test_build_machine_pass_through_meta_cannot_override_reserved_keys():
+    # "image" is handled by _machine_kwargs already; a pass-through entry for it must be ignored,
+    # not silently clobber the value that was set through the normal path.
+    spec = LabCreate.model_validate(
+        {"name": "metalab", "machines": [{"name": "pc1", "image": "kathara/base", "metas": {"image": "evil"}}]}
+    )
+    lab = lab_builder.build_lab(spec)
+    assert lab.machines["pc1"].get_image() == "kathara/base"

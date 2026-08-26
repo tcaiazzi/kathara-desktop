@@ -139,3 +139,32 @@ def test_zip_lab_missing_lab_raises_not_found(tmp_path):
     store = LabStore(tmp_path / "labs")
     with pytest.raises(LabNotFoundError):
         store.zip_lab("nope")
+
+
+def test_read_write_lab_conf_text_round_trips_crlf(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.write_lab("crlflab", {"lab.conf": "pc1[image]=kathara/base\r\npc1[0]=A\r\n"})
+
+    assert store.read_lab_conf_text("crlflab") == "pc1[image]=kathara/base\r\npc1[0]=A\r\n"
+
+    store.write_lab_conf_text("crlflab", "pc1[image]=kathara/base\r\npc1[0]=A\r\npc1[1]=B\r\n")
+    assert store.read_lab_conf_text("crlflab") == "pc1[image]=kathara/base\r\npc1[0]=A\r\npc1[1]=B\r\n"
+
+
+def test_read_lab_conf_text_absent_or_missing_dir(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.ensure_lab_dir("nolabconf")
+    assert store.read_lab_conf_text("nolabconf") is None
+    assert store.read_lab_conf_text("does-not-exist") is None
+
+
+def test_write_lab_conf_text_is_atomic_and_requires_existing_dir(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    with pytest.raises(LabNotFoundError):
+        store.write_lab_conf_text("nosuchlab", "pc1[image]=kathara/base\n")
+
+    store.ensure_lab_dir("atomiclab")
+    store.write_lab_conf_text("atomiclab", "pc1[image]=kathara/base\n")
+    lab_dir = store.lab_dir("atomiclab")
+    assert (lab_dir / "lab.conf").read_text() == "pc1[image]=kathara/base\n"
+    assert not (lab_dir / ".lab.conf.tmp").exists()

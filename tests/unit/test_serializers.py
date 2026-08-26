@@ -75,3 +75,20 @@ def test_machine_to_detail_ignores_interfaces_without_link_object():
     detail = serializers.machine_to_detail(machine)
 
     assert detail.interfaces == []
+
+
+def test_machine_to_detail_exposes_num_terms_entrypoint_args():
+    lab = lab_builder.build_lab(
+        LabCreate.model_validate(
+            {
+                "name": "metalab",
+                "machines": [
+                    {"name": "pc1", "num_terms": 2, "entrypoint": "/sbin/init", "args": "--verbose"}
+                ],
+            }
+        )
+    )
+    detail = serializers.machine_to_detail(lab.machines["pc1"])
+    assert detail.num_terms == 2
+    assert detail.entrypoint == "/sbin/init"
+    assert detail.args == "--verbose"

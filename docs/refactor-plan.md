@@ -576,3 +576,33 @@ binary file's bytes landed intact (`Machine.pack_data`'s Docker-API tar transfer
 unlike the old JSON-only pending-files path), the `shared/` file was merged into `pc1`'s own tree
 (not left as a native `/shared` bind mount), and `pc1.startup` actually ran. Undeployed, deleted,
 and confirmed zero leftover containers.
+
+## Verbatim lab.conf persistence (2026-08-26) — supersedes "always regenerated" above
+
+The design at line ~449 above ("every persisted lab's `lab.conf` is *always* regenerated from
+the model rather than kept verbatim") turned out to be the wrong call: it silently dropped
+`[volume]`, `[exec]`, `[num_terms]`/`[entrypoint]`/`[args]`, comments, ordering, quoting style,
+and any option the model didn't carry, on every import. Reversed:
+
+- `lab_import.py`'s parser is now lossless into the model (`num_terms`/`entrypoint`/`args`
+  mapped; unknown options and `exec_commands` kept as pass-through/model fields instead of
+  dropped; only `[volume]` stays unapplied, for the reason given in `BACKEND.md`). An
+  unrecognized top-level `KEY=value` line is a warning, not a fatal error — a hard error there
+  used to mean the whole lab silently disappeared from the registry on the next restart.
+- Import/upload/editor-save now persist `lab.conf` **verbatim** (`LabStore.write_lab_conf_text`,
+  atomic) instead of round-tripping it through `gen_lab_conf`. `gen_lab_conf` survives only for
+  `create_lab` (JSON-described labs with no source file).
+- Offline structural edits (add/remove device, connect/disconnect on a stopped device) moved from
+  "rebuild a `Lab` from disk, re-serialize the whole file" to surgical text edits
+  (`services/lab_conf_edit.py`) that touch only the lines an edit actually changes. This also
+  fixed a live bug: disconnecting a device's *middle* interface used to leave a numbering gap
+  that made the lab fail to reload after a restart.
+- `GET /api/labs/{lab}/lab-conf` was added so the editor shows (and round-trips) the real on-disk
+  file instead of a client-side reconstruction (`labfs.ts`'s old `genLabConf` was deleted).
+- Deliberately **out of scope for now**: a `shared/` folder in an imported lab is left untouched
+  on disk and reported as a warning rather than merged into every device's tree (the previous
+  per-machine-copy approach also isn't verbatim-safe). Delivering `shared/` to containers without
+  writing derived copies to disk is a follow-up.
+
+See `BACKEND.md`'s "Architecture at a glance" for the current, load-bearing description of this
+area — this entry is left as history, not as the current design.

@@ -1,8 +1,11 @@
 """Parse a standard Kathara lab directory (lab.conf/.startup/folders) into a LabCreate
 plus a per-machine "pending" file/startup spec applied after deploy.
 
-Mirrors the Kathara CLI's own application order: filesystem is populated first, then
-``shared.startup`` + ``<machine>.startup`` + inline ``exec`` directives run.
+Everything a device carries here is kept verbatim: ``<machine>.startup`` is passed through
+unmodified (Kathara's native deploy already runs ``shared.startup`` then ``<machine>.startup``
+then any ``exec`` directives on its own — see ``DockerMachine.STARTUP_COMMANDS`` — so nothing needs
+composing here). A top-level ``shared/`` folder isn't applied to any device yet; it is left alone
+on disk and reported as a warning (see ``translate_lab_files``).
 """
 
 import re
@@ -17,6 +20,8 @@ from ..schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimi
 RESERVED_NAMES = {"shared", "_test"}
 LAB_META_KEYS = {"LAB_NAME", "LAB_DESCRIPTION", "LAB_VERSION", "LAB_AUTHOR", "LAB_EMAIL", "LAB_WEB"}
 CONF_LINE_RE = re.compile(r"""^([a-z0-9_]{1,30})\[(\w+)\]=(["']?)([^"']+)\3(\s+#.*)?$""")
+# A top-level `KEY=value` line that isn't a known LAB_* key: preserved, not applied (see parse_lab_conf).
+TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 STARTUP_NAME_RE = re.compile(r"^([a-z0-9_]{1,30})\.startup$")
 
 
@@ -35,6 +40,12 @@ class _ConfMachine:
     sysctls: dict = field(default_factory=dict)
     ulimits: list = field(default_factory=list)
     execs: list = field(default_factory=list)
+    num_terms: Optional[int] = None
+    entrypoint: Optional[str] = None
+    args: Optional[str] = None
+    # Options this parser does not interpret, kept so they reach the Kathara model untouched
+    # (last one wins, mirroring Kathara's own `assign_meta_to_machine`).
+    metas: dict = field(default_factory=dict)
     interfaces: list = field(default_factory=list)
     unsupported: list = field(default_factory=list)
 
@@ -44,6 +55,7 @@ class _ParsedConf:
     machines: dict
     metadata: dict
     errors: list
+    warnings: list = field(default_factory=list)
 
 
 def _parse_bool(value: str) -> Optional[bool]:
@@ -130,15 +142,33 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
             errors.append(f'line {line_no}: invalid ulimit "{value}"')
     elif opt == "bridged":
         machine.bridged = _parse_bool(value) is True
+    elif opt == "num_terms":
+        try:
+            machine.num_terms = int(value)
+        except ValueError:
+            machine.unsupported.append(
+                f"{machine.name}[num_terms] (line {line_no}) — not an integer, kept in lab.conf but not applied"
+            )
+    elif opt == "entrypoint":
+        machine.entrypoint = value
+    elif opt == "args":
+        machine.args = value
     elif opt == "volume":
+        # Deliberately not applied: a lab.conf can name any host path, and this API is reachable
+        # over the network. The directive stays in lab.conf untouched.
         machine.unsupported.append(
-            f"{machine.name}[volume] (line {line_no}) — host volumes can't be sent over REST, ignored"
+            f"{machine.name}[volume] (line {line_no}) — host volumes aren't applied by the API "
+            f"(kept in lab.conf)"
         )
     else:
-        machine.unsupported.append(f"{machine.name}[{opt}] (line {line_no}) — unknown option, ignored")
+        machine.metas[opt] = value
+        machine.unsupported.append(
+            f"{machine.name}[{opt}] (line {line_no}) — option not interpreted by the API "
+            f"(kept in lab.conf, passed to the device unchanged)"
+        )
 
 
-def _strip_quotes(value: str) -> str:
+def strip_quotes(value: str) -> str:
     """Strip all single/double quotes from a lab.conf value (matching Kathara's own parser)."""
     return re.sub(r"""["']""", "", value)
 
@@ -148,6 +178,7 @@ def parse_lab_conf(text: str) -> _ParsedConf:
     machines: dict[str, _ConfMachine] = {}
     metadata: dict[str, str] = {}
     errors: list[str] = []
+    warnings: list[str] = []
 
     def get(name: str) -> _ConfMachine:
         return machines.setdefault(name, _ConfMachine(name))
@@ -160,7 +191,7 @@ def parse_lab_conf(text: str) -> _ParsedConf:
         m = CONF_LINE_RE.match(line)
         if m:
             key, arg, raw_value = m.group(1), m.group(2), m.group(4)
-            value = _strip_quotes(raw_value)
+            value = strip_quotes(raw_value)
             if key in RESERVED_NAMES:
                 errors.append(f'line {line_no}: "{key}" is a reserved name')
                 continue
@@ -183,7 +214,14 @@ def parse_lab_conf(text: str) -> _ParsedConf:
             eq = line.find("=")
             key = line[:eq].strip() if eq >= 0 else line
             if eq > 0 and key in LAB_META_KEYS:
-                metadata[key.replace("LAB_", "").lower()] = _strip_quotes(line[eq + 1 :]).strip()
+                metadata[key.replace("LAB_", "").lower()] = strip_quotes(line[eq + 1 :]).strip()
+            elif eq > 0 and TOP_LEVEL_KEY_RE.match(key):
+                # An unrecognized `KEY=value` line is *not* fatal (Kathara's own LabParser raises
+                # here). `errors` propagate to KatharaService._translate_lab_dir, which drops the
+                # lab from the registry — so a strict parser would make a stored lab silently
+                # disappear on the next restart. Errors are reserved for a topology we cannot
+                # represent; anything else is a warning and stays in lab.conf as written.
+                warnings.append(f'line {line_no}: unknown key "{key}" — kept in lab.conf, not applied')
             else:
                 errors.append(f'line {line_no}: cannot parse "{line}"')
 
@@ -195,7 +233,7 @@ def parse_lab_conf(text: str) -> _ParsedConf:
                     f"{machine.name}: non-sequential interface numbers (expected eth{expected}, got eth{actual})"
                 )
 
-    return _ParsedConf(machines=machines, metadata=metadata, errors=errors)
+    return _ParsedConf(machines=machines, metadata=metadata, errors=errors, warnings=warnings)
 
 
 def parse_lab_ext(text: str) -> list[LinkCreate]:
@@ -300,6 +338,7 @@ def translate_lab_files(
             warnings.append("no lab.conf — machines derived from folders (no interfaces defined)")
 
     errors.extend(parsed.errors)
+    warnings.extend(parsed.warnings)
     for machine in parsed.machines.values():
         warnings.extend(machine.unsupported)
 
@@ -320,31 +359,36 @@ def translate_lab_files(
             envs=m.envs,
             sysctls=m.sysctls,
             ulimits=m.ulimits,
-            exec_commands=[],
+            exec_commands=list(m.execs),
+            num_terms=m.num_terms,
+            entrypoint=m.entrypoint,
+            args=m.args,
+            metas=dict(m.metas),
             interfaces=m.interfaces,
         )
         for m in parsed.machines.values()
     ]
 
-    shared = _collect_folder(files, "shared/")
-    shared_dirs = _collect_folder_dirs(files, dirs, "shared/")
-    shared_startup = files.get("shared.startup", "")
+    # A `shared/` folder isn't applied to any device yet: Kathara's `Machine.pack_data` doesn't
+    # pack it, and the CLI's `/shared` bind mount is disabled per-lab under Docker-outside-of-Docker
+    # (see lab_builder.build_lab). Rather than merge its contents into every machine (which would
+    # rewrite files that don't belong to the source archive, breaking verbatim import), it is left
+    # on disk untouched and simply not surfaced as pending state — with a warning so the omission is
+    # visible instead of silent.
+    if _collect_folder(files, "shared/"):
+        warnings.append("shared/ folder is not applied to devices yet — left on disk, ignored")
 
     pending: dict[str, PendingMachineFiles] = {}
     for m in parsed.machines.values():
         mfiles = _collect_folder(files, f"{m.name}/")
         mdirs = _collect_folder_dirs(files, dirs, f"{m.name}/")
-        merged_files = {**shared, **mfiles}
-        merged_dirs = sorted(set(shared_dirs) | set(mdirs))
-        parts = []
-        if shared_startup.strip():
-            parts.append(shared_startup)
-        machine_startup = files.get(f"{m.name}.startup")
-        if machine_startup and machine_startup.strip():
-            parts.append(machine_startup)
-        if m.execs:
-            parts.append("\n".join(m.execs))
-        pending[m.name] = PendingMachineFiles(files=merged_files, dirs=merged_dirs, startup="\n".join(parts))
+        # Verbatim: the device's own <name>.startup, unmodified. shared.startup and exec_commands
+        # are not folded in here — Kathara's native deploy already runs shared.startup then
+        # <name>.startup then exec_commands (see DockerMachine.STARTUP_COMMANDS); composing them
+        # here would run them a second time and would silently rewrite the source file on save.
+        pending[m.name] = PendingMachineFiles(
+            files=mfiles, dirs=mdirs, startup=files.get(f"{m.name}.startup", "")
+        )
 
     if skipped:
         shown = ", ".join(skipped[:4]) + ("…" if len(skipped) > 4 else "")

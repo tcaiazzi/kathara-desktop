@@ -35,10 +35,10 @@ from pydantic import ValidationError
 
 from ..config import get_settings
 from ..errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError, SettingsLockedError
-from ..schemas.lab import LabCreate, LabLayout
+from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.lab_import import LabImportPreview, PendingMachineFiles
 from ..schemas.machine import MachineCreate
-from . import lab_builder, lab_import, lab_store
+from . import lab_builder, lab_conf_edit, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
 from .lab_store import LabStore
 from .registry import LabRegistry
@@ -140,39 +140,60 @@ class KatharaService:
                 continue
             yield machine_name, spec, machine
 
+    def _write_machine_files(
+        self, lab: Lab, machine_name: str, files: dict[str, str], dirs: list[str]
+    ) -> None:
+        """Write an explicit files/dirs edit onto one machine's own on-disk folder.
+
+        Only ever called with the caller's own payload, never a whole accumulated pending map —
+        re-writing everything a machine has ever queued on every single edit would be wasteful and
+        would keep touching files nothing asked to change.
+        """
+        machine = lab.machines.get(machine_name)
+        if machine is None:
+            return
+        if dirs:
+            if machine.fs is None:
+                machine.fs = lab.fs.makedir(machine_name, recreate=True)
+            for rel_dir in dirs:
+                if rel_dir and rel_dir.strip():
+                    machine.fs.makedirs(rel_dir, recreate=True)
+        for path, content in files.items():
+            machine.create_file_from_string(content, path)
+
+    def _write_machine_startup(self, lab: Lab, machine_name: str, text: str) -> None:
+        """Write ``<machine>.startup`` verbatim onto the lab's real (osfs) fs — only from an
+        explicit edit (see ``update_pending_files``); an import/upload's own ``<machine>.startup``
+        is already on disk verbatim and must never be rewritten here (see ``_adopt_lab_dir``)."""
+        if text.strip():
+            lab.create_file_from_string(text, f"{machine_name}.startup")
+
     def _materialize_pending_to_fs(
         self, lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
     ) -> None:
-        """Write queued files/dirs/startup for ``target_names`` onto the lab's real (osfs) fs.
-
-        Kathara's ``Machine.pack_data`` reads a machine's files straight off ``machine.fs`` and a
-        machine's ``<name>.startup`` straight off ``lab.fs`` at deploy time, so writing them here
-        before a deploy is what lets native deploy apply this state directly. ``shared/`` files
-        are already merged into each target machine's own file map by
-        ``lab_import.translate_lab_files`` rather than relying on Kathara's own ``/shared`` bind
-        mount (disabled — see ``lab_builder.build_lab``).
+        """Write each target's *entire* currently-queued files/dirs/startup onto the lab's real
+        (osfs) fs. Used only by ``update_shared_pending_files`` (a broadcast-to-every-machine
+        edit, where re-applying the accumulated queue is the existing, intentionally-unchanged
+        behavior) — a single machine's own edit goes through ``_write_machine_files`` /
+        ``_write_machine_startup`` instead, which touch only the payload of that one edit.
         """
         for machine_name, spec, machine in self._pending_targets(lab, pending, target_names):
-            if spec.dirs:
-                if machine.fs is None:
-                    machine.fs = lab.fs.makedir(machine_name, recreate=True)
-                for rel_dir in spec.dirs:
-                    if rel_dir and rel_dir.strip():
-                        machine.fs.makedirs(rel_dir, recreate=True)
+            self._write_machine_files(lab, machine_name, spec.files, spec.dirs)
+            self._write_machine_startup(lab, machine_name, spec.startup)
 
-            for path, content in spec.files.items():
-                machine.create_file_from_string(content, path)
+    def _adopt_lab_dir(self, name: str, t: lab_import.LabImportTranslation) -> Lab:
+        """Build + register a Lab against its already-populated on-disk directory.
 
-            if spec.startup.strip():
-                lab.create_file_from_string(spec.startup, f"{machine_name}.startup")
-
-    def _persist_new_lab(self, lab: Lab, lab_dir, t: lab_import.LabImportTranslation) -> None:
-        """Register + persist a freshly-built lab's parsed state: queue the pending files, materialize
-        them onto the real fs immediately (so the import survives a restart even before the first
-        deploy — not only at deploy time), and (re)generate its lab.conf."""
-        self.registry.set_pending(lab.name, t.pending)
-        self._materialize_pending_to_fs(lab, t.pending, set(t.pending.keys()))
-        self.store.write_lab_conf(lab_dir, lab)
+        Writes nothing: by the time this runs, the directory *is* the lab (verbatim — see
+        ``import_lab``/``upload_lab``), so there is nothing left to materialize. Kathara's own
+        ``Machine.pack_data`` reads a machine's files straight off ``machine.fs`` and its
+        ``<name>.startup``/``shared.startup``/``shared.shutdown`` straight off ``lab.fs`` at
+        deploy time — a machine whose subfolder already exists on disk picks up ``machine.fs``
+        automatically (``Machine.__init__``), so nothing needs writing here for that to work.
+        """
+        lab = self._build_and_register(t.payload, self.store.lab_dir(name))
+        self.registry.set_pending(name, t.pending)
+        return lab
 
     def create_lab(self, spec: LabCreate) -> Lab:
         lab_dir = self.store.ensure_lab_dir(spec.name)
@@ -186,6 +207,21 @@ class KatharaService:
     def export_lab_zip(self, name: str) -> io.BytesIO:
         """Return an in-memory .zip of the lab's on-disk directory (raises 404 if unknown)."""
         return self.store.zip_lab(name)
+
+    def read_lab_conf(self, name: str) -> LabConfView:
+        """The lab's on-disk ``lab.conf``, verbatim — 404 only if the lab itself is unknown.
+
+        Reads the file rather than re-serializing the model (``gen_lab_conf``), which is lossy:
+        the editor must show exactly the bytes an import/upload/edit last wrote. A lab with no
+        ``lab.conf`` on disk (reconstruct-only, or a folder-based import never yet edited) is
+        reported as ``exists=False``, not a 404 — ``update_lab_conf`` (``PUT``) creates the file,
+        so the editor can start from an empty buffer.
+        """
+        clean = lab_store.sanitize_lab_name(name)
+        if self.registry.get(clean) is None and not self.store.lab_dir(clean).is_dir():
+            self.get_lab_or_reconstruct(clean)  # raises LabNotFoundError unless running under this name
+        text = self.store.read_lab_conf_text(clean)
+        return LabConfView(content=text or "", exists=text is not None)
 
     # -- fixed topology layout -------------------------------------------------
 
@@ -222,6 +258,28 @@ class KatharaService:
         workaround for that upstream behavior (the sibling repo is left untouched)."""
         machine.interfaces = {num: iface for num, iface in machine.interfaces.items() if iface is not None}
 
+    @staticmethod
+    def _renumber_interfaces(machine: Machine) -> None:
+        """Drop the ``None`` slots ``Machine.remove_interface`` leaves behind *and* renumber the
+        survivors to eth0..ethN-1, keeping their relative order.
+
+        ``_compact_interfaces`` only drops the slots, which leaves a gap (e.g. 0, 2) — and a gap is
+        rejected both by ``lab_import.parse_lab_conf`` and by Kathara's own ``Machine.check``, so it
+        could neither be reloaded from disk nor deployed. Used only for a **stopped** device's
+        offline disconnect (see ``disconnect_machine``): on a running device the numbers name real
+        container interfaces and must not be rewritten, so the runtime branch keeps using
+        ``_compact_interfaces``.
+        """
+        survivors = sorted(
+            ((num, iface) for num, iface in machine.interfaces.items() if iface is not None),
+            key=lambda kv: kv[0],
+        )
+        renumbered: dict[int, Any] = {}
+        for new_num, (_, iface) in enumerate(survivors):
+            iface.num = new_num
+            renumbered[new_num] = iface
+        machine.interfaces = renumbered
+
     def _translate_lab_dir(self, name: str) -> Optional[lab_import.LabImportTranslation]:
         """Read a stored lab directory and parse it into a translation, or None if the directory is
         missing (reconstruct-only lab) or its lab.conf can't be parsed (logged)."""
@@ -244,6 +302,10 @@ class KatharaService:
         in ``machine.interfaces`` too. Serializing that model would leak runtime edits into
         ``lab.conf``. Rebuilding from disk instead keeps offline (lab.conf) edits isolated from
         runtime ones. Returns None if the lab has no on-disk directory (reconstruct-only labs).
+
+        Used only as the folder-based-import bootstrap in ``_lab_conf_base_text`` now — every
+        other offline edit works on the stored ``lab.conf`` *text* directly (``lab_conf_edit``),
+        never through this model round trip.
         """
         t = self._translate_lab_dir(name)
         if t is None:
@@ -252,16 +314,51 @@ class KatharaService:
         # so it must not touch (or contend for) the live lab's on-disk directory.
         return lab_builder.build_lab(t.payload)
 
-    def _persist_config_lab_conf(self, name: str, mutate: Callable[[Lab], None]) -> None:
-        """Regenerate on-disk ``lab.conf`` from the *config* (on-disk lab.conf), applying only the
-        explicit offline edit via ``mutate``. Deliberately ignores the live registry model so a
-        concurrently-running device's runtime interface changes never leak into the saved config.
+    def _lab_conf_base_text(self, name: str) -> Optional[str]:
+        """The on-disk ``lab.conf`` text an offline structural edit should be applied to, or None
+        when there is nothing to (safely) edit.
+
+        - Lab directory with a readable, parseable ``lab.conf``: its exact bytes.
+        - Lab directory without one (folder-based import): bootstrap one from the on-disk
+          configuration via ``gen_lab_conf`` — there is no user text to preserve here, so
+          generating is lossless, and the lab gains a real ``lab.conf`` on its first edit.
+        - Lab directory whose ``lab.conf`` can't be read back or doesn't parse: None. Blocking an
+          unrelated device edit on a pre-existing problem would be worse than not persisting it;
+          ``update_lab_conf`` (``PUT .../lab-conf``) is the repair path.
+        - No directory at all (reconstruct-only lab): None. An offline edit must never conjure a
+          lab directory as a side effect — the lab was never persisted in the first place.
         """
+        lab_dir = self.store.lab_dir(name)
+        if not lab_dir.is_dir():
+            return None
+        conf_path = self.store.lab_conf_path(name)
+        if conf_path.is_file():
+            text = self.store.read_lab_conf_text(name)
+            if text is None:
+                logger.warning("Not editing lab.conf for `%s`: it could not be read back", name)
+                return None
+            if lab_conf_edit.parse_errors(text):
+                logger.warning("Not editing lab.conf for `%s`: the stored file does not parse", name)
+                return None
+            return text
         config_lab = self._config_lab_from_disk(name)
-        if config_lab is None:
+        return lab_store.gen_lab_conf(config_lab) if config_lab is not None else None
+
+    def _edit_lab_conf(self, name: str, edit: Callable[[str], str]) -> None:
+        """Apply a surgical, line-level edit to the stored ``lab.conf`` and write it back
+        atomically.
+
+        ``edit`` is a pure text -> text transform from ``lab_conf_edit``; it never sees a ``Lab``
+        object, which is exactly why a running device's runtime interface changes can never leak
+        into the saved configuration — the on-disk text *is* the configuration here, the live
+        model is never consulted. Writing nothing when the edit is a no-op keeps mtimes stable.
+        """
+        base = self._lab_conf_base_text(name)
+        if base is None:
             return
-        mutate(config_lab)
-        self.store.write_lab_conf(self.store.lab_dir(name), config_lab)
+        new_text = edit(base)
+        if new_text != base:
+            self.store.write_lab_conf_text(name, new_text)
 
     def _reload_from_disk(self) -> None:
         """Rebuild the registry (and pending state) from the stored lab directories."""
@@ -315,27 +412,41 @@ class KatharaService:
         dirs: Optional[list[str]] = None,
         skipped: Optional[list[str]] = None,
     ) -> tuple[Lab, list[str]]:
-        """Parse a lab directory, create the lab, and queue its files/startup for deploy."""
-        t = lab_import.translate_lab_files(files, name, dirs, skipped)
+        """Create a lab from a lab.conf/.startup/folder description, writing every supplied file
+        to disk verbatim (the JSON twin of ``upload_lab``) and queuing it for deploy."""
+        clean = lab_store.sanitize_lab_name(name)
+        if self.registry.get(clean) is not None or self.store.lab_dir(clean).exists():
+            raise LabAlreadyRegisteredError(f"Lab `{clean}` already exists.")
+        t = lab_import.translate_lab_files(files, clean, dirs, skipped)
         if t.errors:
             raise ApiError("; ".join(t.errors))
-        lab_dir = self.store.ensure_lab_dir(name)
-        lab = self._build_and_register(t.payload, lab_dir)
-        self._persist_new_lab(lab, lab_dir, t)
+        # Verbatim + atomic: write_lab writes into a sibling `.<name>.tmp` dir and os.replace()s
+        # it into place, so a crash mid-write never leaves a half-populated lab directory. This
+        # must run *before* _adopt_lab_dir: Lab(path=...) opens an osfs on the directory, and
+        # Machine.__init__ only picks up an already-existing `<name>/` subfolder as `machine.fs`
+        # at construction time — building first would leave every machine with `fs = None` and
+        # nothing would ever be packed at deploy.
+        self.store.write_lab(clean, files, dirs or [])
+        try:
+            lab = self._adopt_lab_dir(clean, t)
+        except Exception:
+            self.store.delete_lab(clean)
+            raise
         return lab, t.warnings
 
     def upload_lab(self, name: str, zip_data: BinaryIO, deploy: bool = False) -> tuple[Lab, list[str]]:
-        """Create (and optionally deploy) a lab from an uploaded .zip archive.
+        """Create (and optionally deploy) a lab from an uploaded .zip archive, verbatim.
 
         Binary-safe (unlike ``import_lab``, whose ``files`` are JSON/text-only): the archive is
-        extracted to disk as-is, then parsed the same way as a JSON-described import. Machine
-        subfolders that already exist on disk after extraction are picked up automatically as
-        ``machine.fs`` (see ``Machine.__init__``), so any binary files travel to the deployed
-        container via Kathara's native ``pack_data`` even though the pending-files model (which
-        only round-trips text) can't represent them.
+        extracted to disk exactly as uploaded — comments, quoting, ``shared.startup``/
+        ``shared.shutdown``, binaries and all — then parsed the same way as a JSON-described
+        import. Machine subfolders that already exist on disk after extraction are picked up
+        automatically as ``machine.fs`` (see ``Machine.__init__``), so any binary files travel to
+        the deployed container via Kathara's native ``pack_data`` even though the pending-files
+        model (which only round-trips text) can't represent them.
         """
         clean_name = lab_store.sanitize_lab_name(name)
-        if self.registry.get(clean_name) is not None:
+        if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
             raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
 
         lab_dir = self.store.extract_zip(clean_name, zip_data)
@@ -344,16 +455,7 @@ class KatharaService:
             t = lab_import.translate_lab_files(files, clean_name, dirs)
             if t.errors:
                 raise ApiError("; ".join(t.errors))
-            lab = self._build_and_register(t.payload, lab_dir)
-            self._persist_new_lab(lab, lab_dir, t)
-            # shared.startup's content is now folded into each machine's own <machine>.startup by
-            # _persist_new_lab; remove the standalone file(s) the raw archive may have contained so
-            # Kathara's native pack_data (which also auto-picks up a literal shared.startup at the
-            # lab root) doesn't run it a second time.
-            for stray in ("shared.startup", "shared.shutdown"):
-                stray_path = lab_dir / stray
-                if stray_path.exists():
-                    stray_path.unlink()
+            lab = self._adopt_lab_dir(clean_name, t)
         except Exception:
             if self.registry.get(clean_name) is None:
                 self.store.delete_lab(clean_name)  # roll back the extracted directory
@@ -366,11 +468,14 @@ class KatharaService:
     def update_lab_conf(self, name: str, content: str) -> Lab:
         """Rebuild a **non-deployed** lab from an edited ``lab.conf`` (topology + device metadata).
 
-        The edited ``lab.conf`` supplies machines/links; existing on-disk device files and startup
-        scripts are preserved by re-reading the lab directory and overriding only ``lab.conf`` before
-        re-parsing. Rejected with 409 while the lab is deployed (rebuilding would desync running
-        containers) — undeploy first. Binary device files aren't representable in the text merge and
-        would be dropped; they belong to the Runtime FS flow instead.
+        The submitted text is stored **verbatim** (``LabStore.write_lab_conf_text``) — never
+        normalized through parse-and-regenerate — so whatever the caller submits is exactly what
+        lands on disk: comments, ordering, quoting and options this API doesn't interpret survive
+        an editor save unchanged. Existing on-disk device files and startup scripts are preserved
+        by re-reading the lab directory and overriding only ``lab.conf`` before re-parsing.
+        Rejected with 409 while the lab is deployed (rebuilding would desync running containers) —
+        undeploy first. Binary device files aren't representable in the text merge and would be
+        dropped; they belong to the Runtime FS flow instead.
         """
         clean = lab_store.sanitize_lab_name(name)
         with self._mutate_lock:
@@ -385,10 +490,18 @@ class KatharaService:
             t = lab_import.translate_lab_files(files, clean, dirs)
             if t.errors:
                 raise ApiError("; ".join(t.errors))
-            # Rebuild under the same name, replacing the previous registration/model.
+            # Validate against a throwaway in-memory Lab (check_integrity, MAC format, meta
+            # validation) *before* writing anything, so a bad submission never partially lands.
+            lab_builder.build_lab(t.payload)
+            # The only file this writes is lab.conf, verbatim — never store.write_lab(files, dirs),
+            # which would rewrite every device file from read_lab's newline-normalized,
+            # binary-stripped output.
+            self.store.write_lab_conf_text(clean, content)
+            # Rebuild under the same name, replacing the previous registration/model, from the
+            # text just written.
             self.registry.remove(clean)
             new_lab = self._build_and_register(t.payload, lab_dir)
-            self._persist_new_lab(new_lab, lab_dir, t)
+            self.registry.set_pending(clean, t.pending)
             return new_lab
 
     def get_pending(self, lab_name: str) -> dict[str, PendingMachineFiles]:
@@ -526,17 +639,16 @@ class KatharaService:
 
         # Already-running machines can't be recreated — Kathara's facade raises
         # MachineAlreadyExistsError for them — so only machines about to be *freshly* created are
-        # passed to it. Their pending state must be on disk first: Kathara's own deploy machinery
-        # (Machine.pack_data) packs whatever sits on the real (osfs) fs into the container over
-        # the Docker API. Already-running targets instead get any queued update pushed live via
+        # passed to it. Their pending state is already on disk by now: an import/upload wrote it
+        # there verbatim (see _adopt_lab_dir) and any pre-deploy edit was written through
+        # immediately by update_pending_files — so Kathara's own deploy machinery
+        # (Machine.pack_data) packs it straight from the real (osfs) fs, with nothing to
+        # materialize here. Already-running targets instead get any queued update pushed live via
         # ``_apply_pending``, the only way to reach a container that already exists.
         pending = self.registry.get_pending(name)
         pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
         fresh_names = target_names - pre_running
         already_running = target_names & pre_running
-
-        if fresh_names & pending.keys():
-            self._materialize_pending_to_fs(lab, pending, fresh_names & pending.keys())
 
         if fresh_names:
             with self._mutate_lock:
@@ -545,6 +657,30 @@ class KatharaService:
         if already_running & pending.keys():
             self._apply_pending(name, lab, pending, already_running & pending.keys())
         return lab
+
+    @staticmethod
+    def _boot_script(lab: Lab, machine: Machine, own_startup: str) -> str:
+        """The script a *live* push must run for an already-running device: what native deploy
+        would run for a fresh one, in the same order (``DockerMachine.STARTUP_COMMANDS``):
+        ``shared.startup``, the device's own ``<name>.startup`` (verbatim — see
+        ``PendingMachineFiles.startup``), then any ``exec_commands``. Only needed here — for a
+        fresh deploy, ``Machine.pack_data`` and the container's own boot sequence already handle
+        all three natively, straight off disk.
+        """
+        parts = []
+        if lab.fs.exists("shared.startup"):
+            try:
+                shared_text = lab.fs.readtext("shared.startup")
+            except Exception:
+                shared_text = ""
+            if shared_text.strip():
+                parts.append(shared_text)
+        if own_startup.strip():
+            parts.append(own_startup)
+        commands = machine.get_exec_commands()
+        if commands:
+            parts.append("\n".join(commands))
+        return "\n".join(parts)
 
     def _apply_pending(
         self, name: str, lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
@@ -556,7 +692,7 @@ class KatharaService:
         that was already running before it: a redeploy can't recreate a running container
         (Kathara raises ``MachineAlreadyExistsError``), so pushing files/exec'ing the startup
         script live is the only way to update one. Order matches the Kathara CLI's own:
-        filesystem first, then the startup script.
+        filesystem first, then the startup script (composed via ``_boot_script`` — see there).
         """
         for machine_name, spec, machine in self._pending_targets(lab, pending, target_names):
             if machine.api_object is None:
@@ -568,9 +704,10 @@ class KatharaService:
                     self._exec_checked(name, machine_name, f"mkdir -p {quoted}", action_label="mkdir")
 
             files = dict(spec.files)
-            has_startup = bool(spec.startup.strip())
+            boot_script = self._boot_script(lab, machine, spec.startup)
+            has_startup = bool(boot_script.strip())
             if has_startup:
-                files["/tmp/.kathara_boot.sh"] = spec.startup
+                files["/tmp/.kathara_boot.sh"] = boot_script
             if files:
                 self.copy_files(name, machine_name, files)
             if has_startup:
@@ -644,18 +781,22 @@ class KatharaService:
         return available or list(SHELL_PATHS)
 
     def add_machine(self, lab_name: str, spec: MachineCreate) -> Machine:
-        # Adding a device is a *configuration* edit, so it's written to lab.conf (unlike runtime
+        # Adding a device is a *configuration* edit, so it's appended to lab.conf (unlike runtime
         # interface changes, which stay live-only). It is deployed live only when the lab is already
         # running — mirroring interface edits (config on a stopped lab, runtime on a live one).
         lab = self.get_lab_or_reconstruct(lab_name)
         lab_deployed = any(m.api_object is not None for m in lab.machines.values())
-        machine = lab_builder.build_machine(lab, spec)
         with self._mutate_lock:
+            # Render + validate the lab.conf block *before* creating or deploying anything, so a
+            # spec that can't be represented (name clash, interface-number gap) fails with no side
+            # effects instead of leaving a device behind or an unloadable file on disk.
+            base = self._lab_conf_base_text(lab_name)
+            new_conf = lab_conf_edit.add_device(base, spec) if base is not None else None
+            machine = lab_builder.build_machine(lab, spec)
             if lab_deployed:
                 self._facade().deploy_machine(machine)
-            # Persist from the on-disk config (adding the same device there) so a running sibling's
-            # runtime interface changes aren't captured into lab.conf.
-            self._persist_config_lab_conf(lab_name, lambda cfg: lab_builder.build_machine(cfg, spec))
+            if new_conf is not None:
+                self.store.write_lab_conf_text(lab_name, new_conf)
         return machine
 
     def remove_machine(self, lab_name: str, machine_name: str, keep_links: bool = False) -> None:
@@ -677,13 +818,9 @@ class KatharaService:
             lab.remove_machine(name=machine_name, delete_fs=False)
             self._remove_machine_fs(lab, machine_name)
             self._drop_pending_machine(lab_name, machine_name)
-            # Regenerate the persisted lab.conf from the on-disk config (not the live model) so the
-            # device is gone on reload too — without baking a running sibling's runtime interfaces in.
-            def _drop(cfg: Lab) -> None:
-                if machine_name in cfg.machines:
-                    cfg.remove_machine(name=machine_name, delete_fs=False)
-
-            self._persist_config_lab_conf(lab_name, _drop)
+            # Drop the device's lines from the persisted lab.conf — every other line in the file
+            # (comments, other devices, unmodelled options) stays byte-identical.
+            self._edit_lab_conf(lab_name, lambda text: lab_conf_edit.remove_device(text, machine_name))
 
     @staticmethod
     def _remove_machine_fs(lab: Lab, machine_name: str) -> None:
@@ -719,20 +856,19 @@ class KatharaService:
         # persist it to lab.conf so it survives a reload / is applied on the next deploy.
         if machine.api_object is None:
             with self._mutate_lock:
-                machine.add_interface(link, number=interface_number, mac_address=mac_address)
-
-                # Persist from the on-disk config (not the live model) so a running sibling's
-                # runtime interfaces can't leak into lab.conf. Apply the same add to that config Lab.
-                def _add(cfg: Lab) -> None:
-                    if machine_name in cfg.machines:
-                        cfg.connect_machine_to_link(
-                            machine_name,
-                            link_name,
-                            machine_iface_number=interface_number,
-                            mac_address=mac_address,
-                        )
-
-                self._persist_config_lab_conf(lab_name, _add)
+                # Resolve the interface number against the *on-disk* configuration — the same
+                # source the text edit itself reads — and hand the resolved number to the live
+                # model too, so lab.conf and the model can never disagree about eth numbering.
+                base = self._lab_conf_base_text(lab_name)
+                number = interface_number
+                new_conf = None
+                if base is not None:
+                    if number is None:
+                        number = lab_conf_edit.next_interface_number(base, machine_name)
+                    new_conf = lab_conf_edit.add_interface(base, machine_name, number, link_name, mac_address)
+                machine.add_interface(link, number=number, mac_address=mac_address)
+                if new_conf is not None:
+                    self.store.write_lab_conf_text(lab_name, new_conf)
             return machine
 
         if interface_number is not None:
@@ -758,19 +894,14 @@ class KatharaService:
         # For stopped devices, update the topology model only (a "static" lab.conf edit) and persist.
         if machine.api_object is None:
             with self._mutate_lock:
+                # Remove the interface line and renumber the device's higher interfaces: a gap is
+                # an error for both this project's parser and Kathara's own Machine.check, so a
+                # bare line delete would leave a lab.conf that can no longer be loaded or deployed.
+                self._edit_lab_conf(
+                    lab_name, lambda text: lab_conf_edit.remove_interface(text, machine_name, link_name)
+                )
                 machine.remove_interface(link)
-                self._compact_interfaces(machine)
-
-                # Persist from the on-disk config (not the live model) — see connect_machine.
-                def _remove(cfg: Lab) -> None:
-                    cfg_machine = cfg.machines.get(machine_name)
-                    cfg_link = cfg.links.get(link_name)
-                    if cfg_machine is None or cfg_link is None:
-                        return
-                    cfg_machine.remove_interface(cfg_link)
-                    self._compact_interfaces(cfg_machine)
-
-                self._persist_config_lab_conf(lab_name, _remove)
+                self._renumber_interfaces(machine)
             return
 
         # Running device: live disconnect. Compact the None slot Kathara leaves behind so subsequent

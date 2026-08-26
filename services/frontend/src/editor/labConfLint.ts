@@ -2,18 +2,18 @@
 // _apply_conf_option + the sequential-interface check) so the diagnostics shown here match what
 // `PUT /api/labs/{lab}/lab-conf` will accept. Runs instantly, no network.
 //
-// Deliberate divergence: num_terms/entrypoint/args are valid Kathara options that the IDE's narrow
-// backend parser currently flags as "unknown option" *warnings* (non-fatal). We stay silent on them
-// to avoid noisy false positives, since they never block a save.
+// The binding rule for severity: if the backend appends to its `errors` list (rejecting the
+// import/save), this linter must show an error; if the backend only warns (accepts, but the
+// option is preserved-not-applied or not interpreted), this linter shows a warning, never an
+// error — a client-side error the backend would accept blocks a legitimate save.
 
 import { linter, type Diagnostic } from "@codemirror/lint";
 import type { EditorView } from "@codemirror/view";
-import { CONF_LINE_RE, LAB_GLOBAL_SET, RESERVED_MACHINE_NAMES } from "../services/editorLanguage";
+import { CONF_LINE_RE, LAB_GLOBAL_SET, MAPPED_OPTION_SET, RESERVED_MACHINE_NAMES } from "../services/editorLanguage";
 
-// Options the backend maps into the model (validated below).
-const MAPPED = new Set(["image", "mem", "cpus", "cpu", "ipv6", "shell", "privileged", "exec", "port", "sysctl", "env", "ulimit", "bridged"]);
-// Valid in Kathara but not mapped by the IDE parser — kept silent (see header note).
-const SILENT_EXTRA = new Set(["num_terms", "entrypoint", "args"]);
+// A top-level `KEY=value` line that isn't a recognized LAB_* key — mirrors the backend's
+// `TOP_LEVEL_KEY_RE` (lab_import.py): preserved and warned about, not fatal.
+const TOP_LEVEL_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function stripQuotes(value: string): string {
   return value.replace(/["']/g, "");
@@ -92,18 +92,25 @@ function computeDiagnostics(view: EditorView): Diagnostic[] {
           continue;
         }
         (ifaces[name] ??= []).push({ num: Number(arg), from: line.from, to: line.to });
-      } else if (MAPPED.has(arg)) {
+      } else if (arg === "num_terms") {
+        // Backend: a non-integer num_terms is a warning (kept, not applied), never fatal.
+        if (!/^\d+$/.test(value.trim())) push(`invalid num_terms "${value}"`, "warning");
+      } else if (MAPPED_OPTION_SET.has(arg)) {
         const err = optionError(arg, value);
         if (err) push(err);
       } else if (arg === "volume") {
-        push(`${name}[volume] — host volumes can't be sent over REST, ignored`, "warning");
-      } else if (!SILENT_EXTRA.has(arg)) {
-        push(`${name}[${arg}] — unknown option, ignored`, "warning");
+        push(`${name}[volume] — host volumes aren't applied by the API (kept in lab.conf)`, "warning");
+      } else {
+        push(`${name}[${arg}] — not applied by the API (kept in lab.conf)`, "warning");
       }
     } else {
       const eq = text.indexOf("=");
       const key = eq >= 0 ? text.slice(0, eq).trim() : text;
-      if (!(eq > 0 && LAB_GLOBAL_SET.has(key))) {
+      if (eq > 0 && LAB_GLOBAL_SET.has(key)) {
+        // recognized LAB_* metadata — silent
+      } else if (eq > 0 && TOP_LEVEL_KEY_RE.test(key)) {
+        push(`unknown lab.conf key "${key}" — kept as-is, not applied`, "warning");
+      } else {
         push(`cannot parse "${text}"`);
       }
     }

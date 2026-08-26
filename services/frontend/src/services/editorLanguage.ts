@@ -3,7 +3,10 @@
 //
 // The lab.conf rules here MIRROR the backend parser `src/kathara_api/services/lab_import.py`
 // (CONF_LINE_RE, the recognized-option set, RESERVED_NAMES, LAB_META_KEYS). Keep them in sync: if
-// the backend adds/removes a recognized option, update OPTION_KEYWORDS here too.
+// the backend adds/removes a recognized option, update OPTION_KEYWORDS/MAPPED_OPTION_SET here too.
+// If the backend ever relaxes CONF_LINE_RE (e.g. to allow quotes inside a value), this file's
+// CONF_LINE_RE below must change in the same commit — the client linter would otherwise hard-error
+// on lines the backend accepts, blocking legitimate saves.
 
 export type EditorLanguage = "labconf" | "shell" | "plaintext";
 
@@ -17,11 +20,10 @@ export function languageForPath(path: string | null | undefined): EditorLanguage
   return "plaintext";
 }
 
-// lab.conf machine option keywords (the `machine[<option>]=value` form). The first group is what the
-// IDE backend parser maps into the model; num_terms/entrypoint/args are valid in Kathara itself and
-// `volume` parses (though it's dropped over REST) — all treated as valid here so the linter doesn't
-// flag them as "unknown option" false positives.
-export const OPTION_KEYWORDS = [
+// lab.conf machine option keywords (the `machine[<option>]=value` form), split by how the backend
+// treats them. `num_terms` is validated separately by the linter (int-or-warning) so it is listed
+// here but not part of MAPPED_OPTION_SET's generic value-validation path.
+export const MAPPED_OPTIONS = [
   "image",
   "mem",
   "cpus",
@@ -35,13 +37,18 @@ export const OPTION_KEYWORDS = [
   "env",
   "ulimit",
   "bridged",
-  "volume",
-  "num_terms",
   "entrypoint",
   "args",
 ] as const;
 
+// Parsed but never applied to the model (kept in lab.conf, not interpreted) — see
+// lab_import._apply_conf_option's `volume` branch.
+export const PASSTHROUGH_OPTIONS = ["volume"] as const;
+
+export const OPTION_KEYWORDS = [...MAPPED_OPTIONS, "num_terms", ...PASSTHROUGH_OPTIONS] as const;
+
 export const OPTION_KEYWORD_SET = new Set<string>(OPTION_KEYWORDS);
+export const MAPPED_OPTION_SET = new Set<string>(MAPPED_OPTIONS);
 
 // Global lab.conf metadata directives (no brackets), form LAB_KEY="value".
 export const LAB_GLOBALS = [

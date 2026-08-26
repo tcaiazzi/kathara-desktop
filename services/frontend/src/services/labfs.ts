@@ -1,10 +1,15 @@
-// Synthesize a virtual view of a lab's file tree from its LabDetail + queued pending state.
+// Build a view of a lab's file tree from its LabDetail + queued pending state, seeded with the
+// real on-disk lab.conf text.
+//
+// lab.conf comes verbatim from the backend (GET /labs/{lab}/lab-conf) rather than being
+// reconstructed from LabDetail: the backend now persists it byte-for-byte (comments, quoting,
+// options this UI doesn't model), so synthesizing an approximation here would just throw all of
+// that away the moment the user opens — or, worse, saves — the file.
 //
 // Kathara's pending state is already flattened per-machine on the backend (shared/ files are
 // merged into every machine's entry — see services/lab_import.py), so this tree is organized
 // by machine rather than reconstructing a "shared/" node.
 
-import { visibleInterfaces } from "./constants";
 import type { LabDetail, MachineDetail, PendingMachineFiles } from "./types";
 
 // Startup script shown for a machine: the authored pending `.startup` if present, else the
@@ -17,44 +22,12 @@ export function machineStartupText(m: MachineDetail, pending?: PendingMachineFil
       : "";
 }
 
-export function genLabConf(detail: LabDetail): string {
-  const lines: string[] = [];
-  const md = detail.metadata;
-  const meta: [string, string | null][] = [
-    ["LAB_DESCRIPTION", md.description],
-    ["LAB_VERSION", md.version],
-    ["LAB_AUTHOR", md.author],
-    ["LAB_EMAIL", md.email],
-    ["LAB_WEB", md.web],
-  ];
-  let any = false;
-  for (const [k, v] of meta) {
-    if (v) {
-      lines.push(`${k}="${v}"`);
-      any = true;
-    }
-  }
-  if (any) lines.push("");
-
-  for (const m of detail.machines) {
-    if (m.image) lines.push(`${m.name}[image]=${m.image}`);
-    if (m.mem) lines.push(`${m.name}[mem]=${m.mem}`);
-    if (m.cpus != null) lines.push(`${m.name}[cpus]=${m.cpus}`);
-    for (const [k, v] of Object.entries(m.sysctls)) lines.push(`${m.name}[sysctl]=${k}=${v}`);
-    for (const [k, v] of Object.entries(m.envs)) lines.push(`${m.name}[env]=${k}=${v}`);
-    for (const it of visibleInterfaces(m).slice().sort((a, b) => a.num - b.num)) {
-      lines.push(`${m.name}[${it.num}]=${it.link}${it.mac_address ? "/" + it.mac_address : ""}`);
-    }
-    lines.push("");
-  }
-  return lines.join("\n");
-}
-
 export function buildVirtualFs(
   detail: LabDetail,
   pending: Record<string, PendingMachineFiles>,
+  labConf: string,
 ): { files: Record<string, string>; dirs: Set<string> } {
-  const files: Record<string, string> = { "lab.conf": genLabConf(detail) };
+  const files: Record<string, string> = { "lab.conf": labConf };
   const dirs = new Set<string>();
 
   for (const m of detail.machines) {
@@ -112,6 +85,7 @@ export function buildFileTree(files: Record<string, string>, dirs: Iterable<stri
 // from startup scripts, which get a distinct icon from everything else).
 export function fileIcon(name: string): string {
   if (name === "lab.conf" || name === "lab.ext" || name === "lab.dep") return "⚙️";
+  if (name === "lab.layout") return "🗺️";
   if (name.endsWith(".startup") || name.endsWith(".shutdown") || name.endsWith(".sh")) return "📜";
   return "📄";
 }

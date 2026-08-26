@@ -60,6 +60,9 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
         exec_commands=machine.get_exec_commands(),
         interfaces=interfaces,
         bridged=machine.is_bridged(),
+        num_terms=machine.meta.get("num_terms"),
+        entrypoint=machine.meta.get("entrypoint"),
+        args=machine.meta.get("args"),
         running=running,
         status=status,
     )

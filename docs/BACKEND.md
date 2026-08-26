@@ -12,9 +12,22 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   holds the `Kathara.get_instance()` facade behind a mutation lock and a process-local `LabRegistry`
   (`services/registry.py`); state is single-worker by design.
 - **`services/lab_store.py`** (`LabStore`) — on-disk persistence of labs under `KATHARA_API_LABS_DIR`
-  (atomic tmp-swap writes; `gen_lab_conf` is our own `lab.conf` writer since Kathara ships only readers).
+  (atomic tmp-swap writes). An imported/uploaded/hand-edited `lab.conf` is always persisted
+  **verbatim** — byte for byte, comments/quoting/ordering and all — via `write_lab_conf_text`;
+  `gen_lab_conf` (a generator, since Kathara ships only readers) is used for exactly one case: a
+  JSON-created lab (`POST /labs`) that has no source file to preserve.
 - **`services/lab_import.py`** / **`lab_builder.py`** / **`serializers.py`** — parse `lab.conf`/folders,
-  build Kathara model objects, and serialize models back to response schemas.
+  build Kathara model objects, and serialize models back to response schemas. Options this API
+  doesn't interpret (an unknown `machine[key]=value`, an unrecognized top-level `KEY=value` line)
+  are warnings, not errors: they stay in the file untouched but don't block the import. Only
+  `[volume]` is *never* applied to the model (an arbitrary host bind-mount is a real risk over
+  REST), though it too survives verbatim in the file.
+- **`services/lab_conf_edit.py`** — surgical, line-level `lab.conf` text edits (add/remove a device,
+  add/remove an interface, set/unset a meta or `LAB_*` directive). Every offline structural change
+  (`add_machine`, `remove_machine`, `connect_machine`/`disconnect_machine` on a stopped device) goes
+  through this module instead of rebuilding the file from a model, so only the lines an edit
+  actually changes are touched — comments, ordering and unmodelled options elsewhere in the file
+  survive untouched. Every edit re-validates against the parser/builder before it's written.
 - **`errors.py`** — maps Kathara + API exceptions to HTTP status codes (see below); routers stay free of
   try/except.
 - **Fixed topology layout** — a lab may pin its topology-graph node positions in a `lab.layout` file
@@ -22,9 +35,10 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   metadata only: unknown to Kathara and ignored by `lab_import`, so it rides along with the lab
   directory (zip download/upload, restarts) without affecting the topology itself. An absent or
   unparseable file simply means "no fixed layout".
-- **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config);
-  edits on a **running** device use Kathara's runtime manager APIs (live only, never written to
-  `lab.conf`). A full undeploy restores the saved-config topology.
+- **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config,
+  via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
+  interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
+  only, never written to `lab.conf`). A full undeploy restores the saved-config topology.
 
 ### Error mapping (`errors.py`)
 
@@ -64,7 +78,8 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
 | GET | `/api/labs/{lab}/download` | Download the lab directory as `.zip` | — | `application/zip` |
-| PUT | `/api/labs/{lab}/lab-conf` | Apply an edited `lab.conf` (rebuilds topology; 409 if deployed) | `{content}` | `LabDetail` |
+| GET | `/api/labs/{lab}/lab-conf` | The lab's on-disk `lab.conf`, verbatim (`exists: false` if none yet) | — | `LabConfView {content, exists}` |
+| PUT | `/api/labs/{lab}/lab-conf` | Apply an edited `lab.conf`, stored verbatim (rebuilds topology; 409 if deployed) | `{content}` | `LabDetail` |
 | GET | `/api/labs/{lab}/layout` | Fixed topology layout (`lab.layout`); empty `nodes` when the lab has none | — | `LabLayout` |
 | PUT | `/api/labs/{lab}/layout` | Fix the topology layout (writes `lab.layout` into the lab directory) | `LabLayout {version, nodes}` | `LabLayout` |
 | DELETE | `/api/labs/{lab}/layout` | Remove the fixed layout (back to automatic layout) | — | `Message` |

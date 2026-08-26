@@ -81,7 +81,30 @@ def _machine_kwargs(spec: MachineCreate) -> dict:
         kwargs["sysctls"] = [f"{k}={v}" for k, v in spec.sysctls.items()]
     if spec.ulimits:
         kwargs["ulimits"] = [_format_ulimit(u) for u in spec.ulimits]
+    if spec.num_terms is not None:
+        kwargs["num_terms"] = spec.num_terms
+    if spec.entrypoint is not None:
+        kwargs["entrypoint"] = spec.entrypoint
+    if spec.args is not None:
+        kwargs["args"] = spec.args
     return kwargs
+
+
+# Meta keys already handled explicitly (by `_machine_kwargs`/`update_meta` or the volume loop
+# below) or derived by the manager at deploy time. A `MachineCreate.metas` pass-through entry
+# using one of these names is ignored rather than applied — most importantly `volume`, whose
+# special handling in Kathara's own `Machine.add_meta` turns a value into a host bind mount, and
+# `bridged_iface`, which Kathara's `Machine.check` folds into interface-numbering validation.
+# Pass-through metas are assigned straight into `machine.meta` (never through `add_meta`), so this
+# list is what stands between an arbitrary lab.conf/JSON key and re-opening either hole.
+_RESERVED_META_KEYS = frozenset(
+    {
+        "image", "mem", "cpus", "shell", "ipv6", "privileged", "bridged", "bridged_iface",
+        "num_terms", "entrypoint", "args",
+        "exec", "exec_commands", "port", "ports", "env", "envs", "sysctl", "sysctls",
+        "ulimit", "ulimits", "volume", "volumes",
+    }
+)
 
 
 def build_machine(lab: Lab, spec: MachineCreate) -> Machine:
@@ -90,6 +113,11 @@ def build_machine(lab: Lab, spec: MachineCreate) -> Machine:
 
     for volume in spec.volumes:
         machine.add_meta("volume", _format_volume(volume))
+
+    for key, value in spec.metas.items():
+        if key in _RESERVED_META_KEYS:
+            continue
+        machine.meta[key] = value
 
     for iface in spec.interfaces:
         lab.connect_machine_to_link(

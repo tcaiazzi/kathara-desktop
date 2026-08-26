@@ -30,7 +30,7 @@ const parser = StreamLanguage.define<LabConfState>({
     }
 
     // LAB_* global metadata directive (e.g. LAB_DESCRIPTION="...").
-    if (stream.match(/^LAB_[A-Z]+(?=\s*=)/)) return "keyword";
+    if (stream.match(/^[A-Z][A-Z0-9_]*(?=\s*=)/)) return "keyword";
 
     // Machine name preceding a `[` (start of a directive line).
     if (stream.match(/^[a-z0-9_]{1,30}(?=\[)/)) return "variableName";

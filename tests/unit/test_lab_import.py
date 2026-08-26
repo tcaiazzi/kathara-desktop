@@ -87,7 +87,11 @@ def test_translate_lab_files_builds_payload_and_pending():
     assert t.pending["pc2"].startup == ""  # no pc2.startup and no shared.startup
 
 
-def test_translate_lab_files_merges_shared_into_every_machine():
+def test_translate_lab_files_ignores_shared_folder_with_a_warning():
+    # Verbatim import: a `shared/` folder isn't applied to any device (Kathara's own pack_data
+    # doesn't pack it, and the /shared bind mount is disabled under Docker-outside-of-Docker) —
+    # so it must not be merged into machine files, which would rewrite files that aren't part of
+    # any single device's own tree. It stays untouched on disk and is only surfaced as a warning.
     files = {
         **_example_files(),
         "shared/etc/motd": "hello\n",
@@ -96,11 +100,12 @@ def test_translate_lab_files_merges_shared_into_every_machine():
     t = lab_import.translate_lab_files(files, "lab")
 
     for machine_name in ("r1", "r2", "pc1", "pc2"):
-        assert t.pending[machine_name].files == {"/etc/motd": "hello\n"}
-        assert t.pending[machine_name].startup.startswith("echo shared")
+        assert t.pending[machine_name].files == {}
 
-    # r1 also has its own startup, applied after the shared one (CLI order).
-    assert t.pending["r1"].startup == "echo shared\n" + "\n" + R1_STARTUP
+    # r1's own startup is untouched — no shared.startup composed in front of it.
+    assert t.pending["r1"].startup == R1_STARTUP
+
+    assert any("shared/" in w for w in t.warnings)
 
 
 def test_translate_lab_files_merges_machine_specific_files_and_dirs():
@@ -134,3 +139,71 @@ def test_translate_lab_files_reports_errors_when_nothing_found():
 def test_translate_lab_files_surfaces_skipped_binary_warning():
     t = lab_import.translate_lab_files(_example_files(), "lab", skipped=["pc1/bin/tool"])
     assert any("skipped 1 binary" in w for w in t.warnings)
+
+
+def test_parse_lab_conf_maps_num_terms_entrypoint_args():
+    parsed = lab_import.parse_lab_conf(
+        'pc1[num_terms]=2\npc1[entrypoint]="/sbin/custom-init"\npc1[args]="--verbose"\n'
+    )
+    pc1 = parsed.machines["pc1"]
+    assert pc1.num_terms == 2
+    assert pc1.entrypoint == "/sbin/custom-init"
+    assert pc1.args == "--verbose"
+    assert not pc1.unsupported
+
+
+def test_parse_lab_conf_keeps_unknown_option_as_pass_through_meta():
+    parsed = lab_import.parse_lab_conf("pc1[frobnicate]=yes\n")
+    pc1 = parsed.machines["pc1"]
+    assert pc1.metas == {"frobnicate": "yes"}
+    assert any("frobnicate" in w and "not interpreted" in w for w in pc1.unsupported)
+    assert not parsed.errors  # unknown options are never fatal
+
+
+def test_parse_lab_conf_unrecognized_top_level_line_is_a_warning_not_an_error():
+    # A hard error here would make KatharaService._translate_lab_dir drop the whole lab from the
+    # registry on the next restart (see translate_lab_files) — only an unrepresentable topology
+    # should be fatal.
+    parsed = lab_import.parse_lab_conf('LAB_DESCRIPTION="ok"\nLAB_LICENCE="x"\n')
+    assert parsed.errors == []
+    assert any('LAB_LICENCE' in w for w in parsed.warnings)
+    assert parsed.metadata == {"description": "ok"}
+
+
+def test_parse_lab_conf_still_rejects_genuinely_unparseable_lines():
+    parsed = lab_import.parse_lab_conf("this is not a valid line at all\n")
+    assert any("cannot parse" in e for e in parsed.errors)
+
+
+def test_translate_lab_files_keeps_exec_commands_in_the_model():
+    files = {**_example_files(), "lab.conf": LAB_CONF.replace('pc1[0]=A', 'pc1[0]=A\npc1[exec]="echo hi"')}
+    t = lab_import.translate_lab_files(files, "lab")
+
+    pc1 = next(m for m in t.payload.machines if m.name == "pc1")
+    assert pc1.exec_commands == ["echo hi"]
+    # Not folded into the startup script — Kathara's native deploy runs exec_commands on its own.
+    assert "echo hi" not in t.pending["pc1"].startup
+
+
+def test_translate_lab_files_carries_num_terms_entrypoint_args_and_metas():
+    files = {
+        "lab.conf": (
+            'pc1[image]=kathara/base\npc1[0]=A\npc1[num_terms]=2\n'
+            'pc1[entrypoint]=/sbin/init\npc1[args]=--verbose\npc1[frobnicate]=yes\n'
+        )
+    }
+    t = lab_import.translate_lab_files(files, "lab")
+    pc1 = next(m for m in t.payload.machines if m.name == "pc1")
+    assert pc1.num_terms == 2
+    assert pc1.entrypoint == "/sbin/init"
+    assert pc1.args == "--verbose"
+    assert pc1.metas == {"frobnicate": "yes"}
+    assert any("frobnicate" in w for w in t.warnings)
+
+
+def test_translate_lab_files_volume_is_warned_but_not_applied_to_the_model():
+    files = {"lab.conf": 'pc1[image]=kathara/base\npc1[0]=A\npc1[volume]=/host|/mnt|rw\n'}
+    t = lab_import.translate_lab_files(files, "lab")
+    pc1 = next(m for m in t.payload.machines if m.name == "pc1")
+    assert pc1.volumes == []
+    assert any("volume" in w and "aren't applied" in w for w in t.warnings)
