@@ -34,7 +34,7 @@ from Kathara.setting.Setting import Setting
 from pydantic import ValidationError
 
 from ..config import get_settings
-from ..errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError, SettingsLockedError
+from ..errors import ApiError, BinaryFileError, LabAlreadyRegisteredError, LabConfLockedError, SettingsLockedError
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.lab_import import LabImportPreview, PendingMachineFiles
 from ..schemas.machine import MachineCreate
@@ -1021,7 +1021,7 @@ class KatharaService:
         try:
             return raw.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise ApiError("File is not UTF-8 text. Use download for binary files.") from exc
+            raise BinaryFileError("File is not UTF-8 text. Use download for binary files.") from exc
 
     def fs_write_text(self, lab_name: str, machine_name: str, path: str, content: str) -> int:
         _, normalized = self._running_guest_path(lab_name, machine_name, path)

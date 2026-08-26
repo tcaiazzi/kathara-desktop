@@ -65,6 +65,15 @@ class LabConfLockedError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class BinaryFileError(ApiError):
+    """Raised when a runtime filesystem path is read as text but isn't valid UTF-8.
+
+    A distinct class (rather than a generic ApiError) so the frontend can detect this specific
+    case by `error_type` and offer a binary-aware fallback (download/delete, no text preview)
+    instead of just showing the error as a toast.
+    """
+
+
 # Kathara exception -> HTTP status code.
 KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # 404 Not Found

@@ -5,7 +5,7 @@ import pytest
 from Kathara.exceptions import DockerDaemonConnectionError, MachineNotRunningError
 from Kathara.model.Lab import Lab
 
-from kathara_api.errors import ApiError
+from kathara_api.errors import ApiError, BinaryFileError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
@@ -132,6 +132,24 @@ def test_fs_read_bytes_rejects_directory_paths_before_cat():
 
     with pytest.raises(ApiError, match="is a directory"):
         service.fs_read_bytes("lab1", "pc1", "/bin")
+
+
+def test_fs_read_text_raises_binary_file_error_on_non_utf8_content():
+    # A distinct exception (not a generic ApiError) so the frontend can detect this specific case
+    # by error_type and offer a binary-aware fallback (download/delete) instead of a plain toast.
+    service = _service_with_running_machine()
+
+    def _fake_exec(lab_name, machine_name, command, wait=False):
+        if command == ["test", "-d", "/blob.bin"]:
+            return (b"", b"", 1)
+        if command == ["cat", "/blob.bin"]:
+            return (b"\xff\xfe\x00\x01", b"", 0)
+        raise AssertionError(f"Unexpected command: {command}")
+
+    service.exec_command = _fake_exec  # type: ignore[method-assign]
+
+    with pytest.raises(BinaryFileError):
+        service.fs_read_text("lab1", "pc1", "/blob.bin")
 
 
 def test_fs_list_directory_marks_symlink_to_directory_as_directory():

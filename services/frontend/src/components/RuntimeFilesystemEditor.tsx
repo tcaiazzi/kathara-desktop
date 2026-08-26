@@ -6,7 +6,7 @@ import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useConfirmDiscard } from "../hooks/useConfirmDiscard";
 import { useSaveShortcut } from "../hooks/useSaveShortcut";
-import { api } from "../services/api";
+import { api, ApiError } from "../services/api";
 import { languageForPath } from "../services/editorLanguage";
 import { saveBlob } from "../services/download";
 import { baseName, isSubPath, normalizeDir } from "../services/paths";
@@ -41,6 +41,7 @@ export function RuntimeFilesystemEditor({
   const [filterText, setFilterText] = useState("");
   const [editorText, setEditorText] = useState("");
   const [loadedText, setLoadedText] = useState("");
+  const [isBinary, setIsBinary] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const toast = useToast();
@@ -58,6 +59,7 @@ export function RuntimeFilesystemEditor({
       setSelectedPath(null);
       setEditorText("");
       setLoadedText("");
+      setIsBinary(false);
       return;
     }
     if (!machine || !runningMachines.includes(machine)) {
@@ -67,6 +69,7 @@ export function RuntimeFilesystemEditor({
       setSelectedPath(null);
       setEditorText("");
       setLoadedText("");
+      setIsBinary(false);
     }
   }, [machine, runningMachines]);
 
@@ -78,6 +81,7 @@ export function RuntimeFilesystemEditor({
     setSelectedPath(null);
     setEditorText("");
     setLoadedText("");
+    setIsBinary(false);
   }, [preferredMachine, runningMachines]);
 
   const filteredEntries = useMemo(() => {
@@ -105,6 +109,7 @@ export function RuntimeFilesystemEditor({
   function navigate(to: string) {
     setPath(to || "/");
     setSelectedPath(null);
+    setIsBinary(false);
   }
 
   const breadcrumbs = useMemo(() => {
@@ -131,10 +136,24 @@ export function RuntimeFilesystemEditor({
   async function openFile(filePath: string) {
     if (!machine) return;
     await runBusy(setBusy, "Open runtime file", async () => {
-      const resp = await api.fsReadText(labName, machine, filePath);
-      setSelectedPath(resp.path);
-      setEditorText(resp.content);
-      setLoadedText(resp.content);
+      try {
+        const resp = await api.fsReadText(labName, machine, filePath);
+        setSelectedPath(resp.path);
+        setEditorText(resp.content);
+        setLoadedText(resp.content);
+        setIsBinary(false);
+      } catch (e) {
+        if (e instanceof ApiError && e.errorType === "BinaryFileError") {
+          // Not a failure from the user's point of view: select the file so Download/Delete/
+          // Rename work, just without a text preview.
+          setSelectedPath(filePath);
+          setEditorText("");
+          setLoadedText("");
+          setIsBinary(true);
+          return;
+        }
+        throw e;
+      }
     });
   }
 
@@ -143,7 +162,7 @@ export function RuntimeFilesystemEditor({
   }
 
   async function saveFile() {
-    if (!machine || !selectedPath) return;
+    if (!machine || !selectedPath || isBinary) return;
     await runBusy(setBusy, "Save runtime file", async () => {
       await api.fsWriteText(labName, machine, selectedPath, editorText);
       setLoadedText(editorText);
@@ -259,6 +278,7 @@ export function RuntimeFilesystemEditor({
       setSelectedPath(null);
       setEditorText("");
       setLoadedText("");
+      setIsBinary(false);
       toast.show(`Deleted ${selectedPath}.`, "success");
       await loadDirectory();
     });
@@ -280,10 +300,12 @@ export function RuntimeFilesystemEditor({
   async function uploadPath(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !machine) return;
+    const suggested = path === "/" ? `/${file.name}` : `${path}/${file.name}`;
     const destination = await prompt({
       title: "Upload to runtime path",
       message: `Destination absolute path for ${file.name}`,
-      placeholder: path === "/" ? `/${file.name}` : `${path}/${file.name}`,
+      defaultValue: suggested,
+      placeholder: suggested,
       okLabel: "Upload",
     });
     e.target.value = "";
@@ -298,9 +320,9 @@ export function RuntimeFilesystemEditor({
   useSaveShortcut(
     rootRef,
     () => {
-      if (!busy && selectedPath) void saveFile();
+      if (!busy && selectedPath && !isBinary) void saveFile();
     },
-    [busy, selectedPath, editorText, loadedText, machine, labName],
+    [busy, selectedPath, editorText, loadedText, isBinary, machine, labName],
   );
 
   return (
@@ -324,6 +346,7 @@ export function RuntimeFilesystemEditor({
                 setPath("/");
                 setSelectedPath(null);
                 setEditorText("");
+                setIsBinary(false);
               }}
             >
               {runningMachines.map((m) => (
@@ -486,14 +509,20 @@ export function RuntimeFilesystemEditor({
       </div>
 
       <EditorPane
-        pathLabel={selectedPath || "Select a runtime file from the left"}
-        language={languageForPath(selectedPath)}
+        pathLabel={isBinary ? `${selectedPath} (binary)` : selectedPath || "Select a runtime file from the left"}
+        language={isBinary ? "plaintext" : languageForPath(selectedPath)}
         value={editorText}
         onChange={setEditorText}
-        disabled={!selectedPath}
-        placeholder={selectedPath ? undefined : "Select a runtime file from the tree on the left…"}
+        disabled={!selectedPath || isBinary}
+        placeholder={
+          isBinary
+            ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
+            : selectedPath
+              ? undefined
+              : "Select a runtime file from the tree on the left…"
+        }
         onSave={saveFile}
-        saveDisabled={!selectedPath || busy}
+        saveDisabled={!selectedPath || busy || isBinary}
       />
     </div>
   );
