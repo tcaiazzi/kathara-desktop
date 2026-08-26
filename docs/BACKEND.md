@@ -86,6 +86,7 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/labs/{lab}/pending-files` | Queued files/dirs/startup per machine | — | `{machine: PendingMachineFiles}` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
+| POST | `/api/labs/{lab}/rename` | Rename the lab directory (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` |
 | DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk) | — | `Message` |
 
 ## Machines — `/api/labs/{lab}/machines`

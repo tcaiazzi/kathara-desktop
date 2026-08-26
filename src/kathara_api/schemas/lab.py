@@ -42,6 +42,12 @@ class LabCreate(BaseModel):
     links: list[LinkCreate] = Field(default_factory=list)
 
 
+class LabRename(BaseModel):
+    """New name for an existing lab (validated as a safe directory name by the service)."""
+
+    name: str
+
+
 class LabConfUpdate(BaseModel):
     """Raw ``lab.conf`` text to apply to an existing, non-deployed lab."""
 

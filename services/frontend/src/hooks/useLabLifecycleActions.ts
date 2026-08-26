@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useConfirm } from "../context/ConfirmContext";
+import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
 import { api } from "../services/api";
 import { useBusyAction } from "./useBusyAction";
@@ -9,6 +10,7 @@ import { useBusyAction } from "./useBusyAction";
 export function useLabLifecycleActions() {
   const toast = useToast();
   const confirm = useConfirm();
+  const prompt = usePrompt();
   const runBusy = useBusyAction();
 
   const deployToggle = useCallback(
@@ -48,6 +50,28 @@ export function useLabLifecycleActions() {
     [confirm, runBusy, toast],
   );
 
+  // Renames the lab's on-disk directory. The backend refuses (409) while the lab is deployed —
+  // surfaced as an error toast by runBusy, no special-casing needed here. `onDone` receives the
+  // new name so callers can follow the lab (e.g. navigate to its new route).
+  const renameLab = useCallback(
+    async (name: string, setBusy: (busy: boolean) => void, onDone: (newName: string) => Promise<void>) => {
+      const newName = await prompt({
+        title: `Rename ${name}`,
+        message: "New lab name (letters, digits, dot, dash or underscore).",
+        defaultValue: name,
+        placeholder: name,
+        okLabel: "Rename",
+      });
+      if (!newName || newName === name) return;
+      await runBusy(setBusy, "Rename", async () => {
+        await api.renameLab(name, newName);
+        toast.show(`Lab "${name}" renamed to "${newName}".`, "success");
+        await onDone(newName);
+      });
+    },
+    [prompt, runBusy, toast],
+  );
+
   // `kathara wipe` — force-undeploys every running network scenario, not just `name`'s.
   const wipeAll = useCallback(
     async (setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
@@ -66,5 +90,5 @@ export function useLabLifecycleActions() {
     [confirm, runBusy, toast],
   );
 
-  return { deployToggle, deleteLab, wipeAll };
+  return { deployToggle, deleteLab, renameLab, wipeAll };
 }

@@ -34,7 +34,14 @@ from Kathara.setting.Setting import Setting
 from pydantic import ValidationError
 
 from ..config import get_settings
-from ..errors import ApiError, BinaryFileError, LabAlreadyRegisteredError, LabConfLockedError, SettingsLockedError
+from ..errors import (
+    ApiError,
+    BinaryFileError,
+    LabAlreadyRegisteredError,
+    LabConfLockedError,
+    LabRenameLockedError,
+    SettingsLockedError,
+)
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.lab_import import LabImportPreview, PendingMachineFiles
 from ..schemas.machine import MachineCreate
@@ -746,6 +753,42 @@ class KatharaService:
         full_undeploy = selected_machines is None and excluded_machines is None and selected_links is None
         if full_undeploy:
             self._reload_lab_from_disk(name)
+
+    def rename_lab(self, name: str, new_name: str) -> Lab:
+        """Rename a **non-deployed** lab (its directory, and its key in the registry).
+
+        A lab's name is its directory name and the identity Kathara derives container/network names
+        from, so this is rejected with 409 while the lab is deployed — undeploy first. Nothing
+        inside the lab is rewritten: ``lab.conf`` is not regenerated (the name never appears in it —
+        a ``LAB_NAME`` key is dropped at import time), and device files/startup scripts/``lab.layout``
+        travel with the directory.
+
+        The model is rebuilt from the moved directory (``_reload_lab_from_disk``) rather than
+        mutating ``lab.name`` in place, so the ``Lab`` — and every machine's ``fs`` — is re-anchored
+        on the new path, and the pending-files state is re-read under the new key.
+        """
+        clean = lab_store.sanitize_lab_name(name)
+        clean_new = lab_store.sanitize_lab_name(new_name)
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(clean)  # raises LabNotFoundError if unknown
+            if clean_new == clean:
+                return lab
+            if any(m.api_object is not None for m in lab.machines.values()):
+                raise LabRenameLockedError(
+                    f"Cannot rename `{clean}` while it is deployed. Undeploy it first."
+                )
+            if self.registry.get(clean_new) is not None or self.store.lab_dir(clean_new).exists():
+                raise LabAlreadyRegisteredError(f"Lab `{clean_new}` already exists.")
+
+            self.store.rename_lab(clean, clean_new)
+            try:
+                if not self._reload_lab_from_disk(clean_new):
+                    raise ApiError(f"Lab `{clean}` could not be reloaded after renaming.")
+            except Exception:
+                self.store.rename_lab(clean_new, clean)  # roll the directory back
+                raise
+            self.registry.remove(clean)
+            return self.registry.get(clean_new)
 
     def delete_lab(self, name: str) -> None:
         with self._mutate_lock:

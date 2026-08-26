@@ -130,6 +130,10 @@ export const api = {
   undeployDevice: (name: string, machine: string) =>
     request<Message>("POST", `/labs/${encodeURIComponent(name)}/undeploy`, { selected_machines: [machine] }),
   deleteLab: (name: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(name)}`),
+  // Rename a lab (its on-disk directory). 409 while the lab is deployed — its name is what
+  // Kathara derives container/network names from — or if `newName` is already taken.
+  renameLab: (name: string, newName: string) =>
+    request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/rename`, { name: newName }),
   // Download a lab as a .zip of its on-disk directory. Binary response, so it uses the same
   // error-checked raw fetch as fsDownload rather than the JSON `request` wrapper.
   downloadLab: async (name: string) => {

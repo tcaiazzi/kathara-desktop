@@ -23,7 +23,7 @@ from typing import Any, BinaryIO, Optional, Union
 from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
-from ..errors import ApiError
+from ..errors import ApiError, LabAlreadyRegisteredError
 
 logger = logging.getLogger("kathara_api")
 
@@ -357,6 +357,27 @@ class LabStore:
         directory = self.lab_dir(name)
         if directory.exists():
             shutil.rmtree(directory)
+
+    def rename_lab(self, old_name: str, new_name: str) -> Path:
+        """Rename a lab directory in place — the lab's name *is* its directory name.
+
+        Everything the lab owns travels with the directory (``lab.conf`` verbatim, device folders,
+        startup scripts, ``lab.layout``), so nothing is rewritten. Both names are sanitized, so the
+        rename can never escape the storage root, and ``os.rename`` within it is atomic. Refuses to
+        clobber an existing lab; renaming to the same name is a no-op.
+        """
+        old_clean = sanitize_lab_name(old_name)
+        new_clean = sanitize_lab_name(new_name)
+        source = self.lab_dir(old_clean)
+        if not source.is_dir():
+            raise LabNotFoundError(f"Lab `{old_clean}` not found.")
+        if new_clean == old_clean:
+            return source
+        target = self.lab_dir(new_clean)
+        if target.exists():
+            raise LabAlreadyRegisteredError(f"Lab `{new_clean}` already exists.")
+        os.rename(source, target)
+        return target
 
     def extract_zip(self, name: str, data: BinaryIO) -> Path:
         """Extract an uploaded .zip into ``<root>/<name>/``, binary-safe and zip-slip-safe.

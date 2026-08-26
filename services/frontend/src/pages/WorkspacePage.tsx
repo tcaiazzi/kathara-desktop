@@ -180,11 +180,12 @@ const RAIL_MIN_W = 180;
 const RAIL_MAX_W = 560;
 const RAIL_DEFAULT_W = 264;
 
-// "Maximize topology" collapses the other groups to (about) their header height rather than hiding
-// them; clicking a collapsed group's header restores it to a usable height.
+// A "Focus …" preset collapses the other groups to (about) their header height/width rather than
+// hiding them; clicking a collapsed group's header restores it to a usable height.
 const COLLAPSED_GROUP_HEIGHT = 35;
 const COLLAPSED_GROUP_WIDTH = 44;
 const RESTORE_GROUP_HEIGHT = 280;
+const RESTORE_PANEL_WIDTH = 340;
 // A group at/under this height is considered collapsed (header strip only).
 const COLLAPSE_THRESHOLD = 60;
 
@@ -215,14 +216,18 @@ function showNodeInfo(api: DockviewApi) {
   });
 }
 
-// Maximize a group **in place**: the group fills, every other group collapses to a header strip
-// where it already sits (no moving/swapping). Groups stacked above/below the target collapse their
-// height; groups side-by-side collapse their width. Resize-only, so terminal sessions survive; each
-// collapsed group reopens via its own header chevron (or Layout → Reset).
-function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
-  const target = group.element.getBoundingClientRect();
+// Collapse every group NOT in `keep` to a header strip, in place (no moving/swapping panels).
+// Groups stacked above/below the union of the kept groups collapse their height; groups
+// side-by-side collapse their width. Resize-only, so terminal sessions survive; each collapsed
+// group reopens via its own header chevron (or Layout → Balanced).
+function collapseOthers(api: DockviewApi, keep: Set<DockviewGroupPanel>) {
+  const rects = [...keep].map((g) => g.element.getBoundingClientRect());
+  const target = {
+    top: Math.min(...rects.map((r) => r.top)),
+    bottom: Math.max(...rects.map((r) => r.bottom)),
+  };
   for (const g of api.groups) {
-    if (g === group) continue;
+    if (keep.has(g)) continue;
     const r = g.element.getBoundingClientRect();
     const sameRow = r.top < target.bottom - 4 && r.bottom > target.top + 4; // vertical overlap → side-by-side
     if (sameRow) {
@@ -235,17 +240,14 @@ function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
   }
 }
 
+// Maximize a single group in place — used by the per-panel header's "Maximize panel" button.
+function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
+  collapseOthers(api, new Set([group]));
+}
+
 // --- Preset layouts (reposition existing panels via moveTo — no unmount, so terminal sessions
 // survive). All are no-ops when there's nothing to arrange. ---
 const terminalPanelsOf = (api: DockviewApi) => api.panels.filter((p) => p.id.startsWith("terminal:"));
-
-// All open terminals as tabs in a single group.
-function stackTerminals(api: DockviewApi) {
-  const terms = terminalPanelsOf(api);
-  if (terms.length < 2) return;
-  const target = terms[0].api.group;
-  for (const p of terms.slice(1)) p.api.moveTo({ group: target });
-}
 
 // All open terminals tiled into a roughly-square grid (tmux-like).
 function tileTerminals(api: DockviewApi) {
@@ -267,8 +269,8 @@ function tileTerminals(api: DockviewApi) {
   }
 }
 
-// Best-effort default arrangement without unmounting anything: topology on top, the tool panels
-// stacked below, and all terminals grouped to the right of the topology.
+// Balanced (the default): topology on top, the tool panels stacked below, and all terminals
+// grouped to the right of the topology. Without unmounting anything.
 function resetLayout(api: DockviewApi) {
   const topo = api.getPanel("topology");
   const devices = api.getPanel("devices");
@@ -280,18 +282,56 @@ function resetLayout(api: DockviewApi) {
   const terms = terminalPanelsOf(api);
   if (terms.length) {
     // Extract the first terminal into a fresh group right of topology (this pulls it out even if it
-    // was merged with the tools group, e.g. after "Maximize topology"), then gather the rest into it.
+    // was merged with another group, e.g. after "Focus terminals"), then gather the rest into it.
     terms[0].api.moveTo({ group: topo.api.group, position: "right" as const });
     const tg = terms[0].api.group;
     for (const p of terms.slice(1)) p.api.moveTo({ group: tg });
   }
-  // Undo any collapse/maximize pinning: give the tools group a normal height (topology fills the
-  // rest) and clear the tiny min-height so nothing stays stuck as a header strip.
-  const toolsGroupApi = api.getPanel("devices")?.api.group.api;
-  toolsGroupApi?.setConstraints({ minimumHeight: 100 });
-  toolsGroupApi?.setSize({ height: RESTORE_GROUP_HEIGHT });
   // Reset shouldn't leave the inspector hidden — bring it back if it was closed.
   if (!api.getPanel("node-info")) showNodeInfo(api);
+  // Undo any collapse pinning left by a "Focus …" preset, on every group (not just tools) — any of
+  // them can end up shrunk depending on which preset ran last.
+  for (const g of api.groups) {
+    g.api.setConstraints({ minimumHeight: 100, minimumWidth: 100 });
+  }
+  const toolsGroupApi = api.getPanel("devices")?.api.group.api;
+  toolsGroupApi?.setSize({ height: RESTORE_GROUP_HEIGHT });
+  const nodeInfoGroupApi = api.getPanel("node-info")?.api.group.api;
+  nodeInfoGroupApi?.setSize({ width: RESTORE_PANEL_WIDTH });
+}
+
+// Topology + its node-info inspector take almost the whole screen; the tool panels collapse to a
+// strip below.
+function focusTopology(api: DockviewApi) {
+  showNodeInfo(api); // ensure the inspector exists before deciding what to keep
+  const topo = api.getPanel("topology");
+  if (!topo) return;
+  const keep = new Set([topo.api.group]);
+  const nodeInfo = api.getPanel("node-info");
+  if (nodeInfo) keep.add(nodeInfo.api.group);
+  collapseOthers(api, keep);
+  topo.api.setActive();
+}
+
+// The Files panel takes most of the screen (writing lab.conf/startup scripts); topology, its
+// inspector, and any open terminals collapse out of the way.
+function focusEditing(api: DockviewApi) {
+  const files = api.getPanel("files");
+  if (!files) return;
+  files.api.setActive();
+  collapseOthers(api, new Set([files.api.group]));
+}
+
+// All open terminals tiled into a grid taking most of the screen; everything else collapses.
+// No-op if none are open (open one via "+ Terminal" first).
+function focusTerminals(api: DockviewApi) {
+  const terms = terminalPanelsOf(api);
+  if (!terms.length) return;
+  tileTerminals(api); // arrange them among themselves first
+  // Re-fetch: tiling just moved them into new groups.
+  const groups = new Set(terminalPanelsOf(api).map((p) => p.api.group));
+  collapseOthers(api, groups);
+  terms[0].api.setActive();
 }
 
 // Experimental integrated "IDE" view: left rail (labs + devices) + a dockview panel area (topology,
@@ -301,7 +341,7 @@ export function WorkspacePage() {
   const navigate = useNavigate();
   const toast = useToast();
   const ktTheme = useKtTheme();
-  const { deployToggle, deleteLab, wipeAll } = useLabLifecycleActions();
+  const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
   const [labFilter, setLabFilter] = useState("");
@@ -499,10 +539,21 @@ export function WorkspacePage() {
     });
   }
 
-  async function handleDelete() {
-    await deleteLab(name, setBusy, async () => {
+  // `labName` defaults to the open lab (the header button); the rail's context menu passes the
+  // right-clicked lab, which may be a different one — in that case the open lab stays put.
+  async function handleDelete(labName: string = name) {
+    await deleteLab(labName, setBusy, async () => {
       await reloadLabs();
-      navigate("/workspace");
+      if (localStorage.getItem(LS_LAST_LAB) === labName) localStorage.removeItem(LS_LAST_LAB);
+      if (labName === name) navigate("/workspace");
+    });
+  }
+
+  async function handleRename(labName: string) {
+    await renameLab(labName, setBusy, async (newName) => {
+      await reloadLabs();
+      // Follow the lab only if it's the one currently open (the route holds its old name).
+      if (labName === name) navigate(`/workspace/${encodeURIComponent(newName)}`, { replace: true });
     });
   }
 
@@ -515,12 +566,34 @@ export function WorkspacePage() {
     });
   }
 
-  async function handleDownload() {
+  async function handleDownload(labName: string = name) {
     try {
-      saveBlob(await api.downloadLab(name), `${name}.zip`);
+      saveBlob(await api.downloadLab(labName), `${labName}.zip`);
     } catch (e) {
       toast.reportError("Download lab", e);
     }
+  }
+
+  // Right-click actions for a lab row in the rail. Acts on the clicked lab, which need not be the
+  // one currently open.
+  function openLabMenu(e: React.MouseEvent, lab: LabSummary) {
+    if (!lab.name) return;
+    const labName = lab.name;
+    e.preventDefault();
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: "Rename…",
+          disabled: busy || lab.deployed,
+          title: lab.deployed ? "Undeploy the lab to rename it" : undefined,
+          action: () => void handleRename(labName),
+        },
+        { label: "Download .zip", disabled: busy, action: () => void handleDownload(labName) },
+        { label: "Remove", danger: true, disabled: busy, action: () => void handleDelete(labName) },
+      ],
+    });
   }
 
   // Same menu as a right-click on this device in the topology canvas (useDeviceActions).
@@ -554,23 +627,17 @@ export function WorkspacePage() {
 
   const runningMachines = deviceMachines.filter((m) => m.running);
 
-  function applyPreset(preset: "reset" | "tile" | "stack" | "maximize" | "node-info") {
+  function applyPreset(preset: "balanced" | "topology" | "editing" | "terminals") {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
-    if (preset === "reset") {
+    if (preset === "balanced") {
       resetLayout(dockApi);
-    } else if (preset === "tile") {
-      tileTerminals(dockApi);
-    } else if (preset === "stack") {
-      stackTerminals(dockApi);
-    } else if (preset === "node-info") {
-      showNodeInfo(dockApi);
-    } else if (preset === "maximize") {
-      const topo = dockApi.getPanel("topology");
-      if (topo) {
-        maximizeGroup(dockApi, topo.api.group);
-        topo.api.setActive();
-      }
+    } else if (preset === "topology") {
+      focusTopology(dockApi);
+    } else if (preset === "editing") {
+      focusEditing(dockApi);
+    } else if (preset === "terminals") {
+      focusTerminals(dockApi);
     }
   }
 
@@ -627,7 +694,8 @@ export function WorkspacePage() {
                     key={l.name ?? l.hash}
                     className={`kt-ws-row ${l.name === name ? "active" : ""}`}
                     onClick={() => l.name && navigate(`/workspace/${encodeURIComponent(l.name)}`)}
-                    title={l.name ?? ""}
+                    onContextMenu={(e) => openLabMenu(e, l)}
+                    title={l.name ? `${l.name} — click to open · right-click for actions` : ""}
                   >
                     <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
                     <span className="kt-ws-row-name">{l.name || "(unnamed)"}</span>
@@ -720,7 +788,20 @@ export function WorkspacePage() {
         <header className="kt-ws-header">
           {detail ? (
             <>
-              <h5 className="mb-0 me-1">{detail.name || "(unnamed)"}</h5>
+              <h5
+                className="mb-0 me-1"
+                style={{ cursor: "pointer" }}
+                title={detail.deployed ? "Undeploy the lab to rename it" : "Click to rename"}
+                onClick={() => {
+                  if (detail.deployed) {
+                    toast.show("Undeploy the lab to rename it.", "info");
+                    return;
+                  }
+                  void handleRename(name);
+                }}
+              >
+                {detail.name || "(unnamed)"}
+              </h5>
               <Badge bg={detail.deployed ? "success" : "secondary"}>{detail.deployed ? "deployed" : "defined"}</Badge>
               <div className="ms-auto d-flex gap-2">
                 <DropdownButton
@@ -736,19 +817,18 @@ export function WorkspacePage() {
                   ))}
                 </DropdownButton>
                 <DropdownButton size="sm" variant="outline-secondary" title="Layout">
-                  <Dropdown.Item onClick={() => applyPreset("node-info")}>Show node info</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("reset")}>Reset layout</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("tile")}>Tile terminals</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("stack")}>Stack terminals</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("maximize")}>Maximize topology</Dropdown.Item>
+                  <Dropdown.Item onClick={() => applyPreset("balanced")}>Balanced</Dropdown.Item>
+                  <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
+                  <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
+                  <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
                 </DropdownButton>
                 <Button size="sm" variant={detail.deployed ? "outline-warning" : "primary"} disabled={busy} onClick={handleDeployToggle}>
                   {detail.deployed ? "Undeploy" : "Deploy"}
                 </Button>
-                <Button size="sm" variant="outline-secondary" onClick={handleDownload}>
+                <Button size="sm" variant="outline-secondary" onClick={() => void handleDownload()}>
                   Download
                 </Button>
-                <Button size="sm" variant="outline-danger" disabled={busy} onClick={handleDelete}>
+                <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
                   Delete
                 </Button>
               </div>

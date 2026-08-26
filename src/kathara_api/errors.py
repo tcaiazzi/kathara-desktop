@@ -65,6 +65,16 @@ class LabConfLockedError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class LabRenameLockedError(ApiError):
+    """Raised when renaming a lab while it is deployed.
+
+    A lab's name is its directory name *and* the identity Kathara derives container/network names
+    from, so renaming a running lab would orphan everything already deployed under the old name.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
 class BinaryFileError(ApiError):
     """Raised when a runtime filesystem path is read as text but isn't valid UTF-8.
 

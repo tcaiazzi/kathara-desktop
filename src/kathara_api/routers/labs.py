@@ -14,6 +14,7 @@ from ..schemas.lab import (
     LabCreate,
     LabDetail,
     LabLayout,
+    LabRename,
     LabSummary,
     UndeployOptions,
 )
@@ -191,6 +192,13 @@ def undeploy_lab(
         selected_links=_to_set(resolved.selected_links),
     )
     return Message(detail=f"Lab `{lab_name}` undeployed.")
+
+
+@router.post("/{lab_name}/rename", response_model=LabDetail)
+def rename_lab(lab_name: str, payload: LabRename, service: KatharaService = Depends(get_service)) -> LabDetail:
+    """Rename a non-deployed network scenario (409 while deployed, or if the name is taken)."""
+    lab = service.rename_lab(lab_name, payload.name)
+    return serializers.lab_to_detail(lab)
 
 
 @router.delete("/{lab_name}", response_model=Message)
