@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { api } from "../services/api";
-import type { SystemInfo } from "../services/types";
 
 type Health = "checking" | "ok" | "down";
 type ThemeMode = "light" | "dark";
@@ -20,7 +19,6 @@ function getInitialTheme(): ThemeMode {
 
 export function AppNavbar() {
   const [health, setHealth] = useState<Health>("checking");
-  const [system, setSystem] = useState<SystemInfo | null>(null);
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
 
   useEffect(() => {
@@ -37,7 +35,6 @@ export function AppNavbar() {
         await api.health();
         if (cancelled) return;
         setHealth("ok");
-        setSystem(await api.systemInfo());
       } catch {
         if (!cancelled) setHealth("down");
       }
@@ -74,11 +71,6 @@ export function AppNavbar() {
           <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
             {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
           </Badge>
-          {system && (
-            <span className={`small ${dark ? "text-white-50" : "text-body-secondary"}`}>
-              manager: {system.manager} · version: {system.version}
-            </span>
-          )}
         </Navbar.Text>
       </Container>
     </Navbar>

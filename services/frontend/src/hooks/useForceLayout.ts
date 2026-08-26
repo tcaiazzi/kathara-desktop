@@ -95,6 +95,7 @@ function tooltipHtml(nd: TopoNode): string {
       for (const it of nd.ifaces) {
         const ips = it.ips.length ? it.ips.join(", ") : "—";
         rows.push(`<div class="tt-if"><span class="tt-mono">eth${it.num} → ${esc(it.link)}</span><span class="tt-mono tt-ip">${esc(ips)}</span></div>`);
+        if (it.mac) rows.push(`<div class="tt-mac tt-mono">${esc(it.mac)}</div>`);
       }
     }
     if (nd.ports.length) {

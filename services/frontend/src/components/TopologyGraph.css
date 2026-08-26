@@ -422,6 +422,12 @@
 .kt-topo-tooltip .tt-ip {
   color: var(--bs-secondary-color);
 }
+.kt-topo-tooltip .tt-mac {
+  color: var(--bs-secondary-color);
+  font-size: 10px;
+  margin-top: -2px;
+  text-align: right;
+}
 
 /* Toolbar search + zoom controls. */
 .kt-topo-search {
