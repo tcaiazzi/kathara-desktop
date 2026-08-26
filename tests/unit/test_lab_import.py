@@ -156,7 +156,7 @@ def test_parse_lab_conf_keeps_unknown_option_as_pass_through_meta():
     parsed = lab_import.parse_lab_conf("pc1[frobnicate]=yes\n")
     pc1 = parsed.machines["pc1"]
     assert pc1.metas == {"frobnicate": "yes"}
-    assert any("frobnicate" in w and "not interpreted" in w for w in pc1.unsupported)
+    assert any("frobnicate" in w and "not recognized" in w for w in pc1.unsupported)
     assert not parsed.errors  # unknown options are never fatal
 
 

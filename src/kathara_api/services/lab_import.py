@@ -162,10 +162,7 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
         )
     else:
         machine.metas[opt] = value
-        machine.unsupported.append(
-            f"{machine.name}[{opt}] (line {line_no}) — option not interpreted by the API "
-            f"(kept in lab.conf, passed to the device unchanged)"
-        )
+        machine.unsupported.append(f'meta "{opt}" not recognized')
 
 
 def strip_quotes(value: str) -> str:

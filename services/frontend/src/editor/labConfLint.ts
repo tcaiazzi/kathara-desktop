@@ -101,7 +101,7 @@ function computeDiagnostics(view: EditorView): Diagnostic[] {
       } else if (arg === "volume") {
         push(`${name}[volume] — host volumes aren't applied by the API (kept in lab.conf)`, "warning");
       } else {
-        push(`${name}[${arg}] — not applied by the API (kept in lab.conf)`, "warning");
+        push(`meta "${arg}" not recognized`, "warning");
       }
     } else {
       const eq = text.indexOf("=");
