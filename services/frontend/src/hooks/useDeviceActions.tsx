@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { api } from "../services/api";
-import { HOST_BRIDGE } from "../services/constants";
+import { visibleLinks } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
 import { computeTopology, type DeviceNode, type DomainNode, type TopoModel } from "../services/topology";
 import type { LabDetail, PendingMachineFiles } from "../services/types";
@@ -76,9 +76,9 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
     return detail?.machines.map((m) => m.name) ?? [];
   }
   function domainNames(): string[] {
-    return (detail?.links ?? [])
+    return visibleLinks(detail?.links ?? [])
       .map((l) => l.name)
-      .filter((n) => n && n !== HOST_BRIDGE)
+      .filter(Boolean)
       .sort((a, b) => a.localeCompare(b));
   }
 
@@ -358,3 +358,5 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
     withRefresh,
   };
 }
+
+export type UseDeviceActions = ReturnType<typeof useDeviceActions>;

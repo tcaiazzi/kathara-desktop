@@ -1,29 +1,46 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button, Form } from "react-bootstrap";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
-import { useDeviceActions } from "../hooks/useDeviceActions";
+import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { useForceLayout, type NodePositions } from "../hooks/useForceLayout";
 import { api } from "../services/api";
 import { machineStartupText } from "../services/labfs";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
+import { deviceStateLabel, formatIface, formatPort } from "../services/topology";
 import type { LabDetail } from "../services/types";
 import "./TopologyGraph.css";
-import { TopologyActionModal } from "./TopologyActionModal";
-import { TopologyContextMenu, type ContextMenuState } from "./TopologyContextMenu";
+import type { ContextMenuState } from "./TopologyContextMenu";
 
-interface TopologyGraphProps {
+// Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
+// context-menu item lists live in useDeviceActions — a single instance owned by the workspace page
+// (shared with the sidebar's device list, so a right-click means the same thing in both places, and
+// there's one `pending`-files fetch / one action modal instead of two hand-synced copies).
+type DeviceActionsProps = Pick<
+  UseDeviceActions,
+  | "model"
+  | "pending"
+  | "deviceContextItems"
+  | "domainContextItems"
+  | "openAddDevice"
+  | "openAddDomain"
+  | "openAddInterface"
+  | "openConnectExisting"
+  | "openDisconnect"
+  | "openRuntimeFs"
+  | "openTerminalPopup"
+  | "openWorkspaceTerminal"
+  | "machineNames"
+>;
+
+interface TopologyGraphProps extends DeviceActionsProps {
   labName: string;
   detail: LabDetail;
-  onRefresh: () => Promise<void>;
   onEditFiles: () => void;
-  // Opens a terminal for `machine` as a panel in the workspace dock (as opposed to
-  // openTerminalWindow's separate browser popup — see "Open terminal" vs "Open terminal popup").
-  onOpenTerminal: (machine: string) => void;
-  // Opens the Runtime Filesystem dock panel, preselecting `machine` (no in-topology popup).
-  onOpenRuntimeFs: (machine: string) => void;
+  // Shows/dismisses the shared context menu (rendered once by the workspace page).
+  setContextMenu: (menu: ContextMenuState | null) => void;
   // Optional controlled selection (node id `dev:<name>` / `cd:<name>`). When provided, an external
   // list (e.g. the Workspace rail) can drive/read the selected node. Omit for internal selection —
   // the classic tabbed page passes neither and behaves exactly as before.
@@ -33,6 +50,16 @@ interface TopologyGraphProps {
   // be dragged/closed like any dock panel); when null (panel closed) the inspector is hidden and the
   // canvas takes the full width.
   nodeInfoHost?: HTMLElement | null;
+}
+
+// Two-column key/value row used throughout the Node-Info panel below.
+function Kv({ k, v }: { k: string; v: ReactNode }) {
+  return (
+    <div className="kv">
+      <span className="k">{k}</span>
+      <span className="v">{v}</span>
+    </div>
+  );
 }
 
 // Do two position maps describe the same layout? Coordinates are compared as integers (that is what
@@ -50,18 +77,25 @@ function samePositions(a: NodePositions, b: NodePositions | null): boolean {
 // charting library. The simulation/render loop manipulates SVG DOM attributes directly every
 // animation frame rather than going through React state: dozens of position updates per second
 // per node is not a good fit for React re-renders. React only owns the low-frequency parts: the
-// side panel, the context menu, and the action modal.
-//
-// Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
-// context-menu item lists live in useDeviceActions — shared with the workspace sidebar's device
-// list, so a right-click means the same thing in both places.
+// side panel and (via the setContextMenu/deviceContextItems props) the context menu.
 export function TopologyGraph({
   labName,
   detail,
-  onRefresh,
   onEditFiles,
-  onOpenTerminal,
-  onOpenRuntimeFs,
+  model,
+  pending,
+  deviceContextItems,
+  domainContextItems,
+  openAddDevice,
+  openAddDomain,
+  openAddInterface,
+  openConnectExisting,
+  openDisconnect,
+  openRuntimeFs,
+  openTerminalPopup,
+  openWorkspaceTerminal,
+  machineNames,
+  setContextMenu,
   selectedId: controlledSelectedId,
   onSelectId,
   nodeInfoHost,
@@ -69,30 +103,11 @@ export function TopologyGraph({
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelectedId;
   const setSelectedId = onSelectId ?? setInternalSelectedId;
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [showIps, setShowIps] = useState(() => localStorage.getItem("kt-topo-ips") !== "false");
   const [search, setSearch] = useState("");
   const [relayoutNonce, setRelayoutNonce] = useState(0);
   const toast = useToast();
   const confirm = useConfirm();
-
-  const {
-    model,
-    pending,
-    actionConfig,
-    setActionConfig,
-    deviceContextItems,
-    domainContextItems,
-    openAddDevice,
-    openAddDomain,
-    openAddInterface,
-    openConnectExisting,
-    openDisconnect,
-    openRuntimeFs,
-    openTerminalPopup,
-    openWorkspaceTerminal,
-    machineNames,
-  } = useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOpenTerminal, onOpenRuntimeFs });
 
   // Distinct device categories present (for a legend that only lists what's on screen) + whether any
   // device is bridged.
@@ -230,7 +245,7 @@ export function TopologyGraph({
         else openAddDevice(nd.name);
       },
     },
-    { initialPositions, onPositionsChange: savePositions },
+    { initialPositions, onPositionsChange: savePositions, selectedId },
   );
 
   useEffect(() => {
@@ -433,30 +448,16 @@ export function TopologyGraph({
           ) : selectedNode.type === "dev" ? (
             <>
               <h4>{selectedNode.name}</h4>
-              <div className="kv">
-                <span className="k">type</span>
-                <span className="v">{selectedNode.typeLabel}</span>
-              </div>
-              <div className="kv">
-                <span className="k">image</span>
-                <span className="v">{selectedNode.image || "—"}</span>
-              </div>
+              <Kv k="type" v={selectedNode.typeLabel} />
+              <Kv k="image" v={selectedNode.image || "—"} />
               <div className="kv">
                 <span className="k">state</span>
                 <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
-                  {selectedNode.running ? selectedNode.status || "running" : "stopped"}
+                  {deviceStateLabel(selectedNode)}
                 </span>
               </div>
-              <div className="kv">
-                <span className="k">ifaces</span>
-                <span className="v">{selectedNode.ifaces.length}</span>
-              </div>
-              {selectedMachine?.bridged && (
-                <div className="kv">
-                  <span className="k">bridged</span>
-                  <span className="v">yes (host bridge)</span>
-                </div>
-              )}
+              <Kv k="ifaces" v={selectedNode.ifaces.length} />
+              {selectedMachine?.bridged && <Kv k="bridged" v="yes (host bridge)" />}
               <div className="d-flex gap-2 mt-2 flex-wrap">
                 {selectedNode.running && (
                   <Button size="sm" variant="dark" onClick={() => openWorkspaceTerminal(selectedNode)}>
@@ -485,33 +486,20 @@ export function TopologyGraph({
               </div>
               {selectedNode.ifaces.map((it) => (
                 <div className="iface" key={it.num}>
-                  <div style={{ fontWeight: 600, fontFamily: "monospace" }}>
-                    eth{it.num} → {it.link}
-                  </div>
-                  {it.ips.length > 0 && (
-                    <div className="kv">
-                      <span className="k">ip</span>
-                      <span className="v">{it.ips.join(", ")}</span>
-                    </div>
-                  )}
-                  {it.mac && (
-                    <div className="kv">
-                      <span className="k">mac</span>
-                      <span className="v">{it.mac}</span>
-                    </div>
-                  )}
+                  <div style={{ fontWeight: 600, fontFamily: "monospace" }}>{formatIface(it.num, it.link)}</div>
+                  {it.ips.length > 0 && <Kv k="ip" v={it.ips.join(", ")} />}
+                  {it.mac && <Kv k="mac" v={it.mac} />}
                 </div>
               ))}
               {selectedMachine?.ports && selectedMachine.ports.length > 0 && (
                 <div className="iface">
                   <div style={{ fontWeight: 600 }}>ports</div>
                   {selectedMachine.ports.map((p) => (
-                    <div className="kv" key={`${p.host_port}/${p.protocol}`}>
-                      <span className="k">
-                        {p.host_port}→{p.guest_port}/{p.protocol}
-                      </span>
-                      <span className="v">
-                        {selectedNode.running && p.protocol === "tcp" ? (
+                    <Kv
+                      key={`${p.host_port}/${p.protocol}`}
+                      k={formatPort(p)}
+                      v={
+                        selectedNode.running && p.protocol === "tcp" ? (
                           <a
                             href={`http://${window.location.hostname}:${p.host_port}`}
                             target="_blank"
@@ -521,9 +509,9 @@ export function TopologyGraph({
                           </a>
                         ) : (
                           <span className="hint">{selectedNode.running ? "—" : "deploy to open"}</span>
-                        )}
-                      </span>
-                    </div>
+                        )
+                      }
+                    />
                   ))}
                 </div>
               )}
@@ -539,22 +527,14 @@ export function TopologyGraph({
           ) : (
             <>
               <h4>{selectedNode.name}</h4>
-              <div className="kv">
-                <span className="k">type</span>
-                <span className="v">{selectedNode.external.length ? "external" : "internal"}</span>
-              </div>
+              <Kv k="type" v={selectedNode.external.length ? "external" : "internal"} />
               <div className="kv">
                 <span className="k">state</span>
                 <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
                   {selectedNode.running ? "up" : "down"}
                 </span>
               </div>
-              {selectedNode.external.length > 0 && (
-                <div className="kv">
-                  <span className="k">external</span>
-                  <span className="v">{selectedNode.external.join(", ")}</span>
-                </div>
-              )}
+              {selectedNode.external.length > 0 && <Kv k="external" v={selectedNode.external.join(", ")} />}
               {machineNames().length > 0 && (
                 <div className="mt-2">
                   <Button size="sm" variant="outline-secondary" onClick={() => openConnectExisting(selectedNode)}>
@@ -571,8 +551,6 @@ export function TopologyGraph({
           </div>,
           nodeInfoHost,
         )}
-      <TopologyContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
-      <TopologyActionModal config={actionConfig} onClose={() => setActionConfig(null)} />
     </div>
   );
 }

@@ -64,6 +64,18 @@ export interface TopoModel {
   edges: TopoEdge[];
 }
 
+export function formatIface(num: number, link: string): string {
+  return `eth${num} → ${link}`;
+}
+
+export function formatPort(p: PortMapping): string {
+  return `${p.host_port}→${p.guest_port}/${p.protocol}`;
+}
+
+export function deviceStateLabel(node: { running: boolean; status: string | null }): string {
+  return node.running ? node.status || "running" : "stopped";
+}
+
 // Best-effort: pull "ip address add <cidr> dev ethN" out of a device's config text. Kathara's
 // startup log echoes each command (`echo "++ <command>"`), so a line can match twice — the dedupe
 // below keeps each IP once per interface.
@@ -97,6 +109,10 @@ export function computeTopology(
     if (lk.name === HOST_BRIDGE) continue;
     cds.set(lk.name, { name: lk.name, external: lk.external, running: lk.running, machines: new Set(lk.machines) });
   }
+  // Domains listed in detail.links trust the backend's running flag as-is; domains only inferred
+  // below (from a device interface, with no entry in detail.links) don't have one yet — that path
+  // OR's it in as running devices are found, instead of freezing it to whichever device is seen first.
+  const explicitDomains = new Set(cds.keys());
 
   const nodes: TopoNode[] = [];
   const edges: TopoEdge[] = [];
@@ -124,7 +140,9 @@ export function computeTopology(
       const ifIps = ips[it.num] || [];
       node.ifaces.push({ num: it.num, link: it.link, mac: it.mac_address, ips: ifIps });
       if (!cds.has(it.link)) cds.set(it.link, { name: it.link, external: [], running: node.running, machines: new Set() });
-      cds.get(it.link)!.machines.add(m.name);
+      const cd = cds.get(it.link)!;
+      cd.machines.add(m.name);
+      if (!explicitDomains.has(it.link) && node.running) cd.running = true;
       edges.push({ source: node.id, target: `cd:${it.link}`, label: `eth${it.num}`, mac: it.mac_address, ips: ifIps });
     }
     nodes.push(node);

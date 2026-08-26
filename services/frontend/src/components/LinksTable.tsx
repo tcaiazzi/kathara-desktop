@@ -1,5 +1,5 @@
 import { Badge, Table } from "react-bootstrap";
-import { HOST_BRIDGE } from "../services/constants";
+import { visibleLinks } from "../services/constants";
 import type { LinkDetail } from "../services/types";
 import { Panel } from "./Panel";
 
@@ -10,7 +10,7 @@ interface LinksTableProps {
 // Read-only collision-domain table. Add/remove/connect actions live with the topology graph,
 // not here.
 export function LinksTable({ links }: LinksTableProps) {
-  const visible = links.filter((l) => l.name !== HOST_BRIDGE);
+  const visible = visibleLinks(links);
 
   return (
     <Panel title={`Collision domains (${visible.length})`}>

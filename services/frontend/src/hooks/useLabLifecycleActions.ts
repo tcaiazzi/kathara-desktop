@@ -48,5 +48,23 @@ export function useLabLifecycleActions() {
     [confirm, runBusy, toast],
   );
 
-  return { deployToggle, deleteLab };
+  // `kathara wipe` — force-undeploys every running network scenario, not just `name`'s.
+  const wipeAll = useCallback(
+    async (setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
+      const ok = await confirm({
+        title: "Wipe all labs?",
+        message: "This force-undeploys every running network scenario, not just the one open here.",
+        okLabel: "Wipe all",
+      });
+      if (!ok) return;
+      await runBusy(setBusy, "Wipe all", async () => {
+        await api.wipeAll();
+        toast.show("All labs wiped.", "success");
+        await onDone();
+      });
+    },
+    [confirm, runBusy, toast],
+  );
+
+  return { deployToggle, deleteLab, wipeAll };
 }

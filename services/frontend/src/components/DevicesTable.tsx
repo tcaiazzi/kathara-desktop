@@ -1,6 +1,7 @@
 import { Badge, Button, Table } from "react-bootstrap";
 import { visibleInterfaces } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
+import { deviceStateLabel, formatIface } from "../services/topology";
 import type { MachineDetail } from "../services/types";
 import { Panel } from "./Panel";
 
@@ -30,16 +31,14 @@ export function DevicesTable({ labName, machines }: DevicesTableProps) {
           <tbody>
             {machines.map((m) => {
               const ifaces = visibleInterfaces(m)
-                .map((i) => `eth${i.num}→${i.link}`)
+                .map((i) => formatIface(i.num, i.link))
                 .join(", ");
               return (
                 <tr key={m.name}>
                   <td className="font-monospace">{m.name}</td>
                   <td className="font-monospace text-muted">{m.image || "—"}</td>
                   <td>
-                    <Badge bg={m.running ? "success" : "secondary"}>
-                      {m.running ? m.status || "running" : "stopped"}
-                    </Badge>
+                    <Badge bg={m.running ? "success" : "secondary"}>{deviceStateLabel(m)}</Badge>
                   </td>
                   <td className="font-monospace text-muted">{ifaces || "—"}</td>
                   <td className="text-end">

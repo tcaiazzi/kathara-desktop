@@ -1,4 +1,6 @@
 import { createContext, useContext } from "react";
+import type { UseDeviceActions } from "../hooks/useDeviceActions";
+import type { ContextMenuState } from "../components/TopologyContextMenu";
 import type { LabDetail } from "../services/types";
 
 // Shared live state for the Workspace's dockview panels. dockview-react renders panels within the
@@ -21,6 +23,26 @@ export interface WorkspaceCtx {
    *  portals its inspector into it, so node info lives in a draggable/closable dock panel. */
   nodeInfoHost: HTMLElement | null;
   setNodeInfoHost: (el: HTMLElement | null) => void;
+  /** The single useDeviceActions instance for this workspace, shared by the topology canvas and
+   *  the device rail/table — see useDeviceActions.tsx for why there must be only one. */
+  deviceActions: Pick<
+    UseDeviceActions,
+    | "model"
+    | "pending"
+    | "deviceContextItems"
+    | "domainContextItems"
+    | "openAddDevice"
+    | "openAddDomain"
+    | "openAddInterface"
+    | "openConnectExisting"
+    | "openDisconnect"
+    | "openRuntimeFs"
+    | "openTerminalPopup"
+    | "openWorkspaceTerminal"
+    | "machineNames"
+  >;
+  /** Shows/dismisses the shared context menu (rendered once, at the workspace-page level). */
+  setContextMenu: (menu: ContextMenuState | null) => void;
 }
 
 const Ctx = createContext<WorkspaceCtx | null>(null);

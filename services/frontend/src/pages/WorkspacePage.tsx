@@ -30,7 +30,7 @@ import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useKtTheme } from "../hooks/useKtTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError } from "../services/api";
-import { HOST_BRIDGE } from "../services/constants";
+import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import type { LabDetail, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
@@ -43,10 +43,9 @@ function TopologyPanel() {
       <TopologyGraph
         labName={ws.labName}
         detail={ws.detail}
-        onRefresh={ws.onRefresh}
         onEditFiles={ws.openFilesPanel}
-        onOpenTerminal={ws.openTerminal}
-        onOpenRuntimeFs={ws.openRuntimeFsPanel}
+        {...ws.deviceActions}
+        setContextMenu={ws.setContextMenu}
         selectedId={ws.selectedId}
         onSelectId={ws.setSelectedId}
         nodeInfoHost={ws.nodeInfoHost}
@@ -302,7 +301,7 @@ export function WorkspacePage() {
   const navigate = useNavigate();
   const toast = useToast();
   const ktTheme = useKtTheme();
-  const { deployToggle, deleteLab } = useLabLifecycleActions();
+  const { deployToggle, deleteLab, wipeAll } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
   const [labFilter, setLabFilter] = useState("");
@@ -437,9 +436,10 @@ export function WorkspacePage() {
     });
   }, []);
 
-  // Same device actions + context-menu item list as the topology canvas (see useDeviceActions) —
-  // right-clicking a device in the rail means exactly the same thing as right-clicking it there.
-  const { deviceContextItems, findDeviceNode, actionConfig, setActionConfig } = useDeviceActions({
+  // Single useDeviceActions instance for the whole workspace — shared by the topology canvas (via
+  // WorkspaceContext) and the device rail below, so right-clicking a device in either place means
+  // exactly the same thing and there's one `pending`-files fetch / one action modal, not two.
+  const deviceActions = useDeviceActions({
     labName: name,
     detail,
     onRefresh: load,
@@ -447,6 +447,7 @@ export function WorkspacePage() {
     onOpenTerminal: openTerminal,
     onOpenRuntimeFs: openRuntimeFsPanel,
   });
+  const { deviceContextItems, findDeviceNode, actionConfig, setActionConfig } = deviceActions;
 
   // Close terminal panels whose device no longer exists in the lab (matches the old grid behavior).
   useEffect(() => {
@@ -505,6 +506,15 @@ export function WorkspacePage() {
     });
   }
 
+  // Undeploys every running lab (not just this one) — the labs themselves (lab.conf etc.) stay on
+  // disk, so refresh the list + the currently open lab's deployed state rather than navigating away.
+  async function handleWipeAll() {
+    await wipeAll(setBusy, async () => {
+      await reloadLabs();
+      await load();
+    });
+  }
+
   async function handleDownload() {
     try {
       saveBlob(await api.downloadLab(name), `${name}.zip`);
@@ -522,7 +532,7 @@ export function WorkspacePage() {
   }
 
   const deviceMachines = detail?.machines ?? [];
-  const visibleLinks = detail?.links.filter((lk) => lk.name !== HOST_BRIDGE) ?? [];
+  const nonHostLinks = visibleLinks(detail?.links ?? []);
 
   const ctxValue = detail
     ? {
@@ -537,6 +547,8 @@ export function WorkspacePage() {
         runtimeFsPreferredMachine,
         nodeInfoHost,
         setNodeInfoHost,
+        deviceActions,
+        setContextMenu: setCtxMenu,
       }
     : null;
 
@@ -586,6 +598,16 @@ export function WorkspacePage() {
                 Upload
               </Button>
             </div>
+            <Button
+              size="sm"
+              variant="outline-danger"
+              className="w-100 mb-2"
+              disabled={busy}
+              onClick={handleWipeAll}
+              title="kathara wipe — force-undeploys every running lab, not just this one"
+            >
+              Wipe all labs
+            </Button>
             <Form.Control
               size="sm"
               type="search"
@@ -652,13 +674,13 @@ export function WorkspacePage() {
                   ))
                 )}
               </div>
-              {visibleLinks.length > 0 && (
+              {nonHostLinks.length > 0 && (
                 <>
                   <div className="kt-ws-rail-head mt-2">
                     <span>Collision domains</span>
                   </div>
                   <div className="kt-ws-list">
-                    {visibleLinks.map((lk) => (
+                    {nonHostLinks.map((lk) => (
                       <button
                         key={lk.name}
                         className={`kt-ws-row ${selectedId === `cd:${lk.name}` ? "active" : ""}`}

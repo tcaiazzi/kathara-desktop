@@ -91,6 +91,9 @@ export const api = {
   systemInfo: () => request<SystemInfo>("GET", "/system"),
   getSettings: () => request<SettingsView>("GET", "/settings"),
   updateSettings: (payload: SettingsUpdate) => request<SettingsView>("PUT", "/settings", payload),
+  // Force-undeploys every one of the current user's running network scenarios (`kathara wipe`),
+  // not just the currently open lab.
+  wipeAll: () => request<Message>("POST", "/system/wipe", {}),
 
   listLabs: () => request<LabSummary[]>("GET", "/labs"),
   getLab: (name: string) => request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`),

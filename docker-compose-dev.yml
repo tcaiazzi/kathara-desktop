@@ -12,6 +12,13 @@ services:
     build:
       context: .
       dockerfile: services/backend/Dockerfile.dev
+    # Kathara derives each device's container name from the host's hostname (see
+    # Kathara.utils.get_current_user_name) to tell "my own" previously-deployed devices apart from
+    # other users'. Without a pinned hostname, Docker assigns this container a fresh random one on
+    # every recreate, so a backend restart makes Kathara "forget" every device it deployed before
+    # that restart — they keep running (still holding their ports) but are no longer recognized as
+    # already deployed, so the next deploy tries to create a duplicate and collides on static ports.
+    hostname: kathara-ide-backend
     volumes:
       - ./src:/app/src
       - /var/run/docker.sock:/var/run/docker.sock

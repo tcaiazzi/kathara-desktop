@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { CATEGORY_ICON } from "../services/deviceIcon";
-import type { TopoEdge, TopoModel, TopoNode } from "../services/topology";
+import { deviceStateLabel, formatIface, formatPort, type TopoEdge, type TopoModel, type TopoNode } from "../services/topology";
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -61,6 +61,9 @@ export interface UseForceLayoutOptions {
   initialPositions?: NodePositions;
   // Called (settle + drag-end) with the current node positions, for the caller to persist.
   onPositionsChange?: (positions: NodePositions) => void;
+  // Currently-selected node id (if any), so a rebuild can restore it instead of unconditionally
+  // clearing the selection when the selected node still exists in the new model.
+  selectedId?: string | null;
 }
 
 export interface UseForceLayout {
@@ -88,18 +91,18 @@ function tooltipHtml(nd: TopoNode): string {
     const rows: string[] = [
       `<div class="tt-title">${esc(nd.name)}<span class="tt-tag">${esc(nd.typeLabel)}${nd.bridged ? " · bridged" : ""}</span></div>`,
       ttRow("image", nd.image || "—"),
-      ttRow("state", nd.running ? nd.status || "running" : "stopped"),
+      ttRow("state", deviceStateLabel(nd)),
     ];
     if (nd.ifaces.length) {
       rows.push('<div class="tt-sec">interfaces</div>');
       for (const it of nd.ifaces) {
         const ips = it.ips.length ? it.ips.join(", ") : "—";
-        rows.push(`<div class="tt-if"><span class="tt-mono">eth${it.num} → ${esc(it.link)}</span><span class="tt-mono tt-ip">${esc(ips)}</span></div>`);
+        rows.push(`<div class="tt-if"><span class="tt-mono">${formatIface(it.num, esc(it.link))}</span><span class="tt-mono tt-ip">${esc(ips)}</span></div>`);
         if (it.mac) rows.push(`<div class="tt-mac tt-mono">${esc(it.mac)}</div>`);
       }
     }
     if (nd.ports.length) {
-      const ports = nd.ports.map((p) => `${p.host_port}→${p.guest_port}/${p.protocol}`).join(", ");
+      const ports = nd.ports.map(formatPort).join(", ");
       rows.push('<div class="tt-sec">ports</div>');
       rows.push(`<div class="tt-mono">${esc(ports)}</div>`);
     }
@@ -165,7 +168,6 @@ export function useForceLayout(
     const canvas = canvasRef.current;
     if (!canvas || !model.nodes.length) return;
     canvas.replaceChildren();
-    callbacksRef.current.onSelect(null);
     callbacksRef.current.onDismissContextMenu();
 
     const W = Math.max(canvas.clientWidth || 800, 320);
@@ -556,6 +558,11 @@ export function useForceLayout(
       nodesG.append(g);
       engine.nodeEls[nd.id] = g;
     }
+
+    // Restore the caller's selection if the previously-selected node survived the rebuild, instead
+    // of leaving it cleared (see the dropped onSelect(null) above).
+    const keepSelected = optionsRef.current.selectedId;
+    selectNode(keepSelected != null && byId[keepSelected] ? keepSelected : null);
 
     svgNode.addEventListener("pointerdown", onBgPointerDown as EventListener);
     svgNode.addEventListener(

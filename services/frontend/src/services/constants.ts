@@ -7,3 +7,8 @@ export const HOST_BRIDGE = "kathara_host_bridge";
 export function visibleInterfaces(machine: MachineDetail): InterfaceModel[] {
   return machine.interfaces.filter((i) => i.link !== HOST_BRIDGE);
 }
+
+// Hides Kathara's own internal collision domain from any list of links the user might see.
+export function visibleLinks<T extends { name: string }>(links: T[]): T[] {
+  return links.filter((l) => l.name !== HOST_BRIDGE);
+}
