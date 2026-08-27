@@ -54,6 +54,6 @@ def check_image(
 
 @router.post("/system/wipe", response_model=Message)
 def wipe(service: KatharaService = Depends(get_service)) -> Message:
-    """Undeploy all of the current user's running network scenarios."""
+    """Undeploy every lab kathara-ide has deployed (scenarios started by other tools are left alone)."""
     service.wipe()
     return Message(detail="All network scenarios wiped.")

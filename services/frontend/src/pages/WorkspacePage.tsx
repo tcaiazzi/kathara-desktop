@@ -667,7 +667,7 @@ export function WorkspacePage() {
               className="w-100 mb-2"
               disabled={busy}
               onClick={handleWipeAll}
-              title="kathara wipe — force-undeploys every running lab, not just this one"
+              title="Force-undeploys every lab running in kathara-ide, not just this one"
             >
               Wipe all labs
             </Button>

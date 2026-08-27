@@ -72,12 +72,13 @@ export function useLabLifecycleActions() {
     [prompt, runBusy, toast],
   );
 
-  // `kathara wipe` — force-undeploys every running network scenario, not just `name`'s.
+  // Force-undeploys every lab kathara-ide has deployed, not just `name`'s — but unlike the
+  // Kathara CLI's own `kathara wipe`, it leaves scenarios started by other tools alone.
   const wipeAll = useCallback(
     async (setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
       const ok = await confirm({
         title: "Wipe all labs?",
-        message: "This force-undeploys every running network scenario, not just the one open here.",
+        message: "This force-undeploys every lab running in kathara-ide, not just the one open here.",
         okLabel: "Wipe all",
       });
       if (!ok) return;

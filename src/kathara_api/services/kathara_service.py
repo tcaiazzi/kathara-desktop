@@ -118,15 +118,19 @@ class KatharaService:
         self._facade().check_image(image)
 
     def wipe(self) -> None:
+        """Undeploy every lab kathara-ide itself has registered and deployed.
+
+        Unlike the Kathara CLI's own ``wipe(all_users=False)``, which force-undeploys *every*
+        running scenario for the OS user regardless of who deployed it, this only touches labs
+        this backend is managing — it must not reach out and kill scenarios some other tool (the
+        CLI, another Kathara frontend) started. Routed through ``undeploy_lab`` per registered lab
+        so the usual post-undeploy bookkeeping (cleared api_object, topology reloaded from disk)
+        happens exactly as it would for a single manual undeploy.
+        """
         with self._mutate_lock:
-            self._facade().wipe(all_users=False)
-            # Unlike undeploy_lab/delete_lab, wipe() doesn't operate on any specific registered
-            # Lab, so nothing else clears their cached api_object — without this, every registered
-            # lab would keep reporting its pre-wipe deployed/running state forever (see
-            # _clear_undeployed_state's docstring: update_lab_from_api only ever *sets* api_object
-            # for what's still running, it never clears one that went down).
             for lab in self.registry.all():
-                self._clear_undeployed_state(lab, set(lab.machines.keys()))
+                if any(m.api_object is not None for m in lab.machines.values()):
+                    self.undeploy_lab(lab.name)
 
     # -- lab lifecycle --------------------------------------------------------
 
