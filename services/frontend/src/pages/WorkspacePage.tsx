@@ -300,16 +300,12 @@ function resetLayout(api: DockviewApi) {
   nodeInfoGroupApi?.setSize({ width: RESTORE_PANEL_WIDTH });
 }
 
-// Topology + its node-info inspector take almost the whole screen; the tool panels collapse to a
-// strip below.
+// Topology takes almost the whole screen; the tool panels and the node-info inspector collapse to
+// a strip.
 function focusTopology(api: DockviewApi) {
-  showNodeInfo(api); // ensure the inspector exists before deciding what to keep
   const topo = api.getPanel("topology");
   if (!topo) return;
-  const keep = new Set([topo.api.group]);
-  const nodeInfo = api.getPanel("node-info");
-  if (nodeInfo) keep.add(nodeInfo.api.group);
-  collapseOthers(api, keep);
+  collapseOthers(api, new Set([topo.api.group]));
   topo.api.setActive();
 }
 
