@@ -104,6 +104,16 @@ def test_remove_device_absent_is_noop():
     assert lce.remove_device(GNARLY, "nosuch") == GNARLY
 
 
+def test_remove_device_at_start_of_file_does_not_leave_a_leading_blank_line():
+    # Removing the *first* device followed by a blank separator must collapse that blank the same
+    # way removing the *last* device already does — the removed run starting at index 0 has no
+    # "before" line to compare against, which is the asymmetry this test guards against.
+    text = 'pc1[image]="kathara/base"\npc1[0]="A"\n\npc2[image]="kathara/base"\npc2[0]="A"\n'
+    result = lce.remove_device(text, "pc1")
+    assert result == 'pc2[image]="kathara/base"\npc2[0]="A"\n'
+    lce.validate(result)
+
+
 # -- add_interface --------------------------------------------------------------
 
 
@@ -255,6 +265,18 @@ def test_replace_device_options_clears_options_not_resubmitted():
     text = 'pc1[image]="kathara/base"\npc1[mem]="128m"\npc1[env]="A=1"\npc1[custom]=old\npc1[0]="X"\n'
     result = lce.replace_device_options(text, "pc1", MachineUpdate())
     assert result == 'pc1[image]="kathara/base"\npc1[0]="X"\n'
+
+
+def test_set_meta_group_clearing_a_group_collapses_blank_lines_like_unset_meta():
+    # A hand-edited file with a single group-shaped option (port) surrounded by blank separators —
+    # emptying it must collapse the resulting double blank line the same way unset_meta already does
+    # for scalar keys, not leave two blank lines behind.
+    text = 'pc1[image]="x"\n\npc1[port]="80:80/tcp"\n\npc2[image]="y"\n'
+    doc = lce.LabConfDoc(text)
+    doc.set_meta_group("pc1", "port", [])
+    result = doc.render()
+    assert result == 'pc1[image]="x"\n\npc2[image]="y"\n'
+    assert "\n\n\n" not in result
 
 
 def test_replace_device_options_is_idempotent():

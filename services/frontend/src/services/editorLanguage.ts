@@ -47,7 +47,6 @@ export const PASSTHROUGH_OPTIONS = ["volume"] as const;
 
 export const OPTION_KEYWORDS = [...MAPPED_OPTIONS, "num_terms", ...PASSTHROUGH_OPTIONS] as const;
 
-export const OPTION_KEYWORD_SET = new Set<string>(OPTION_KEYWORDS);
 export const MAPPED_OPTION_SET = new Set<string>(MAPPED_OPTIONS);
 
 // Global lab.conf metadata directives (no brackets), form LAB_KEY="value".

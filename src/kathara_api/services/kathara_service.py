@@ -151,15 +151,18 @@ class KatharaService:
         target = Path(path or "/").expanduser()
         if not target.is_absolute():
             raise ApiError(f"Path `{path}` must be absolute.")
-        if not target.exists():
-            raise PathNotFoundError(f"Path `{path}` not found.")
-        if not target.is_dir():
-            raise ApiError(f"`{path}` is a file, not a directory.")
-        entries: list[FsEntry] = []
+        # `exists()`/`is_dir()` only swallow ENOENT-class failures themselves — a permission error on
+        # the path itself (or an unreadable ancestor directory) propagates as a raw PermissionError,
+        # so the existence/directory checks need the same guard `iterdir()` already has below.
         try:
+            if not target.exists():
+                raise PathNotFoundError(f"Path `{path}` not found.")
+            if not target.is_dir():
+                raise ApiError(f"`{path}` is a file, not a directory.")
             children = list(target.iterdir())
         except PermissionError as exc:
             raise ApiError(f"Permission denied listing `{path}`.") from exc
+        entries: list[FsEntry] = []
         for child in children:
             try:
                 st = child.stat()
@@ -179,8 +182,10 @@ class KatharaService:
 
     def list_net_sysctls(self) -> list[str]:
         """Every ``net.*`` sysctl key available on this host's current kernel — walks
-        ``/proc/sys/net``, where each readable file corresponds 1:1 to a ``net.a.b.c`` sysctl
-        name (path separators become dots). Reflects the real kernel/loaded modules on this
+        ``/proc/sys/net``, where each file corresponds 1:1 to a ``net.a.b.c`` sysctl name (path
+        separators become dots); a subtree this process can't list is silently skipped by
+        ``os.walk``, but an individual unreadable *file* is still listed here as available since
+        this only inspects names, never contents. Reflects the real kernel/loaded modules on this
         machine rather than a static, potentially stale list — Kathara's own sysctl validation
         only ever accepts the ``net.*`` namespace anyway (see ``Machine.add_meta``'s regex), so
         this is also exactly the set of keys that would actually be accepted.
@@ -1120,9 +1125,15 @@ class KatharaService:
         # Adding a device is a *configuration* edit, so it's appended to lab.conf (unlike runtime
         # interface changes, which stay live-only). It is deployed live only when the lab is already
         # running — mirroring interface edits (config on a stopped lab, runtime on a live one).
-        lab = self.get_lab_or_reconstruct(lab_name)
-        lab_deployed = any(m.api_object is not None for m in lab.machines.values())
+        #
+        # `lab`/`lab_deployed` are (re)read *inside* the lock, not before it — matching
+        # update_machine/update_lab_conf/rename_lab. Reading them outside the lock would let a
+        # concurrent deploy_lab/undeploy_lab run first: a stale `lab_deployed=False` would skip
+        # deploying a device on a lab that's actually now running, and a stale `lab` object could be
+        # an orphan the registry no longer tracks (undeploy_lab replaces it via _reload_lab_from_disk).
         with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            lab_deployed = any(m.api_object is not None for m in lab.machines.values())
             # Render + validate the lab.conf block *before* creating or deploying anything, so a
             # spec that can't be represented (name clash, interface-number gap) fails with no side
             # effects instead of leaving a device behind or an unloadable file on disk.
@@ -1316,8 +1327,12 @@ class KatharaService:
     def fs_list_directory(self, lab_name: str, machine_name: str, path: str) -> list[dict[str, Any]]:
         _, normalized = self._running_guest_path(lab_name, machine_name, path)
         quoted = shlex.quote(normalized)
+        # `-H` dereferences `path` itself when it's a symlink (e.g. Debian/Ubuntu's merged-usr
+        # `/bin -> usr/bin`) without following symlinks encountered among the listed children —
+        # plain `find` (`-P`) treats a symlinked `path` as a leaf at depth 0, so with `-mindepth 1`
+        # excluding that depth-0 node, listing a symlinked directory silently returns zero entries.
         cmd = (
-            f"find {quoted} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%Y\\t%s\\t%m\\t%T@\\n' "
+            f"find -H {quoted} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%Y\\t%s\\t%m\\t%T@\\n' "
             "| LC_ALL=C sort"
         )
         stdout, _ = self._exec_checked(

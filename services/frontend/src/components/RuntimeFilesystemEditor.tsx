@@ -146,10 +146,18 @@ export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = nu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machine, runningMachines]);
 
+  // Tracks the last `preferredMachine` value actually applied, so this effect only fires again
+  // when the *value* changes (a fresh "Show runtime filesystem" click) — not on every re-render
+  // where `runningMachines` merely gets a new array identity (it's recomputed from `detail.machines`
+  // on every lab refresh, even when the running-machine set is unchanged). Without this guard, a
+  // manual device switch via the dropdown below (which never updates `preferredMachine`) would get
+  // silently overridden — and its unsaved edits discarded — by the next unrelated lab refresh.
+  const appliedPreferredRef = useRef<string | null>(null);
   useEffect(() => {
     if (!preferredMachine) return;
+    if (appliedPreferredRef.current === preferredMachine) return;
     if (!runningMachines.includes(preferredMachine)) return;
-    if (preferredMachine === machine) return;
+    appliedPreferredRef.current = preferredMachine;
     setMachine(preferredMachine);
     resetTreeState();
     // eslint-disable-next-line react-hooks/exhaustive-deps

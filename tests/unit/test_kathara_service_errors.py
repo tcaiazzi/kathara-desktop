@@ -175,6 +175,26 @@ def test_fs_list_directory_marks_symlink_to_directory_as_directory():
     assert by_name["hosts"]["is_dir"] is False
 
 
+def test_fs_list_directory_dereferences_a_symlinked_query_path():
+    # Debian/Ubuntu-based images (kathara/base included) use a merged-usr layout where /bin, /lib,
+    # /sbin are themselves symlinks to /usr/{bin,lib,sbin}. Plain `find` (`-P`) never descends into
+    # a symlinked *starting* path — with `-mindepth 1` excluding that depth-0 node, listing one of
+    # these would silently return zero entries unless the command dereferences it via `-H`.
+    service = _service_with_running_machine()
+
+    def _fake_exec(lab_name, machine_name, command, wait=False):
+        if command[0:2] == ["sh", "-lc"]:
+            assert "find -H " in command[2]
+            payload = "ls\td\td\t4096\t755\t1700000000\n"
+            return (payload.encode("utf-8"), b"", 0)
+        raise AssertionError(f"Unexpected command: {command}")
+
+    service.exec_command = _fake_exec  # type: ignore[method-assign]
+
+    entries = service.fs_list_directory("lab1", "pc1", "/bin")
+    assert [entry["name"] for entry in entries] == ["ls"]
+
+
 def test_fs_list_directory_handles_none_stdout_from_exec():
     service = _service_with_running_machine()
 

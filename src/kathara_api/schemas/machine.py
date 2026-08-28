@@ -71,7 +71,7 @@ class MachineOptionsBase(BaseModel):
     args: Optional[str] = None
     # Options this API doesn't interpret (from an imported lab.conf, or authored directly), passed
     # to the device unchanged. Never routed through Kathara's `Machine.add_meta` (see
-    # `lab_builder.build_machine`) — only assigned straight into `machine.meta` — so a key like
+    # `lab_builder.apply_options`) — only assigned straight into `machine.meta` — so a key like
     # `volume` can't smuggle a host bind mount in through this side door.
     metas: dict[str, str] = Field(default_factory=dict)
 

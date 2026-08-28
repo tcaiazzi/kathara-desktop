@@ -50,7 +50,7 @@ _SCALAR_META_ORDER = (
 # Meta keys already emitted explicitly above (scalars) or by the container-typed loops below, plus
 # `bridged_iface`, which the manager derives at deploy time rather than something authored in
 # lab.conf. Everything else in `device.meta` is a pass-through option (see
-# `lab_builder.build_machine`) and gets its own `name[key]="value"` line, sorted for stability.
+# `lab_builder.apply_options`) and gets its own `name[key]="value"` line, sorted for stability.
 _KNOWN_META_KEYS = frozenset(_SCALAR_META_ORDER) | {
     "image", "exec_commands", "ports", "envs", "sysctls", "ulimits", "volumes", "bridged_iface",
 }
@@ -128,7 +128,7 @@ def gen_device_lines(device) -> list[str]:
     for command in meta.get("exec_commands", []):
         lines.append(f'{name}[exec]="{command}"')
 
-    # Pass-through metas this API doesn't interpret (see lab_builder.build_machine), sorted for
+    # Pass-through metas this API doesn't interpret (see lab_builder.apply_options), sorted for
     # stable output.
     for key in sorted(set(meta) - _KNOWN_META_KEYS):
         lines.append(f'{name}[{key}]={conf_value(meta[key])}')

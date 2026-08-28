@@ -136,6 +136,13 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
     }
   }, [machine?.name, show]);
 
+  // If the open device disappears from the lab (e.g. removed via the same context menu while this
+  // modal is open) `machine` becomes null but `show`/the parent's `optionsEditorMachine` don't — close
+  // cleanly here instead of silently rendering nothing and leaving the parent's state dangling.
+  useEffect(() => {
+    if (show && !machine) onClose();
+  }, [show, machine, onClose]);
+
   // Fetched once per modal open, not per keystroke — the net.* sysctl list (thousands of
   // entries) never changes while the backend process is running.
   useEffect(() => {
@@ -173,238 +180,240 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
     });
   }
 
-  if (!machine || !form) return null;
-
   return (
     <Modal show={show} onHide={handleRequestClose} size="lg" scrollable>
-      <Modal.Header closeButton>
-        <Modal.Title>Options — {machine.name}</Modal.Title>
-      </Modal.Header>
-      <Modal.Body>
-        {deployed && (
-          <Alert variant="warning" className="py-2">
-            Undeploy this lab to edit its options. Showing the current configuration read-only.
-          </Alert>
-        )}
+      {machine && form && (
+        <>
+          <Modal.Header closeButton>
+            <Modal.Title>Options — {machine.name}</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            {deployed && (
+              <Alert variant="warning" className="py-2">
+                Undeploy this lab to edit its options. Showing the current configuration read-only.
+              </Alert>
+            )}
 
-        <div className="d-flex gap-4 flex-wrap mb-3">
-          <Form.Check
-            type="checkbox"
-            label="bridged"
-            checked={form.bridged}
-            disabled={disabled}
-            onChange={(e) => set("bridged", e.target.checked)}
-          />
-          <Form.Check
-            type="checkbox"
-            label="privileged"
-            checked={form.privileged}
-            disabled={disabled}
-            onChange={(e) => set("privileged", e.target.checked)}
-          />
-          <Form.Check
-            type="checkbox"
-            label="ipv6"
-            checked={form.ipv6}
-            disabled={disabled}
-            onChange={(e) => set("ipv6", e.target.checked)}
-          />
-        </div>
+            <div className="d-flex gap-4 flex-wrap mb-3">
+              <Form.Check
+                type="checkbox"
+                label="bridged"
+                checked={form.bridged}
+                disabled={disabled}
+                onChange={(e) => set("bridged", e.target.checked)}
+              />
+              <Form.Check
+                type="checkbox"
+                label="privileged"
+                checked={form.privileged}
+                disabled={disabled}
+                onChange={(e) => set("privileged", e.target.checked)}
+              />
+              <Form.Check
+                type="checkbox"
+                label="ipv6"
+                checked={form.ipv6}
+                disabled={disabled}
+                onChange={(e) => set("ipv6", e.target.checked)}
+              />
+            </div>
 
-        <div className="row g-2 mb-3">
-          <div className="col-6">
-            <Form.Label className="small mb-1">image</Form.Label>
-            <Form.Control
-              size="sm"
-              value={form.image}
+            <div className="row g-2 mb-3">
+              <div className="col-6">
+                <Form.Label className="small mb-1">image</Form.Label>
+                <Form.Control
+                  size="sm"
+                  value={form.image}
+                  disabled={disabled}
+                  placeholder="kathara/base"
+                  onChange={(e) => set("image", e.target.value)}
+                />
+              </div>
+              <div className="col-3">
+                <Form.Label className="small mb-1">mem</Form.Label>
+                <Form.Control
+                  size="sm"
+                  value={form.mem}
+                  disabled={disabled}
+                  placeholder="256m"
+                  onChange={(e) => set("mem", e.target.value)}
+                />
+              </div>
+              <div className="col-3">
+                <Form.Label className="small mb-1">cpus</Form.Label>
+                <Form.Control
+                  size="sm"
+                  type="number"
+                  min={0}
+                  step="0.1"
+                  value={form.cpus}
+                  disabled={disabled}
+                  onChange={(e) => set("cpus", e.target.value)}
+                />
+              </div>
+              <div className="col-4">
+                <Form.Label className="small mb-1">shell</Form.Label>
+                <Form.Control
+                  size="sm"
+                  value={form.shell}
+                  disabled={disabled}
+                  placeholder="/bin/bash"
+                  onChange={(e) => set("shell", e.target.value)}
+                />
+              </div>
+              <div className="col-2">
+                <Form.Label className="small mb-1">num_terms</Form.Label>
+                <Form.Control
+                  size="sm"
+                  type="number"
+                  min={0}
+                  value={form.numTerms}
+                  disabled={disabled}
+                  onChange={(e) => set("numTerms", e.target.value)}
+                />
+              </div>
+              <div className="col-3">
+                <Form.Label className="small mb-1">entrypoint</Form.Label>
+                <Form.Control
+                  size="sm"
+                  value={form.entrypoint}
+                  disabled={disabled}
+                  onChange={(e) => set("entrypoint", e.target.value)}
+                />
+              </div>
+              <div className="col-3">
+                <Form.Label className="small mb-1">args</Form.Label>
+                <Form.Control
+                  size="sm"
+                  value={form.args}
+                  disabled={disabled}
+                  onChange={(e) => set("args", e.target.value)}
+                />
+              </div>
+            </div>
+
+            <h6>Environment variables</h6>
+            <RowListEditor
+              columns={KV_COLUMNS}
+              rows={form.envs}
               disabled={disabled}
-              placeholder="kathara/base"
-              onChange={(e) => set("image", e.target.value)}
+              onChange={(rows) => set("envs", rows)}
+              emptyRow={() => ({ key: "", value: "" })}
             />
-          </div>
-          <div className="col-3">
-            <Form.Label className="small mb-1">mem</Form.Label>
-            <Form.Control
-              size="sm"
-              value={form.mem}
+
+            <h6>Sysctls</h6>
+            <RowListEditor<KeyValueRow>
+              columns={[
+                { key: "key", label: "Name", placeholder: "net.ipv4.ip_forward", options: netSysctls },
+                { key: "value", label: "Value" },
+              ]}
+              rows={form.sysctls}
               disabled={disabled}
-              placeholder="256m"
-              onChange={(e) => set("mem", e.target.value)}
+              hint="Only the net.* namespace is accepted — start typing to search the host's available sysctls."
+              onChange={(rows) => set("sysctls", rows)}
+              emptyRow={() => ({ key: "", value: "" })}
             />
-          </div>
-          <div className="col-3">
-            <Form.Label className="small mb-1">cpus</Form.Label>
-            <Form.Control
-              size="sm"
-              type="number"
-              min={0}
-              step="0.1"
-              value={form.cpus}
+
+            <h6>Ulimits</h6>
+            <RowListEditor<Ulimit>
+              columns={[
+                { key: "name", label: "Name", placeholder: "nofile" },
+                { key: "soft", label: "Soft", type: "number", min: -1 },
+                { key: "hard", label: "Hard", type: "number", min: -1, placeholder: "same as soft" },
+              ]}
+              rows={form.ulimits}
               disabled={disabled}
-              onChange={(e) => set("cpus", e.target.value)}
+              onChange={(rows) => set("ulimits", rows)}
+              emptyRow={() => ({ name: "", soft: -1, hard: null })}
             />
-          </div>
-          <div className="col-4">
-            <Form.Label className="small mb-1">shell</Form.Label>
-            <Form.Control
-              size="sm"
-              value={form.shell}
+
+            <h6>Exec commands</h6>
+            <RowListEditor<ExecRow>
+              columns={[{ key: "value", label: "Command", placeholder: "e.g. ip route add ..." }]}
+              rows={form.execCommands}
               disabled={disabled}
-              placeholder="/bin/bash"
-              onChange={(e) => set("shell", e.target.value)}
+              hint="Commands run in order at container startup."
+              onChange={(rows) => set("execCommands", rows)}
+              emptyRow={() => ({ value: "" })}
             />
-          </div>
-          <div className="col-2">
-            <Form.Label className="small mb-1">num_terms</Form.Label>
-            <Form.Control
-              size="sm"
-              type="number"
-              min={0}
-              value={form.numTerms}
+
+            <h6>Ports</h6>
+            <RowListEditor<PortMapping>
+              columns={[
+                { key: "host_port", label: "Host port", type: "number", min: 1, max: 65535 },
+                { key: "guest_port", label: "Guest port", type: "number", min: 1, max: 65535 },
+                { key: "protocol", label: "Protocol", type: "select", options: ["tcp", "udp", "sctp"] },
+              ]}
+              rows={form.ports}
               disabled={disabled}
-              onChange={(e) => set("numTerms", e.target.value)}
+              onChange={(rows) => set("ports", rows)}
+              emptyRow={() => ({ host_port: 3000, guest_port: 80, protocol: "tcp" })}
             />
-          </div>
-          <div className="col-3">
-            <Form.Label className="small mb-1">entrypoint</Form.Label>
-            <Form.Control
-              size="sm"
-              value={form.entrypoint}
+
+            <h6>Volumes</h6>
+            <RowListEditor<VolumeMount>
+              columns={[
+                {
+                  key: "host_path",
+                  label: "Host path",
+                  render: (value, setValue, rowDisabled) => (
+                    <div className="d-flex gap-1">
+                      <Form.Control
+                        size="sm"
+                        placeholder="Host path"
+                        disabled={rowDisabled}
+                        value={value == null ? "" : String(value)}
+                        onChange={(e) => setValue(e.target.value)}
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        className="kt-icon-btn"
+                        disabled={rowDisabled}
+                        title="Browse the host filesystem"
+                        aria-label="Browse the host filesystem"
+                        onClick={() =>
+                          setHostPathTarget({
+                            path: value == null || value === "" ? "/" : String(value),
+                            setValue: (v) => setValue(v),
+                          })
+                        }
+                      >
+                        <FolderOpen size={14} />
+                      </Button>
+                    </div>
+                  ),
+                },
+                { key: "guest_path", label: "Guest path" },
+                { key: "mode", label: "Mode", type: "select", options: ["ro", "rw", "rx"] },
+              ]}
+              rows={form.volumes}
               disabled={disabled}
-              onChange={(e) => set("entrypoint", e.target.value)}
+              onChange={(rows) => set("volumes", rows)}
+              emptyRow={() => ({ host_path: "", guest_path: "", mode: "rw" })}
             />
-          </div>
-          <div className="col-3">
-            <Form.Label className="small mb-1">args</Form.Label>
-            <Form.Control
-              size="sm"
-              value={form.args}
+
+            <h6>Advanced (other options)</h6>
+            <RowListEditor
+              columns={KV_COLUMNS}
+              rows={form.metas}
               disabled={disabled}
-              onChange={(e) => set("args", e.target.value)}
+              hint="Any other lab.conf option this editor doesn't have a dedicated field for."
+              onChange={(rows) => set("metas", rows)}
+              emptyRow={() => ({ key: "", value: "" })}
             />
-          </div>
-        </div>
-
-        <h6>Environment variables</h6>
-        <RowListEditor
-          columns={KV_COLUMNS}
-          rows={form.envs}
-          disabled={disabled}
-          onChange={(rows) => set("envs", rows)}
-          emptyRow={() => ({ key: "", value: "" })}
-        />
-
-        <h6>Sysctls</h6>
-        <RowListEditor<KeyValueRow>
-          columns={[
-            { key: "key", label: "Name", placeholder: "net.ipv4.ip_forward", options: netSysctls },
-            { key: "value", label: "Value" },
-          ]}
-          rows={form.sysctls}
-          disabled={disabled}
-          hint="Only the net.* namespace is accepted — start typing to search the host's available sysctls."
-          onChange={(rows) => set("sysctls", rows)}
-          emptyRow={() => ({ key: "", value: "" })}
-        />
-
-        <h6>Ulimits</h6>
-        <RowListEditor<Ulimit>
-          columns={[
-            { key: "name", label: "Name", placeholder: "nofile" },
-            { key: "soft", label: "Soft", type: "number", min: -1 },
-            { key: "hard", label: "Hard", type: "number", min: -1, placeholder: "same as soft" },
-          ]}
-          rows={form.ulimits}
-          disabled={disabled}
-          onChange={(rows) => set("ulimits", rows)}
-          emptyRow={() => ({ name: "", soft: -1, hard: null })}
-        />
-
-        <h6>Exec commands</h6>
-        <RowListEditor<ExecRow>
-          columns={[{ key: "value", label: "Command", placeholder: "e.g. ip route add ..." }]}
-          rows={form.execCommands}
-          disabled={disabled}
-          hint="Commands run in order at container startup."
-          onChange={(rows) => set("execCommands", rows)}
-          emptyRow={() => ({ value: "" })}
-        />
-
-        <h6>Ports</h6>
-        <RowListEditor<PortMapping>
-          columns={[
-            { key: "host_port", label: "Host port", type: "number", min: 1, max: 65535 },
-            { key: "guest_port", label: "Guest port", type: "number", min: 1, max: 65535 },
-            { key: "protocol", label: "Protocol", type: "select", options: ["tcp", "udp", "sctp"] },
-          ]}
-          rows={form.ports}
-          disabled={disabled}
-          onChange={(rows) => set("ports", rows)}
-          emptyRow={() => ({ host_port: 3000, guest_port: 80, protocol: "tcp" })}
-        />
-
-        <h6>Volumes</h6>
-        <RowListEditor<VolumeMount>
-          columns={[
-            {
-              key: "host_path",
-              label: "Host path",
-              render: (value, setValue, rowDisabled) => (
-                <div className="d-flex gap-1">
-                  <Form.Control
-                    size="sm"
-                    placeholder="Host path"
-                    disabled={rowDisabled}
-                    value={value == null ? "" : String(value)}
-                    onChange={(e) => setValue(e.target.value)}
-                  />
-                  <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    className="kt-icon-btn"
-                    disabled={rowDisabled}
-                    title="Browse the host filesystem"
-                    aria-label="Browse the host filesystem"
-                    onClick={() =>
-                      setHostPathTarget({
-                        path: value == null || value === "" ? "/" : String(value),
-                        setValue: (v) => setValue(v),
-                      })
-                    }
-                  >
-                    <FolderOpen size={14} />
-                  </Button>
-                </div>
-              ),
-            },
-            { key: "guest_path", label: "Guest path" },
-            { key: "mode", label: "Mode", type: "select", options: ["ro", "rw", "rx"] },
-          ]}
-          rows={form.volumes}
-          disabled={disabled}
-          onChange={(rows) => set("volumes", rows)}
-          emptyRow={() => ({ host_path: "", guest_path: "", mode: "rw" })}
-        />
-
-        <h6>Advanced (other options)</h6>
-        <RowListEditor
-          columns={KV_COLUMNS}
-          rows={form.metas}
-          disabled={disabled}
-          hint="Any other lab.conf option this editor doesn't have a dedicated field for."
-          onChange={(rows) => set("metas", rows)}
-          emptyRow={() => ({ key: "", value: "" })}
-        />
-      </Modal.Body>
-      {!deployed && (
-        <ModalSubmitFooter
-          onCancel={handleRequestClose}
-          busy={busy}
-          submitLabel="Save"
-          busyLabel="Saving…"
-          submitDisabled={!dirty}
-          onSubmit={handleSave}
-        />
+          </Modal.Body>
+          {!deployed && (
+            <ModalSubmitFooter
+              onCancel={handleRequestClose}
+              busy={busy}
+              submitLabel="Save"
+              busyLabel="Saving…"
+              submitDisabled={!dirty}
+              onSubmit={handleSave}
+            />
+          )}
+        </>
       )}
       <HostPathPicker
         show={!!hostPathTarget}

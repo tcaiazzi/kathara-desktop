@@ -14,7 +14,7 @@ own result and refuses to return text that would not load back — see ``validat
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
 
@@ -198,7 +198,9 @@ class LabConfDoc:
         sorted_idx = sorted(indices)
         # Collapse a blank line this deletion would double up: for each maximal contiguous run of
         # removed indices, if the lines immediately before and after the run are both blank, drop
-        # the one after too (or the one before, if the run reaches end of file).
+        # the one after too (or the one before, if the run reaches end of file). A run starting at
+        # index 0 has no "before" line at all, so an after-blank there is a leading blank once the
+        # run is gone — collapse it the same way as the end-of-file case.
         runs: list[list[int]] = []
         for i in sorted_idx:
             if runs and runs[-1][-1] == i - 1:
@@ -210,7 +212,7 @@ class LabConfDoc:
             before, after = run[0] - 1, run[-1] + 1
             before_blank = before >= 0 and before not in indices and self._lines[before].kind == _Kind.BLANK
             after_blank = after < len(self._lines) and after not in indices and self._lines[after].kind == _Kind.BLANK
-            if after_blank and (before_blank or after == len(self._lines) - 1):
+            if after_blank and (before_blank or after == len(self._lines) - 1 or run[0] == 0):
                 extra.add(after)
             elif before_blank and after >= len(self._lines):
                 extra.add(before)
@@ -293,17 +295,46 @@ class LabConfDoc:
         ``set_meta``, which can only ever hold one line per key, this is for a key that
         legitimately repeats N times — N old lines in, N new lines out, replaced in place rather
         than deleted-then-appended, so a hand-edited file's group doesn't relocate to the end of
-        the block on every save."""
+        the block on every save.
+
+        Removal goes through ``_remove_indices`` (not a raw slice) so an emptied group gets the
+        same double-blank-line collapsing every other removal in this class gets. Because that can
+        remove more lines than just this key's own (an adjacent now-redundant blank), the insertion
+        point for the replacement lines is tracked by *line object identity* rather than a
+        precomputed numeric index, which `_remove_indices` would otherwise invalidate.
+        """
         existing = self.meta_line_indices(device, key)
+        existing_set = set(existing)
+
+        if not values:
+            self._remove_indices(existing_set)
+            return
+
+        insert_at_end = False
+        anchor_line: Optional[_Line] = None
         if existing:
-            insert_at = min(existing)
-            indent = self._lines[insert_at].indent
+            anchor_idx = min(existing) - 1
+            if anchor_idx >= 0:
+                anchor_line = self._lines[anchor_idx]
+            indent = self._lines[min(existing)].indent
         else:
             dev_lines = self._device_line_indices(device)
-            insert_at = (max(dev_lines) + 1) if dev_lines else len(self._lines)
-            indent = self._lines[dev_lines[-1]].indent if dev_lines else ""
-        existing_set = set(existing)
-        self._lines = [line for i, line in enumerate(self._lines) if i not in existing_set]
+            if dev_lines:
+                anchor_line = self._lines[dev_lines[-1]]
+                indent = anchor_line.indent
+            else:
+                insert_at_end = True
+                indent = ""
+
+        self._remove_indices(existing_set)
+
+        if insert_at_end:
+            insert_at = len(self._lines)
+        elif anchor_line is None:
+            insert_at = 0
+        else:
+            insert_at = next(i for i, line in enumerate(self._lines) if line is anchor_line) + 1
+
         new_lines = [
             _Line(raw="", kind=_Kind.META, indent=indent, device=device, arg=key, quote='"', value=value)
             for value in values
