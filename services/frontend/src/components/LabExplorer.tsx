@@ -1,4 +1,4 @@
-import { FilePlus, FolderPlus, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
+import { FilePlus, FolderPlus, Info, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps, type TreeApi } from "react-arborist";
@@ -580,9 +580,15 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
           >
             <RefreshCw size={16} />
           </Button>
+          <span
+            className="kt-icon-btn text-muted"
+            title="Drag files/folders onto a device or folder to move them. Double-click or F2 to rename."
+            aria-label="Drag files/folders onto a device or folder to move them. Double-click or F2 to rename."
+          >
+            <Info size={16} />
+          </span>
           <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
         </div>
-        <div className="small text-muted mb-2">Drag files/folders onto a device or folder to move them. Double-click or F2 to rename.</div>
         <div ref={treeSizeRef} className="kt-explorer-tree border rounded" style={{ flex: 1, minHeight: 0 }}>
           {!loaded ? (
             <p className="text-muted small p-2">Loading…</p>
