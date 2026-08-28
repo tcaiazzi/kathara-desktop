@@ -86,7 +86,7 @@ function FilesPanel() {
 function RuntimeFsPanel() {
   const ws = useWorkspace();
   return (
-    <div className="kt-ws-panel">
+    <div className="kt-ws-panel-fill">
       <RuntimeFilesystemEditor labName={ws.labName} detail={ws.detail} preferredMachine={ws.runtimeFsPreferredMachine} />
     </div>
   );

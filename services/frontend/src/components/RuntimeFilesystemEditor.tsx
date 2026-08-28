@@ -1,144 +1,291 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Download, FilePlus, FolderPlus, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Form } from "react-bootstrap";
+import { NodeApi, Tree, type NodeRendererProps, type TreeApi } from "react-arborist";
 import { useConfirm } from "../context/ConfirmContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
+import { useWorkspace } from "../context/WorkspaceContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useConfirmDiscard } from "../hooks/useConfirmDiscard";
+import { useElementSize } from "../hooks/useElementSize";
 import { useSaveShortcut } from "../hooks/useSaveShortcut";
 import { api, ApiError } from "../services/api";
-import { languageForPath } from "../services/editorLanguage";
 import { saveBlob } from "../services/download";
-import { baseName, isSubPath, normalizeDir } from "../services/paths";
+import { languageForPath } from "../services/editorLanguage";
+import { fileIcon } from "../services/labfs";
+import { baseName, isSubPath } from "../services/paths";
 import type { FsEntry, LabDetail } from "../services/types";
 import { EditorPane } from "./EditorPane";
+import type { ContextMenuItem } from "./TopologyContextMenu";
+import "./LabExplorer.css";
 
 interface RuntimeFilesystemEditorProps {
   labName: string;
   detail: LabDetail;
   preferredMachine?: string | null;
-  compact?: boolean;
 }
 
-export function RuntimeFilesystemEditor({
-  labName,
-  detail,
-  preferredMachine = null,
-  compact = false,
-}: RuntimeFilesystemEditorProps) {
+// One node in the lazily-loaded tree. `children` is `undefined` until this directory has been
+// listed at least once — same lazy-load sentinel as LabExplorer's FsNode.
+interface FsNode {
+  name: string;
+  path: string;
+  dir: boolean;
+  children?: FsNode[];
+}
+
+function entryToNode(e: FsEntry): FsNode {
+  return { name: e.name, path: e.path, dir: e.is_dir };
+}
+
+// Lets the module-level `Node` row renderer (which react-arborist requires to keep a stable
+// component identity) reach back into this component's handlers to build its right-click menu.
+interface RowActions {
+  onNewFile: (dir: string) => void;
+  onDownload: (path: string) => void;
+  onRename: (path: string) => void;
+  onDelete: (path: string) => void;
+  canModify: (path: string) => boolean;
+}
+const RowActionsCtx = createContext<RowActions | null>(null);
+
+function parentOf(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx <= 0 ? "/" : path.slice(0, idx);
+}
+
+function findNode(nodes: FsNode[], path: string): FsNode | null {
+  for (const n of nodes) {
+    if (n.path === path) return n;
+    if (n.children && isSubPath(path, n.path)) {
+      const found = findNode(n.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Replace `oldNodes` with `freshNodes` from a listing, but carry over any already-loaded
+// `children` for a directory that's still present — so a background refresh never collapses an
+// already-expanded subfolder or throws away what it had loaded.
+function mergeNodeList(oldNodes: FsNode[], freshNodes: FsNode[]): FsNode[] {
+  return freshNodes
+    .map((fresh) => {
+      const old = oldNodes.find((o) => o.path === fresh.path);
+      return old && fresh.dir && old.dir ? { ...fresh, children: old.children } : fresh;
+    })
+    .sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name)));
+}
+
+function withMergedChildrenAt(nodes: FsNode[], path: string, freshChildren: FsNode[]): FsNode[] {
+  return nodes.map((n) => {
+    if (n.path === path) return { ...n, children: mergeNodeList(n.children ?? [], freshChildren) };
+    if (n.children && isSubPath(path, n.path)) {
+      return { ...n, children: withMergedChildrenAt(n.children, path, freshChildren) };
+    }
+    return n;
+  });
+}
+
+// Browse/edit a running device's own filesystem, over exec — a VS Code-style tree (react-arborist)
+// on the left, a CodeMirror editor on the right, same pattern as LabExplorer's lab-directory tree.
+// The one thing this tab has that LabExplorer doesn't is the device picker: every read/write is
+// scoped to whichever running machine is currently selected, and switching devices fully resets
+// the tree since two machines can legitimately share path namespaces (both may have an `/etc`).
+export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = null }: RuntimeFilesystemEditorProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const treeRef = useRef<TreeApi<FsNode> | undefined>(undefined);
+  const { ref: treeSizeRef, width: treeWidth, height: treeHeight } = useElementSize<HTMLDivElement>();
+
   const runningMachines = useMemo(
     () => detail.machines.filter((m) => m.running).map((m) => m.name),
     [detail.machines],
   );
   const [machine, setMachine] = useState<string>(runningMachines[0] ?? "");
-  const [path, setPath] = useState<string>("/");
-  const [entries, setEntries] = useState<FsEntry[]>([]);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
-  const [draggedPath, setDraggedPath] = useState<string | null>(null);
-  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
-  const [dropIntoCurrentDir, setDropIntoCurrentDir] = useState(false);
-  const [filterText, setFilterText] = useState("");
+
+  const [loaded, setLoaded] = useState(false);
+  const [tree, setTree] = useState<FsNode[]>([]);
+  const treeRefValue = useRef<FsNode[]>(tree);
+  useEffect(() => {
+    treeRefValue.current = tree;
+  }, [tree]);
+
+  const [selected, setSelected] = useState<string | null>(null);
   const [editorText, setEditorText] = useState("");
   const [loadedText, setLoadedText] = useState("");
   const [isBinary, setIsBinary] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const toast = useToast();
   const prompt = usePrompt();
   const confirm = useConfirm();
   const confirmDiscard = useConfirmDiscard();
   const runBusy = useBusyAction();
-  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  function resetTreeState() {
+    setTree([]);
+    setLoaded(false);
+    setSelected(null);
+    setEditorText("");
+    setLoadedText("");
+    setIsBinary(false);
+  }
 
   useEffect(() => {
     if (!runningMachines.length) {
       setMachine("");
-      setPath("/");
-      setEntries([]);
-      setSelectedPath(null);
-      setEditorText("");
-      setLoadedText("");
-      setIsBinary(false);
+      resetTreeState();
       return;
     }
     if (!machine || !runningMachines.includes(machine)) {
       setMachine(runningMachines[0]);
-      setPath("/");
-      setEntries([]);
-      setSelectedPath(null);
-      setEditorText("");
-      setLoadedText("");
-      setIsBinary(false);
+      resetTreeState();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machine, runningMachines]);
 
   useEffect(() => {
     if (!preferredMachine) return;
     if (!runningMachines.includes(preferredMachine)) return;
+    if (preferredMachine === machine) return;
     setMachine(preferredMachine);
-    setPath("/");
-    setSelectedPath(null);
+    resetTreeState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferredMachine, runningMachines]);
+
+  // Root listing, refreshed whenever the selected device changes or the toolbar's ↻ Reload
+  // bumps reloadKey.
+  useEffect(() => {
+    if (!machine) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await api.fsList(labName, machine, "/");
+        if (!cancelled) {
+          setTree((prev) => mergeNodeList(prev, resp.entries.map(entryToNode)));
+          setLoaded(true);
+        }
+      } catch (e) {
+        if (!cancelled) toast.reportError("List runtime directory", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [labName, machine, reloadKey]);
+
+  const data = useMemo(() => tree, [tree]);
+
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+
+  // Bring a path into view (opening its ancestor folders) and sync the tree's own selection
+  // state to match — react-arborist owns selection/open state internally.
+  function revealAndSelect(path: string | null) {
+    const t = treeRef.current;
+    if (!t || !path) return;
+    t.openParents(path);
+    t.select(path);
+  }
+  useEffect(() => {
+    revealAndSelect(selected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, tree]);
+
+  async function loadAndMerge(path: string): Promise<FsNode[]> {
+    const resp = await api.fsList(labName, machine, path);
+    const children = resp.entries.map(entryToNode);
+    setTree((prev) => (path === "/" ? mergeNodeList(prev, children) : withMergedChildrenAt(prev, path, children)));
+    return children;
+  }
+
+  // Lazy per-directory fetch, triggered the first time a folder is expanded — `children ===
+  // undefined` is exactly "never listed yet".
+  async function ensureLoaded(path: string) {
+    const node = findNode(treeRefValue.current, path);
+    if (!node || !node.dir || node.children !== undefined) return;
+    try {
+      await loadAndMerge(path);
+    } catch (e) {
+      toast.reportError("List directory", e);
+    }
+  }
+
+  // Refresh one directory's listing after a write/delete/move affects something inside it.
+  async function refreshDir(path: string) {
+    try {
+      if (path !== "/") {
+        const segments = path.split("/").filter(Boolean);
+        let acc = "";
+        for (let i = 0; i < segments.length - 1; i++) {
+          acc += `/${segments[i]}`;
+          if (!findNode(treeRefValue.current, acc)) await loadAndMerge(acc);
+        }
+      }
+      await loadAndMerge(path);
+    } catch (e) {
+      toast.reportError("Reload", e);
+    }
+  }
+
+  // Re-fetch every currently-loaded directory (recursively), preserving expand state.
+  async function reloadTree() {
+    async function reloadLevel(nodes: FsNode[]): Promise<FsNode[]> {
+      return Promise.all(
+        nodes.map(async (n) => {
+          if (!n.dir || n.children === undefined) return n;
+          const resp = await api.fsList(labName, machine, n.path);
+          const merged = mergeNodeList(n.children, resp.entries.map(entryToNode));
+          return { ...n, children: await reloadLevel(merged) };
+        }),
+      );
+    }
+    const rootResp = await api.fsList(labName, machine, "/");
+    const merged = mergeNodeList(treeRefValue.current, rootResp.entries.map(entryToNode));
+    setTree(await reloadLevel(merged));
+  }
+
+  // Nothing on a running device's filesystem is structurally protected the way lab.conf is.
+  function canModify(_path: string): boolean {
+    return true;
+  }
+
+  const hasUnsavedChanges = !!selected && editorText !== loadedText;
+
+  function requestFileSwitch(nextPath: string): Promise<boolean> {
+    return confirmDiscard({ currentPath: selected, nextPath, hasUnsavedChanges });
+  }
+
+  // Selecting a folder row only needs to move the toolbar's Delete/rename target — there's no
+  // content to load, and the editor pane just goes blank/disabled for it.
+  async function selectDir(path: string) {
+    const ok = await requestFileSwitch(path);
+    if (!ok) {
+      revealAndSelect(selected);
+      return;
+    }
+    setSelected(path);
     setEditorText("");
     setLoadedText("");
     setIsBinary(false);
-  }, [preferredMachine, runningMachines]);
+  }
 
-  const filteredEntries = useMemo(() => {
-    const q = filterText.trim().toLowerCase();
-    if (!q) return entries;
-    return entries.filter((entry) => entry.name.toLowerCase().includes(q));
-  }, [entries, filterText]);
-
-  const hasUnsavedChanges = !!selectedPath && editorText !== loadedText;
-
-  async function loadDirectory() {
+  async function selectFile(path: string) {
     if (!machine) return;
-    await runBusy(setLoading, `Load runtime directory ${path}`, async () => {
-      const resp = await api.fsList(labName, machine, path);
-      setEntries(resp.entries);
-    });
-  }
-
-  useEffect(() => {
-    void loadDirectory();
-    // path and machine changes should refresh the listing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, machine]);
-
-  function navigate(to: string) {
-    setPath(to || "/");
-    setSelectedPath(null);
-    setIsBinary(false);
-  }
-
-  const breadcrumbs = useMemo(() => {
-    const parts = path.split("/").filter(Boolean);
-    const acc: { label: string; value: string }[] = [{ label: "/", value: "/" }];
-    let current = "";
-    for (const part of parts) {
-      current += `/${part}`;
-      acc.push({ label: part, value: current });
-    }
-    return acc;
-  }, [path]);
-
-  function up() {
-    if (path === "/") return;
-    const parts = path.split("/").filter(Boolean);
-    if (parts.length <= 1) {
-      navigate("/");
+    const ok = await requestFileSwitch(path);
+    if (!ok) {
+      revealAndSelect(selected);
       return;
     }
-    navigate(`/${parts.slice(0, -1).join("/")}`);
-  }
-
-  async function openFile(filePath: string) {
-    if (!machine) return;
     await runBusy(setBusy, "Open runtime file", async () => {
       try {
-        const resp = await api.fsReadText(labName, machine, filePath);
-        setSelectedPath(resp.path);
+        const resp = await api.fsReadText(labName, machine, path);
+        setSelected(resp.path);
         setEditorText(resp.content);
         setLoadedText(resp.content);
         setIsBinary(false);
@@ -146,7 +293,7 @@ export function RuntimeFilesystemEditor({
         if (e instanceof ApiError && e.errorType === "BinaryFileError") {
           // Not a failure from the user's point of view: select the file so Download/Delete/
           // Rename work, just without a text preview.
-          setSelectedPath(filePath);
+          setSelected(path);
           setEditorText("");
           setLoadedText("");
           setIsBinary(true);
@@ -157,349 +304,306 @@ export function RuntimeFilesystemEditor({
     });
   }
 
-  function requestFileSwitch(nextPath: string): Promise<boolean> {
-    return confirmDiscard({ currentPath: selectedPath, nextPath, hasUnsavedChanges });
-  }
-
   async function saveFile() {
-    if (!machine || !selectedPath || isBinary) return;
+    if (!machine || !selected || isBinary) return;
     await runBusy(setBusy, "Save runtime file", async () => {
-      await api.fsWriteText(labName, machine, selectedPath, editorText);
+      await api.fsWriteText(labName, machine, selected, editorText);
       setLoadedText(editorText);
-      toast.show(`Saved ${selectedPath} on ${machine}.`, "success");
+      toast.show(`Saved ${selected} on ${machine}.`, "success");
+      await refreshDir(parentOf(selected));
     });
   }
 
-  async function createFile() {
+  async function handleNewFile(defaultDir?: string) {
     if (!machine) return;
+    const dir = defaultDir ?? (selected ? (selectedIsDir ? selected : parentOf(selected)) : "/");
     const newPath = await prompt({
       title: "Create runtime file",
       message: "Absolute path on the running device, e.g.: /etc/frr/frr.conf",
-      placeholder: path === "/" ? "/tmp/new-file.txt" : `${path}/new-file.txt`,
+      defaultValue: dir === "/" ? "/" : `${dir}/`,
+      placeholder: dir === "/" ? "/tmp/new-file.txt" : `${dir}/new-file.txt`,
       okLabel: "Create",
     });
     if (!newPath) return;
+    const clean = `/${newPath.trim().replace(/^\/+/, "").replace(/\/+$/, "")}`;
+    if (clean === "/") return;
+
     await runBusy(setBusy, "Create runtime file", async () => {
-      await api.fsWriteText(labName, machine, newPath, "");
-      toast.show(`Created ${newPath} on ${machine}.`, "success");
-      await loadDirectory();
+      await api.fsWriteText(labName, machine, clean, "");
+      toast.show(`Created ${clean} on ${machine}.`, "success");
+      await refreshDir(parentOf(clean));
+      await selectFile(clean);
     });
   }
 
-  async function createDirectory() {
+  async function handleNewDirectory() {
     if (!machine) return;
+    const dir = selected ? (selectedIsDir ? selected : parentOf(selected)) : "/";
     const newPath = await prompt({
       title: "Create runtime directory",
       message: "Absolute directory path, e.g.: /etc/frr",
-      placeholder: path === "/" ? "/tmp/new-dir" : `${path}/new-dir`,
+      defaultValue: dir === "/" ? "/" : `${dir}/`,
+      placeholder: dir === "/" ? "/tmp/new-dir" : `${dir}/new-dir`,
       okLabel: "Create",
     });
     if (!newPath) return;
+    const clean = `/${newPath.trim().replace(/^\/+/, "").replace(/\/+$/, "")}`;
+    if (clean === "/") return;
+
     await runBusy(setBusy, "Create runtime directory", async () => {
-      await api.fsMkdir(labName, machine, newPath);
-      toast.show(`Created ${newPath} on ${machine}.`, "success");
-      await loadDirectory();
+      await api.fsMkdir(labName, machine, clean);
+      toast.show(`Created ${clean} on ${machine}.`, "success");
+      await refreshDir(parentOf(clean));
+      revealAndSelect(clean);
     });
   }
 
-  async function renamePath() {
-    if (!machine || !selectedPath) {
-      toast.show("Select a runtime file or directory to rename.", "danger");
-      return;
-    }
-    const destination = await prompt({
-      title: "Rename / Move runtime path",
-      message: `New absolute path for ${selectedPath}`,
-      placeholder: selectedPath,
-      okLabel: "Move",
-    });
-    if (!destination || destination === selectedPath) return;
-    await runBusy(setBusy, "Rename runtime path", async () => {
-      await api.fsMove(labName, machine, selectedPath, destination);
-      setSelectedPath(destination);
-      toast.show(`Moved to ${destination}.`, "success");
-      await loadDirectory();
-    });
-  }
-
-  async function movePath(sourcePath: string, targetDir: string) {
-    if (!machine) return;
-    const source = normalizeDir(sourcePath);
-    const destDir = normalizeDir(targetDir || "/");
-    if (!source || source === "/") return;
-    if (source === destDir) return;
-    if (isSubPath(destDir, source)) {
-      toast.show("Cannot move a folder into one of its descendants.", "danger");
-      return;
-    }
-    const name = baseName(source);
-    if (!name) return;
-    const destination = destDir === "/" ? `/${name}` : `${destDir}/${name}`;
-    if (destination === source) return;
-
-    await runBusy(setBusy, "Drag and drop move", async () => {
-      await api.fsMove(labName, machine, source, destination);
-      if (selectedPath === source) setSelectedPath(destination);
-      toast.show(`Moved ${source} to ${destination}.`, "success");
-      await loadDirectory();
-    });
-    setDraggedPath(null);
-    setDropTargetPath(null);
-    setDropIntoCurrentDir(false);
-  }
-
-  async function uploadDroppedFiles(fileList: FileList) {
-    if (!machine || !fileList.length) return;
-    const files = Array.from(fileList);
-    await runBusy(setBusy, "Drop upload", async () => {
-      for (const file of files) {
-        const destination = path === "/" ? `/${file.name}` : `${normalizeDir(path)}/${file.name}`;
-        await api.fsUpload(labName, machine, destination, file);
-      }
-      toast.show(`Uploaded ${files.length} file(s) to ${path}.`, "success");
-      await loadDirectory();
-    });
-    setDropIntoCurrentDir(false);
-  }
-
-  async function deletePath() {
-    if (!machine || !selectedPath) {
-      toast.show("Select a runtime file or directory to delete.", "danger");
-      return;
-    }
+  async function handleDelete(path: string) {
+    if (!machine || !canModify(path)) return;
+    const isDir = findNode(treeRefValue.current, path)?.dir ?? false;
     const ok = await confirm({
-      title: "Delete runtime path?",
-      message: `Delete ${selectedPath} from ${machine}?`,
+      title: isDir ? "Delete runtime folder?" : "Delete runtime file?",
+      message: `Delete ${path} from ${machine}? This cannot be undone.`,
       okLabel: "Delete",
     });
     if (!ok) return;
+
     await runBusy(setBusy, "Delete runtime path", async () => {
-      await api.fsDelete(labName, machine, selectedPath, true);
-      setSelectedPath(null);
-      setEditorText("");
-      setLoadedText("");
-      setIsBinary(false);
-      toast.show(`Deleted ${selectedPath}.`, "success");
-      await loadDirectory();
+      await api.fsDelete(labName, machine, path, true);
+      if (selected === path || (isDir && selected?.startsWith(`${path}/`))) {
+        setSelected(null);
+        setEditorText("");
+        setLoadedText("");
+        setIsBinary(false);
+      }
+      toast.show(`Deleted ${path}.`, "success");
+      await refreshDir(parentOf(path));
     });
   }
 
-  async function downloadPath() {
-    if (!machine || !selectedPath) {
-      toast.show("Select a runtime file to download.", "danger");
+  // Shared core for both drag-and-drop move (onMove) and inline rename (onRename) — the only
+  // difference between the two is how `destPath` is computed.
+  async function movePath(sourcePath: string, destPath: string) {
+    if (!machine || !canModify(sourcePath)) return;
+    if (destPath === sourcePath) return;
+    const destDir = parentOf(destPath);
+    if (destDir === sourcePath || isSubPath(destDir, sourcePath)) return;
+
+    await runBusy(setBusy, "Move runtime path", async () => {
+      await api.fsMove(labName, machine, sourcePath, destPath);
+      toast.show(`Moved ${sourcePath} → ${destPath}.`, "success");
+      await Promise.all([refreshDir(parentOf(sourcePath)), refreshDir(destDir)]);
+      if (selected === sourcePath) setSelected(destPath);
+    });
+  }
+
+  async function handleTreeMove(dragIds: string[], parentId: string | null) {
+    const sourcePath = dragIds[0];
+    if (!sourcePath) return;
+    const name = baseName(sourcePath);
+    if (!name) return;
+    const destDirPath = parentId ?? "/";
+    const destPath = destDirPath === "/" ? `/${name}` : `${destDirPath}/${name}`;
+    await movePath(sourcePath, destPath);
+  }
+
+  async function handleRename(sourcePath: string, newName: string) {
+    const clean = newName.trim();
+    if (!clean || clean.includes("/")) {
+      toast.show("Invalid name.", "danger");
       return;
     }
+    const destDirPath = parentOf(sourcePath);
+    const destPath = destDirPath === "/" ? `/${clean}` : `${destDirPath}/${clean}`;
+    await movePath(sourcePath, destPath);
+  }
+
+  async function handleDownload(path: string) {
+    if (!machine) return;
     await runBusy(setBusy, "Download runtime file", async () => {
-      const blob = await api.fsDownload(labName, machine, selectedPath);
-      const name = selectedPath.split("/").filter(Boolean).pop() || "download.bin";
+      const blob = await api.fsDownload(labName, machine, path);
+      const name = path.split("/").filter(Boolean).pop() || "download.bin";
       saveBlob(blob, name);
-      toast.show(`Downloaded ${selectedPath}.`, "success");
+      toast.show(`Downloaded ${path}.`, "success");
     });
   }
 
-  async function uploadPath(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    if (e.target) e.target.value = "";
     if (!file || !machine) return;
-    const suggested = path === "/" ? `/${file.name}` : `${path}/${file.name}`;
+
+    const selDir = selected ? (selectedIsDir ? selected : parentOf(selected)) : "/";
+    const suggested = selDir === "/" ? `/${file.name}` : `${selDir}/${file.name}`;
     const destination = await prompt({
-      title: "Upload to runtime path",
-      message: `Destination absolute path for ${file.name}`,
+      title: `Upload ${file.name}`,
+      message: `Destination absolute path on ${machine}`,
       defaultValue: suggested,
       placeholder: suggested,
       okLabel: "Upload",
     });
-    e.target.value = "";
     if (!destination) return;
+
     await runBusy(setBusy, "Upload runtime file", async () => {
       await api.fsUpload(labName, machine, destination, file);
-      toast.show(`Uploaded ${file.name} to ${destination}.`, "success");
-      await loadDirectory();
+      await refreshDir(parentOf(destination));
+      toast.show(`Uploaded ${file.name} → ${destination}.`, "success");
     });
   }
+
+  const canDelete = !!selected && canModify(selected);
+  const selectedIsDir = !!selected && (findNode(tree, selected)?.dir ?? false);
+
+  const rowActions: RowActions = {
+    onNewFile: (dir) => void handleNewFile(dir),
+    onDownload: (path) => void handleDownload(path),
+    onRename: (path) => void treeRef.current?.edit(path),
+    onDelete: (path) => void handleDelete(path),
+    canModify,
+  };
 
   useSaveShortcut(
     rootRef,
     () => {
-      if (!busy && selectedPath && !isBinary) void saveFile();
+      if (!busy && selected && !isBinary && !selectedIsDir) void saveFile();
     },
-    [busy, selectedPath, editorText, loadedText, isBinary, machine, labName],
+    [busy, selected, editorText, loadedText, isBinary, selectedIsDir, machine, labName],
   );
 
   return (
-    <div ref={rootRef} className={`d-flex gap-3 ${compact ? "mt-0" : "mt-3"}`} style={{ minHeight: compact ? 360 : 420 }}>
-      <div className="border rounded p-2" style={{ width: compact ? 320 : 360, overflowY: "auto" }}>
-        <div className="d-flex justify-content-between align-items-center mb-2">
-          <strong className="small">Runtime Filesystem</strong>
-          <Button size="sm" variant="outline-secondary" onClick={loadDirectory} disabled={!machine || busy || loading}>
-            Refresh
-          </Button>
-        </div>
+    <div ref={rootRef} className="kt-explorer" style={{ display: "flex", flexDirection: "row", gap: 12, minHeight: 0 }}>
+      <div className="kt-explorer-side" style={{ width: 260, flex: "0 0 260px", display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <Form.Select
+          size="sm"
+          className="mb-2"
+          value={machine}
+          disabled={!runningMachines.length}
+          onChange={(e) => {
+            setMachine(e.target.value);
+            resetTreeState();
+          }}
+        >
+          {runningMachines.length ? (
+            runningMachines.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))
+          ) : (
+            <option value="">No running devices</option>
+          )}
+        </Form.Select>
 
         {runningMachines.length ? (
           <>
-            <Form.Select
-              size="sm"
-              className="mb-2"
-              value={machine}
-              onChange={(e) => {
-                setMachine(e.target.value);
-                setPath("/");
-                setSelectedPath(null);
-                setEditorText("");
-                setIsBinary(false);
-              }}
-            >
-              {runningMachines.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </Form.Select>
-
-            <div className="d-flex gap-2 mb-2">
-              <Button size="sm" variant="outline-secondary" onClick={up} disabled={path === "/" || busy}>
-                Up
+            <div className="d-flex gap-2 mb-2 flex-wrap">
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="kt-icon-btn"
+                title="New file"
+                aria-label="New file"
+                onClick={() => void handleNewFile()}
+              >
+                <FilePlus size={16} />
               </Button>
-              <Button size="sm" variant="outline-secondary" onClick={createFile} disabled={busy}>
-                + File
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="kt-icon-btn"
+                title="New folder"
+                aria-label="New folder"
+                onClick={() => void handleNewDirectory()}
+              >
+                <FolderPlus size={16} />
               </Button>
-              <Button size="sm" variant="outline-secondary" onClick={createDirectory} disabled={busy}>
-                + Dir
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="kt-icon-btn"
+                title="Upload file"
+                aria-label="Upload file"
+                disabled={busy}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <UploadIcon size={16} />
               </Button>
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="kt-icon-btn"
+                title="Download"
+                aria-label="Download"
+                disabled={!selected || selectedIsDir || busy}
+                onClick={() => selected && void handleDownload(selected)}
+              >
+                <Download size={16} />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline-danger"
+                className="kt-icon-btn"
+                title="Delete"
+                aria-label="Delete"
+                disabled={!canDelete || busy}
+                onClick={() => selected && void handleDelete(selected)}
+              >
+                <Trash2 size={16} />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="kt-icon-btn"
+                disabled={busy}
+                title="Reload from disk"
+                aria-label="Reload from disk"
+                onClick={() => {
+                  setReloadKey((k) => k + 1);
+                  void reloadTree();
+                }}
+              >
+                <RefreshCw size={16} />
+              </Button>
+              <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
             </div>
-            <div className="d-flex flex-wrap align-items-center gap-1 mb-2">
-              {breadcrumbs.map((crumb, idx) => {
-                const isLast = idx === breadcrumbs.length - 1;
-                return (
-                  <div key={crumb.value} className="d-flex align-items-center gap-1">
-                    <Button
-                      size="sm"
-                      variant={isLast ? "secondary" : "outline-secondary"}
-                      disabled={busy || isLast}
-                      onClick={() => navigate(crumb.value)}
-                      className="py-0 px-2 font-monospace"
-                    >
-                      {crumb.label}
-                    </Button>
-                    {!isLast && <span className="text-muted small">/</span>}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="small text-muted mb-2">Drag entries onto folders to move. Drop local files here to upload.</div>
-
-            <Form.Control
-              size="sm"
-              className="mb-2"
-              placeholder="Filter entries…"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-            />
-
-            <div className="d-flex gap-2 mb-2">
-              <Button size="sm" variant="outline-secondary" onClick={renamePath} disabled={!selectedPath || busy}>
-                Rename
-              </Button>
-              <Button size="sm" variant="outline-danger" onClick={deletePath} disabled={!selectedPath || busy}>
-                Delete
-              </Button>
-            </div>
-
-            <div className="d-flex gap-2 mb-2">
-              <Button size="sm" variant="outline-secondary" onClick={() => uploadInputRef.current?.click()} disabled={busy}>
-                Upload
-              </Button>
-              <Button size="sm" variant="outline-secondary" onClick={downloadPath} disabled={!selectedPath || busy}>
-                Download
-              </Button>
-            </div>
-
-            <input ref={uploadInputRef} type="file" style={{ display: "none" }} onChange={uploadPath} />
-
-            <div
-              className={`border rounded p-1 ${dropIntoCurrentDir ? "bg-primary bg-opacity-10" : ""}`}
-              style={{ maxHeight: 300, overflowY: "auto" }}
-              onDragOver={(e) => {
-                const hasLocalFiles = (e.dataTransfer?.types || []).includes("Files");
-                if (hasLocalFiles || draggedPath) {
-                  e.preventDefault();
-                  setDropIntoCurrentDir(true);
-                }
-              }}
-              onDragLeave={() => setDropIntoCurrentDir(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                const hasLocalFiles = e.dataTransfer.files && e.dataTransfer.files.length > 0;
-                if (hasLocalFiles) {
-                  void uploadDroppedFiles(e.dataTransfer.files);
-                  return;
-                }
-                if (draggedPath) void movePath(draggedPath, path);
-              }}
-            >
-              {loading ? (
-                <p className="text-muted small mb-0">Loading runtime directory…</p>
-              ) : filteredEntries.length ? (
-                filteredEntries.map((entry) => {
-                  const isSelected = selectedPath === entry.path;
-                  const isDropTarget = dropTargetPath === entry.path;
-                  return (
-                    <div
-                      key={entry.path}
-                      className={`d-flex align-items-center justify-content-between px-1 py-1 rounded ${
-                        isSelected ? "bg-primary bg-opacity-25" : ""
-                      } ${
-                        isDropTarget ? "border border-primary" : ""
-                      }`}
-                      style={{ cursor: "pointer" }}
-                      draggable={!busy}
-                      onDragStart={() => {
-                        setDraggedPath(entry.path);
-                        setDropTargetPath(null);
-                      }}
-                      onDragEnd={() => {
-                        setDraggedPath(null);
-                        setDropTargetPath(null);
-                        setDropIntoCurrentDir(false);
-                      }}
-                      onDragOver={(e) => {
-                        if (!entry.is_dir || !draggedPath || draggedPath === entry.path) return;
-                        e.preventDefault();
-                        setDropTargetPath(entry.path);
-                      }}
-                      onDragLeave={() => {
-                        if (dropTargetPath === entry.path) setDropTargetPath(null);
-                      }}
-                      onDrop={(e) => {
-                        if (!entry.is_dir) return;
-                        e.preventDefault();
-                        if (draggedPath) {
-                          void movePath(draggedPath, entry.path);
-                        }
-                      }}
-                      onClick={() => {
-                        if (entry.is_dir) {
-                          navigate(entry.path);
-                          return;
-                        }
-                        void (async () => {
-                          const ok = await requestFileSwitch(entry.path);
-                          if (!ok) return;
-                          await openFile(entry.path);
-                        })();
-                      }}
-                    >
-                      <span className="font-monospace small">
-                        {entry.is_dir ? "📁" : "📄"} {entry.name}
-                      </span>
-                      <span className="text-muted small">{entry.is_dir ? "dir" : entry.size ?? "-"}</span>
-                    </div>
-                  );
-                })
+            <div className="small text-muted mb-2">Drag files/folders onto a folder to move them. Double-click or F2 to rename.</div>
+            <div ref={treeSizeRef} className="kt-explorer-tree border rounded" style={{ flex: 1, minHeight: 0 }}>
+              {!loaded ? (
+                <p className="text-muted small p-2">Loading…</p>
               ) : (
-                <p className="text-muted small mb-0">
-                  {filterText.trim() ? "No entries match the filter." : "Directory is empty."}
-                </p>
+                <RowActionsCtx.Provider value={rowActions}>
+                  <Tree<FsNode>
+                    key={machine}
+                    ref={treeRef}
+                    data={data}
+                    idAccessor="path"
+                    childrenAccessor={(d) => (d.dir ? d.children ?? [] : null)}
+                    openByDefault={false}
+                    width={treeWidth}
+                    height={treeHeight}
+                    rowHeight={26}
+                    indent={14}
+                    disableMultiSelection
+                    disableEdit={(d) => !canModify(d.path)}
+                    disableDrag={(d) => !canModify(d.path)}
+                    disableDrop={({ parentNode, dragNodes }) =>
+                      dragNodes.some((n) => isSubPath(parentNode.data.path, n.data.path) || n.data.path === parentNode.data.path)
+                    }
+                    onToggle={(id) => {
+                      if (treeRef.current?.isOpen(id)) void ensureLoaded(id);
+                    }}
+                    onSelect={(nodes) => {
+                      const node = nodes[0];
+                      if (!node) return;
+                      if (node.data.path === selectedRef.current) return;
+                      void (node.data.dir ? selectDir(node.data.path) : selectFile(node.data.path));
+                    }}
+                    onRename={({ id, name }) => void handleRename(id, name)}
+                    onMove={({ dragIds, parentId }) => void handleTreeMove(dragIds, parentId)}
+                  >
+                    {Node}
+                  </Tree>
+                </RowActionsCtx.Provider>
               )}
             </div>
           </>
@@ -508,22 +612,92 @@ export function RuntimeFilesystemEditor({
         )}
       </div>
 
-      <EditorPane
-        pathLabel={isBinary ? `${selectedPath} (binary)` : selectedPath || "Select a runtime file from the left"}
-        language={isBinary ? "plaintext" : languageForPath(selectedPath)}
-        value={editorText}
-        onChange={setEditorText}
-        disabled={!selectedPath || isBinary}
-        placeholder={
-          isBinary
-            ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
-            : selectedPath
-              ? undefined
-              : "Select a runtime file from the tree on the left…"
-        }
-        onSave={saveFile}
-        saveDisabled={!selectedPath || busy || isBinary}
-      />
+      <div className="d-flex flex-column flex-grow-1" style={{ minHeight: 0 }}>
+        <EditorPane
+          pathLabel={isBinary ? `${selected} (binary)` : selected || "Select a runtime file from the tree"}
+          language={isBinary ? "plaintext" : languageForPath(selected)}
+          value={editorText}
+          onChange={setEditorText}
+          disabled={!selected || selectedIsDir || isBinary}
+          placeholder={
+            selectedIsDir
+              ? "This is a folder — select a file to edit it."
+              : isBinary
+                ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
+                : selected
+                  ? undefined
+                  : "Select a runtime file from the tree on the left…"
+          }
+          onSave={saveFile}
+          saveDisabled={!selected || selectedIsDir || busy || isBinary}
+        />
+      </div>
     </div>
+  );
+}
+
+// Row renderer: VS-Code-ish icon + name, with inline rename input when the node is being edited.
+function Node({ node, style, dragHandle }: NodeRendererProps<FsNode>) {
+  const rowActions = useContext(RowActionsCtx);
+  const { setContextMenu } = useWorkspace();
+
+  function openContextMenu(e: React.MouseEvent) {
+    e.preventDefault();
+    if (!rowActions) return;
+    node.select();
+    const path = node.data.path;
+    const renameDelete: ContextMenuItem[] = [
+      { label: "Rename", action: () => rowActions.onRename(path) },
+      { label: "Delete", danger: true, action: () => rowActions.onDelete(path) },
+    ];
+    const items = node.data.dir
+      ? [{ label: "New File", action: () => rowActions.onNewFile(path) }, ...renameDelete]
+      : [{ label: "Download", action: () => rowActions.onDownload(path) }, ...renameDelete];
+    setContextMenu({ x: e.clientX, y: e.clientY, items });
+  }
+
+  return (
+    <div
+      ref={dragHandle}
+      style={style}
+      className={`kt-explorer-row d-flex align-items-center gap-1 ${node.isSelected ? "kt-explorer-row--selected" : ""} ${
+        node.willReceiveDrop ? "kt-explorer-row--drop" : ""
+      }`}
+      onClick={() => {
+        node.select();
+        if (node.isInternal) node.toggle();
+      }}
+      onDoubleClick={() => node.isEditable && node.edit()}
+      onKeyDown={(e) => {
+        if (e.key === "F2" && node.isEditable) node.edit();
+      }}
+      onContextMenu={openContextMenu}
+    >
+      {node.isInternal ? <span className="kt-explorer-chevron">{node.isOpen ? "▾" : "▸"}</span> : <span className="kt-explorer-chevron" />}
+      <span>{node.data.dir ? "📁" : fileIcon(node.data.name)}</span>
+      {node.isEditing ? <NodeEditInput node={node} /> : <span className="font-monospace small">{node.data.name}</span>}
+    </div>
+  );
+}
+
+function NodeEditInput({ node }: { node: NodeApi<FsNode> }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return (
+    <input
+      ref={inputRef}
+      className="kt-explorer-edit font-monospace small"
+      defaultValue={node.data.name}
+      onClick={(e) => e.stopPropagation()}
+      onBlur={() => node.reset()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") node.reset();
+        if (e.key === "Enter") node.submit(inputRef.current?.value || "");
+      }}
+    />
   );
 }
