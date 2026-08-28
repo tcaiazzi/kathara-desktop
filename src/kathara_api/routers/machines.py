@@ -17,7 +17,7 @@ from ..schemas.filesystem import (
     FsUploadResponse,
     FsWriteTextRequest,
 )
-from ..schemas.machine import MachineCreate, MachineDetail, MachineUpdate
+from ..schemas.machine import MachineCreate, MachineDetail, MachineUpdate, StartupStatus
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
@@ -149,6 +149,19 @@ def read_runtime_text_file(
     """Read a UTF-8 text file from a running device."""
     normalized = service.normalize_guest_path(path)
     return FsReadTextResponse(path=normalized, content=service.fs_read_text(lab_name, machine_name, normalized))
+
+
+@router.get("/{machine_name}/startup-status", response_model=StartupStatus)
+def get_startup_status(
+    lab_name: str,
+    machine_name: str,
+    service: KatharaService = Depends(get_service),
+) -> StartupStatus:
+    """Live startup-log tail and whether startup commands have finished, for a running device."""
+    return StartupStatus(
+        log=service.get_startup_log(lab_name, machine_name),
+        finished=service.is_startup_finished(lab_name, machine_name),
+    )
 
 
 @router.put("/{machine_name}/fs/text", response_model=Message)

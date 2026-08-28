@@ -16,6 +16,7 @@ import type {
   Message,
   SettingsUpdate,
   SettingsView,
+  StartupStatus,
   SystemInfo,
 } from "./types";
 
@@ -283,6 +284,13 @@ export const api = {
     }
     return res.blob();
   },
+  // Live boot-time startup log + finished flag for a running device — poll while a node's info
+  // panel is open and startup hasn't finished yet (see TopologyGraph's node-info block).
+  getStartupStatus: (labName: string, machineName: string) =>
+    request<StartupStatus>(
+      "GET",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/startup-status`,
+    ),
   execCommand: (labName: string, machineName: string, command: string | string[], wait = false) =>
     request<ExecResult>(
       "POST",

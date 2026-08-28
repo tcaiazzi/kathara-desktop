@@ -205,6 +205,14 @@
   color: var(--kt-node-stopped);
   background: color-mix(in srgb, var(--kt-node-stopped) 20%, transparent);
 }
+.kt-topo-side .kt-state.done {
+  color: var(--bs-success);
+  background: color-mix(in srgb, var(--bs-success) 16%, transparent);
+}
+.kt-topo-side .kt-state.pending {
+  color: var(--bs-warning);
+  background: color-mix(in srgb, var(--bs-warning) 22%, transparent);
+}
 .kt-topo-side pre.startup {
   margin: 6px 0 0;
   padding: 8px;

@@ -192,6 +192,13 @@ export interface FsUploadResponse {
   size: number;
 }
 
+// A running device's boot-time startup progress — the live /var/log/startup.log tail and whether
+// its startup commands (.startup script + exec_commands) have finished executing.
+export interface StartupStatus {
+  log: string;
+  finished: boolean;
+}
+
 export interface MachineStats {
   name: string;
   container_name: string | null;

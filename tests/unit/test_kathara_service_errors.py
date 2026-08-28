@@ -195,6 +195,68 @@ def test_fs_list_directory_dereferences_a_symlinked_query_path():
     assert [entry["name"] for entry in entries] == ["ls"]
 
 
+def test_get_startup_log_returns_empty_string_when_file_does_not_exist_yet():
+    # A device with no `.startup` script (or one that hasn't run yet) never gets a
+    # /var/log/startup.log at all — `cat` fails, and that must read as "no log yet", not an error,
+    # since the whole point is to poll this while a device is still booting.
+    service = _service_with_running_machine()
+    service.exec_command = lambda *a, **k: (b"", b"cat: No such file or directory\n", 1)  # type: ignore[method-assign]
+    assert service.get_startup_log("lab1", "pc1") == ""
+
+
+def test_get_startup_log_returns_file_content_when_present():
+    service = _service_with_running_machine()
+
+    def _fake_exec(lab_name, machine_name, command, wait=False):
+        assert command == ["cat", "/var/log/startup.log"]
+        assert wait is False
+        return (b"+ ip addr add 10.0.0.1/24 dev eth0\n", b"", 0)
+
+    service.exec_command = _fake_exec  # type: ignore[method-assign]
+    assert service.get_startup_log("lab1", "pc1") == "+ ip addr add 10.0.0.1/24 dev eth0\n"
+
+
+def test_is_startup_finished_checks_the_eos_marker_without_blocking():
+    # Kathara's own startup-wait logic (`wait=True`) blocks on this exact same condition — passing
+    # it here would hang instead of reporting current status, so this must always poll with
+    # `wait=False` and just test for the /tmp/EOS marker Kathara's startup sequence touches last.
+    service = _service_with_running_machine()
+
+    def _fake_exec(lab_name, machine_name, command, wait=False):
+        assert command == ["test", "-f", "/tmp/EOS"]
+        assert wait is False
+        return (b"", b"", 0)
+
+    service.exec_command = _fake_exec  # type: ignore[method-assign]
+    assert service.is_startup_finished("lab1", "pc1") is True
+
+
+def test_is_startup_finished_is_false_before_the_marker_exists():
+    service = _service_with_running_machine()
+    service.exec_command = lambda *a, **k: (b"", b"", 1)  # type: ignore[method-assign]
+    assert service.is_startup_finished("lab1", "pc1") is False
+
+
+def test_get_startup_log_requires_running_machine():
+    service = KatharaService()
+    service._instance = _FacadeNoCopyOnStopped()
+    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
+    service.registry.add(lab_builder.build_lab(spec))
+
+    with pytest.raises(MachineNotRunningError):
+        service.get_startup_log("lab1", "pc1")
+
+
+def test_is_startup_finished_requires_running_machine():
+    service = KatharaService()
+    service._instance = _FacadeNoCopyOnStopped()
+    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
+    service.registry.add(lab_builder.build_lab(spec))
+
+    with pytest.raises(MachineNotRunningError):
+        service.is_startup_finished("lab1", "pc1")
+
+
 def test_fs_list_directory_handles_none_stdout_from_exec():
     service = _service_with_running_machine()
 

@@ -10,7 +10,7 @@ import { api } from "../services/api";
 import { machineStartupText } from "../services/labfs";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
 import { deviceStateLabel, formatIface, formatPort } from "../services/topology";
-import type { LabDetail } from "../services/types";
+import type { LabDetail, StartupStatus } from "../services/types";
 import "./TopologyGraph.css";
 import type { ContextMenuState } from "./TopologyContextMenu";
 
@@ -285,6 +285,43 @@ export function TopologyGraph({
   const isEmpty = !model.nodes.length;
   const hasFixedLayout = !!savedLayout && Object.keys(savedLayout).length > 0;
 
+  const selectedDeviceName = selectedNode?.type === "dev" ? selectedNode.name : null;
+  const selectedDeviceRunning = selectedNode?.type === "dev" ? selectedNode.running : false;
+  const [startupStatus, setStartupStatus] = useState<StartupStatus | null>(null);
+
+  // Poll the running device's boot-time startup log (/var/log/startup.log) until its startup
+  // commands finish — signaled by the /tmp/EOS marker Kathara's own startup sequence touches last
+  // (see KatharaService.is_startup_finished). Stops as soon as `finished` comes back true, or
+  // immediately when the selection changes or the device stops running, so nothing keeps polling
+  // in the background for a node the user isn't even looking at anymore. Depends on primitives
+  // (name/running), not the node/machine objects themselves, which get new identities on every
+  // unrelated lab refresh — an object dependency here would restart polling (and briefly show
+  // "Loading…") on every such refresh instead of only on an actual selection change.
+  useEffect(() => {
+    setStartupStatus(null);
+    if (!selectedDeviceName || !selectedDeviceRunning) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = () => {
+      api
+        .getStartupStatus(labName, selectedDeviceName)
+        .then((status) => {
+          if (cancelled) return;
+          setStartupStatus(status);
+          if (!status.finished) timer = setTimeout(poll, 1500);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          timer = setTimeout(poll, 1500);
+        });
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [labName, selectedDeviceName, selectedDeviceRunning]);
+
   return (
     <div className="mt-3">
       <div className="kt-topo-hints">
@@ -528,6 +565,21 @@ export function TopologyGraph({
                   <div className="hint">No startup commands.</div>
                 )}
               </div>
+              {selectedNode.running && (
+                <div className="iface">
+                  <div className="d-flex align-items-center justify-content-between">
+                    <span style={{ fontWeight: 600 }}>startup log</span>
+                    <span className={`kt-state ${startupStatus?.finished ? "done" : "pending"}`}>
+                      {startupStatus?.finished ? "finished" : "running…"}
+                    </span>
+                  </div>
+                  {startupStatus?.log ? (
+                    <pre className="startup">{startupStatus.log}</pre>
+                  ) : (
+                    <div className="hint">{startupStatus ? "No output yet." : "Loading…"}</div>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <>

@@ -127,3 +127,11 @@ class MachineDetail(BaseModel):
     status: Optional[str] = None
 
     model_config = ConfigDict(extra="ignore")
+
+
+class StartupStatus(BaseModel):
+    """A running device's boot-time startup progress: the live `/var/log/startup.log` tail and
+    whether its startup commands (`.startup` script + `exec_commands`) have finished executing."""
+
+    log: str
+    finished: bool

@@ -1391,6 +1391,30 @@ class KatharaService:
         except UnicodeDecodeError as exc:
             raise BinaryFileError("File is not UTF-8 text. Use download for binary files.") from exc
 
+    def get_startup_log(self, lab_name: str, machine_name: str) -> str:
+        """The device's boot-time startup log: `/var/log/startup.log`, the redirected stdout+stderr
+        of its `.startup` script followed by its lab.conf `exec_commands` (see Kathara's
+        `DockerMachine.STARTUP_COMMANDS`). The file doesn't exist until the device actually has a
+        `.startup` script to run — treated as "no log yet" (empty string) rather than an error,
+        since polling this while a device is still booting is the whole point.
+        """
+        self._get_running_machine(lab_name, machine_name)
+        stdout, _, exit_code = self.exec_command(lab_name, machine_name, ["cat", "/var/log/startup.log"], wait=False)
+        if exit_code != 0:
+            return ""
+        return (stdout or b"").decode("utf-8", errors="replace")
+
+    def is_startup_finished(self, lab_name: str, machine_name: str) -> bool:
+        """Whether the device's startup commands (`.startup` script + `exec_commands`) have finished
+        executing — mirrors Kathara's own internal check (`DockerMachine._wait_startup_execution`):
+        the very last of its startup commands is `touch /tmp/EOS`, so the marker's existence is the
+        signal. Must call `exec_command` with `wait=False` here — `wait=True` would itself block on
+        this same condition via Kathara's blocking wait, defeating the point of polling for it.
+        """
+        self._get_running_machine(lab_name, machine_name)
+        _, _, exit_code = self.exec_command(lab_name, machine_name, ["test", "-f", "/tmp/EOS"], wait=False)
+        return exit_code == 0
+
     def fs_write_text(self, lab_name: str, machine_name: str, path: str, content: str) -> int:
         _, normalized = self._running_guest_path(lab_name, machine_name, path)
         self.copy_files(lab_name, machine_name, {normalized: content})
