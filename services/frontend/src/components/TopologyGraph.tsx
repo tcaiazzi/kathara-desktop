@@ -30,6 +30,7 @@ type DeviceActionsProps = Pick<
   | "openConnectExisting"
   | "openDisconnect"
   | "openRuntimeFs"
+  | "openOptions"
   | "openTerminalPopup"
   | "openWorkspaceTerminal"
   | "machineNames"
@@ -92,6 +93,7 @@ export function TopologyGraph({
   openConnectExisting,
   openDisconnect,
   openRuntimeFs,
+  openOptions,
   openTerminalPopup,
   openWorkspaceTerminal,
   machineNames,
@@ -482,6 +484,9 @@ export function TopologyGraph({
                 </Button>
                 <Button size="sm" variant="primary" onClick={onEditFiles}>
                   Edit configuration
+                </Button>
+                <Button size="sm" variant="outline-secondary" onClick={() => openOptions(selectedNode)}>
+                  {detail.deployed ? "View options" : "Edit options"}
                 </Button>
               </div>
               {selectedNode.ifaces.map((it) => (

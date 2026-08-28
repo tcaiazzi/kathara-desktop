@@ -19,6 +19,12 @@ export interface WorkspaceCtx {
   openRuntimeFsPanel: (machine: string) => void;
   /** The machine the Runtime Filesystem panel should preselect (set by openRuntimeFsPanel). */
   runtimeFsPreferredMachine: string | null;
+  /** Opens the machine-options editor modal (rendered once, at the workspace-page level) for `machine`. */
+  openOptionsEditor: (machine: string) => void;
+  /** The machine whose options editor modal is currently open, or null when it's closed. */
+  optionsEditorMachine: string | null;
+  /** Closes the machine-options editor modal. */
+  closeOptionsEditor: () => void;
   /** DOM node of the "Node info" dock panel, or null when that panel is closed. The topology
    *  portals its inspector into it, so node info lives in a draggable/closable dock panel. */
   nodeInfoHost: HTMLElement | null;
@@ -37,6 +43,7 @@ export interface WorkspaceCtx {
     | "openConnectExisting"
     | "openDisconnect"
     | "openRuntimeFs"
+    | "openOptions"
     | "openTerminalPopup"
     | "openWorkspaceTerminal"
     | "machineNames"

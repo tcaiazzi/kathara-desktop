@@ -32,7 +32,11 @@ export function EditorPane({
   language = "plaintext",
 }: EditorPaneProps) {
   return (
-    <div className="flex-grow-1 d-flex flex-column">
+    // minHeight: 0 lets this flex item shrink below its content's natural height instead of
+    // pushing the panel taller — without it, a long file grows the whole pane rather than
+    // scrolling inside the (fixed-height) editor below (see CodeEditor's own height:100%/
+    // .cm-scroller{overflow:auto} — that only kicks in once every ancestor actually bounds height).
+    <div className="flex-grow-1 d-flex flex-column" style={{ minHeight: 0 }}>
       <div className="d-flex justify-content-between align-items-center mb-2">
         <span className="font-monospace small text-muted">{pathLabel}</span>
         <div className="d-flex gap-2">
@@ -42,7 +46,7 @@ export function EditorPane({
           </Button>
         </div>
       </div>
-      <Suspense fallback={<div className="flex-grow-1" style={{ minHeight: 360 }} />}>
+      <Suspense fallback={<div className="flex-grow-1" style={{ minHeight: 0 }} />}>
         <CodeEditor
           language={language}
           value={value}

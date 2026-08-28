@@ -15,9 +15,11 @@ Design notes:
 
 import io
 import logging
+import os
 import posixpath
 import shlex
 import threading
+from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 
 import fs.copy
@@ -47,7 +49,7 @@ from ..errors import (
 from ..schemas.filesystem import FsEntry
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.lab_import import LabImportPreview
-from ..schemas.machine import MachineCreate
+from ..schemas.machine import MachineCreate, MachineUpdate
 from . import lab_builder, lab_conf_edit, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
 from .lab_store import LabStore
@@ -139,6 +141,60 @@ class KatharaService:
             for lab in self.registry.all():
                 if any(m.api_object is not None for m in lab.machines.values()):
                     self.undeploy_lab(lab.name)
+
+    def browse_host_directory(self, path: str) -> list[FsEntry]:
+        """List a directory on the host machine's own filesystem — not a lab's directory or a
+        running device's (that's a container's filesystem, reached over exec), the real OS
+        filesystem this backend process itself sees. Lets the user pick a real path for a
+        device's ``[volume]`` bind mount from an in-app browser instead of typing one blind.
+        """
+        target = Path(path or "/").expanduser()
+        if not target.is_absolute():
+            raise ApiError(f"Path `{path}` must be absolute.")
+        if not target.exists():
+            raise PathNotFoundError(f"Path `{path}` not found.")
+        if not target.is_dir():
+            raise ApiError(f"`{path}` is a file, not a directory.")
+        entries: list[FsEntry] = []
+        try:
+            children = list(target.iterdir())
+        except PermissionError as exc:
+            raise ApiError(f"Permission denied listing `{path}`.") from exc
+        for child in children:
+            try:
+                st = child.stat()
+                is_dir = child.is_dir()
+            except OSError:
+                continue  # broken symlink or a permission error on this one entry: skip it
+            entries.append(
+                FsEntry(
+                    name=child.name,
+                    path=str(child),
+                    is_dir=is_dir,
+                    size=None if is_dir else st.st_size,
+                    mtime=st.st_mtime,
+                )
+            )
+        return sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
+
+    def list_net_sysctls(self) -> list[str]:
+        """Every ``net.*`` sysctl key available on this host's current kernel — walks
+        ``/proc/sys/net``, where each readable file corresponds 1:1 to a ``net.a.b.c`` sysctl
+        name (path separators become dots). Reflects the real kernel/loaded modules on this
+        machine rather than a static, potentially stale list — Kathara's own sysctl validation
+        only ever accepts the ``net.*`` namespace anyway (see ``Machine.add_meta``'s regex), so
+        this is also exactly the set of keys that would actually be accepted.
+        """
+        root = Path("/proc/sys/net")
+        if not root.is_dir():
+            return []
+        keys: set[str] = set()
+        for dirpath, _dirnames, filenames in os.walk(root):
+            rel_dir = Path(dirpath).relative_to(root)
+            for filename in filenames:
+                rel = filename if rel_dir == Path(".") else f"{rel_dir.as_posix()}/{filename}"
+                keys.add("net." + rel.replace("/", "."))
+        return sorted(keys)
 
     # -- lab lifecycle --------------------------------------------------------
 
@@ -1078,6 +1134,30 @@ class KatharaService:
             if new_conf is not None:
                 self.store.write_lab_conf_text(lab_name, new_conf)
         return machine
+
+    def update_machine(self, lab_name: str, machine_name: str, spec: MachineUpdate) -> Machine:
+        """Replace a stopped device's full option set (image/mem/.../volumes) from ``spec``.
+
+        This is a configuration edit, not a runtime one — rejected with 409 while the lab is
+        deployed (mirroring ``update_lab_conf``'s gate exactly), unlike ``add_machine``, which is
+        allowed to also deploy live. There is no live-redeploy path here: editing options only
+        ever takes effect from the lab's next deploy.
+        """
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            if any(m.api_object is not None for m in lab.machines.values()):
+                raise LabConfLockedError(
+                    f"Cannot edit device options while `{lab_name}` is deployed. Undeploy it first."
+                )
+            machine = lab.get_machine(machine_name)  # raises MachineNotFoundError
+            # Render + validate the lab.conf edit *before* mutating the live model, so a spec that
+            # can't be represented fails with no side effects (mirrors add_machine's ordering).
+            base = self._lab_conf_base_text(lab_name)
+            new_conf = lab_conf_edit.replace_device_options(base, machine_name, spec) if base is not None else None
+            lab_builder.apply_options(machine, spec)
+            if new_conf is not None:
+                self.store.write_lab_conf_text(lab_name, new_conf)
+            return machine
 
     def remove_machine(self, lab_name: str, machine_name: str, keep_links: bool = False) -> None:
         lab = self.get_lab_or_reconstruct(lab_name)

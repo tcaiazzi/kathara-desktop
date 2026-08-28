@@ -20,6 +20,8 @@ export interface UseDeviceActionsOptions {
   onOpenTerminal: (machine: string) => void;
   // Opens the Runtime Filesystem dock panel, preselecting `machine`.
   onOpenRuntimeFs: (machine: string) => void;
+  // Opens the machine-options editor modal for `machine`.
+  onOpenOptions: (machine: string) => void;
 }
 
 const EMPTY_MODEL: TopoModel = { nodes: [], edges: [] };
@@ -28,7 +30,7 @@ const EMPTY_MODEL: TopoModel = { nodes: [], edges: [] };
 // context-menu item lists that expose them, shared by the topology canvas and the workspace
 // sidebar's device list — so "right-click a device" means the exact same thing in both places
 // instead of two hand-synced copies that inevitably drift apart.
-export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOpenTerminal, onOpenRuntimeFs }: UseDeviceActionsOptions) {
+export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOpenTerminal, onOpenRuntimeFs, onOpenOptions }: UseDeviceActionsOptions) {
   const toast = useToast();
   const confirm = useConfirm();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
@@ -290,6 +292,13 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
     onOpenRuntimeFs(deviceNode.name);
   }
 
+  // No running-gate here (unlike openRuntimeFs/openTerminalPopup) — editing options requires the
+  // lab to be *stopped*, the opposite condition, and the modal itself already shows a clear
+  // undeploy-first message and a read-only view when the lab is deployed.
+  function openOptions(deviceNode: DeviceNode) {
+    onOpenOptions(deviceNode.name);
+  }
+
   function openTerminalPopup(deviceNode: DeviceNode) {
     if (!requireRunning(deviceNode)) return;
     openTerminalWindow(labName, deviceNode.name);
@@ -301,7 +310,10 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
   }
 
   function deviceContextItems(nd: DeviceNode): ContextMenuItem[] {
-    const items: ContextMenuItem[] = [{ label: "Edit configuration", action: onEditFiles }];
+    const items: ContextMenuItem[] = [
+      { label: "Edit configuration", action: onEditFiles },
+      { label: detail?.deployed ? "View options" : "Edit options", action: () => openOptions(nd) },
+    ];
     if (!nd.running) {
       items.push({ label: "Deploy device", success: true, action: () => deployDevice(nd) });
     }
@@ -352,6 +364,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
     undeployDevice,
     removeDomain,
     openRuntimeFs,
+    openOptions,
     openTerminalPopup,
     openWorkspaceTerminal,
     machineNames,

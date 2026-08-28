@@ -85,17 +85,47 @@ export interface InterfaceModel {
   mac_address: string | null;
 }
 
-export interface MachineDetail {
+export interface VolumeMount {
+  host_path: string;
+  guest_path: string;
+  mode: "ro" | "rw" | "rx";
+}
+
+export interface Ulimit {
   name: string;
+  soft: number;
+  hard: number | null;
+}
+
+// Mirrors backend schemas/machine.py's MachineOptionsBase — every device "option"/meta this API
+// models explicitly, shared by the add-device payload and the update-device payload (and, with
+// `name`/`interfaces`/`running`/`status` layered on, MachineDetail below) so the field list lives
+// in exactly one place on this side too.
+export interface MachineOptionsPayload {
   image: string | null;
   mem: string | null;
   cpus: number | null;
   ports: PortMapping[];
-  envs: Record<string, string | number>;
+  envs: Record<string, string>;
   sysctls: Record<string, string | number>;
   exec_commands: string[];
-  interfaces: InterfaceModel[];
+  volumes: VolumeMount[];
+  ulimits: Ulimit[];
+  privileged: boolean;
   bridged: boolean;
+  ipv6: boolean | null;
+  shell: string | null;
+  num_terms: number | null;
+  entrypoint: string | null;
+  args: string | null;
+  metas: Record<string, string>;
+}
+
+export type MachineUpdatePayload = MachineOptionsPayload;
+
+export interface MachineDetail extends MachineOptionsPayload {
+  name: string;
+  interfaces: InterfaceModel[];
   running: boolean;
   status: string | null;
 }

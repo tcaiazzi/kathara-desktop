@@ -13,7 +13,7 @@ from Kathara.model.Lab import Lab
 from Kathara.model.Machine import Machine
 
 from ..schemas.lab import LabCreate
-from ..schemas.machine import MachineCreate
+from ..schemas.machine import MachineCreate, MachineOptionsBase
 
 # A host interface spec optionally carrying a trailing VLAN tag, e.g. "eth0" or "eth0.100".
 _VLAN_SUFFIX_RE = re.compile(r"^(?P<iface>.+)\.(?P<vlan>\d+)$")
@@ -54,7 +54,7 @@ def _format_volume(volume) -> str:
     return f"{volume.host_path}|{volume.guest_path}|{volume.mode}"
 
 
-def _machine_kwargs(spec: MachineCreate) -> dict:
+def _machine_kwargs(spec: MachineOptionsBase) -> dict:
     """Build the kwargs dict consumed by ``Machine.update_meta``."""
     kwargs: dict = {}
     if spec.image is not None:
@@ -107,9 +107,13 @@ _RESERVED_META_KEYS = frozenset(
 )
 
 
-def build_machine(lab: Lab, spec: MachineCreate) -> Machine:
-    """Create a single Machine (with interfaces and volumes) inside ``lab``."""
-    machine = lab.new_machine(spec.name, **_machine_kwargs(spec))
+def apply_options(machine: Machine, spec: MachineOptionsBase) -> None:
+    """(Re)populate ``machine.meta`` from ``spec``, wholesale — resets to the same default shape
+    ``Machine.__init__`` starts from, then reapplies every option, so calling this twice on the
+    same machine (an edit) leaves no stale entry from whatever was set before."""
+    machine.meta.clear()
+    machine.meta.update({"exec_commands": [], "sysctls": {}, "envs": {}, "ports": {}, "ulimits": {}, "volumes": {}})
+    machine.update_meta(_machine_kwargs(spec))
 
     for volume in spec.volumes:
         machine.add_meta("volume", _format_volume(volume))
@@ -118,6 +122,12 @@ def build_machine(lab: Lab, spec: MachineCreate) -> Machine:
         if key in _RESERVED_META_KEYS:
             continue
         machine.meta[key] = value
+
+
+def build_machine(lab: Lab, spec: MachineCreate) -> Machine:
+    """Create a single Machine (with interfaces and volumes) inside ``lab``."""
+    machine = lab.new_machine(spec.name)
+    apply_options(machine, spec)
 
     for iface in spec.interfaces:
         lab.connect_machine_to_link(

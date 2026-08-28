@@ -7,7 +7,7 @@ import pytest
 
 from kathara_api.errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError
 from kathara_api.schemas.lab import LabCreate
-from kathara_api.schemas.machine import MachineCreate
+from kathara_api.schemas.machine import MachineCreate, MachineUpdate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import FakeFacadeBase, zip_bytes
@@ -321,6 +321,53 @@ def test_add_machine_deploys_live_when_lab_running(tmp_path):
     # Lab is running → the new device is deployed live *and* persisted to lab.conf.
     assert machine.api_object is not None
     assert "pc2[image]" in (service.store.lab_dir("lab1") / "lab.conf").read_text()
+
+
+def test_update_machine_persists_to_lab_conf_when_stopped(tmp_path):
+    service = _service(tmp_path)
+    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+
+    spec = MachineUpdate(mem="256m", bridged=True, envs={"FOO": "bar"})
+    machine = service.update_machine("lab1", "pc1", spec)
+
+    assert machine.meta["mem"] == "256m"
+    assert machine.meta["bridged"] is True
+    assert machine.meta["envs"] == {"FOO": "bar"}
+    conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    assert "pc1[mem]=256m" in conf
+    assert 'pc1[env]="FOO=bar"' in conf
+    # ...and it survives a reload from disk (truly persisted, not just live).
+    service._reload_lab_from_disk("lab1")
+    reloaded = service.registry.get("lab1").machines["pc1"]
+    assert reloaded.meta["mem"] == "256m"
+
+
+def test_update_machine_rejects_when_deployed(tmp_path):
+    service = _service(tmp_path)
+    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    service.deploy_lab("lab1")  # fake facade sets api_object on machines
+
+    with pytest.raises(LabConfLockedError):
+        service.update_machine("lab1", "pc1", MachineUpdate(mem="256m"))
+
+    # Rejected before touching anything — lab.conf and the live model are both untouched.
+    conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    assert "pc1[mem]" not in conf
+    assert "mem" not in service.registry.get("lab1").machines["pc1"].meta
+
+
+def test_update_machine_clears_options_not_resubmitted(tmp_path):
+    service = _service(tmp_path)
+    service.import_lab(
+        "lab1", {"lab.conf": 'pc1[image]=kathara/base\npc1[0]=A\npc1[mem]="128m"\npc1[env]="A=1"\n'}, []
+    )
+
+    service.update_machine("lab1", "pc1", MachineUpdate())
+
+    conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    assert "pc1[mem]" not in conf
+    assert "pc1[env]" not in conf
+    assert "mem" not in service.registry.get("lab1").machines["pc1"].meta
 
 
 def test_runtime_interface_change_never_leaks_into_lab_conf(tmp_path):

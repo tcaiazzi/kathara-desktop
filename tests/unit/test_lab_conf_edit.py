@@ -9,7 +9,7 @@ import pytest
 from Kathara.exceptions import MachineAlreadyExistsError, MachineCollisionDomainError, MachineNotFoundError
 
 from kathara_api.errors import ApiError
-from kathara_api.schemas.machine import MachineCreate
+from kathara_api.schemas.machine import MachineCreate, MachineUpdate, PortMapping, Ulimit
 from kathara_api.services import lab_conf_edit as lce
 
 # A deliberately hostile lab.conf: comments, unusual interface ordering, single quotes, [volume],
@@ -197,6 +197,78 @@ def test_unset_meta_removes_all_occurrences():
     assert out == "pc1[image]=kathara/base\npc1[0]=A\n"
 
 
+# -- set_meta_group / replace_device_options ---------------------------------------
+
+
+def test_set_meta_group_replaces_all_old_lines_with_new_ones_in_place():
+    doc = lce.LabConfDoc('pc1[image]="kathara/base"\npc1[env]="A=1"\npc1[env]="B=2"\npc1[0]="X"\n')
+    doc.set_meta_group("pc1", "env", ["C=3", "D=4", "E=5"])
+    assert doc.render() == (
+        'pc1[image]="kathara/base"\npc1[env]="C=3"\npc1[env]="D=4"\npc1[env]="E=5"\npc1[0]="X"\n'
+    )
+
+
+def test_set_meta_group_appends_when_key_absent():
+    doc = lce.LabConfDoc('pc1[image]="kathara/base"\npc1[0]="X"\n')
+    doc.set_meta_group("pc1", "exec", ["echo hi"])
+    assert doc.render() == 'pc1[image]="kathara/base"\npc1[0]="X"\npc1[exec]="echo hi"\n'
+
+
+def test_set_meta_group_empty_values_removes_all():
+    doc = lce.LabConfDoc('pc1[image]="kathara/base"\npc1[env]="A=1"\npc1[env]="B=2"\n')
+    doc.set_meta_group("pc1", "env", [])
+    assert doc.render() == 'pc1[image]="kathara/base"\n'
+
+
+def test_replace_device_options_rewrites_only_the_target_device():
+    spec = MachineUpdate(
+        image="kathara/netkit-lab",
+        mem="256m",
+        bridged=True,
+        envs={"FOO": "newval", "EXTRA": "1"},
+        sysctls={"net.ipv4.ip_forward": 1},
+        ulimits=[Ulimit(name="nofile", soft=1024, hard=2048)],
+        ports=[PortMapping(host_port=8080, guest_port=80, protocol="tcp")],
+        exec_commands=["echo hello"],
+        metas={"custom_opt": "value1"},
+    )
+    result = lce.replace_device_options(GNARLY, "pc1", spec)
+    assert 'pc1[image]="kathara/netkit-lab"' in result
+    assert "pc1[mem]=256m" in result
+    assert "pc1[bridged]=True" in result
+    assert 'pc1[env]="FOO=newval"' in result
+    assert 'pc1[env]="EXTRA=1"' in result
+    assert 'pc1[sysctl]="net.ipv4.ip_forward=1"' in result
+    assert 'pc1[ulimit]="nofile=1024:2048"' in result
+    assert 'pc1[port]="8080:80/tcp"' in result
+    assert 'pc1[exec]="echo hello"' in result
+    assert "pc1[custom_opt]=value1" in result
+    # r1's own options (including the ones interleaved into pc1's block) must be untouched.
+    assert "r1[image]=kathara/base" in result
+    assert "r1[volume]=/host/data|/mnt/data|rw" in result
+    assert "r1[frobnicate]=yes" in result
+    assert "r1[mem]=256m                         # r1 again, interleaved into pc1's block on purpose" in result
+    lce.validate(result)
+
+
+def test_replace_device_options_clears_options_not_resubmitted():
+    text = 'pc1[image]="kathara/base"\npc1[mem]="128m"\npc1[env]="A=1"\npc1[custom]=old\npc1[0]="X"\n'
+    result = lce.replace_device_options(text, "pc1", MachineUpdate())
+    assert result == 'pc1[image]="kathara/base"\npc1[0]="X"\n'
+
+
+def test_replace_device_options_is_idempotent():
+    spec = MachineUpdate(mem="64m", envs={"X": "1"}, exec_commands=["a", "b"])
+    once = lce.replace_device_options('pc1[0]="A"\n', "pc1", spec)
+    twice = lce.replace_device_options(once, "pc1", spec)
+    assert once == twice
+
+
+def test_replace_device_options_unknown_device_raises():
+    with pytest.raises(MachineNotFoundError):
+        lce.replace_device_options('pc1[0]="A"\n', "ghost", MachineUpdate())
+
+
 # -- set_lab_metadata -------------------------------------------------------------
 
 
@@ -230,6 +302,7 @@ OPERATIONS = [
     lambda t: lce.remove_interface(t, "pc1", "A"),
     lambda t: lce.set_meta(t, "pc1", "mem", "256m"),
     lambda t: lce.unset_meta(t, "pc1", "image"),
+    lambda t: lce.replace_device_options(t, "pc1", MachineUpdate(mem="256m", envs={"X": "1"})),
     lambda t: lce.set_lab_metadata(t, "LAB_DESCRIPTION", "d"),
 ]
 

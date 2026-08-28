@@ -12,6 +12,7 @@ import type {
   LabSummary,
   LinkDetail,
   MachineDetail,
+  MachineUpdatePayload,
   Message,
   SettingsUpdate,
   SettingsView,
@@ -93,6 +94,11 @@ export const api = {
   // Force-undeploys every lab kathara-ide has deployed, not just the currently open one — scopes
   // to labs this backend manages, unlike the Kathara CLI's own `kathara wipe`.
   wipeAll: () => request<Message>("POST", "/system/wipe", {}),
+  // Browses the host machine's own filesystem (not a lab's or a device's) — backs the volume
+  // host-path picker in the machine options editor.
+  browseHost: (path: string) => request<FsListResponse>("GET", `/system/browse?path=${encodeURIComponent(path)}`),
+  // Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara accepts.
+  listNetSysctls: () => request<string[]>("GET", "/system/sysctls"),
 
   listLabs: () => request<LabSummary[]>("GET", "/labs"),
   getLab: (name: string) => request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`),
@@ -307,6 +313,14 @@ export const api = {
   ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labName)}/machines`, payload),
   removeMachine: (labName: string, machineName: string) =>
     request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`),
+  // Full replace of a stopped device's option set (schemas/machine.py's MachineUpdate) — rejected
+  // with 409 while the lab is deployed.
+  updateMachine: (labName: string, machineName: string, payload: MachineUpdatePayload) =>
+    request<MachineDetail>(
+      "PUT",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`,
+      payload,
+    ),
   // connect/disconnect take query params on the backend (no request body) — see routers/machines.py.
   // interfaceNumber is only honored for a stopped device (static lab.conf edit); omit it for a
   // running device so the backend/Kathara auto-assigns the next interface number at runtime.

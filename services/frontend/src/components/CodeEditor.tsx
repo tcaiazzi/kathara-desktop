@@ -129,6 +129,9 @@ export function CodeEditor({ language, value, onChange, readOnly = false, placeh
   }, [placeholder]);
 
   // flex-column so the CodeMirror editor stretches to the full width of the pane (a row flex would
-  // shrink it to its content width).
-  return <div ref={hostRef} className="flex-grow-1 d-flex flex-column" style={{ minHeight: 360, overflow: "hidden" }} />;
+  // shrink it to its content width). minHeight: 0 (not a fixed floor) lets this host shrink to
+  // whatever the panel actually has available, so CodeMirror's own `.cm-editor{height:100%}` +
+  // `.cm-scroller{overflow:auto}` (editor theme) get a real bound to scroll within instead of the
+  // editor growing to fit its content and pushing the rest of the page down.
+  return <div ref={hostRef} className="flex-grow-1 d-flex flex-column" style={{ minHeight: 0, overflow: "hidden" }} />;
 }

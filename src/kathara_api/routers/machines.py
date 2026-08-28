@@ -17,7 +17,7 @@ from ..schemas.filesystem import (
     FsUploadResponse,
     FsWriteTextRequest,
 )
-from ..schemas.machine import MachineCreate, MachineDetail
+from ..schemas.machine import MachineCreate, MachineDetail, MachineUpdate
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
@@ -54,6 +54,19 @@ def add_machine(
 ) -> MachineDetail:
     """Add a device to a running network scenario and deploy it."""
     machine = service.add_machine(lab_name, payload)
+    return serializers.machine_to_detail(machine)
+
+
+@router.put("/{machine_name}", response_model=MachineDetail)
+def update_machine(
+    lab_name: str,
+    machine_name: str,
+    payload: MachineUpdate,
+    service: KatharaService = Depends(get_service),
+) -> MachineDetail:
+    """Replace a stopped device's full option set (lab.conf metadata). Rejected with 409 while
+    the lab is deployed — undeploy it first."""
+    machine = service.update_machine(lab_name, machine_name, payload)
     return serializers.machine_to_detail(machine)
 
 

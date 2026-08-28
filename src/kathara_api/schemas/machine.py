@@ -22,7 +22,7 @@ class VolumeMount(BaseModel):
 
     host_path: str
     guest_path: str
-    mode: Literal["ro", "rw"] = "rw"
+    mode: Literal["ro", "rw", "rx"] = "rw"
 
 
 class Ulimit(BaseModel):
@@ -49,10 +49,10 @@ class InterfaceModel(BaseModel):
     mac_address: Optional[str] = None
 
 
-class MachineCreate(BaseModel):
-    """JSON description of a device to create."""
+class MachineOptionsBase(BaseModel):
+    """Every device "option"/meta this API models explicitly, shared by creation and update —
+    keeping the field list in exactly one place so the two request shapes can't drift apart."""
 
-    name: str = Field(pattern=MACHINE_NAME_PATTERN)
     image: Optional[str] = None
     mem: Optional[str] = None
     cpus: Optional[float] = None
@@ -74,7 +74,6 @@ class MachineCreate(BaseModel):
     # `lab_builder.build_machine`) — only assigned straight into `machine.meta` — so a key like
     # `volume` can't smuggle a host bind mount in through this side door.
     metas: dict[str, str] = Field(default_factory=dict)
-    interfaces: list[InterfaceAttach] = Field(default_factory=list)
 
     @field_validator("image", "mem", "shell", "entrypoint", "args")
     @classmethod
@@ -90,6 +89,18 @@ class MachineCreate(BaseModel):
         return values
 
 
+class MachineCreate(MachineOptionsBase):
+    """JSON description of a device to create."""
+
+    name: str = Field(pattern=MACHINE_NAME_PATTERN)
+    interfaces: list[InterfaceAttach] = Field(default_factory=list)
+
+
+class MachineUpdate(MachineOptionsBase):
+    """Full replacement of an existing, non-deployed device's option set — every field is resent,
+    not just the ones that changed (see `KatharaService.update_machine`)."""
+
+
 class MachineDetail(BaseModel):
     """Response describing a device and (if deployed) its running state."""
 
@@ -101,11 +112,17 @@ class MachineDetail(BaseModel):
     envs: dict[str, Union[str, int]] = Field(default_factory=dict)
     sysctls: dict[str, Union[str, int]] = Field(default_factory=dict)
     exec_commands: list[str] = Field(default_factory=list)
+    volumes: list[VolumeMount] = Field(default_factory=list)
+    ulimits: list[Ulimit] = Field(default_factory=list)
     interfaces: list[InterfaceModel] = Field(default_factory=list)
+    privileged: bool = False
     bridged: bool = False
+    ipv6: Optional[bool] = None
+    shell: Optional[str] = None
     num_terms: Optional[int] = None
     entrypoint: Optional[str] = None
     args: Optional[str] = None
+    metas: dict[str, str] = Field(default_factory=dict)
     running: bool = False
     status: Optional[str] = None
 

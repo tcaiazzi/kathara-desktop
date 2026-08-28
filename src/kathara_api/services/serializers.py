@@ -12,8 +12,9 @@ from Kathara.model.Machine import Machine
 
 from ..schemas.lab import LabDetail, LabMetadata, LabSummary
 from ..schemas.link import LinkDetail
-from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping
+from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping, Ulimit, VolumeMount
 from ..schemas.stats import LinkStats, MachineStats
+from .lab_store import _KNOWN_META_KEYS
 
 
 def _ports_to_schema(ports: dict) -> list[PortMapping]:
@@ -24,6 +25,19 @@ def _ports_to_schema(ports: dict) -> list[PortMapping]:
             PortMapping(host_port=host_port, guest_port=guest_port, protocol=protocol)
         )
     return result
+
+
+def _volumes_to_schema(volumes: dict) -> list[VolumeMount]:
+    """Convert Kathara volume meta ``{host_path: {guest_path, mode}}`` to a VolumeMount list."""
+    return [
+        VolumeMount(host_path=host_path, guest_path=v["guest_path"], mode=v["mode"])
+        for host_path, v in volumes.items()
+    ]
+
+
+def _ulimits_to_schema(ulimits: dict) -> list[Ulimit]:
+    """Convert Kathara ulimit meta ``{name: {soft, hard}}`` to a Ulimit list."""
+    return [Ulimit(name=name, soft=v["soft"], hard=v["hard"]) for name, v in ulimits.items()]
 
 
 def machine_to_detail(machine: Machine) -> MachineDetail:
@@ -58,11 +72,22 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
         envs=machine.get_envs(),
         sysctls=machine.get_sysctls(),
         exec_commands=machine.get_exec_commands(),
+        # Read straight from `meta` rather than the `is_privileged()`/`is_ipv6_enabled()`/
+        # `get_volumes()` getters: those resolve lab-level metadata overrides and setting-file
+        # defaults this API doesn't expose, and `get_volumes()` additionally raises
+        # `MountDeniedError` under a restrictive mount policy — wrong for a plain "what did this
+        # device declare" read used to populate an edit form.
+        volumes=_volumes_to_schema(machine.meta.get("volumes", {})),
+        ulimits=_ulimits_to_schema(machine.meta.get("ulimits", {})),
         interfaces=interfaces,
+        privileged=bool(machine.meta.get("privileged", False)),
         bridged=machine.is_bridged(),
+        ipv6=machine.meta.get("ipv6"),
+        shell=machine.meta.get("shell"),
         num_terms=machine.meta.get("num_terms"),
         entrypoint=machine.meta.get("entrypoint"),
         args=machine.meta.get("args"),
+        metas={k: str(v) for k, v in machine.meta.items() if k not in _KNOWN_META_KEYS},
         running=running,
         status=status,
     )

@@ -22,7 +22,7 @@ from Kathara.exceptions import MachineAlreadyExistsError, MachineCollisionDomain
 from Kathara.model.Lab import Lab
 
 from ..errors import ApiError
-from ..schemas.machine import MachineCreate
+from ..schemas.machine import MachineCreate, MachineUpdate
 from . import lab_builder, lab_import, lab_store
 
 
@@ -286,6 +286,34 @@ class LabConfDoc:
     def unset_meta(self, device: str, key: str) -> None:
         self._remove_indices(set(self.meta_line_indices(device, key)))
 
+    def set_meta_group(self, device: str, key: str, values: list[str]) -> None:
+        """Replace every ``device[key]=...`` line with exactly one line per ``values``, in order,
+        always double-quoted (matching ``lab_store.gen_device_lines``' convention for the
+        container-typed metas: ports/envs/sysctls/ulimits/volumes/exec commands). Unlike
+        ``set_meta``, which can only ever hold one line per key, this is for a key that
+        legitimately repeats N times — N old lines in, N new lines out, replaced in place rather
+        than deleted-then-appended, so a hand-edited file's group doesn't relocate to the end of
+        the block on every save."""
+        existing = self.meta_line_indices(device, key)
+        if existing:
+            insert_at = min(existing)
+            indent = self._lines[insert_at].indent
+        else:
+            dev_lines = self._device_line_indices(device)
+            insert_at = (max(dev_lines) + 1) if dev_lines else len(self._lines)
+            indent = self._lines[dev_lines[-1]].indent if dev_lines else ""
+        existing_set = set(existing)
+        self._lines = [line for i, line in enumerate(self._lines) if i not in existing_set]
+        new_lines = [
+            _Line(raw="", kind=_Kind.META, indent=indent, device=device, arg=key, quote='"', value=value)
+            for value in values
+        ]
+        self._lines[insert_at:insert_at] = new_lines
+
+    def device_meta_keys(self, device: str) -> set[str]:
+        """Every distinct ``[key]`` currently used by ``device``'s META-kind lines."""
+        return {self._lines[i].arg for i in self._meta_line_indices(device)}
+
     def set_lab_metadata(self, key: str, rendered_value: Optional[str]) -> None:
         existing = self.lab_meta_line_indices(key)
         if rendered_value is None:
@@ -442,6 +470,81 @@ def unset_meta(text: str, device: str, key: str) -> str:
         return text
     doc.unset_meta(device, key)
     return doc.render()
+
+
+# Scalar meta keys, and the six keys that repeat (one line per list/dict entry) — used by
+# `replace_device_options` to know which lines are "modeled" (so anything else left on the device
+# is a pass-through `metas` entry, not one this function forgot to handle).
+_SCALAR_OPTION_KEYS = (
+    "image", "mem", "cpus", "shell", "num_terms", "entrypoint", "args", "bridged", "privileged", "ipv6",
+)
+_GROUP_OPTION_KEYS = ("exec", "port", "env", "sysctl", "ulimit", "volume")
+
+
+def _set_scalar(doc: "LabConfDoc", device: str, key: str, value) -> None:
+    if value is None or value == "":
+        doc.unset_meta(device, key)
+        return
+    rendered = lab_store.conf_value(value)
+    quote = '"' if rendered.startswith('"') else ""
+    inner = rendered.strip('"') if quote else rendered
+    doc.set_meta(device, key, inner, quote)
+
+
+def replace_device_options(text: str, device: str, spec: MachineUpdate) -> str:
+    """Rewrite every lab.conf line this API models for ``device`` to match ``spec`` exactly — the
+    machine-options analogue of ``add_device``, but for an existing device's block instead of a
+    new one. Interface lines, comments, and every other device's lines are left untouched.
+
+    Raises ``MachineNotFoundError`` if ``device`` has no lines in ``text`` at all.
+    """
+    doc = LabConfDoc(text)
+    if not doc.has_device(device):
+        raise MachineNotFoundError(f"Device `{device}` not found.")
+
+    # `image` is always written, quoted, falling back to Kathara's own default — mirrors
+    # `gen_device_lines`'s literal `name[image]="value"` line exactly (not run through
+    # `conf_value`'s conditional quoting, which would leave an image name with no whitespace
+    # unquoted and diverge from what a freshly created device's block looks like). Every other
+    # scalar is omitted entirely when falsy, mirroring `gen_device_lines`' `value not in (None,
+    # "", False)` guard: a boolean like `bridged`/`privileged`/`ipv6` set to False is
+    # indistinguishable from "never set" in this project's own generator, so writing it explicitly
+    # would be inconsistent with a freshly created device.
+    doc.set_meta(device, "image", spec.image or "kathara/base", '"')
+    _set_scalar(doc, device, "mem", spec.mem)
+    _set_scalar(doc, device, "cpus", spec.cpus)
+    _set_scalar(doc, device, "shell", spec.shell)
+    _set_scalar(doc, device, "num_terms", spec.num_terms)
+    _set_scalar(doc, device, "entrypoint", spec.entrypoint)
+    _set_scalar(doc, device, "args", spec.args)
+    _set_scalar(doc, device, "bridged", True if spec.bridged else None)
+    _set_scalar(doc, device, "privileged", True if spec.privileged else None)
+    _set_scalar(doc, device, "ipv6", True if spec.ipv6 else None)
+
+    groups = {
+        "exec": list(spec.exec_commands),
+        "port": [lab_builder._format_port(p) for p in spec.ports],
+        "env": [f"{k}={v}" for k, v in spec.envs.items()],
+        "sysctl": [f"{k}={v}" for k, v in spec.sysctls.items()],
+        "ulimit": [lab_builder._format_ulimit(u) for u in spec.ulimits],
+        "volume": [lab_builder._format_volume(v) for v in spec.volumes],
+    }
+    for key, values in groups.items():
+        doc.set_meta_group(device, key, values)
+
+    # Anything left on the device that isn't one of the keys just handled above is a pass-through
+    # `metas` entry (an option this API doesn't model explicitly) — reconcile it against `spec.metas`
+    # rather than leaving stale ones behind or dropping ones the caller didn't touch.
+    modeled = set(_SCALAR_OPTION_KEYS) | set(_GROUP_OPTION_KEYS)
+    existing_passthrough = doc.device_meta_keys(device) - modeled
+    for stale_key in existing_passthrough - set(spec.metas):
+        doc.unset_meta(device, stale_key)
+    for key, value in spec.metas.items():
+        _set_scalar(doc, device, key, value)
+
+    new_text = doc.render()
+    validate(new_text)
+    return new_text
 
 
 def set_lab_metadata(text: str, key: str, value: Optional[str]) -> str:

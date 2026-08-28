@@ -16,6 +16,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { DevicesTable } from "../components/DevicesTable";
 import { LabExplorer } from "../components/LabExplorer";
 import { LinksTable } from "../components/LinksTable";
+import { MachineOptionsEditor } from "../components/MachineOptionsEditor";
 import { NewLabModal } from "../components/NewLabModal";
 import { RuntimeFilesystemEditor } from "../components/RuntimeFilesystemEditor";
 import { StatsPanel } from "../components/StatsPanel";
@@ -428,6 +429,17 @@ export function WorkspacePage() {
     dockApiRef.current?.getPanel("runtime-fs")?.api.setActive();
   }, []);
 
+  // The machine-options editor is a modal, not a dock panel — rendered once here (not inside
+  // TopologyGraph) so both the topology canvas and the sidebar device list's right-click menu
+  // (which share a single deviceContextItems) open the exact same instance.
+  const [optionsEditorMachine, setOptionsEditorMachine] = useState<string | null>(null);
+  const openOptionsEditor = useCallback((machine: string) => {
+    setOptionsEditorMachine(machine);
+  }, []);
+  const closeOptionsEditor = useCallback(() => {
+    setOptionsEditorMachine(null);
+  }, []);
+
   // Drag the rail's right edge to resize it (persisted). Listeners live on window so the drag keeps
   // tracking even when the pointer moves fast over the dock area.
   const startRailResize = useCallback((e: React.MouseEvent) => {
@@ -482,6 +494,7 @@ export function WorkspacePage() {
     onEditFiles: openFilesPanel,
     onOpenTerminal: openTerminal,
     onOpenRuntimeFs: openRuntimeFsPanel,
+    onOpenOptions: openOptionsEditor,
   });
   const { deviceContextItems, findDeviceNode, actionConfig, setActionConfig } = deviceActions;
 
@@ -614,6 +627,9 @@ export function WorkspacePage() {
         openTerminal,
         openRuntimeFsPanel,
         runtimeFsPreferredMachine,
+        openOptionsEditor,
+        optionsEditorMachine,
+        closeOptionsEditor,
         nodeInfoHost,
         setNodeInfoHost,
         deviceActions,
@@ -866,6 +882,16 @@ export function WorkspacePage() {
 
       <TopologyContextMenu menu={ctxMenu} onClose={() => setCtxMenu(null)} />
       <TopologyActionModal config={actionConfig} onClose={() => setActionConfig(null)} />
+      {detail && (
+        <MachineOptionsEditor
+          show={!!optionsEditorMachine}
+          labName={name}
+          machine={optionsEditorMachine ? detail.machines.find((m) => m.name === optionsEditorMachine) ?? null : null}
+          deployed={detail.deployed}
+          onClose={closeOptionsEditor}
+          onSaved={load}
+        />
+      )}
 
       <NewLabModal
         show={showNew}
