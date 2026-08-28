@@ -125,21 +125,19 @@ def test_clear_lab_layout(tmp_path):
 
 
 def test_layout_file_is_inert_for_the_importer():
-    """A root lab.layout must not become a machine, a pending file, or a warning/error."""
+    """A root lab.layout must not become a machine or a warning/error."""
     conf = 'pc1[image]="kathara/base"\npc1[0]="A"\n'
     layout_text = json.dumps(LAYOUT)
 
     with_conf = lab_import.translate_lab_files({"lab.conf": conf, LAYOUT_FILENAME: layout_text}, "mylab")
     assert not with_conf.errors
     assert not with_conf.warnings
-    assert sorted(with_conf.pending) == ["pc1"]
-    assert with_conf.pending["pc1"].files == {}
+    assert {m.name for m in with_conf.payload.machines} == {"pc1"}
 
     # Folder-fallback path (no lab.conf): machines come from subfolders, so a root file is ignored.
     folder = lab_import.translate_lab_files({"pc1/etc/motd": "hi\n", LAYOUT_FILENAME: layout_text}, "mylab")
     assert not folder.errors
-    assert sorted(folder.pending) == ["pc1"]
-    assert folder.pending["pc1"].files == {"/etc/motd": "hi\n"}
+    assert {m.name for m in folder.payload.machines} == {"pc1"}
 
 
 def test_layout_survives_reload_and_zip_round_trip(tmp_path):

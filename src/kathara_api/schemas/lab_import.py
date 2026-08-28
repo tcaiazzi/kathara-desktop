@@ -1,7 +1,5 @@
 """Schemas for importing a standard Kathara lab directory (lab.conf/.startup/folders)."""
 
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 from .lab import LabDetail
@@ -36,26 +34,3 @@ class LabImportResult(LabDetail):
     """Response for a successful import, including any non-fatal parse warnings."""
 
     warnings: list[str] = Field(default_factory=list)
-
-
-class _FilesDirsBase(BaseModel):
-    """Shared shape for a queued files/dirs payload."""
-
-    files: dict[str, str] = Field(default_factory=dict)
-    dirs: list[str] = Field(default_factory=list)
-
-
-class PendingMachineFiles(_FilesDirsBase):
-    """Files/dirs/startup script queued to be applied to a machine on its next deploy."""
-
-    startup: str = ""
-
-
-class PendingFilesUpdate(_FilesDirsBase):
-    """Merge request for a single machine's queued files (e.g. explorer edits)."""
-
-    startup: Optional[str] = None
-
-
-class SharedPendingFilesUpdate(_FilesDirsBase):
-    """Merge request applied to every machine's queued files (``shared/`` semantics)."""

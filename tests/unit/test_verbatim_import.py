@@ -194,17 +194,20 @@ def test_live_push_boot_script_composes_shared_own_and_exec_commands(tmp_path):
     )
 
     service.deploy_lab("lab1")  # fresh: native, no live push yet
-    service.deploy_lab("lab1")  # now "running": live push exercises _boot_script
+    # An edit while pc1 is stopped wouldn't mark it dirty for a push (nothing's running to push
+    # to) — here it's already running, so this queues the next redeploy's live push.
+    service.fs_write_text_offline("lab1", "/pc1.startup", "echo two\n")
+    service.deploy_lab("lab1")  # now "running" and dirty: live push exercises _boot_script
 
     facade = service._instance
     boot_scripts = [files["/tmp/.kathara_boot.sh"] for name, files in facade.copied if name == "pc1"]
     assert boot_scripts == ["echo one\n\necho two\n\necho three"]
 
 
-def test_pending_startup_is_the_verbatim_machine_startup(tmp_path):
-    # PendingMachineFiles.startup must be exactly <machine>.startup's own content — no
-    # shared.startup prefix, no exec_commands suffix (those are native-deploy's job; composing
-    # them here would run them twice and would silently diverge from the file on disk).
+def test_get_startup_scripts_is_the_verbatim_machine_startup(tmp_path):
+    # get_startup_scripts must return exactly <machine>.startup's own content — no shared.startup
+    # prefix, no exec_commands suffix (those are native-deploy's/the live-push boot script's job;
+    # composing them here would silently diverge from the real file on disk).
     service = _service(tmp_path)
     service.import_lab(
         "lab1",
@@ -215,5 +218,4 @@ def test_pending_startup_is_the_verbatim_machine_startup(tmp_path):
         },
         [],
     )
-    pending = service.get_pending("lab1")
-    assert pending["pc1"].startup == "echo two\n"
+    assert service.get_startup_scripts("lab1")["pc1"] == "echo two\n"

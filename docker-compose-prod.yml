@@ -25,9 +25,13 @@ services:
     hostname: kathara-ide-backend
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - labs_data:/app/data/labs
+      # Bind-mounted at the *same absolute path* on both sides, not a named volume — required for
+      # Kathara's native `shared_mount` bind mount (see docker-compose-dev.yml's comment for why).
+      # Override KATHARA_IDE_LABS_DIR (e.g. via a .env file) to point at wherever labs should live
+      # on this host.
+      - ${KATHARA_IDE_LABS_DIR:-/var/lib/kathara-ide/labs}:${KATHARA_IDE_LABS_DIR:-/var/lib/kathara-ide/labs}
     environment:
-      - KATHARA_API_LABS_DIR=/app/data/labs
+      - KATHARA_API_LABS_DIR=${KATHARA_IDE_LABS_DIR:-/var/lib/kathara-ide/labs}
     restart: unless-stopped
 
   frontend:
@@ -44,11 +48,3 @@ services:
       - backend
       - frontend
     restart: unless-stopped
-
-volumes:
-  # Every lab is persisted here as a real Kathara lab directory (see docs/refactor-plan.md's
-  # persistence entry), so labs survive a container restart. A plain named volume is enough —
-  # Kathara's native `/shared` bind mount is disabled per-lab (lab_builder.build_lab), so nothing
-  # under this volume is ever bind-mounted into a sibling device container; machine files/startup
-  # travel to containers over the Docker API instead (DinD-safe regardless of storage backing).
-  labs_data:

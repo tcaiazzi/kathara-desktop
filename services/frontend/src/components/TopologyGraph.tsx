@@ -17,11 +17,11 @@ import type { ContextMenuState } from "./TopologyContextMenu";
 // Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
 // context-menu item lists live in useDeviceActions — a single instance owned by the workspace page
 // (shared with the sidebar's device list, so a right-click means the same thing in both places, and
-// there's one `pending`-files fetch / one action modal instead of two hand-synced copies).
+// there's one startup-scripts fetch / one action modal instead of two hand-synced copies).
 type DeviceActionsProps = Pick<
   UseDeviceActions,
   | "model"
-  | "pending"
+  | "startups"
   | "deviceContextItems"
   | "domainContextItems"
   | "openAddDevice"
@@ -83,7 +83,7 @@ export function TopologyGraph({
   detail,
   onEditFiles,
   model,
-  pending,
+  startups,
   deviceContextItems,
   domainContextItems,
   openAddDevice,
@@ -279,7 +279,7 @@ export function TopologyGraph({
   const selectedNode = selectedId ? model.nodes.find((n) => n.id === selectedId) ?? null : null;
   const selectedMachine =
     selectedNode?.type === "dev" ? detail.machines.find((m) => m.name === selectedNode.name) ?? null : null;
-  const startupText = selectedMachine ? machineStartupText(selectedMachine, pending[selectedMachine.name]) : "";
+  const startupText = selectedMachine ? machineStartupText(selectedMachine, startups[selectedMachine.name]) : "";
   const isEmpty = !model.nodes.length;
   const hasFixedLayout = !!savedLayout && Object.keys(savedLayout).length > 0;
 

@@ -1,57 +1,133 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FilePlus, FolderPlus, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
+import { NodeApi, Tree, type NodeRendererProps, type TreeApi } from "react-arborist";
+import { useConfirm } from "../context/ConfirmContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
+import { useWorkspace } from "../context/WorkspaceContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useConfirmDiscard } from "../hooks/useConfirmDiscard";
+import { useElementSize } from "../hooks/useElementSize";
 import { useSaveShortcut } from "../hooks/useSaveShortcut";
-import { api } from "../services/api";
+import { api, ApiError } from "../services/api";
 import { languageForPath } from "../services/editorLanguage";
-import { buildFileTree, buildVirtualFs, fileIcon, type TreeNode } from "../services/labfs";
-import type { LabConfView, LabDetail, PendingMachineFiles } from "../services/types";
+import { fileIcon } from "../services/labfs";
+import { baseName, isSubPath } from "../services/paths";
+import type { FsEntry, LabConfView, LabDetail } from "../services/types";
 import { EditorPane } from "./EditorPane";
-
-const STARTUP_RE = /^([a-z0-9_]{1,30})\.startup$/;
+import type { ContextMenuItem } from "./TopologyContextMenu";
+import "./LabExplorer.css";
 
 interface LabExplorerProps {
   labName: string;
   detail: LabDetail;
-  // Called after a structural change (e.g. applying an edited lab.conf) so the parent can reload
-  // `detail`. Optional — the classic page passes its `load`; callers that don't care can omit it.
   onStructuralChange?: () => Promise<void>;
 }
 
-// Browse/edit a lab's files: lab.conf (editable when the lab is not deployed — applied via the
-// backend which rebuilds the topology), each device's startup script, and any files/dirs queued
-// for it. Saving pushes live to a running device *and* queues the change for the next deploy. Does
-// not (yet) cover: drag-and-drop moves, or a "shared/" broadcast-to-all-devices shortcut.
+// One node in the lazily-loaded tree. `children` is `undefined` until this directory has been
+// listed at least once — react-arborist still renders it as expandable (an empty array still
+// counts as "internal", see NodeApi.isLeaf), so the very first expand click is what triggers the
+// fetch (see `ensureLoaded`/the Tree's `onToggle` below).
+interface FsNode {
+  name: string;
+  path: string;
+  dir: boolean;
+  children?: FsNode[];
+}
+
+function entryToNode(e: FsEntry): FsNode {
+  return { name: e.name, path: e.path, dir: e.is_dir };
+}
+
+// Lets the module-level `Node` row renderer (which react-arborist requires to keep a stable
+// component identity, so it can't just be redefined as a closure each render) reach back into
+// LabExplorer's handlers to build its right-click menu.
+interface RowActions {
+  onNewFile: (dir: string) => void;
+  onRename: (path: string) => void;
+  onDelete: (path: string) => void;
+  canModify: (path: string) => boolean;
+}
+const RowActionsCtx = createContext<RowActions | null>(null);
+
+function parentOf(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx <= 0 ? "/" : path.slice(0, idx);
+}
+
+function findNode(nodes: FsNode[], path: string): FsNode | null {
+  for (const n of nodes) {
+    if (n.path === path) return n;
+    if (n.children && isSubPath(path, n.path)) {
+      const found = findNode(n.children, path);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+// Replace `oldNodes` with `freshNodes` from a listing, but carry over any already-loaded
+// `children` for a directory that's still present — so a background refresh never collapses an
+// already-expanded subfolder or throws away what it had loaded.
+function mergeNodeList(oldNodes: FsNode[], freshNodes: FsNode[]): FsNode[] {
+  return freshNodes
+    .map((fresh) => {
+      const old = oldNodes.find((o) => o.path === fresh.path);
+      return old && fresh.dir && old.dir ? { ...fresh, children: old.children } : fresh;
+    })
+    .sort((a, b) => (a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name)));
+}
+
+function withMergedChildrenAt(nodes: FsNode[], path: string, freshChildren: FsNode[]): FsNode[] {
+  return nodes.map((n) => {
+    if (n.path === path) return { ...n, children: mergeNodeList(n.children ?? [], freshChildren) };
+    if (n.children && isSubPath(path, n.path)) {
+      return { ...n, children: withMergedChildrenAt(n.children, path, freshChildren) };
+    }
+    return n;
+  });
+}
+
+// Browse/edit a lab's own on-disk directory directly — lab.conf, every device's own folder (even
+// one with nothing in it yet), each device's `<name>.startup`, and anything else queued at the
+// lab root — a VS Code-style tree (react-arborist: virtualized rows, drag-and-drop, keyboard nav,
+// inline rename via double-click/F2) on the left, a CodeMirror editor on the right.
+//
+// Every read/write is a real call against the lab's real filesystem (services/api.ts's
+// `fs*Offline` methods) — there is no separate in-memory cache of what's queued, so nothing here
+// can ever drift from what's actually on disk (that was an earlier design; it repeatedly did).
+// Directories are listed lazily, one at a time, the same way the Runtime FS tab already works
+// against a live device — the difference is this tab reads/writes the lab's directory on the
+// host directly, so it works whether or not any device is actually running.
 export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorerProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [pending, setPending] = useState<Record<string, PendingMachineFiles> | null>(null);
-  const [files, setFiles] = useState<Record<string, string>>({});
-  const [dirs, setDirs] = useState<Set<string>>(new Set());
-  const [open, setOpen] = useState<Set<string>>(new Set());
+  const treeRef = useRef<TreeApi<FsNode> | undefined>(undefined);
+  const { ref: treeSizeRef, width: treeWidth, height: treeHeight } = useElementSize<HTMLDivElement>();
+
+  const [loaded, setLoaded] = useState(false);
+  const [tree, setTree] = useState<FsNode[]>([]);
+  const treeRefValue = useRef<FsNode[]>(tree);
+  useEffect(() => {
+    treeRefValue.current = tree;
+  }, [tree]);
+
   const [selected, setSelected] = useState<string | null>(null);
   const [editorText, setEditorText] = useState("");
+  const [loadedText, setLoadedText] = useState("");
+  const [isBinary, setIsBinary] = useState(false);
   const [busy, setBusy] = useState(false);
   const [labConf, setLabConf] = useState<LabConfView | null>(null);
-  // The last lab.conf text the server actually gave us — the baseline for "did it change under
-  // us?" (see the load effect) and for "did the server round-trip what I just saved verbatim?"
-  // (see handleSave — I2: what the user saves must be exactly what lands in the file).
   const serverConfRef = useRef<string>("");
-  // Set when a lab.conf refresh arrives while the buffer has unsaved edits *and* the server text
-  // actually changed — surfaced as a dismissible "reload?" banner rather than silently clobbering
-  // the user's in-progress edit.
   const [confConflict, setConfConflict] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const toast = useToast();
   const prompt = usePrompt();
+  const confirm = useConfirm();
   const confirmDiscard = useConfirmDiscard();
   const runBusy = useBusyAction();
 
-  // Mirrors kept in refs so the load effect doesn't need to depend on (and therefore re-run on
-  // every keystroke of) `selected`/`editorText`.
   const selectedRef = useRef(selected);
   const editorTextRef = useRef(editorText);
   useEffect(() => {
@@ -61,76 +137,199 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
     editorTextRef.current = editorText;
   }, [editorText]);
 
+  // Root listing + lab.conf, refreshed whenever the parent's `detail` changes (any lifecycle
+  // action that can rewrite lab.conf) or the toolbar's ↻ Reload bumps `reloadKey`.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [p, conf] = await Promise.all([api.getPendingFiles(labName), api.getLabConf(labName)]);
-        if (cancelled) return;
-        setPending(p);
-        setLabConf(conf);
-
-        const dirty = selectedRef.current === "lab.conf" && editorTextRef.current !== serverConfRef.current;
-        const changed = conf.content !== serverConfRef.current;
-        const nextLabConf = dirty && changed ? editorTextRef.current : conf.content;
-
-        const { files: f, dirs: d } = buildVirtualFs(detail, p, nextLabConf);
-        setFiles(f);
-        setDirs(d);
-
-        if (dirty && changed) {
-          setConfConflict(conf.content);
-        } else {
-          serverConfRef.current = conf.content;
-          setConfConflict(null);
-          // Clean lab.conf tab and the server text actually changed (e.g. a topology-view action
-          // surgically edited lab.conf): sync the visible editor buffer too, not just `files`/
-          // `serverConfRef`. Safe — "not dirty" here means editorText already equals the old
-          // server text, so there is nothing unsaved to lose.
-          if (selectedRef.current === "lab.conf" && changed) setEditorText(conf.content);
+        const resp = await api.fsListOffline(labName, "/");
+        if (!cancelled) {
+          setTree((prev) => mergeNodeList(prev, resp.entries.map(entryToNode)));
+          setLoaded(true);
         }
       } catch (e) {
-        if (!cancelled) toast.reportError("Load lab files", e);
+        if (!cancelled) toast.reportError("List lab directory", e);
       }
     })();
     return () => {
       cancelled = true;
     };
-    // detail is refetched by the parent on every lifecycle action that can rewrite lab.conf (add/
-    // remove device, connect/disconnect a stopped device, apply an edited lab.conf) — its identity
-    // changing is exactly the signal to refetch. reloadKey lets the toolbar's ↻ button force a
-    // refetch for out-of-band writes (another tab, a hand edit on disk) with no other state change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labName, detail, reloadKey]);
 
-  const tree = useMemo(() => buildFileTree(files, dirs), [files, dirs]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const conf = await api.getLabConf(labName);
+        if (cancelled) return;
+        const dirty = selectedRef.current === "/lab.conf" && editorTextRef.current !== serverConfRef.current;
+        const changed = conf.content !== serverConfRef.current;
+        if (dirty && changed) {
+          setConfConflict(conf.content);
+        } else {
+          serverConfRef.current = conf.content;
+          setConfConflict(null);
+          if (selectedRef.current === "/lab.conf" && changed) {
+            setEditorText(conf.content);
+            setLoadedText(conf.content);
+          }
+        }
+        setLabConf(conf);
+      } catch (e) {
+        if (!cancelled) toast.reportError("Load lab.conf", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [labName, detail, reloadKey]);
 
-  const runningMachine = useCallback(
-    (name: string) => detail.machines.find((m) => m.name === name)?.running ?? false,
-    [detail.machines],
-  );
+  const data = useMemo(() => tree, [tree]);
+
+  // Bring a path into view (opening its ancestor folders) and sync the tree's own selection
+  // state to match — react-arborist owns selection/open state internally, so whenever *our*
+  // `selected` changes for a reason other than the user clicking a row directly, it has to be
+  // told. Reruns as `tree` fills in while `revealPath` is still loading ancestor levels below.
+  function revealAndSelect(path: string | null) {
+    const t = treeRef.current;
+    if (!t || !path) return;
+    t.openParents(path);
+    t.select(path);
+  }
+  useEffect(() => {
+    revealAndSelect(selected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, tree]);
+
+  async function loadAndMerge(path: string): Promise<FsNode[]> {
+    const resp = await api.fsListOffline(labName, path);
+    const children = resp.entries.map(entryToNode);
+    setTree((prev) => (path === "/" ? mergeNodeList(prev, children) : withMergedChildrenAt(prev, path, children)));
+    return children;
+  }
+
+  // Lazy per-directory fetch, triggered the first time a folder is expanded (see the Tree's
+  // onToggle below) — `children === undefined` is exactly "never listed yet".
+  async function ensureLoaded(path: string) {
+    const node = findNode(treeRefValue.current, path);
+    if (!node || !node.dir || node.children !== undefined) return;
+    try {
+      await loadAndMerge(path);
+    } catch (e) {
+      toast.reportError("List directory", e);
+    }
+  }
+
+  // Refresh one directory's listing after a write/delete/move affects something inside it —
+  // loading any not-yet-seen ancestor along the way first, so a brand-new deeply nested path
+  // (created under a folder nobody has expanded yet) still shows up correctly.
+  async function refreshDir(path: string) {
+    try {
+      if (path !== "/") {
+        const segments = path.split("/").filter(Boolean);
+        let acc = "";
+        for (let i = 0; i < segments.length - 1; i++) {
+          acc += `/${segments[i]}`;
+          if (!findNode(treeRefValue.current, acc)) await loadAndMerge(acc);
+        }
+      }
+      await loadAndMerge(path);
+    } catch (e) {
+      toast.reportError("Reload", e);
+    }
+  }
+
+  // Re-fetch every currently-loaded directory (recursively), preserving expand state — a true
+  // resync with disk, not just the root level.
+  async function reloadTree() {
+    async function reloadLevel(nodes: FsNode[]): Promise<FsNode[]> {
+      return Promise.all(
+        nodes.map(async (n) => {
+          if (!n.dir || n.children === undefined) return n;
+          const resp = await api.fsListOffline(labName, n.path);
+          const merged = mergeNodeList(n.children, resp.entries.map(entryToNode));
+          return { ...n, children: await reloadLevel(merged) };
+        }),
+      );
+    }
+    const rootResp = await api.fsListOffline(labName, "/");
+    const merged = mergeNodeList(treeRefValue.current, rootResp.entries.map(entryToNode));
+    setTree(await reloadLevel(merged));
+  }
+
+  // lab.conf is the only entry that's never deletable, draggable, or renamable here. Everything
+  // else is fair game, including a machine's own <name>.startup — it's just a real file sitting
+  // at the lab root, same as any other — and the bare device-root node itself, since this tab
+  // never touches a running device; acting on it only ever rewrites the lab's own on-disk files.
+  function canModify(path: string): boolean {
+    return path !== "/lab.conf";
+  }
+
+  // Selecting a folder row only needs to move the toolbar's Delete/rename target — there's no
+  // content to load, and the editor pane just goes blank/disabled for it.
+  async function selectDir(path: string) {
+    const ok = await confirmDiscard({
+      currentPath: selected,
+      nextPath: path,
+      hasUnsavedChanges: !!selected && editorText !== loadedText,
+    });
+    if (!ok) {
+      revealAndSelect(selected);
+      return;
+    }
+    setSelected(path);
+    setEditorText("");
+    setLoadedText("");
+    setIsBinary(false);
+  }
 
   async function selectFile(path: string) {
     const ok = await confirmDiscard({
       currentPath: selected,
       nextPath: path,
-      hasUnsavedChanges: !!selected && editorText !== (files[selected] ?? ""),
+      hasUnsavedChanges: !!selected && editorText !== loadedText,
     });
-    if (!ok) return;
-    setSelected(path);
-    setEditorText(files[path] ?? "");
-  }
-
-  function updateLocalFile(path: string, text: string) {
-    setFiles((prev) => ({ ...prev, [path]: text }));
+    if (!ok) {
+      revealAndSelect(selected);
+      return;
+    }
+    if (path === "/lab.conf") {
+      setSelected(path);
+      setEditorText(labConf?.content ?? "");
+      setLoadedText(labConf?.content ?? "");
+      setIsBinary(false);
+      return;
+    }
+    await runBusy(setBusy, "Open file", async () => {
+      try {
+        const resp = await api.fsReadTextOffline(labName, path);
+        setSelected(path);
+        setEditorText(resp.content);
+        setLoadedText(resp.content);
+        setIsBinary(false);
+      } catch (e) {
+        if (e instanceof ApiError && e.errorType === "BinaryFileError") {
+          // Not a failure from the user's point of view: select the file so Download/Delete/
+          // Rename work, just without a text preview.
+          setSelected(path);
+          setEditorText("");
+          setLoadedText("");
+          setIsBinary(true);
+          return;
+        }
+        throw e;
+      }
+    });
   }
 
   async function handleSave() {
     if (!selected) return;
     const content = editorText;
-    updateLocalFile(selected, content);
 
-    if (selected === "lab.conf") {
+    if (selected === "/lab.conf") {
       if (detail.deployed) {
         toast.show("Undeploy the lab to edit lab.conf.", "info");
         return;
@@ -138,9 +337,9 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       await runBusy(setBusy, "Apply lab.conf", async () => {
         await api.updateLabConf(labName, content);
         // Re-read to refresh our "last known server text" baseline — not to recover a
-        // "normalized" version. The backend stores lab.conf verbatim (I2): if what comes back
-        // differs from what was just sent, that is a backend bug, not a client-side detail to
-        // paper over by silently accepting the server's text.
+        // "normalized" version. The backend stores lab.conf verbatim: if what comes back differs
+        // from what was just sent, that is a backend bug, not a client-side detail to paper over
+        // by silently accepting the server's text.
         const conf = await api.getLabConf(labName);
         if (conf.content !== content) {
           toast.show("lab.conf was saved, but the server returned different text than submitted.", "danger");
@@ -148,8 +347,8 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
         serverConfRef.current = conf.content;
         setLabConf(conf);
         setConfConflict(null);
-        updateLocalFile("lab.conf", conf.content);
-        if (selectedRef.current === "lab.conf") setEditorText(conf.content);
+        setEditorText(conf.content);
+        setLoadedText(conf.content);
         toast.show("Applied lab.conf — topology updated.", "success");
         await onStructuralChange?.();
       });
@@ -157,56 +356,10 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
     }
 
     await runBusy(setBusy, "Save file", async () => {
-      const startupMatch = STARTUP_RE.exec(selected);
-      if (startupMatch) {
-        const machine = startupMatch[1];
-        await api.updatePendingFiles(labName, machine, { startup: content });
-        if (runningMachine(machine)) {
-          await api.copyFiles(labName, machine, { "/tmp/.kathara_boot.sh": content });
-          await api.execCommand(labName, machine, "sh /tmp/.kathara_boot.sh", false);
-          toast.show(`Ran ${machine}.startup; will re-run on the next deploy too.`, "success");
-        } else {
-          toast.show(`Saved ${selected}; runs on next deploy.`, "success");
-        }
-      } else if (selected.includes("/")) {
-        const machine = selected.split("/")[0];
-        const guest = "/" + selected.split("/").slice(1).join("/");
-        await api.updatePendingFiles(labName, machine, { files: { [guest]: content } });
-        if (runningMachine(machine)) {
-          await api.copyFiles(labName, machine, { [guest]: content });
-          toast.show(`Saved ${guest} to ${machine}.`, "success");
-        } else {
-          toast.show(`Saved ${selected}; applied to ${machine} on next deploy.`, "success");
-        }
-      } else {
-        // A root-level file that's neither lab.conf nor a <machine>.startup (e.g. one created via
-        // "+ File" with a bare name) has nowhere to be persisted — there's no per-machine or
-        // shared destination for it. Say so explicitly instead of claiming a save that never
-        // happened.
-        toast.show("Root-level files can't be saved yet — put the file under a device, e.g. pc1/etc/motd.", "danger");
-      }
-    });
-  }
-
-  async function handleLoadFromDevice() {
-    if (!selected || !selected.includes("/")) {
-      toast.show("Select a <device>/… file to load.", "danger");
-      return;
-    }
-    const machine = selected.split("/")[0];
-    const guest = "/" + selected.split("/").slice(1).join("/");
-    if (!runningMachine(machine)) {
-      toast.show(`Device "${machine}" is not running.`, "danger");
-      return;
-    }
-    await runBusy(setBusy, "Load file", async () => {
-      const r = await api.execCommand(labName, machine, ["cat", guest], false);
-      if (r.exit_code !== 0) {
-        toast.show(`cat ${guest}: ${(r.stderr || "").trim() || "failed"}`, "danger");
-        return;
-      }
-      updateLocalFile(selected, r.stdout);
-      setEditorText(r.stdout);
+      await api.fsWriteTextOffline(labName, selected, content);
+      setLoadedText(content);
+      toast.show(`Saved ${selected}.`, "success");
+      await refreshDir(parentOf(selected));
     });
   }
 
@@ -215,180 +368,262 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
     if (e.target) e.target.value = ""; // allow re-picking the same file
     if (!file) return;
 
-    // The pending-files model is text-only; binary belongs to the Runtime FS tab (native fs).
-    const buf = await file.arrayBuffer();
-    if (new Uint8Array(buf).subarray(0, 8000).includes(0)) {
-      toast.show("Binary files aren't supported here — use the Runtime FS tab for a running device.", "danger", "Binary file");
-      return;
-    }
-    const content = new TextDecoder().decode(buf);
-
-    const selDir = selected && selected.includes("/") ? selected.split("/").slice(0, -1).join("/") + "/" : "";
-    const fallback = detail.machines[0] ? `${detail.machines[0].name}/` : "";
+    const selDir = selected ? (selectedIsDir ? selected : parentOf(selected)) : "/";
+    const fallbackDir = detail.machines[0] ? `/${detail.machines[0].name}` : "/";
+    const dir = selDir !== "/" ? selDir : fallbackDir;
+    const suggested = dir === "/" ? `/${file.name}` : `${dir}/${file.name}`;
     const target = await prompt({
       title: `Upload ${file.name}`,
-      message: "Target path (relative to the lab), e.g.: pc1/etc/frr/frr.conf",
-      defaultValue: (selDir || fallback) + file.name,
-      placeholder: "pc1/etc/frr/frr.conf",
+      message: "Target path (relative to the lab), e.g.: /pc1/etc/frr/frr.conf",
+      defaultValue: suggested,
+      placeholder: "/pc1/etc/frr/frr.conf",
       okLabel: "Upload",
     });
     if (!target) return;
-    const clean = target.trim().replace(/^\/+/, "");
-    if (!clean.includes("/")) {
-      toast.show("Upload path must live under a device, e.g. pc1/etc/motd.", "danger");
-      return;
-    }
+    const clean = `/${target.trim().replace(/^\/+/, "").replace(/\/+$/, "")}`;
+    if (clean === "/") return;
 
-    const machine = clean.split("/")[0];
-    const guest = "/" + clean.split("/").slice(1).join("/");
     await runBusy(setBusy, "Upload file", async () => {
-      await api.updatePendingFiles(labName, machine, { files: { [guest]: content } });
-      if (runningMachine(machine)) await api.copyFiles(labName, machine, { [guest]: content });
-      updateLocalFile(clean, content);
-      setOpen((prev) => new Set(prev).add(clean.split("/").slice(0, -1).join("/")));
+      await api.fsUploadOffline(labName, clean, file);
+      await refreshDir(parentOf(clean));
       await selectFile(clean);
       toast.show(`Uploaded ${file.name} → ${clean}.`, "success");
     });
   }
 
-  async function handleNewFile() {
+  async function handleNewFile(defaultDir?: string) {
+    const dir = defaultDir ?? (selected ? (selectedIsDir ? selected : parentOf(selected)) : "/");
     const path = await prompt({
       title: "Create file",
-      message: "New file path (relative to the lab), e.g.: pc1/etc/frr/frr.conf, pc1.startup",
+      message: "New file path (relative to the lab), e.g.: pc1/etc/frr/frr.conf, pc1.startup, notes.txt",
+      defaultValue: dir === "/" ? "/" : `${dir}/`,
       placeholder: "pc1/etc/frr/frr.conf",
       okLabel: "Create",
     });
     if (!path) return;
-    const clean = path.trim().replace(/^\/+/, "");
-    if (!clean) return;
-    if (files[clean] === undefined) updateLocalFile(clean, "");
-    if (clean.includes("/")) setOpen((prev) => new Set(prev).add(clean.split("/").slice(0, -1).join("/")));
-    await selectFile(clean);
+    const clean = `/${path.trim().replace(/^\/+/, "").replace(/\/+$/, "")}`;
+    if (clean === "/") return;
+
+    await runBusy(setBusy, "Create file", async () => {
+      await api.fsWriteTextOffline(labName, clean, "");
+      await refreshDir(parentOf(clean));
+      await selectFile(clean);
+    });
   }
 
   async function handleNewDirectory() {
+    const dir = selected ? (selectedIsDir ? selected : parentOf(selected)) : "/";
     const path = await prompt({
       title: "Create folder",
-      message: "New directory path (relative to the lab), e.g.: pc1/etc/frr, pc1/var/log",
+      message: "New directory path (relative to the lab), e.g.: pc1/etc/frr, pc1/var/log, scratch",
+      defaultValue: dir === "/" ? "/" : `${dir}/`,
       placeholder: "pc1/etc/frr",
       okLabel: "Create",
     });
     if (!path) return;
-    const clean = path.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-    if (!clean) return;
+    const clean = `/${path.trim().replace(/^\/+/, "").replace(/\/+$/, "")}`;
+    if (clean === "/") return;
 
-    setDirs((prev) => {
-      const next = new Set(prev);
-      const parts = clean.split("/");
-      for (let i = 1; i <= parts.length; i++) next.add(parts.slice(0, i).join("/"));
-      return next;
+    await runBusy(setBusy, "Create folder", async () => {
+      await api.fsMkdirOffline(labName, clean);
+      await refreshDir(parentOf(clean));
+      revealAndSelect(clean);
     });
+  }
 
-    const parts = clean.split("/");
-    const top = parts[0];
-    const guest = "/" + parts.slice(1).join("/");
-    if (parts.length > 1 && guest !== "/" && detail.machines.some((m) => m.name === top)) {
-      try {
-        await api.updatePendingFiles(labName, top, { dirs: [guest] });
-        toast.show(`Directory ${clean} queued. Files inside it are applied on deploy.`, "success");
-      } catch (e) {
-        toast.reportError("Queue directory", e);
+  async function handleDelete(path: string) {
+    if (!canModify(path)) return;
+    const isDir = findNode(treeRefValue.current, path)?.dir ?? false;
+    const ok = await confirm({
+      title: isDir ? "Delete folder?" : "Delete file?",
+      message: `Delete ${path}? This cannot be undone.`,
+      okLabel: "Delete",
+    });
+    if (!ok) return;
+
+    await runBusy(setBusy, "Delete", async () => {
+      await api.fsDeleteOffline(labName, path, true);
+      if (selected === path || (isDir && selected?.startsWith(`${path}/`))) {
+        setSelected(null);
+        setEditorText("");
+        setLoadedText("");
+        setIsBinary(false);
       }
+      toast.show(`Deleted ${path}.`, "success");
+      await refreshDir(parentOf(path));
+    });
+  }
+
+  // Shared core for both drag-and-drop move (onMove) and inline rename (onRename) — the only
+  // difference between the two is how `destPath` is computed (new parent, same name vs. same
+  // parent, new name).
+  async function movePath(sourcePath: string, destPath: string) {
+    if (!canModify(sourcePath)) return;
+    if (destPath === sourcePath) return;
+    const destDir = parentOf(destPath);
+    if (destDir === sourcePath || isSubPath(destDir, sourcePath)) return;
+
+    await runBusy(setBusy, "Move", async () => {
+      await api.fsMoveOffline(labName, sourcePath, destPath);
+      toast.show(`Moved ${sourcePath} → ${destPath}.`, "success");
+      await Promise.all([refreshDir(parentOf(sourcePath)), refreshDir(destDir)]);
+      if (selected === sourcePath) setSelected(destPath);
+    });
+  }
+
+  async function handleTreeMove(dragIds: string[], parentId: string | null) {
+    const sourcePath = dragIds[0];
+    if (!sourcePath) return;
+    const name = baseName(sourcePath);
+    if (!name) return;
+    const destDirPath = parentId ?? "/";
+    const destPath = destDirPath === "/" ? `/${name}` : `${destDirPath}/${name}`;
+    await movePath(sourcePath, destPath);
+  }
+
+  async function handleRename(sourcePath: string, newName: string) {
+    const clean = newName.trim();
+    if (!clean || clean.includes("/")) {
+      toast.show("Invalid name.", "danger");
+      return;
     }
-    setOpen((prev) => new Set(prev).add(clean));
+    const destDirPath = parentOf(sourcePath);
+    const destPath = destDirPath === "/" ? `/${clean}` : `${destDirPath}/${clean}`;
+    await movePath(sourcePath, destPath);
   }
 
   function acceptConfConflict() {
     if (confConflict === null) return;
     serverConfRef.current = confConflict;
-    updateLocalFile("lab.conf", confConflict);
-    if (selectedRef.current === "lab.conf") setEditorText(confConflict);
+    if (selectedRef.current === "/lab.conf") {
+      setEditorText(confConflict);
+      setLoadedText(confConflict);
+    }
     setConfConflict(null);
   }
 
-  function toggleOpen(path: string) {
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }
+  const canDelete = !!selected && canModify(selected);
+  const selectedIsDir = !!selected && (findNode(tree, selected)?.dir ?? false);
 
-  function renderNode(node: TreeNode, depth: number): JSX.Element[] {
-    return node.children.flatMap((child) => {
-      const isOpen = open.has(child.path);
-      if (child.dir) {
-        return [
-          <div
-            key={child.path}
-            className="d-flex align-items-center gap-1 py-1"
-            style={{ paddingLeft: depth * 14, cursor: "pointer" }}
-            onClick={() => toggleOpen(child.path)}
-          >
-            <span>{isOpen ? "▾" : "▸"}</span>
-            <span>📁</span>
-            <span>{child.name}</span>
-          </div>,
-          ...(isOpen ? renderNode(child, depth + 1) : []),
-        ];
-      }
-      return [
-        <div
-          key={child.path}
-          className={`d-flex align-items-center gap-1 py-1 px-1 rounded ${
-            selected === child.path ? "bg-primary bg-opacity-25" : ""
-          }`}
-          style={{ paddingLeft: depth * 14 + 14, cursor: "pointer" }}
-          onClick={() => {
-            void selectFile(child.path);
-          }}
-        >
-          <span>{fileIcon(child.name)}</span>
-          <span className="font-monospace small">{child.name}</span>
-        </div>,
-      ];
-    });
-  }
-
-  const canLoadFromDevice = !!selected && selected.includes("/") && runningMachine(selected.split("/")[0]);
+  const rowActions: RowActions = {
+    onNewFile: (dir) => void handleNewFile(dir),
+    onRename: (path) => void treeRef.current?.edit(path),
+    onDelete: (path) => void handleDelete(path),
+    canModify,
+  };
 
   useSaveShortcut(
     rootRef,
     () => {
-      if (!busy && selected) void handleSave();
+      if (!busy && selected && !isBinary && !selectedIsDir) void handleSave();
     },
-    [busy, selected, editorText, files],
+    [busy, selected, editorText, loadedText, isBinary, selectedIsDir],
   );
 
   return (
-    <div ref={rootRef} className="d-flex gap-3 mt-3" style={{ minHeight: 420 }}>
-      <div className="border rounded p-2" style={{ width: 260, overflowY: "auto" }}>
+    <div ref={rootRef} className="kt-explorer" style={{ display: "flex", flexDirection: "row", gap: 12, minHeight: 0 }}>
+      <div className="kt-explorer-side" style={{ width: 260, flex: "0 0 260px", display: "flex", flexDirection: "column", minHeight: 0 }}>
         <div className="d-flex gap-2 mb-2 flex-wrap">
-          <Button size="sm" variant="outline-secondary" onClick={handleNewFile}>
-            + File
-          </Button>
-          <Button size="sm" variant="outline-secondary" onClick={handleNewDirectory}>
-            + Dir
-          </Button>
-          <Button size="sm" variant="outline-secondary" disabled={busy} onClick={() => fileInputRef.current?.click()}>
-            ⤴ Upload
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            className="kt-icon-btn"
+            title="New file"
+            aria-label="New file"
+            onClick={() => handleNewFile()}
+          >
+            <FilePlus size={16} />
           </Button>
           <Button
             size="sm"
             variant="outline-secondary"
-            disabled={busy}
-            title="Reload files from disk"
-            onClick={() => setReloadKey((k) => k + 1)}
+            className="kt-icon-btn"
+            title="New folder"
+            aria-label="New folder"
+            onClick={handleNewDirectory}
           >
-            ↻ Reload
+            <FolderPlus size={16} />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            className="kt-icon-btn"
+            title="Upload file"
+            aria-label="Upload file"
+            disabled={busy}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <UploadIcon size={16} />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline-danger"
+            className="kt-icon-btn"
+            title="Delete"
+            aria-label="Delete"
+            disabled={!canDelete || busy}
+            onClick={() => selected && void handleDelete(selected)}
+          >
+            <Trash2 size={16} />
+          </Button>
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            className="kt-icon-btn"
+            disabled={busy}
+            title="Reload from disk"
+            aria-label="Reload from disk"
+            onClick={() => {
+              setReloadKey((k) => k + 1);
+              void reloadTree();
+            }}
+          >
+            <RefreshCw size={16} />
           </Button>
           <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={handleUpload} />
         </div>
-        {pending == null ? <p className="text-muted small">Loading…</p> : renderNode(tree, 0)}
+        <div className="small text-muted mb-2">Drag files/folders onto a device or folder to move them. Double-click or F2 to rename.</div>
+        <div ref={treeSizeRef} className="kt-explorer-tree border rounded" style={{ flex: 1, minHeight: 0 }}>
+          {!loaded ? (
+            <p className="text-muted small p-2">Loading…</p>
+          ) : (
+            <RowActionsCtx.Provider value={rowActions}>
+              <Tree<FsNode>
+                ref={treeRef}
+                data={data}
+                idAccessor="path"
+                childrenAccessor={(d) => (d.dir ? d.children ?? [] : null)}
+                openByDefault={false}
+                width={treeWidth}
+                height={treeHeight}
+                rowHeight={26}
+                indent={14}
+                disableMultiSelection
+                disableEdit={(d) => !canModify(d.path)}
+                disableDrag={(d) => !canModify(d.path)}
+                disableDrop={({ parentNode, dragNodes }) =>
+                  dragNodes.some((n) => isSubPath(parentNode.data.path, n.data.path) || n.data.path === parentNode.data.path)
+                }
+                onToggle={(id) => {
+                  if (treeRef.current?.isOpen(id)) void ensureLoaded(id);
+                }}
+                onSelect={(nodes) => {
+                  const node = nodes[0];
+                  if (!node) return;
+                  if (node.data.path === selectedRef.current) return;
+                  void (node.data.dir ? selectDir(node.data.path) : selectFile(node.data.path));
+                }}
+                onRename={({ id, name }) => void handleRename(id, name)}
+                onMove={({ dragIds, parentId }) => void handleTreeMove(dragIds, parentId)}
+              >
+                {Node}
+              </Tree>
+            </RowActionsCtx.Provider>
+          )}
+        </div>
       </div>
-      <div className="d-flex flex-column flex-grow-1">
-        {selected === "lab.conf" && confConflict !== null && (
+      <div className="d-flex flex-column flex-grow-1" style={{ minHeight: 0 }}>
+        {selected === "/lab.conf" && confConflict !== null && (
           <div className="alert alert-warning py-1 px-2 mb-2 d-flex justify-content-between align-items-center small">
             <span>lab.conf changed on disk since you started editing.</span>
             <Button size="sm" variant="outline-dark" onClick={acceptConfConflict}>
@@ -396,25 +631,96 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
             </Button>
           </div>
         )}
-        {selected === "lab.conf" && labConf?.exists === false && (
+        {selected === "/lab.conf" && labConf?.exists === false && (
           <div className="text-muted small mb-1">Not on disk yet — saving will create it.</div>
         )}
         <EditorPane
-          pathLabel={selected || "Select a file from the tree"}
-          language={languageForPath(selected)}
+          pathLabel={isBinary ? `${selected} (binary)` : selected || "Select a file from the tree"}
+          language={isBinary ? "plaintext" : languageForPath(selected)}
           value={editorText}
           onChange={setEditorText}
-          disabled={!selected || (selected === "lab.conf" && detail.deployed)}
-          placeholder={selected ? undefined : "Select a file from the tree on the left…"}
-          onSave={handleSave}
-          saveDisabled={!selected || busy || (selected === "lab.conf" && detail.deployed)}
-          extraActions={
-            <Button size="sm" variant="outline-secondary" disabled={!canLoadFromDevice || busy} onClick={handleLoadFromDevice}>
-              ⤵ Load from device
-            </Button>
+          disabled={!selected || selectedIsDir || isBinary || (selected === "/lab.conf" && detail.deployed)}
+          placeholder={
+            selectedIsDir
+              ? "This is a folder — select a file to edit it."
+              : isBinary
+                ? "This file is binary and can't be displayed here. Delete to remove it, or edit it via the Runtime FS tab once the device is running."
+                : selected
+                  ? undefined
+                  : "Select a file from the tree on the left…"
           }
+          onSave={handleSave}
+          saveDisabled={!selected || selectedIsDir || busy || isBinary || (selected === "/lab.conf" && detail.deployed)}
         />
       </div>
     </div>
+  );
+}
+
+// Row renderer: VS-Code-ish icon + name, with inline rename input when the node is being edited.
+// onCreate/onDelete are intentionally left off <Tree> above — toolbar actions call the offline-fs
+// API directly instead of going through arborist's own create/delete UX.
+function Node({ node, style, dragHandle }: NodeRendererProps<FsNode>) {
+  const rowActions = useContext(RowActionsCtx);
+  const { setContextMenu } = useWorkspace();
+
+  function openContextMenu(e: React.MouseEvent) {
+    e.preventDefault();
+    if (!rowActions) return;
+    node.select();
+    const path = node.data.path;
+    const modifiable = rowActions.canModify(path);
+    const lockedTitle = modifiable ? undefined : "lab.conf can't be renamed or deleted here.";
+    const renameDelete: ContextMenuItem[] = [
+      { label: "Rename", disabled: !modifiable, title: lockedTitle, action: () => rowActions.onRename(path) },
+      { label: "Delete", danger: true, disabled: !modifiable, title: lockedTitle, action: () => rowActions.onDelete(path) },
+    ];
+    const items = node.data.dir ? [{ label: "New File", action: () => rowActions.onNewFile(path) }, ...renameDelete] : renameDelete;
+    setContextMenu({ x: e.clientX, y: e.clientY, items });
+  }
+
+  return (
+    <div
+      ref={dragHandle}
+      style={style}
+      className={`kt-explorer-row d-flex align-items-center gap-1 ${node.isSelected ? "kt-explorer-row--selected" : ""} ${
+        node.willReceiveDrop ? "kt-explorer-row--drop" : ""
+      }`}
+      onClick={() => {
+        node.select();
+        if (node.isInternal) node.toggle();
+      }}
+      onDoubleClick={() => node.isEditable && node.edit()}
+      onKeyDown={(e) => {
+        if (e.key === "F2" && node.isEditable) node.edit();
+      }}
+      onContextMenu={openContextMenu}
+    >
+      {node.isInternal ? <span className="kt-explorer-chevron">{node.isOpen ? "▾" : "▸"}</span> : <span className="kt-explorer-chevron" />}
+      <span>{node.data.dir ? "📁" : fileIcon(node.data.name)}</span>
+      {node.isEditing ? <NodeEditInput node={node} /> : <span className="font-monospace small">{node.data.name}</span>}
+    </div>
+  );
+}
+
+function NodeEditInput({ node }: { node: NodeApi<FsNode> }) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  return (
+    <input
+      ref={inputRef}
+      className="kt-explorer-edit font-monospace small"
+      defaultValue={node.data.name}
+      onClick={(e) => e.stopPropagation()}
+      onBlur={() => node.reset()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") node.reset();
+        if (e.key === "Enter") node.submit(inputRef.current?.value || "");
+      }}
+    />
   );
 }

@@ -64,8 +64,8 @@ def test_labs_reload_from_disk_on_fresh_service(tmp_path):
     # A brand-new service (simulating a restart) sees the same labs, rebuilt from disk.
     fresh = _service(LabStore(tmp_path / "labs"))
     assert set(fresh.registry.names()) == {"imported", "jsonlab"}
-    # Pending state (startup) is reconstructed too.
-    assert fresh.get_pending("imported")["r1"].startup.strip() == "ip a"
+    # The startup script is a real file on disk — nothing needs reconstructing to see it.
+    assert fresh.get_startup_scripts("imported")["r1"].strip() == "ip a"
 
 
 def test_delete_lab_removes_directory(tmp_path):
@@ -78,31 +78,20 @@ def test_delete_lab_removes_directory(tmp_path):
     assert not store.lab_dir("jsonlab").exists()
 
 
-def test_pending_file_edit_writes_through_to_disk_before_any_deploy(tmp_path):
+def test_offline_fs_edit_writes_through_to_disk_before_any_deploy(tmp_path):
     """A queued files/dirs edit must survive a restart even for a lab that has never been
     deployed — not just at deploy time."""
     store = LabStore(tmp_path / "labs")
     service = _service(store)
     service.create_lab(LabCreate(name="jsonlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
 
-    service.update_pending_files("jsonlab", "pc1", files={"/etc/motd": "edited\n"}, dirs=["/var/log"])
+    service.fs_write_text_offline("jsonlab", "/pc1/etc/motd", "edited\n")
+    service.fs_mkdir_offline("jsonlab", "/pc1/var/log")
 
     lab_dir = store.lab_dir("jsonlab")
     assert (lab_dir / "pc1" / "etc" / "motd").read_text() == "edited\n"
     assert (lab_dir / "pc1" / "var" / "log").is_dir()
 
-    # Simulated restart: a fresh service sees the edit without ever having deployed.
+    # Simulated restart: a fresh service still sees the edit — it's a real file, not a cache.
     fresh = _service(LabStore(tmp_path / "labs"))
-    assert fresh.get_pending("jsonlab")["pc1"].files == {"/etc/motd": "edited\n"}
-
-
-def test_shared_pending_edit_writes_through_to_every_machine_on_disk(tmp_path):
-    store = LabStore(tmp_path / "labs")
-    service = _service(store)
-    service.import_lab("lab1", {"lab.conf": "r1[image]=kathara/base\npc1[image]=kathara/base\n"}, [])
-
-    service.update_shared_pending_files("lab1", files={"/etc/motd": "shared edit\n"})
-
-    lab_dir = store.lab_dir("lab1")
-    assert (lab_dir / "r1" / "etc" / "motd").read_text() == "shared edit\n"
-    assert (lab_dir / "pc1" / "etc" / "motd").read_text() == "shared edit\n"
+    assert fresh.fs_read_text_offline("jsonlab", "/pc1/etc/motd") == "edited\n"

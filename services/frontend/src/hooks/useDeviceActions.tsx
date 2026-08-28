@@ -5,7 +5,7 @@ import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
 import { computeTopology, type DeviceNode, type DomainNode, type TopoModel } from "../services/topology";
-import type { LabDetail, PendingMachineFiles } from "../services/types";
+import type { LabDetail } from "../services/types";
 import type { TopoActionConfig, TopoActionField } from "../components/TopologyActionModal";
 import type { ContextMenuItem } from "../components/TopologyContextMenu";
 
@@ -32,20 +32,21 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
   const toast = useToast();
   const confirm = useConfirm();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
-  const [pending, setPending] = useState<Record<string, PendingMachineFiles>>({});
+  const [startups, setStartups] = useState<Record<string, string>>({});
 
-  // Best-effort fetch of queued startup/files so callers (the node-info panel) can show a device's
-  // startup script (same source + precedence as the Editor). Inspection-only, errors are ignored.
+  // Best-effort fetch of each device's real `<name>.startup` content so callers (the node-info
+  // panel) can show it (same source + precedence as the Lab Configuration tab). Inspection-only,
+  // errors are ignored.
   useEffect(() => {
     if (!detail) {
-      setPending({});
+      setStartups({});
       return;
     }
     let live = true;
     api
-      .getPendingFiles(labName)
-      .then((p) => {
-        if (live) setPending(p);
+      .getStartupScripts(labName)
+      .then((s) => {
+        if (live) setStartups(s);
       })
       .catch(() => {});
     return () => {
@@ -53,7 +54,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
     };
   }, [labName, detail]);
 
-  const model = useMemo(() => (detail ? computeTopology(detail, pending) : EMPTY_MODEL), [detail, pending]);
+  const model = useMemo(() => (detail ? computeTopology(detail, startups) : EMPTY_MODEL), [detail, startups]);
 
   function findDeviceNode(name: string): DeviceNode | null {
     const nd = model.nodes.find((n) => n.id === `dev:${name}`);
@@ -335,7 +336,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
 
   return {
     model,
-    pending,
+    startups,
     actionConfig,
     setActionConfig,
     findDeviceNode,

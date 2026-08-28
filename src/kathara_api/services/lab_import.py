@@ -1,11 +1,12 @@
-"""Parse a standard Kathara lab directory (lab.conf/.startup/folders) into a LabCreate
-plus a per-machine "pending" file/startup spec applied after deploy.
+"""Parse a standard Kathara lab directory (lab.conf/.startup/folders) into a LabCreate.
 
-Everything a device carries here is kept verbatim: ``<machine>.startup`` is passed through
-unmodified (Kathara's native deploy already runs ``shared.startup`` then ``<machine>.startup``
-then any ``exec`` directives on its own — see ``DockerMachine.STARTUP_COMMANDS`` — so nothing needs
-composing here). A top-level ``shared/`` folder isn't applied to any device yet; it is left alone
-on disk and reported as a warning (see ``translate_lab_files``).
+Every device file/``<machine>.startup``/``lab.conf`` a real import or upload writes lands on disk
+verbatim (see ``KatharaService.import_lab``/``upload_lab``) — this module only needs to translate
+that directory into the structural ``LabCreate`` (machines, interfaces, links); it no longer also
+builds a separate in-memory file/dir tracking structure (an earlier design did — see git history —
+and it repeatedly went stale relative to what was actually on disk). A top-level ``shared/`` folder
+isn't applied to any device yet; it is left alone on disk and reported as a warning (see
+``translate_lab_files``).
 """
 
 import re
@@ -13,7 +14,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ..schemas.lab import LabCreate, LabMetadata
-from ..schemas.lab_import import PendingMachineFiles
 from ..schemas.link import LinkCreate
 from ..schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit
 
@@ -258,39 +258,9 @@ def _collect_folder(files: dict, prefix: str) -> dict:
     return out
 
 
-def _collect_folder_dirs(files: dict, dirs: list, prefix: str) -> list:
-    out: set = set()
-
-    def add_guest_dir(rel: str) -> None:
-        clean = rel.strip().strip("/")
-        if not clean:
-            return
-        parts = clean.split("/")
-        for i in range(1, len(parts) + 1):
-            out.add("/" + "/".join(parts[:i]))
-
-    for path in files:
-        if not path.startswith(prefix) or path == prefix:
-            continue
-        rel = path[len(prefix) :]
-        slash = rel.rfind("/")
-        if slash > 0:
-            add_guest_dir(rel[:slash])
-
-    for d in dirs or []:
-        if not d.startswith(prefix):
-            continue
-        rel = d[len(prefix) :]
-        if rel:
-            add_guest_dir(rel)
-
-    return sorted(out)
-
-
 @dataclass
 class LabImportTranslation:
     payload: LabCreate
-    pending: dict
     machine_count: int
     domains: list
     errors: list
@@ -300,15 +270,13 @@ class LabImportTranslation:
 def translate_lab_files(
     files: dict[str, str],
     lab_name: str,
-    dirs: Optional[list[str]] = None,
     skipped: Optional[list[str]] = None,
 ) -> LabImportTranslation:
-    """Translate a lab directory's file contents into a LabCreate + per-machine pending files.
+    """Translate a lab directory's file contents into a LabCreate.
 
     ``files`` maps lab-relative paths to UTF-8 text (binary files must already be excluded
     by the caller; pass their names in ``skipped`` only so a warning can be surfaced).
     """
-    dirs = dirs or []
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -375,18 +343,6 @@ def translate_lab_files(
     if _collect_folder(files, "shared/"):
         warnings.append("shared/ folder is not applied to devices yet — left on disk, ignored")
 
-    pending: dict[str, PendingMachineFiles] = {}
-    for m in parsed.machines.values():
-        mfiles = _collect_folder(files, f"{m.name}/")
-        mdirs = _collect_folder_dirs(files, dirs, f"{m.name}/")
-        # Verbatim: the device's own <name>.startup, unmodified. shared.startup and exec_commands
-        # are not folded in here — Kathara's native deploy already runs shared.startup then
-        # <name>.startup then exec_commands (see DockerMachine.STARTUP_COMMANDS); composing them
-        # here would run them a second time and would silently rewrite the source file on save.
-        pending[m.name] = PendingMachineFiles(
-            files=mfiles, dirs=mdirs, startup=files.get(f"{m.name}.startup", "")
-        )
-
     if skipped:
         shown = ", ".join(skipped[:4]) + ("…" if len(skipped) > 4 else "")
         warnings.append(f"skipped {len(skipped)} binary/non-UTF-8 file(s): {shown}")
@@ -410,7 +366,6 @@ def translate_lab_files(
 
     return LabImportTranslation(
         payload=payload,
-        pending=pending,
         machine_count=len(parsed.machines),
         domains=sorted(domains),
         errors=errors,

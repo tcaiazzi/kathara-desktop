@@ -3,7 +3,7 @@
 
 import { HOST_BRIDGE, visibleInterfaces } from "./constants";
 import { type DeviceCategory, deviceType } from "./deviceIcon";
-import type { LabDetail, MachineDetail, PendingMachineFiles, PortMapping } from "./types";
+import type { LabDetail, MachineDetail, PortMapping } from "./types";
 
 export interface TopoIface {
   num: number;
@@ -102,7 +102,7 @@ export function parseIfaceIps(machine: MachineDetail, startup = ""): Record<numb
 
 export function computeTopology(
   detail: LabDetail,
-  pending?: Record<string, PendingMachineFiles>,
+  startups?: Record<string, string>,
 ): TopoModel {
   const cds = new Map<string, { name: string; external: string[]; running: boolean; machines: Set<string> }>();
   for (const lk of detail.links) {
@@ -117,7 +117,7 @@ export function computeTopology(
   const nodes: TopoNode[] = [];
   const edges: TopoEdge[] = [];
   for (const m of detail.machines) {
-    const ips = parseIfaceIps(m, pending?.[m.name]?.startup);
+    const ips = parseIfaceIps(m, startups?.[m.name]);
     const dtype = deviceType(m);
     const node: DeviceNode = {
       id: `dev:${m.name}`,

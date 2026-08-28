@@ -78,7 +78,7 @@ function DevicesPanel() {
 function FilesPanel() {
   const ws = useWorkspace();
   return (
-    <div className="kt-ws-panel">
+    <div className="kt-ws-panel-fill">
       <LabExplorer labName={ws.labName} detail={ws.detail} onStructuralChange={ws.onRefresh} />
     </div>
   );
@@ -192,7 +192,7 @@ const COLLAPSE_THRESHOLD = 60;
 function buildDefaultLayout(api: DockviewApi) {
   api.addPanel({ id: "topology", component: "topology", title: "Topology", tabComponent: "fixed" });
   api.addPanel({ id: "devices", component: "devices", title: "Devices", tabComponent: "fixed", position: { referencePanel: "topology", direction: "below" } });
-  api.addPanel({ id: "files", component: "files", title: "Files", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "files", component: "files", title: "Lab Configuration", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime FS", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "stats", component: "stats", title: "Stats", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
   // Node info: a closable panel to the right of the topology (drag it anywhere; close it to give the

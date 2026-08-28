@@ -109,9 +109,9 @@ def test_service_rename_rekeys_registry_and_keeps_content(tmp_path):
     assert service.read_lab_conf("renamed").content == LAB_CONF
     # The rebuilt Lab is re-anchored on the new directory.
     assert renamed.fs_path().rstrip("/") == str(store.lab_dir("renamed"))
-    # Pending state (the startup script on disk) is re-read under the new key.
-    assert service.get_pending("renamed")["pc1"].startup == "ip addr\n"
-    assert service.get_pending("mylab") == {}
+    # The startup script (a real file) travels with the moved directory, addressable under the
+    # new name — nothing needs re-keying since there's no separate pending cache to carry over.
+    assert service.get_startup_scripts("renamed")["pc1"] == "ip addr\n"
 
 
 def test_service_rename_keeps_the_layout(tmp_path):

@@ -55,7 +55,7 @@ def _service(tmp_path):
 LAB_CONF = "r1[image]=kathara/base\nr1[0]=A\npc1[image]=kathara/base\npc1[0]=A\n"
 
 
-def test_import_lab_creates_lab_and_stores_pending(tmp_path):
+def test_import_lab_creates_lab_with_files_on_disk(tmp_path):
     service = _service(tmp_path)
     files = {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}
 
@@ -63,8 +63,7 @@ def test_import_lab_creates_lab_and_stores_pending(tmp_path):
 
     assert warnings == []
     assert set(lab.machines.keys()) == {"r1", "pc1"}
-    pending = service.get_pending("lab1")
-    assert pending["r1"].startup.strip() == "ip a"
+    assert service.get_startup_scripts("lab1")["r1"].strip() == "ip a"
 
 
 def test_import_lab_raises_api_error_on_parse_errors(tmp_path):
@@ -94,10 +93,11 @@ def test_fresh_deploy_materializes_pending_to_native_fs_not_exec(tmp_path):
     assert (lab_dir / "lab.conf").exists()
 
 
-def test_deploy_materializes_pending_dirs_and_files_to_native_fs(tmp_path):
+def test_deploy_materializes_offline_edits_to_native_fs(tmp_path):
     service = _service(tmp_path)
     service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
-    service.update_pending_files("lab1", "pc1", files={"/etc/motd": "hi\n"}, dirs=["/etc/empty"])
+    service.fs_write_text_offline("lab1", "/pc1/etc/motd", "hi\n")
+    service.fs_mkdir_offline("lab1", "/pc1/etc/empty")
 
     service.deploy_lab("lab1")
 
@@ -136,49 +136,41 @@ def test_deploy_is_scoped_to_selected_machines(tmp_path):
 
 def test_redeploy_of_already_running_machine_pushes_live_update_once(tmp_path):
     """A machine that's already running can't be recreated (Kathara raises
-    MachineAlreadyExistsError on a real redeploy), so a second deploy call must still push its
-    queued state live via copy_files+exec — but only once, and only for the already-running
-    subset (the first call's machines are handled natively, not through this path)."""
+    MachineAlreadyExistsError on a real redeploy). A redeploy with *no* offline edit since the
+    last (re)deploy must not push/re-exec anything — native first-deploy boot already ran the
+    startup script once. An explicit edit in between must be pushed live exactly once (via the
+    dirty-machine set, not a redeploy-always-pushes rule)."""
     service = _service(tmp_path)
     service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 
     service.deploy_lab("lab1")  # fresh: native materialization, no copy_files/exec
-    service.deploy_lab("lab1")  # both machines now already "running": live push
+    service.deploy_lab("lab1")  # both already running, nothing changed since: no push
 
     facade = service._instance
+    assert facade.exec_calls == []
+    assert facade.copied == []
+
+    service.fs_write_text_offline("lab1", "/r1.startup", "ip a\necho again\n")
+    service.deploy_lab("lab1")
+
     assert facade.exec_calls == [("r1", "sh /tmp/.kathara_boot.sh", False)]
-    assert ("r1", {"/tmp/.kathara_boot.sh": "ip a\n"}) in facade.copied
+    assert ("r1", {"/tmp/.kathara_boot.sh": "ip a\necho again\n"}) in facade.copied
+
+    # A further redeploy with no new edit doesn't push again.
+    service.deploy_lab("lab1")
+    assert facade.exec_calls == [("r1", "sh /tmp/.kathara_boot.sh", False)]
 
 
-def test_update_pending_files_merges_without_clobbering(tmp_path):
+def test_offline_fs_writes_accumulate_without_clobbering(tmp_path):
     service = _service(tmp_path)
     service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
 
-    service.update_pending_files("lab1", "pc1", files={"/a": "1"})
-    service.update_pending_files("lab1", "pc1", files={"/b": "2"})
+    service.fs_write_text_offline("lab1", "/pc1/a", "1")
+    service.fs_write_text_offline("lab1", "/pc1/b", "2")
 
-    pending = service.get_pending("lab1")
-    assert pending["pc1"].files == {"/a": "1", "/b": "2"}
-
-
-def test_update_shared_pending_files_targets_every_machine(tmp_path):
-    service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF}, [])
-
-    service.update_shared_pending_files("lab1", files={"/etc/motd": "hi\n"})
-
-    pending = service.get_pending("lab1")
-    assert pending["r1"].files == {"/etc/motd": "hi\n"}
-    assert pending["pc1"].files == {"/etc/motd": "hi\n"}
-
-
-def test_delete_lab_clears_pending_state(tmp_path):
-    service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
-
-    service.delete_lab("lab1")
-
-    assert service.get_pending("lab1") == {}
+    lab_dir = service.store.lab_dir("lab1")
+    assert (lab_dir / "pc1" / "a").read_text() == "1"
+    assert (lab_dir / "pc1" / "b").read_text() == "2"
 
 
 def test_upload_lab_extracts_and_materializes_binary_and_text(tmp_path):
@@ -246,7 +238,7 @@ def test_update_lab_conf_preserves_existing_device_startup(tmp_path):
     # Edit lab.conf (drop pc1); r1's existing startup must survive the rebuild.
     service.update_lab_conf("lab1", "r1[image]=kathara/base\nr1[0]=A\n")
 
-    assert service.get_pending("lab1")["r1"].startup.strip() == "ip a"
+    assert service.get_startup_scripts("lab1")["r1"].strip() == "ip a"
 
 
 def test_update_lab_conf_rejects_when_deployed(tmp_path):
@@ -259,22 +251,22 @@ def test_update_lab_conf_rejects_when_deployed(tmp_path):
         service.update_lab_conf("lab1", "pc1[image]=kathara/base\n")
 
 
-def test_remove_machine_removes_from_model_pending_and_lab_conf(tmp_path):
+def test_remove_machine_removes_from_model_and_lab_conf(tmp_path):
     service = _service(tmp_path)
     service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
-    service.update_pending_files("lab1", "r1", files={"/etc/motd": "hi\n"})
+    service.fs_write_text_offline("lab1", "/r1/etc/motd", "hi\n")
 
     service.remove_machine("lab1", "r1")
 
     lab = service.registry.get("lab1")
     assert "r1" not in lab.machines  # gone from the model, not just undeployed
     assert "r1" not in lab.links["A"].machines  # detached from the shared collision domain
-    assert "r1" not in service.get_pending("lab1")  # queued state dropped
     # Regenerated lab.conf no longer references the device, and its on-disk files are gone.
     conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
     assert "r1[" not in conf
     assert "pc1[" in conf
     assert not (service.store.lab_dir("lab1") / "r1.startup").exists()
+    assert not (service.store.lab_dir("lab1") / "r1").exists()
 
 
 def test_connect_disconnect_stopped_persists_lab_conf(tmp_path):

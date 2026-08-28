@@ -1,12 +1,22 @@
 """Network scenario (lab) lifecycle endpoints."""
 
+import posixpath
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import get_service
 from ..schemas.common import Message
+from ..schemas.filesystem import (
+    FsDeleteRequest,
+    FsListResponse,
+    FsMkdirRequest,
+    FsMoveRequest,
+    FsReadTextResponse,
+    FsUploadResponse,
+    FsWriteTextRequest,
+)
 from ..schemas.lab import (
     DeployOptions,
     LabConfUpdate,
@@ -18,7 +28,7 @@ from ..schemas.lab import (
     LabSummary,
     UndeployOptions,
 )
-from ..schemas.lab_import import LabImportPreview, LabImportRequest, LabImportResult, PendingMachineFiles
+from ..schemas.lab_import import LabImportPreview, LabImportRequest, LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
@@ -46,15 +56,15 @@ def preview_import(
     payload: LabImportRequest, service: KatharaService = Depends(get_service)
 ) -> LabImportPreview:
     """Dry-run parse of a standard Kathara lab directory, without creating anything."""
-    return service.preview_import(payload.name, payload.files, payload.dirs, payload.skipped_files)
+    return service.preview_import(payload.name, payload.files, payload.skipped_files)
 
 
 @router.post("/import", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)
 def import_lab(payload: LabImportRequest, service: KatharaService = Depends(get_service)) -> LabImportResult:
     """Create (and optionally deploy) a lab from a lab.conf/.startup/folder directory.
 
-    Files/dirs are parsed and queued server-side, so file/startup application on deploy is
-    atomic regardless of client state.
+    Every file/dir is written to disk verbatim server-side, so file/startup application on
+    deploy is atomic regardless of client state.
     """
     lab, warnings = service.import_lab(payload.name, payload.files, payload.dirs, payload.skipped_files)
     if payload.deploy:
@@ -150,15 +160,93 @@ def clear_lab_layout(lab_name: str, service: KatharaService = Depends(get_servic
     return Message(detail=detail)
 
 
-@router.get("/{lab_name}/pending-files", response_model=dict[str, PendingMachineFiles])
-def get_pending_files(
-    lab_name: str, service: KatharaService = Depends(get_service)
-) -> dict[str, PendingMachineFiles]:
-    """Return each machine's queued files/dirs/startup, applied on the lab's next deploy.
+@router.get("/{lab_name}/fs/list", response_model=FsListResponse)
+def list_lab_directory(
+    lab_name: str, path: str = "/", service: KatharaService = Depends(get_service)
+) -> FsListResponse:
+    """List a directory in the lab's own on-disk tree — ``lab.conf``, every device's folder (even
+    one with nothing in it yet), and anything queued at the lab root."""
+    entries = service.fs_list_offline(lab_name, path)
+    return FsListResponse(path=service.normalize_guest_path(path), entries=entries)
 
-    Lets the UI restore this state after a page reload.
-    """
-    return service.get_pending(lab_name)
+
+@router.get("/{lab_name}/fs/text", response_model=FsReadTextResponse)
+def read_lab_text_file(
+    lab_name: str, path: str, service: KatharaService = Depends(get_service)
+) -> FsReadTextResponse:
+    """Read a UTF-8 text file from the lab's own on-disk tree."""
+    normalized = service.normalize_guest_path(path)
+    return FsReadTextResponse(path=normalized, content=service.fs_read_text_offline(lab_name, normalized))
+
+
+@router.put("/{lab_name}/fs/text", response_model=Message)
+def write_lab_text_file(
+    lab_name: str, payload: FsWriteTextRequest, service: KatharaService = Depends(get_service)
+) -> Message:
+    """Write or overwrite a UTF-8 text file in the lab's own on-disk tree."""
+    size = service.fs_write_text_offline(lab_name, payload.path, payload.content)
+    return Message(detail=f"Wrote {size} byte(s) to `{payload.path}`.")
+
+
+@router.post("/{lab_name}/fs/mkdir", response_model=Message)
+def mkdir_lab_directory(
+    lab_name: str, payload: FsMkdirRequest, service: KatharaService = Depends(get_service)
+) -> Message:
+    """Create a directory (and any missing parents) in the lab's own on-disk tree."""
+    service.fs_mkdir_offline(lab_name, payload.path)
+    return Message(detail=f"Directory `{payload.path}` created.")
+
+
+@router.post("/{lab_name}/fs/move", response_model=Message)
+def move_lab_path(
+    lab_name: str, payload: FsMoveRequest, service: KatharaService = Depends(get_service)
+) -> Message:
+    """Rename or move a path in the lab's own on-disk tree — across devices too."""
+    service.fs_move_offline(lab_name, payload.source_path, payload.destination_path)
+    return Message(detail=f"Moved `{payload.source_path}` to `{payload.destination_path}`.")
+
+
+@router.delete("/{lab_name}/fs", response_model=Message)
+def delete_lab_path(
+    lab_name: str,
+    payload: FsDeleteRequest = Body(...),
+    service: KatharaService = Depends(get_service),
+) -> Message:
+    """Delete a path from the lab's own on-disk tree."""
+    service.fs_delete_offline(lab_name, payload.path, recursive=payload.recursive)
+    return Message(detail=f"Deleted `{payload.path}`.")
+
+
+@router.post("/{lab_name}/fs/upload", response_model=FsUploadResponse)
+async def upload_lab_file(
+    lab_name: str,
+    path: str = Form(...),
+    file: UploadFile = File(...),
+    service: KatharaService = Depends(get_service),
+) -> FsUploadResponse:
+    """Upload a binary or text file to a path in the lab's own on-disk tree."""
+    data = await file.read()
+    size = service.fs_upload_bytes_offline(lab_name, path, data)
+    return FsUploadResponse(path=service.normalize_guest_path(path), size=size)
+
+
+@router.get("/{lab_name}/fs/download")
+def download_lab_file(
+    lab_name: str, path: str, service: KatharaService = Depends(get_service)
+) -> StreamingResponse:
+    """Download a file from the lab's own on-disk tree as octet-stream."""
+    normalized = service.normalize_guest_path(path)
+    data = service.fs_read_bytes_offline(lab_name, normalized)
+    filename = posixpath.basename(normalized) or "download.bin"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(iter([data]), media_type="application/octet-stream", headers=headers)
+
+
+@router.get("/{lab_name}/fs/startups", response_model=dict[str, str])
+def get_startup_scripts(lab_name: str, service: KatharaService = Depends(get_service)) -> dict[str, str]:
+    """Each device's real ``<machine>.startup`` content (``""`` if it doesn't exist) — backs the
+    topology node-info panel's boot-time IP preview."""
+    return service.get_startup_scripts(lab_name)
 
 
 @router.post("/{lab_name}/deploy", response_model=LabDetail)

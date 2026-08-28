@@ -20,6 +20,7 @@ import shlex
 import threading
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 
+import fs.copy
 from Kathara.exceptions import (
     InvocationError,
     LabNotFoundError,
@@ -40,10 +41,12 @@ from ..errors import (
     LabAlreadyRegisteredError,
     LabConfLockedError,
     LabRenameLockedError,
+    PathNotFoundError,
     SettingsLockedError,
 )
+from ..schemas.filesystem import FsEntry
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
-from ..schemas.lab_import import LabImportPreview, PendingMachineFiles
+from ..schemas.lab_import import LabImportPreview
 from ..schemas.machine import MachineCreate
 from . import lab_builder, lab_conf_edit, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
@@ -51,6 +54,11 @@ from .lab_store import LabStore
 from .registry import LabRegistry
 
 logger = logging.getLogger("kathara_api")
+
+# Reserved "machine name" for files/dirs queued directly under the lab root (no device) — the Lab
+# Configuration tab's tree root. Structurally impossible for a real device to collide with: device
+# names are validated against MACHINE_NAME_PATTERN (schemas/machine.py), which is lowercase-only.
+ROOT_MACHINE = "ROOT"
 
 
 class KatharaService:
@@ -146,18 +154,6 @@ class KatharaService:
             raise LabAlreadyRegisteredError(f"Lab `{spec.name}` already exists.")
         return lab
 
-    @staticmethod
-    def _pending_targets(
-        lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
-    ) -> Generator[tuple[str, PendingMachineFiles, Machine], None, None]:
-        """Yield ``(name, spec, machine)`` for each target with both a queued spec and a live Machine."""
-        for machine_name in target_names:
-            spec = pending.get(machine_name)
-            machine = lab.machines.get(machine_name)
-            if spec is None or machine is None:
-                continue
-            yield machine_name, spec, machine
-
     def _write_machine_files(
         self, lab: Lab, machine_name: str, files: dict[str, str], dirs: list[str]
     ) -> None:
@@ -179,25 +175,74 @@ class KatharaService:
         for path, content in files.items():
             machine.create_file_from_string(content, path)
 
-    def _write_machine_startup(self, lab: Lab, machine_name: str, text: str) -> None:
-        """Write ``<machine>.startup`` verbatim onto the lab's real (osfs) fs — only from an
-        explicit edit (see ``update_pending_files``); an import/upload's own ``<machine>.startup``
-        is already on disk verbatim and must never be rewritten here (see ``_adopt_lab_dir``)."""
-        if text.strip():
-            lab.create_file_from_string(text, f"{machine_name}.startup")
+    def _write_lab_root_files(self, lab: Lab, files: dict[str, str], dirs: list[str]) -> None:
+        """Same as ``_write_machine_files``, but for files/dirs queued under the ROOT_MACHINE
+        bucket (the Lab Configuration tab's tree root, no device) — written straight onto the
+        lab's own on-disk directory, alongside ``lab.conf`` and each device's folder. Real files,
+        just not consumed by deploy (nothing under Kathara's deploy machinery reads outside
+        ``lab.conf``/``<machine>/``/``<machine>.startup``/``shared/``)."""
+        for rel_dir in dirs:
+            if rel_dir and rel_dir.strip():
+                lab.fs.makedirs(rel_dir, recreate=True)
+        for path, content in files.items():
+            lab.create_file_from_string(content, path)
 
-    def _materialize_pending_to_fs(
-        self, lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
-    ) -> None:
-        """Write each target's *entire* currently-queued files/dirs/startup onto the lab's real
-        (osfs) fs. Used only by ``update_shared_pending_files`` (a broadcast-to-every-machine
-        edit, where re-applying the accumulated queue is the existing, intentionally-unchanged
-        behavior) — a single machine's own edit goes through ``_write_machine_files`` /
-        ``_write_machine_startup`` instead, which touch only the payload of that one edit.
+    def _fs_for(self, lab: Lab, machine_name: str):
+        """The real (osfs) fs backing ``machine_name``'s offline files — the lab's own root
+        directory for ``ROOT_MACHINE``, or a registered device's own subdirectory. ``None`` if
+        ``machine_name`` is neither ``ROOT_MACHINE`` nor a registered device."""
+        if machine_name == ROOT_MACHINE:
+            return lab.fs
+        machine = lab.machines.get(machine_name)
+        return machine.fs if machine is not None else None
+
+    @staticmethod
+    def _offline_fs_owner(lab: Lab, path: str) -> tuple[str, str]:
+        """Resolve a lab-relative path (``"pc1/etc/motd"``, ``"pc1.startup"``, ``"notes.txt"``) to
+        ``(owner, guest_path)`` — ``owner`` is a real device name if the path's first segment
+        matches one, else ``ROOT_MACHINE`` (the lab's own root — this is where a device's
+        ``<name>.startup`` naturally resolves to too, since it really is just a file sitting in
+        ``lab.fs``, not under any device's own subdirectory). ``guest_path`` is owner-relative,
+        always leading-slash.
         """
-        for machine_name, spec, machine in self._pending_targets(lab, pending, target_names):
-            self._write_machine_files(lab, machine_name, spec.files, spec.dirs)
-            self._write_machine_startup(lab, machine_name, spec.startup)
+        clean = path.strip("/")
+        if not clean:
+            return ROOT_MACHINE, "/"
+        top, _, rest = clean.partition("/")
+        if lab.machines.get(top) is not None:
+            return top, f"/{rest}"
+        return ROOT_MACHINE, f"/{clean}"
+
+    @staticmethod
+    def _dirty_target_for(lab: Lab, path: str) -> Optional[str]:
+        """The device a write to ``path`` should mark dirty for redeploy live-push purposes — a
+        path under a device's own subtree, or that device's dedicated ``<name>.startup`` file.
+        ``None`` for ``lab.conf`` and anything else at the lab root, which have no already-running
+        container to push into.
+        """
+        clean = path.strip("/")
+        if not clean:
+            return None
+        if "/" in clean:
+            top = clean.split("/", 1)[0]
+            return top if lab.machines.get(top) is not None else None
+        if clean.endswith(".startup"):
+            candidate = clean[: -len(".startup")]
+            return candidate if lab.machines.get(candidate) is not None else None
+        return None
+
+    @staticmethod
+    def _fs_entry(info, parent_normalized: str) -> FsEntry:
+        name = info.name
+        path = f"/{name}" if parent_normalized == "/" else f"{parent_normalized}/{name}"
+        modified = info.modified
+        return FsEntry(
+            name=name,
+            path=path,
+            is_dir=info.is_dir,
+            size=info.size,
+            mtime=modified.timestamp() if modified else None,
+        )
 
     def _adopt_lab_dir(self, name: str, t: lab_import.LabImportTranslation) -> Lab:
         """Build + register a Lab against its already-populated on-disk directory.
@@ -209,9 +254,7 @@ class KatharaService:
         deploy time — a machine whose subfolder already exists on disk picks up ``machine.fs``
         automatically (``Machine.__init__``), so nothing needs writing here for that to work.
         """
-        lab = self._build_and_register(t.payload, self.store.lab_dir(name))
-        self.registry.set_pending(name, t.pending)
-        return lab
+        return self._build_and_register(t.payload, self.store.lab_dir(name))
 
     def create_lab(self, spec: LabCreate) -> Lab:
         lab_dir = self.store.ensure_lab_dir(spec.name)
@@ -304,8 +347,8 @@ class KatharaService:
         lab_dir = self.store.lab_dir(name)
         if not lab_dir.exists():
             return None
-        files, dirs = self.store.read_lab(lab_dir)
-        t = lab_import.translate_lab_files(files, name, dirs)
+        files, _dirs = self.store.read_lab(lab_dir)
+        t = lab_import.translate_lab_files(files, name)
         if t.errors:
             logger.warning("Cannot load lab `%s` from disk: %s", name, "; ".join(t.errors))
             return None
@@ -379,7 +422,7 @@ class KatharaService:
             self.store.write_lab_conf_text(name, new_text)
 
     def _reload_from_disk(self) -> None:
-        """Rebuild the registry (and pending state) from the stored lab directories."""
+        """Rebuild the registry from the stored lab directories."""
         for name in self.store.lab_names():
             try:
                 t = self._translate_lab_dir(name)
@@ -390,22 +433,24 @@ class KatharaService:
                 # Kathara's Machine.__init__), so a redeployed/reloaded lab stays OS-backed.
                 lab = lab_builder.build_lab(t.payload, path=str(self.store.lab_dir(name)))
                 self.registry.add_if_absent(lab)
-                self.registry.set_pending(name, t.pending)
             except Exception:
                 logger.warning("Failed to reload lab `%s` from disk", name, exc_info=True)
 
     def _reload_lab_from_disk(self, name: str) -> bool:
-        """Rebuild a single lab's model + pending from its on-disk lab.conf, *replacing* the registry
-        entry. Used after a full undeploy to drop runtime-only model changes (e.g. interfaces added
-        live) and restore the saved configuration topology. Returns False if the lab has no on-disk
+        """Rebuild a single lab's model from its on-disk lab.conf, *replacing* the registry entry.
+        Used after a full undeploy to drop runtime-only model changes (e.g. interfaces added live)
+        and restore the saved configuration topology. Returns False if the lab has no on-disk
         directory (reconstruct-only labs) or the stored lab.conf can't be parsed.
+
+        Doesn't touch any device's actual files/dirs — those live only on the real on-disk fs
+        (``lab.fs``/``machine.fs``), never mirrored into a separate in-memory structure, so there is
+        nothing here that could go stale or be lost by rebuilding the model.
         """
         t = self._translate_lab_dir(name)
         if t is None:
             return False
         lab = lab_builder.build_lab(t.payload, path=str(self.store.lab_dir(name)))
         self.registry.add(lab)
-        self.registry.set_pending(name, t.pending)
         return True
 
     # -- lab.conf / folder import ----------------------------------------------
@@ -414,11 +459,10 @@ class KatharaService:
         self,
         name: str,
         files: dict[str, str],
-        dirs: Optional[list[str]] = None,
         skipped: Optional[list[str]] = None,
     ) -> LabImportPreview:
         """Dry-run parse of a lab directory, without creating anything."""
-        t = lab_import.translate_lab_files(files, name or "lab", dirs, skipped)
+        t = lab_import.translate_lab_files(files, name or "lab", skipped)
         return LabImportPreview(
             machine_count=t.machine_count, domains=t.domains, warnings=t.warnings, errors=t.errors
         )
@@ -435,7 +479,7 @@ class KatharaService:
         clean = lab_store.sanitize_lab_name(name)
         if self.registry.get(clean) is not None or self.store.lab_dir(clean).exists():
             raise LabAlreadyRegisteredError(f"Lab `{clean}` already exists.")
-        t = lab_import.translate_lab_files(files, clean, dirs, skipped)
+        t = lab_import.translate_lab_files(files, clean, skipped)
         if t.errors:
             raise ApiError("; ".join(t.errors))
         # Verbatim + atomic: write_lab writes into a sibling `.<name>.tmp` dir and os.replace()s
@@ -469,8 +513,8 @@ class KatharaService:
 
         lab_dir = self.store.extract_zip(clean_name, zip_data)
         try:
-            files, dirs = self.store.read_lab(lab_dir)
-            t = lab_import.translate_lab_files(files, clean_name, dirs)
+            files, _dirs = self.store.read_lab(lab_dir)
+            t = lab_import.translate_lab_files(files, clean_name)
             if t.errors:
                 raise ApiError("; ".join(t.errors))
             lab = self._adopt_lab_dir(clean_name, t)
@@ -503,9 +547,9 @@ class KatharaService:
                     f"Cannot edit lab.conf while `{clean}` is deployed. Undeploy it first."
                 )
             lab_dir = self.store.ensure_lab_dir(clean)
-            files, dirs = self.store.read_lab(lab_dir)
+            files, _dirs = self.store.read_lab(lab_dir)
             files["lab.conf"] = content
-            t = lab_import.translate_lab_files(files, clean, dirs)
+            t = lab_import.translate_lab_files(files, clean)
             if t.errors:
                 raise ApiError("; ".join(t.errors))
             # Validate against a throwaway in-memory Lab (check_integrity, MAC format, meta
@@ -519,43 +563,206 @@ class KatharaService:
             # text just written.
             self.registry.remove(clean)
             new_lab = self._build_and_register(t.payload, lab_dir)
-            self.registry.set_pending(clean, t.pending)
             return new_lab
 
-    def get_pending(self, lab_name: str) -> dict[str, PendingMachineFiles]:
-        """Return the queued files/dirs/startup per machine (survives a page reload)."""
-        return self.registry.get_pending(lab_name)
+    # -- offline lab filesystem (the Lab Configuration tab) --------------------
+    #
+    # Browses/edits the lab's own on-disk directory directly — lab.conf, every device's own
+    # subdirectory, its <name>.startup, and anything else queued at the lab root (no separate
+    # in-memory tracking of what's there; the filesystem itself is the only source of truth, so
+    # a redeploy/undeploy/rename can never lose track of something a cache failed to reconstruct).
+    # A write under a device's own path (or its <name>.startup) marks that device "dirty" — see
+    # registry.mark_dirty — so a later redeploy of an already-running container knows to live-push
+    # the change (deploy_lab's already-running branch, _live_push below).
 
-    def update_pending_files(
-        self,
-        lab_name: str,
-        machine_name: str,
-        files: Optional[dict[str, str]] = None,
-        dirs: Optional[list[str]] = None,
-        startup: Optional[str] = None,
-    ) -> PendingMachineFiles:
-        updated = self.registry.update_pending_machine(lab_name, machine_name, files=files, dirs=dirs, startup=startup)
-        # Write through to the lab's real (osfs) fs immediately — not just at next deploy — so an
-        # edit made before ever deploying still survives a server restart. This only keeps the
-        # on-disk source of truth current; pushing the edit into an already-running container is
-        # a separate, caller-driven step.
+    def get_startup_scripts(self, lab_name: str) -> dict[str, str]:
+        """Each device's real ``<machine>.startup`` content (``""`` if it doesn't exist) — a fresh
+        scan, not a cache. Backs the topology node-info panel's boot-time IP preview."""
         lab = self.get_lab_or_reconstruct(lab_name)
-        self._materialize_pending_to_fs(lab, {machine_name: updated}, {machine_name})
-        return updated
+        result: dict[str, str] = {}
+        for name in lab.machines:
+            fname = f"{name}.startup"
+            result[name] = lab.fs.readtext(fname) if lab.fs.exists(fname) else ""
+        return result
 
-    def update_shared_pending_files(
-        self,
-        lab_name: str,
-        files: Optional[dict[str, str]] = None,
-        dirs: Optional[list[str]] = None,
-    ) -> dict[str, PendingMachineFiles]:
-        """Queue files/dirs for every machine currently known in the lab (``shared/`` semantics)."""
+    def fs_list_offline(self, lab_name: str, path: str) -> list[FsEntry]:
+        """A directory listing straight off the real fs — no synthesized entries. A device with
+        nothing on disk yet simply doesn't appear at the root, the same way an empty/nonexistent
+        directory has no listing on a normal filesystem; it starts existing the moment something
+        is written under it (`fs_write_text_offline`/`fs_mkdir_offline`/etc.), and stops existing
+        again once its last real content is deleted (see `fs_delete_offline`)."""
         lab = self.get_lab_or_reconstruct(lab_name)
-        for machine_name in lab.machines:
-            self.registry.update_pending_machine(lab_name, machine_name, files=files, dirs=dirs)
-        pending = self.registry.get_pending(lab_name)
-        self._materialize_pending_to_fs(lab, pending, set(lab.machines.keys()))
-        return pending
+        owner, guest = self._offline_fs_owner(lab, path)
+        target_fs = self._fs_for(lab, owner)
+        normalized = self.normalize_guest_path(path)
+        entries: dict[str, FsEntry] = {}
+        if target_fs is not None:
+            if target_fs.exists(guest):
+                if not target_fs.isdir(guest):
+                    raise ApiError(f"`{path}` is a file, not a directory.")
+                for info in target_fs.scandir(guest, namespaces=["details"]):
+                    entries[info.name] = self._fs_entry(info, normalized)
+            elif guest != "/":
+                raise PathNotFoundError(f"Path `{path}` not found.")
+            # guest == "/" with nothing materialized yet (a device with no machine.fs) is a
+            # legitimate empty listing, not an error.
+        return sorted(entries.values(), key=lambda e: (not e.is_dir, e.name))
+
+    def fs_read_text_offline(self, lab_name: str, path: str) -> str:
+        if path.strip("/") == "lab.conf":
+            return self.read_lab_conf(lab_name).content
+        lab = self.get_lab_or_reconstruct(lab_name)
+        owner, guest = self._offline_fs_owner(lab, path)
+        target_fs = self._fs_for(lab, owner)
+        if target_fs is None or not target_fs.exists(guest):
+            raise PathNotFoundError(f"Path `{path}` not found.")
+        if target_fs.isdir(guest):
+            raise ApiError(f"`{path}` is a directory. Use list to navigate it.")
+        try:
+            return target_fs.readtext(guest)
+        except UnicodeDecodeError as exc:
+            raise BinaryFileError("File is not UTF-8 text. Use download for binary files.") from exc
+
+    def fs_read_bytes_offline(self, lab_name: str, path: str) -> bytes:
+        lab = self.get_lab_or_reconstruct(lab_name)
+        owner, guest = self._offline_fs_owner(lab, path)
+        target_fs = self._fs_for(lab, owner)
+        if target_fs is None or not target_fs.exists(guest):
+            raise PathNotFoundError(f"Path `{path}` not found.")
+        if target_fs.isdir(guest):
+            raise ApiError(f"`{path}` is a directory. Use list to navigate it.")
+        return target_fs.readbytes(guest)
+
+    def fs_write_text_offline(self, lab_name: str, path: str, content: str) -> int:
+        if path.strip("/") == "lab.conf":
+            self.update_lab_conf(lab_name, content)
+            return len(content.encode("utf-8"))
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            owner, guest = self._offline_fs_owner(lab, path)
+            if owner == ROOT_MACHINE:
+                self._write_lab_root_files(lab, {guest: content}, [])
+            else:
+                self._write_machine_files(lab, owner, {guest: content}, [])
+            dirty = self._dirty_target_for(lab, path)
+            if dirty:
+                self.registry.mark_dirty(lab_name, dirty)
+        return len(content.encode("utf-8"))
+
+    def fs_upload_bytes_offline(self, lab_name: str, path: str, content: bytes) -> int:
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            owner, guest = self._offline_fs_owner(lab, path)
+            if owner == ROOT_MACHINE:
+                target_fs = lab.fs
+            else:
+                machine = lab.machines.get(owner)
+                if machine is None:
+                    raise ApiError(f"Unknown device `{owner}`.")
+                if machine.fs is None:
+                    machine.fs = lab.fs.makedir(owner, recreate=True)
+                target_fs = machine.fs
+            parent = posixpath.dirname(guest)
+            if parent and parent != "/":
+                target_fs.makedirs(parent, recreate=True)
+            target_fs.writebytes(guest, content)
+            dirty = self._dirty_target_for(lab, path)
+            if dirty:
+                self.registry.mark_dirty(lab_name, dirty)
+        return len(content)
+
+    def fs_mkdir_offline(self, lab_name: str, path: str) -> None:
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            owner, guest = self._offline_fs_owner(lab, path)
+            if owner == ROOT_MACHINE:
+                self._write_lab_root_files(lab, {}, [guest])
+            else:
+                self._write_machine_files(lab, owner, {}, [guest])
+            dirty = self._dirty_target_for(lab, path)
+            if dirty:
+                self.registry.mark_dirty(lab_name, dirty)
+
+    def fs_delete_offline(self, lab_name: str, path: str, recursive: bool = False) -> None:
+        if path.strip("/") == "lab.conf":
+            raise ApiError("lab.conf can't be deleted.")
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            owner, guest = self._offline_fs_owner(lab, path)
+
+            if owner != ROOT_MACHINE and guest == "/":
+                # Deleting a device's own folder removes it entirely — machine.fs stops existing
+                # (matching fs_list_offline, which then stops showing it) rather than leaving an
+                # empty shell behind; it starts existing again the moment anything new is written
+                # under this device. <name>.startup is a separate, sibling entry and untouched.
+                machine = lab.machines.get(owner)
+                if machine is None:
+                    raise PathNotFoundError(f"Path `{path}` not found.")
+                if machine.fs is not None and lab.fs.exists(owner):
+                    lab.fs.removetree(owner)
+                machine.fs = None
+                return
+
+            target_fs = self._fs_for(lab, owner)
+            if target_fs is None:
+                raise PathNotFoundError(f"Path `{path}` not found.")
+            if not target_fs.exists(guest):
+                raise PathNotFoundError(f"Path `{path}` not found.")
+            if target_fs.isdir(guest):
+                if not recursive and next(iter(target_fs.scandir(guest)), None) is not None:
+                    raise ApiError(f"`{path}` is not empty. Delete recursively to remove it.")
+                target_fs.removetree(guest)
+            else:
+                target_fs.remove(guest)
+            dirty = self._dirty_target_for(lab, path)
+            if dirty:
+                self.registry.mark_dirty(lab_name, dirty)
+
+    def fs_move_offline(self, lab_name: str, source_path: str, destination_path: str) -> None:
+        if source_path.strip("/") == "lab.conf" or destination_path.strip("/") == "lab.conf":
+            raise ApiError("lab.conf can't be moved.")
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            source_owner, source_guest = self._offline_fs_owner(lab, source_path)
+            dest_owner, dest_guest = self._offline_fs_owner(lab, destination_path)
+            src_fs = self._fs_for(lab, source_owner)
+            if src_fs is None or not src_fs.exists(source_guest):
+                raise PathNotFoundError(f"Path `{source_path}` not found.")
+
+            if dest_owner == ROOT_MACHINE:
+                dst_fs = lab.fs
+            else:
+                dst_machine = lab.machines.get(dest_owner)
+                if dst_machine is None:
+                    raise ApiError(f"Unknown device `{dest_owner}`.")
+                if dst_machine.fs is None:
+                    dst_machine.fs = lab.fs.makedir(dest_owner, recreate=True)
+                dst_fs = dst_machine.fs
+
+            parent = posixpath.dirname(dest_guest)
+            if parent and parent != "/":
+                dst_fs.makedirs(parent, recreate=True)
+
+            is_dir = src_fs.isdir(source_guest)
+            same_fs = src_fs is dst_fs
+            if is_dir:
+                if same_fs:
+                    src_fs.movedir(source_guest, dest_guest, create=True)
+                else:
+                    dst_fs.makedirs(dest_guest, recreate=True)
+                    fs.copy.copy_dir(src_fs, source_guest, dst_fs, dest_guest)
+                    src_fs.removetree(source_guest)
+            else:
+                if same_fs:
+                    src_fs.move(source_guest, dest_guest, overwrite=True)
+                else:
+                    fs.copy.copy_file(src_fs, source_guest, dst_fs, dest_guest)
+                    src_fs.remove(source_guest)
+
+            for p in (source_path, destination_path):
+                dirty = self._dirty_target_for(lab, p)
+                if dirty:
+                    self.registry.mark_dirty(lab_name, dirty)
 
     def get_lab_or_reconstruct(self, name: str) -> Lab:
         """Return the registered Lab (refreshed from the backend) or reconstruct it.
@@ -657,13 +864,14 @@ class KatharaService:
 
         # Already-running machines can't be recreated — Kathara's facade raises
         # MachineAlreadyExistsError for them — so only machines about to be *freshly* created are
-        # passed to it. Their pending state is already on disk by now: an import/upload wrote it
-        # there verbatim (see _adopt_lab_dir) and any pre-deploy edit was written through
-        # immediately by update_pending_files — so Kathara's own deploy machinery
-        # (Machine.pack_data) packs it straight from the real (osfs) fs, with nothing to
-        # materialize here. Already-running targets instead get any queued update pushed live via
-        # ``_apply_pending``, the only way to reach a container that already exists.
-        pending = self.registry.get_pending(name)
+        # passed to it. Their files are already on disk by now: an import/upload wrote them there
+        # verbatim (see _adopt_lab_dir) and any pre-deploy edit was written through immediately by
+        # fs_write_text_offline/etc. — so Kathara's own deploy machinery (Machine.pack_data) packs
+        # them straight from the real (osfs) fs, with nothing to materialize here. Already-running
+        # targets instead get any *changed* file pushed live via ``_live_push`` (the dirty set —
+        # see registry.mark_dirty — not everything, so an untouched machine isn't redundantly
+        # re-pushed and its startup script re-executed on every redeploy), the only way to reach a
+        # container that already exists.
         pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
         fresh_names = target_names - pre_running
         already_running = target_names & pre_running
@@ -671,19 +879,24 @@ class KatharaService:
         if fresh_names:
             with self._mutate_lock:
                 self._facade().deploy_lab(lab, selected_machines=fresh_names)
+            # Native pack_data just packed each fresh machine's *current* on-disk state, so any
+            # dirty flag an offline edit set before this deploy is already reflected — discard it
+            # rather than leaving it to trigger a spurious live-push on some future redeploy.
+            self.registry.pop_dirty_machines(name, fresh_names)
 
-        if already_running & pending.keys():
-            self._apply_pending(name, lab, pending, already_running & pending.keys())
+        dirty = self.registry.pop_dirty_machines(name, already_running)
+        if dirty:
+            self._live_push(name, lab, dirty)
         return lab
 
     @staticmethod
-    def _boot_script(lab: Lab, machine: Machine, own_startup: str) -> str:
+    def _boot_script(lab: Lab, machine: Machine) -> str:
         """The script a *live* push must run for an already-running device: what native deploy
         would run for a fresh one, in the same order (``DockerMachine.STARTUP_COMMANDS``):
-        ``shared.startup``, the device's own ``<name>.startup`` (verbatim — see
-        ``PendingMachineFiles.startup``), then any ``exec_commands``. Only needed here — for a
-        fresh deploy, ``Machine.pack_data`` and the container's own boot sequence already handle
-        all three natively, straight off disk.
+        ``shared.startup``, the device's own ``<name>.startup`` (read straight off ``lab.fs`` —
+        the real, only copy of it), then any ``exec_commands``. Only needed here — for a fresh
+        deploy, ``Machine.pack_data`` and the container's own boot sequence already handle all
+        three natively, straight off disk.
         """
         parts = []
         if lab.fs.exists("shared.startup"):
@@ -693,36 +906,49 @@ class KatharaService:
                 shared_text = ""
             if shared_text.strip():
                 parts.append(shared_text)
-        if own_startup.strip():
-            parts.append(own_startup)
+        startup_name = f"{machine.name}.startup"
+        if lab.fs.exists(startup_name):
+            try:
+                own_startup = lab.fs.readtext(startup_name)
+            except Exception:
+                own_startup = ""
+            if own_startup.strip():
+                parts.append(own_startup)
         commands = machine.get_exec_commands()
         if commands:
             parts.append("\n".join(commands))
         return "\n".join(parts)
 
-    def _apply_pending(
-        self, name: str, lab: Lab, pending: dict[str, PendingMachineFiles], target_names: set[str]
-    ) -> None:
-        """Live-push queued files/dirs/startup into machines that were *already running*.
+    def _live_push(self, name: str, lab: Lab, target_names: set[str]) -> None:
+        """Live-push each already-running target's *current* on-disk files/dirs/startup into its
+        container, and re-run its boot script.
 
-        Native deploy (``Machine.pack_data``, see ``deploy_lab``) already applies pending state
+        Native deploy (``Machine.pack_data``, see ``deploy_lab``) already applies on-disk state
         for machines freshly created by this deploy call, so this is scoped to only the subset
         that was already running before it: a redeploy can't recreate a running container
         (Kathara raises ``MachineAlreadyExistsError``), so pushing files/exec'ing the startup
         script live is the only way to update one. Order matches the Kathara CLI's own:
         filesystem first, then the startup script (composed via ``_boot_script`` — see there).
+        Reads straight off ``machine.fs``/``lab.fs`` — there is no cached spec to read instead.
         """
-        for machine_name, spec, machine in self._pending_targets(lab, pending, target_names):
-            if machine.api_object is None:
+        for machine_name in target_names:
+            machine = lab.machines.get(machine_name)
+            if machine is None or machine.api_object is None:
                 continue
 
-            if spec.dirs:
-                quoted = " ".join(shlex.quote(d) for d in spec.dirs if d and d.strip())
-                if quoted:
+            files: dict[str, str] = {}
+            if machine.fs is not None:
+                dirs = list(machine.fs.walk.dirs())
+                if dirs:
+                    quoted = " ".join(shlex.quote(d) for d in dirs)
                     self._exec_checked(name, machine_name, f"mkdir -p {quoted}", action_label="mkdir")
+                for file_path in machine.fs.walk.files():
+                    try:
+                        files[file_path] = machine.fs.readtext(file_path)
+                    except UnicodeDecodeError:
+                        continue  # binary — this live-push path is text-only, same as before
 
-            files = dict(spec.files)
-            boot_script = self._boot_script(lab, machine, spec.startup)
+            boot_script = self._boot_script(lab, machine)
             has_startup = bool(boot_script.strip())
             if has_startup:
                 files["/tmp/.kathara_boot.sh"] = boot_script
@@ -871,7 +1097,6 @@ class KatharaService:
             # device folder — clean the fs ourselves recursively (see _remove_machine_fs).
             lab.remove_machine(name=machine_name, delete_fs=False)
             self._remove_machine_fs(lab, machine_name)
-            self._drop_pending_machine(lab_name, machine_name)
             # Drop the device's lines from the persisted lab.conf — every other line in the file
             # (comments, other devices, unmodelled options) stays byte-identical.
             self._edit_lab_conf(lab_name, lambda text: lab_conf_edit.remove_device(text, machine_name))
@@ -886,12 +1111,6 @@ class KatharaService:
                 lab.fs.remove(fname)
         if lab.fs.exists(machine_name):
             lab.fs.removetree(machine_name)
-
-    def _drop_pending_machine(self, lab_name: str, machine_name: str) -> None:
-        """Drop a single device's queued pending state (the registry only removes whole labs)."""
-        pending = self.registry.get_pending(lab_name)
-        if pending.pop(machine_name, None) is not None:
-            self.registry.set_pending(lab_name, pending)
 
     def connect_machine(
         self,

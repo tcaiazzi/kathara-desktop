@@ -29,6 +29,13 @@ docker compose -f docker-compose-dev.yml up --build
 # -> http://localhost:5173
 ```
 
+Labs are persisted to `./data/labs` on the host (bind-mounted into the backend container at the
+*same absolute path* — required so Kathara's native `/shared` folder mount, which the host's own
+Docker daemon resolves, points at a path that actually exists there; see the compose file's
+comment for why). For `docker-compose-prod.yml`, set `KATHARA_IDE_LABS_DIR` to an absolute host
+path (defaults to `/var/lib/kathara-ide/labs`) — it's used for both the bind mount and
+`KATHARA_API_LABS_DIR` inside the container.
+
 ### On the host
 
 ```bash
@@ -69,8 +76,6 @@ pytest -m docker            # integration tests (require a running Docker daemon
   run with a **single worker**, so it can't be scaled horizontally.
 - **Live terminals require the Docker manager.** Attaching to a running device (`connect` /
   interactive TTY) is unsupported on Kathara managers other than Docker.
-- **File editor limitations.** No drag-and-drop file moves, and no "shared" broadcast shortcut —
-  editing a file queues it for the single device it lives under, not for all devices.
 - **No layered/hierarchical topology layout** — the graph is force-directed only.
 - **Known upstream bug:** disconnecting a device from a collision domain, or removing a domain a
   device is attached to, can leave the lab wedged (an unguarded `None` interface in the Kathara

@@ -71,7 +71,7 @@ def test_parse_lab_ext_groups_external_interfaces_by_link():
     assert by_name == {"A": ["eth0", "eth1.100"], "B": ["eth2"]}
 
 
-def test_translate_lab_files_builds_payload_and_pending():
+def test_translate_lab_files_builds_payload():
     t = lab_import.translate_lab_files(_example_files(), "static_routing")
 
     assert not t.errors
@@ -83,15 +83,12 @@ def test_translate_lab_files_builds_payload_and_pending():
     names = {m.name for m in t.payload.machines}
     assert names == {"r1", "r2", "pc1", "pc2"}
 
-    assert t.pending["r1"].startup.strip() == R1_STARTUP.strip()
-    assert t.pending["pc2"].startup == ""  # no pc2.startup and no shared.startup
-
 
 def test_translate_lab_files_ignores_shared_folder_with_a_warning():
     # Verbatim import: a `shared/` folder isn't applied to any device (Kathara's own pack_data
     # doesn't pack it, and the /shared bind mount is disabled under Docker-outside-of-Docker) —
-    # so it must not be merged into machine files, which would rewrite files that aren't part of
-    # any single device's own tree. It stays untouched on disk and is only surfaced as a warning.
+    # it stays untouched on disk (see KatharaService.upload_lab/import_lab, which write files
+    # verbatim) and is only surfaced here as a warning.
     files = {
         **_example_files(),
         "shared/etc/motd": "hello\n",
@@ -99,26 +96,7 @@ def test_translate_lab_files_ignores_shared_folder_with_a_warning():
     }
     t = lab_import.translate_lab_files(files, "lab")
 
-    for machine_name in ("r1", "r2", "pc1", "pc2"):
-        assert t.pending[machine_name].files == {}
-
-    # r1's own startup is untouched — no shared.startup composed in front of it.
-    assert t.pending["r1"].startup == R1_STARTUP
-
     assert any("shared/" in w for w in t.warnings)
-
-
-def test_translate_lab_files_merges_machine_specific_files_and_dirs():
-    files = {
-        **_example_files(),
-        "r1/etc/frr/frr.conf": "hostname r1\n",
-    }
-    t = lab_import.translate_lab_files(files, "lab", dirs=["r1/var/log"])
-
-    assert t.pending["r1"].files == {"/etc/frr/frr.conf": "hostname r1\n"}
-    assert t.pending["r1"].dirs == ["/etc", "/etc/frr", "/var", "/var/log"]
-    # Only r1 gets its own machine-scoped files.
-    assert t.pending["pc1"].files == {}
 
 
 def test_translate_lab_files_folder_fallback_without_lab_conf():
@@ -181,8 +159,6 @@ def test_translate_lab_files_keeps_exec_commands_in_the_model():
 
     pc1 = next(m for m in t.payload.machines if m.name == "pc1")
     assert pc1.exec_commands == ["echo hi"]
-    # Not folded into the startup script — Kathara's native deploy runs exec_commands on its own.
-    assert "echo hi" not in t.pending["pc1"].startup
 
 
 def test_translate_lab_files_carries_num_terms_entrypoint_args_and_metas():

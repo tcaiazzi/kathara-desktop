@@ -28,7 +28,7 @@ export interface WorkspaceCtx {
   deviceActions: Pick<
     UseDeviceActions,
     | "model"
-    | "pending"
+    | "startups"
     | "deviceContextItems"
     | "domainContextItems"
     | "openAddDevice"

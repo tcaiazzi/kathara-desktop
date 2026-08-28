@@ -23,7 +23,9 @@
     "bootstrap": "^5.3.3",
     "codemirror": "^6.0.2",
     "dockview-react": "^7.0.2",
+    "lucide-react": "^0.544.0",
     "react": "^18.3.1",
+    "react-arborist": "^3.16.0",
     "react-bootstrap": "^2.10.4",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.1"

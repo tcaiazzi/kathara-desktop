@@ -13,7 +13,6 @@ import type {
   LinkDetail,
   MachineDetail,
   Message,
-  PendingMachineFiles,
   SettingsUpdate,
   SettingsView,
   SystemInfo,
@@ -158,19 +157,53 @@ export const api = {
     return res.blob();
   },
 
-  // -- lab file editor/explorer (queued files/dirs/startup + live push to running devices) --
-  getPendingFiles: (labName: string) =>
-    request<Record<string, PendingMachineFiles>>("GET", `/labs/${encodeURIComponent(labName)}/pending-files`),
-  updatePendingFiles: (
-    labName: string,
-    machineName: string,
-    body: { files?: Record<string, string>; dirs?: string[]; startup?: string },
-  ) =>
-    request<PendingMachineFiles>(
-      "PUT",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/pending-files`,
-      body,
-    ),
+  // -- Lab Configuration tab: the lab's own on-disk directory, browsed/edited directly (real
+  // reads/writes on every call — no separate cache, so nothing here can ever drift from disk). --
+  getStartupScripts: (labName: string) =>
+    request<Record<string, string>>("GET", `/labs/${encodeURIComponent(labName)}/fs/startups`),
+  fsListOffline: (labName: string, path: string) =>
+    request<FsListResponse>("GET", `/labs/${encodeURIComponent(labName)}/fs/list?path=${encodeURIComponent(path)}`),
+  fsReadTextOffline: (labName: string, path: string) =>
+    request<FsReadTextResponse>("GET", `/labs/${encodeURIComponent(labName)}/fs/text?path=${encodeURIComponent(path)}`),
+  fsWriteTextOffline: (labName: string, path: string, content: string) =>
+    request<Message>("PUT", `/labs/${encodeURIComponent(labName)}/fs/text`, { path, content }),
+  fsMkdirOffline: (labName: string, path: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/mkdir`, { path }),
+  fsMoveOffline: (labName: string, sourcePath: string, destinationPath: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/move`, { sourcePath, destinationPath }),
+  fsDeleteOffline: (labName: string, path: string, recursive = false) =>
+    request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/fs`, { path, recursive }),
+  fsUploadOffline: async (labName: string, path: string, file: File) => {
+    const form = new FormData();
+    form.append("path", path);
+    form.append("file", file);
+    return requestForm<FsUploadResponse>(`/labs/${encodeURIComponent(labName)}/fs/upload`, form);
+  },
+  fsDownloadOffline: async (labName: string, path: string) => {
+    const res = await fetch(
+      `${API_BASE}/labs/${encodeURIComponent(labName)}/fs/download?path=${encodeURIComponent(path)}`,
+      { method: "GET" },
+    );
+    if (!res.ok) {
+      const text = await res.text();
+      let data: unknown = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = text;
+        }
+      }
+      const err = data as Partial<ErrorResponse> | null;
+      throw new ApiError(
+        err?.detail || res.statusText || `HTTP ${res.status}`,
+        err?.error_type || `HTTP ${res.status}`,
+        res.status,
+      );
+    }
+    return res.blob();
+  },
+
   copyFiles: (labName: string, machineName: string, files: Record<string, string>) =>
     request<Message>(
       "POST",

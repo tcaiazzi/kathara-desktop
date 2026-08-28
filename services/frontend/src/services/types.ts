@@ -131,14 +131,6 @@ export interface LabLayout {
 // The "New lab from JSON" flow accepts a raw JSON blob rather than a full typed form.
 export type LabCreate = Record<string, unknown> & { name: string };
 
-// Files/dirs/startup queued for a machine, applied on the lab's next deploy (see
-// services/lab_import.py and services/registry.py on the backend).
-export interface PendingMachineFiles {
-  files: Record<string, string>;
-  dirs: string[];
-  startup: string;
-}
-
 export interface ExecResult {
   machine: string;
   stdout: string;

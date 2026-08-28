@@ -140,14 +140,6 @@ def build_lab(spec: LabCreate, path: Optional[str] = None) -> Lab:
     """
     lab = Lab(spec.name, path=path)
 
-    if path:
-        # The API materializes `shared/` files into every machine's own tree itself (see
-        # services/lab_import.py), so Kathara's own `/shared` bind mount must be disabled
-        # per-lab. That bind mount is resolved by the *true* Docker host, not the API container
-        # (Docker-outside-of-Docker), and would otherwise be silently created since Kathara's
-        # `shared_mount` setting defaults to True for any OS-backed lab.
-        lab.add_option("shared_mount", False)
-
     meta = spec.metadata
     lab.description = meta.description
     lab.version = meta.version

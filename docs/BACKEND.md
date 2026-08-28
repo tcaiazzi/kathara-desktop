@@ -39,6 +39,15 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
   interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
   only, never written to `lab.conf`). A full undeploy restores the saved-config topology.
+- **Offline lab filesystem** (`/api/labs/{lab}/fs/*`) — the Lab Configuration tab's backing store:
+  every read/write is a real call against the lab's own on-disk directory (`lab.fs`/`machine.fs`,
+  via pyfilesystem2), routed by path (`/lab.conf`, `/<machine>.startup`, `/<machine>/…`, or the lab
+  root for anything else) — there is deliberately no separate in-memory cache of what's queued (an
+  earlier design kept one; it repeatedly drifted from disk, most visibly by silently losing content
+  on undeploy). A device that's already running when a write lands is marked "dirty"
+  (`LabRegistry.mark_dirty`) so the next redeploy live-pushes exactly the machines that actually
+  changed — not a blind push-on-every-redeploy, and not a no-op that would leave a live edit
+  un-applied.
 
 ### Error mapping (`errors.py`)
 
@@ -83,7 +92,15 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/labs/{lab}/layout` | Fixed topology layout (`lab.layout`); empty `nodes` when the lab has none | — | `LabLayout` |
 | PUT | `/api/labs/{lab}/layout` | Fix the topology layout (writes `lab.layout` into the lab directory) | `LabLayout {version, nodes}` | `LabLayout` |
 | DELETE | `/api/labs/{lab}/layout` | Remove the fixed layout (back to automatic layout) | — | `Message` |
-| GET | `/api/labs/{lab}/pending-files` | Queued files/dirs/startup per machine | — | `{machine: PendingMachineFiles}` |
+| GET | `/api/labs/{lab}/fs/list` | List a directory in the lab's own on-disk tree — a real listing, no synthesized entries; an empty/never-written-to device just doesn't appear | `?path=/` | `FsListResponse` |
+| GET | `/api/labs/{lab}/fs/text` | Read a UTF-8 text file (`/lab.conf` routes to the same verbatim read as `GET lab-conf`) | `?path=` | `FsReadTextResponse` |
+| PUT | `/api/labs/{lab}/fs/text` | Write a text file (`/lab.conf` routes to the same verbatim apply as `PUT lab-conf`) | `FsWriteTextRequest {path, content}` | `Message` |
+| POST | `/api/labs/{lab}/fs/mkdir` | Create a directory (and any missing parents) | `FsMkdirRequest {path}` | `Message` |
+| POST | `/api/labs/{lab}/fs/move` | Move/rename a path, including across two devices | `FsMoveRequest {sourcePath, destinationPath}` | `Message` |
+| DELETE | `/api/labs/{lab}/fs` | Delete a path (`lab.conf` rejected) | `FsDeleteRequest {path, recursive?}` | `Message` |
+| POST | `/api/labs/{lab}/fs/upload` | Upload a file (binary-safe) | multipart: `path`, `file` | `FsUploadResponse` |
+| GET | `/api/labs/{lab}/fs/download` | Download a file (octet-stream) | `?path=` | binary |
+| GET | `/api/labs/{lab}/fs/startups` | Each device's real `<name>.startup` content (`""` if absent) — backs the topology node-info preview | — | `{machine: string}` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
 | POST | `/api/labs/{lab}/rename` | Rename the lab directory (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` |
@@ -108,8 +125,6 @@ Errors return `{"detail": str, "error_type": str}`.
 | DELETE | `…/machines/{m}/fs` | Delete a path | `FsDeleteRequest {path, recursive?}` | `Message` |
 | POST | `…/machines/{m}/fs/upload` | Upload a file (binary) | multipart: `path`, `file` | `FsUploadResponse` |
 | GET | `…/machines/{m}/fs/download` | Download a file (octet-stream) | `?path=` | binary |
-| PUT | `…/machines/{m}/pending-files` | Queue files/dirs/startup for a device | `PendingFilesUpdate` | `PendingMachineFiles` |
-| PUT | `…/machines/shared-files` | Queue `shared/`-style files for every device | `SharedPendingFilesUpdate` | `{machine: PendingMachineFiles}` |
 
 ## Exec — `/api/labs/{lab}/machines/{m}`
 

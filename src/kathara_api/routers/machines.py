@@ -17,7 +17,6 @@ from ..schemas.filesystem import (
     FsUploadResponse,
     FsWriteTextRequest,
 )
-from ..schemas.lab_import import PendingFilesUpdate, PendingMachineFiles, SharedPendingFilesUpdate
 from ..schemas.machine import MachineCreate, MachineDetail
 from ..services import serializers
 from ..services.kathara_service import KatharaService
@@ -219,29 +218,3 @@ def download_runtime_file(
     filename = posixpath.basename(normalized) or "download.bin"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(iter([data]), media_type="application/octet-stream", headers=headers)
-
-
-@router.put("/{machine_name}/pending-files", response_model=PendingMachineFiles)
-def update_pending_files(
-    lab_name: str,
-    machine_name: str,
-    payload: PendingFilesUpdate,
-    service: KatharaService = Depends(get_service),
-) -> PendingMachineFiles:
-    """Queue files/dirs/startup for this device, applied on the lab's next deploy.
-
-    Merges into any already-queued state; stored server-side so it survives a page reload.
-    """
-    return service.update_pending_files(
-        lab_name, machine_name, files=payload.files, dirs=payload.dirs, startup=payload.startup
-    )
-
-
-@router.put("/shared-files", response_model=dict[str, PendingMachineFiles])
-def update_shared_pending_files(
-    lab_name: str,
-    payload: SharedPendingFilesUpdate,
-    service: KatharaService = Depends(get_service),
-) -> dict[str, PendingMachineFiles]:
-    """Queue files/dirs for every device in the lab (``shared/`` semantics)."""
-    return service.update_shared_pending_files(lab_name, files=payload.files, dirs=payload.dirs)

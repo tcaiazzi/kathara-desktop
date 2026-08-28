@@ -75,6 +75,12 @@ class LabRenameLockedError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class PathNotFoundError(ApiError):
+    """Raised when an offline lab filesystem path doesn't exist."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+
+
 class BinaryFileError(ApiError):
     """Raised when a runtime filesystem path is read as text but isn't valid UTF-8.
 

@@ -5,10 +5,12 @@ only in the ``Lab`` object; that state cannot be fully recovered from the backen
 retains those objects for their lifetime. Operations on labs that exist in the backend but not
 in the registry (e.g. after an API restart) fall back to reconstruction via the Kathara facade.
 
-The registry also holds each lab's "pending" file-import state (see ``services.lab_import``):
-files/dirs/startup scripts queued per machine, applied on (every) deploy. Keeping this
-server-side means it survives a page reload instead of being lost for labs that were imported
-but not yet deployed.
+The registry also tracks, per lab, which devices have been written to (via the offline lab
+filesystem, ``services.kathara_service``'s ``fs_*_offline`` methods) since their last (re)deploy —
+just *which* machines changed, never their content. A machine's actual queued files/dirs/startup
+live only on the real on-disk filesystem (``lab.fs``/``machine.fs``); there is deliberately no
+second, in-memory copy of that content to keep in sync (an earlier design did keep one, and it
+repeatedly drifted from disk — see the "ROOT_MACHINE" history in kathara_service.py).
 
 The registry is process-local; the server therefore must run with a single worker.
 """
@@ -18,15 +20,13 @@ from typing import Optional
 
 from Kathara.model.Lab import Lab
 
-from ..schemas.lab_import import PendingMachineFiles
-
 
 class LabRegistry:
-    """Thread-safe mapping of lab name -> Lab object (+ pending import state)."""
+    """Thread-safe mapping of lab name -> Lab object (+ per-lab dirty-machine tracking)."""
 
     def __init__(self) -> None:
         self._labs: dict[str, Lab] = {}
-        self._pending: dict[str, dict[str, PendingMachineFiles]] = {}
+        self._dirty: dict[str, set[str]] = {}
         self._lock = threading.RLock()
 
     def add(self, lab: Lab) -> None:
@@ -47,7 +47,7 @@ class LabRegistry:
 
     def remove(self, name: str) -> Optional[Lab]:
         with self._lock:
-            self._pending.pop(name, None)
+            self._dirty.pop(name, None)
             return self._labs.pop(name, None)
 
     def names(self) -> list[str]:
@@ -58,33 +58,23 @@ class LabRegistry:
         with self._lock:
             return list(self._labs.values())
 
-    # -- pending import state --------------------------------------------------
+    # -- dirty-machine tracking -------------------------------------------------
 
-    def set_pending(self, lab_name: str, pending: dict[str, PendingMachineFiles]) -> None:
-        """Replace the whole pending map for a lab (used right after import)."""
+    def mark_dirty(self, lab_name: str, machine_name: str) -> None:
+        """Record that ``machine_name`` was written to (via the offline lab fs) since its last
+        (re)deploy — the redeploy path uses this to decide which already-running devices are
+        worth live-pushing into, without caching what actually changed."""
         with self._lock:
-            self._pending[lab_name] = dict(pending)
+            self._dirty.setdefault(lab_name, set()).add(machine_name)
 
-    def get_pending(self, lab_name: str) -> dict[str, PendingMachineFiles]:
+    def pop_dirty_machines(self, lab_name: str, machine_names: set[str]) -> set[str]:
+        """Return the subset of ``machine_names`` marked dirty for ``lab_name``, and clear them —
+        so an already-running machine that hasn't changed since its last push isn't redundantly
+        live-pushed (and its startup script re-executed) on every subsequent redeploy."""
         with self._lock:
-            return dict(self._pending.get(lab_name, {}))
-
-    def update_pending_machine(
-        self,
-        lab_name: str,
-        machine_name: str,
-        files: Optional[dict[str, str]] = None,
-        dirs: Optional[list[str]] = None,
-        startup: Optional[str] = None,
-    ) -> PendingMachineFiles:
-        """Merge new files/dirs/startup into one machine's queued pending state."""
-        with self._lock:
-            lab_pending = self._pending.setdefault(lab_name, {})
-            machine_pending = lab_pending.setdefault(machine_name, PendingMachineFiles())
-            if files:
-                machine_pending.files = {**machine_pending.files, **files}
-            if dirs:
-                machine_pending.dirs = sorted(set(machine_pending.dirs) | set(dirs))
-            if startup is not None:
-                machine_pending.startup = startup
-            return machine_pending
+            dirty = self._dirty.get(lab_name)
+            if not dirty:
+                return set()
+            touched = dirty & machine_names
+            dirty -= touched
+            return touched
