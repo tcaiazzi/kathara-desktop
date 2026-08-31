@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Button, Form } from "react-bootstrap";
+import { Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
+import { AppWindow, FileEdit, FolderOpen, Plug, SlidersHorizontal, SquareTerminal, Unplug } from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
@@ -486,7 +487,47 @@ export function TopologyGraph({
             </>
           ) : selectedNode.type === "dev" ? (
             <>
-              <h4>{selectedNode.name}</h4>
+              <h4 className="mb-2">{selectedNode.name}</h4>
+              <div className="d-flex gap-2 mb-2">
+                {selectedNode.running && (
+                  <Button size="sm" variant="dark" onClick={() => openWorkspaceTerminal(selectedNode)}>
+                    <SquareTerminal size={14} className="me-1" />
+                    Open terminal
+                  </Button>
+                )}
+                <DropdownButton size="sm" variant="outline-secondary" title="Actions">
+                  {selectedNode.running && (
+                    <Dropdown.Item onClick={() => openTerminalPopup(selectedNode)}>
+                      <AppWindow size={14} className="me-2" />
+                      Open terminal popup
+                    </Dropdown.Item>
+                  )}
+                  {selectedNode.running && (
+                    <Dropdown.Item onClick={() => openRuntimeFs(selectedNode)}>
+                      <FolderOpen size={14} className="me-2" />
+                      Show runtime FS
+                    </Dropdown.Item>
+                  )}
+                  {selectedNode.running && <Dropdown.Divider />}
+                  <Dropdown.Item onClick={() => openAddInterface(selectedNode)}>
+                    <Plug size={14} className="me-2" />
+                    {selectedNode.running ? "Add interface (runtime)" : "Add interface (lab.conf)"}
+                  </Dropdown.Item>
+                  <Dropdown.Item className="text-danger" onClick={() => openDisconnect(selectedNode)}>
+                    <Unplug size={14} className="me-2" />
+                    {selectedNode.running ? "Disconnect interface (runtime)" : "Remove interface (lab.conf)"}
+                  </Dropdown.Item>
+                  <Dropdown.Divider />
+                  <Dropdown.Item onClick={() => openOptions(selectedNode)}>
+                    <SlidersHorizontal size={14} className="me-2" />
+                    {detail.deployed ? "View options" : "Edit options"}
+                  </Dropdown.Item>
+                  <Dropdown.Item onClick={onEditFiles}>
+                    <FileEdit size={14} className="me-2" />
+                    Edit configuration
+                  </Dropdown.Item>
+                </DropdownButton>
+              </div>
               <Kv k="type" v={selectedNode.typeLabel} />
               <Kv k="image" v={selectedNode.image || "—"} />
               <div className="kv">
@@ -497,35 +538,6 @@ export function TopologyGraph({
               </div>
               <Kv k="ifaces" v={selectedNode.ifaces.length} />
               {selectedMachine?.bridged && <Kv k="bridged" v="yes (host bridge)" />}
-              <div className="d-flex gap-2 mt-2 flex-wrap">
-                {selectedNode.running && (
-                  <Button size="sm" variant="dark" onClick={() => openWorkspaceTerminal(selectedNode)}>
-                    Open terminal
-                  </Button>
-                )}
-                {selectedNode.running && (
-                  <Button size="sm" variant="dark" onClick={() => openTerminalPopup(selectedNode)}>
-                    Open terminal popup
-                  </Button>
-                )}
-                {selectedNode.running && (
-                  <Button size="sm" variant="outline-secondary" onClick={() => openRuntimeFs(selectedNode)}>
-                    Show runtime FS
-                  </Button>
-                )}
-                <Button size="sm" variant="outline-secondary" onClick={() => openAddInterface(selectedNode)}>
-                  {selectedNode.running ? "Add interface (runtime)" : "Add interface (lab.conf)"}
-                </Button>
-                <Button size="sm" variant="outline-secondary" onClick={() => openDisconnect(selectedNode)}>
-                  {selectedNode.running ? "Disconnect interface (runtime)" : "Remove interface (lab.conf)"}
-                </Button>
-                <Button size="sm" variant="primary" onClick={onEditFiles}>
-                  Edit configuration
-                </Button>
-                <Button size="sm" variant="outline-secondary" onClick={() => openOptions(selectedNode)}>
-                  {detail.deployed ? "View options" : "Edit options"}
-                </Button>
-              </div>
               {selectedNode.ifaces.map((it) => (
                 <div className="iface" key={it.num}>
                   <div style={{ fontWeight: 600, fontFamily: "monospace" }}>{formatIface(it.num, it.link)}</div>
