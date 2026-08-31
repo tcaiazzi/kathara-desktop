@@ -538,6 +538,14 @@ export function TopologyGraph({
               </div>
               <Kv k="ifaces" v={selectedNode.ifaces.length} />
               {selectedMachine?.bridged && <Kv k="bridged" v="yes (host bridge)" />}
+              {selectedMachine?.privileged && <Kv k="privileged" v="yes" />}
+              {selectedMachine?.ipv6 != null && <Kv k="ipv6" v={selectedMachine.ipv6 ? "enabled" : "disabled"} />}
+              {selectedMachine?.mem && <Kv k="mem" v={selectedMachine.mem} />}
+              {selectedMachine?.cpus != null && <Kv k="cpus" v={selectedMachine.cpus} />}
+              {selectedMachine?.shell && <Kv k="shell" v={selectedMachine.shell} />}
+              {selectedMachine?.num_terms != null && <Kv k="num_terms" v={selectedMachine.num_terms} />}
+              {selectedMachine?.entrypoint && <Kv k="entrypoint" v={selectedMachine.entrypoint} />}
+              {selectedMachine?.args && <Kv k="args" v={selectedMachine.args} />}
               {selectedNode.ifaces.map((it) => (
                 <div className="iface" key={it.num}>
                   <div style={{ fontWeight: 600, fontFamily: "monospace" }}>{formatIface(it.num, it.link)}</div>
@@ -566,6 +574,46 @@ export function TopologyGraph({
                         )
                       }
                     />
+                  ))}
+                </div>
+              )}
+              {selectedMachine && Object.keys(selectedMachine.envs).length > 0 && (
+                <div className="iface">
+                  <div style={{ fontWeight: 600 }}>env</div>
+                  {Object.entries(selectedMachine.envs).map(([k, v]) => (
+                    <Kv key={k} k={k} v={v} />
+                  ))}
+                </div>
+              )}
+              {selectedMachine && Object.keys(selectedMachine.sysctls).length > 0 && (
+                <div className="iface">
+                  <div style={{ fontWeight: 600 }}>sysctls</div>
+                  {Object.entries(selectedMachine.sysctls).map(([k, v]) => (
+                    <Kv key={k} k={k} v={String(v)} />
+                  ))}
+                </div>
+              )}
+              {selectedMachine && selectedMachine.ulimits.length > 0 && (
+                <div className="iface">
+                  <div style={{ fontWeight: 600 }}>ulimits</div>
+                  {selectedMachine.ulimits.map((u) => (
+                    <Kv key={u.name} k={u.name} v={u.hard != null ? `${u.soft} / ${u.hard}` : `${u.soft}`} />
+                  ))}
+                </div>
+              )}
+              {selectedMachine && selectedMachine.volumes.length > 0 && (
+                <div className="iface">
+                  <div style={{ fontWeight: 600 }}>volumes</div>
+                  {selectedMachine.volumes.map((v) => (
+                    <Kv key={`${v.host_path}:${v.guest_path}`} k={v.guest_path} v={`${v.host_path} (${v.mode})`} />
+                  ))}
+                </div>
+              )}
+              {selectedMachine && Object.keys(selectedMachine.metas).length > 0 && (
+                <div className="iface">
+                  <div style={{ fontWeight: 600 }}>other options</div>
+                  {Object.entries(selectedMachine.metas).map(([k, v]) => (
+                    <Kv key={k} k={k} v={v} />
                   ))}
                 </div>
               )}
