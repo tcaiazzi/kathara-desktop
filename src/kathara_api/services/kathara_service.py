@@ -1398,19 +1398,23 @@ class KatharaService:
             entries.append(entry)
         return entries
 
+    # Exit code used to signal "path is a directory" from the combined test+cat below — distinct
+    # from `cat`'s own exit codes (1 on error) and from a shell's own low-numbered exit codes.
+    _FS_READ_IS_DIR_EXIT = 90
+
     def fs_read_bytes(self, lab_name: str, machine_name: str, path: str) -> bytes:
         _, normalized = self._running_guest_path(lab_name, machine_name, path)
-        _, _, is_dir_exit = self.exec_command(lab_name, machine_name, ["test", "-d", normalized], wait=False)
-        if is_dir_exit == 0:
+        quoted = shlex.quote(normalized)
+        # A single exec instead of a `test -d` probe followed by a separate `cat` — halves the
+        # docker-exec round trips for every Runtime FS file open.
+        cmd = f"[ -d {quoted} ] && exit {self._FS_READ_IS_DIR_EXIT}; cat {quoted}"
+        stdout, stderr, exit_code = self.exec_command(lab_name, machine_name, ["sh", "-lc", cmd], wait=False)
+        if exit_code == self._FS_READ_IS_DIR_EXIT:
             raise ApiError(f"Path `{normalized}` is a directory. Use list to navigate it.")
-        stdout, _ = self._exec_checked(
-            lab_name,
-            machine_name,
-            ["cat", normalized],
-            wait=False,
-            action_label=f"Read file `{normalized}`",
-        )
-        return stdout
+        if exit_code != 0:
+            err = (stderr or b"").decode("utf-8", errors="replace").strip()
+            raise ApiError(f"Read file `{normalized}` failed: {err or f'exit code {exit_code}'}")
+        return stdout or b""
 
     def fs_read_text(self, lab_name: str, machine_name: str, path: str) -> str:
         raw = self.fs_read_bytes(lab_name, machine_name, path)

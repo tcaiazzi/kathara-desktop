@@ -26,6 +26,7 @@ import { TopologyContextMenu, type ContextMenuState } from "../components/Topolo
 import { TopologyGraph } from "../components/TopologyGraph";
 import { UploadLabModal } from "../components/UploadLabModal";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
+import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import { useToast } from "../context/ToastContext";
 import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useKtTheme } from "../hooks/useKtTheme";
@@ -77,7 +78,7 @@ function DevicesPanel() {
   );
 }
 function FilesPanel() {
-  const ws = useWorkspace();
+  const ws = useWorkspaceCore();
   return (
     <div className="kt-ws-panel-fill">
       <LabExplorer labName={ws.labName} detail={ws.detail} onStructuralChange={ws.onRefresh} />
@@ -85,7 +86,7 @@ function FilesPanel() {
   );
 }
 function RuntimeFsPanel() {
-  const ws = useWorkspace();
+  const ws = useWorkspaceCore();
   return (
     <div className="kt-ws-panel-fill">
       <RuntimeFilesystemEditor labName={ws.labName} detail={ws.detail} preferredMachine={ws.runtimeFsPreferredMachine} />
@@ -168,10 +169,11 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
   );
 }
 
-// v4: node info moved out of the topology into its own closable "Node info" dock panel; ignore
-// older saved layouts (v3 core tabs, v2 closable core tabs, v1 removed "terminals" panel) so the
-// fresh default (which includes node-info) applies.
-const LS_LAYOUT = "kt-ws-layout-v4";
+// v5: default arrangement flipped — topology is now its own full-height column on the right, with
+// the inspector, tool panels and every terminal sharing one tab group on the left. Ignore older
+// saved layouts (v4 node info out of the topology, v3 core tabs, v2 closable core tabs, v1 removed
+// "terminals" panel) so the new default applies.
+const LS_LAYOUT = "kt-ws-layout-v5";
 const LS_RAIL = "kt-ws-rail-open";
 const LS_RAIL_W = "kt-ws-rail-width";
 const LS_LAST_LAB = "kt-ws-last-lab";
@@ -186,41 +188,53 @@ const RAIL_DEFAULT_W = 264;
 const COLLAPSED_GROUP_HEIGHT = 35;
 const COLLAPSED_GROUP_WIDTH = 44;
 const RESTORE_GROUP_HEIGHT = 280;
-const RESTORE_PANEL_WIDTH = 340;
 // A group at/under this height is considered collapsed (header strip only).
 const COLLAPSE_THRESHOLD = 60;
 
+// Fraction of the total width the topology column gets when it's first split off from the left
+// tab group — matches the shipped default screenshot (topology noticeably wider than the tabs).
+const TOPOLOGY_WIDTH_FRACTION = 0.62;
+
 function buildDefaultLayout(api: DockviewApi) {
-  api.addPanel({ id: "topology", component: "topology", title: "Topology", tabComponent: "fixed" });
-  api.addPanel({ id: "devices", component: "devices", title: "Devices", tabComponent: "fixed", position: { referencePanel: "topology", direction: "below" } });
+  // One shared tab group on the left: the inspector plus every tool panel. Node info goes in
+  // first so it lands as the left-most tab.
+  api.addPanel({ id: "node-info", component: "node-info", title: "Node info" });
+  api.addPanel({ id: "devices", component: "devices", title: "Devices", tabComponent: "fixed", position: { referencePanel: "node-info", direction: "within" } });
   api.addPanel({ id: "files", component: "files", title: "Lab Configuration", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime FS", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "stats", component: "stats", title: "Stats", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
-  // Node info: a closable panel to the right of the topology (drag it anywhere; close it to give the
-  // topology the full width).
-  api.addPanel({ id: "node-info", component: "node-info", title: "Node info", position: { referencePanel: "topology", direction: "right" } });
+  // Topology: its own full-height column to the right of that shared group.
+  api.addPanel({
+    id: "topology",
+    component: "topology",
+    title: "Topology",
+    tabComponent: "fixed",
+    position: { referencePanel: "devices", direction: "right" },
+    initialWidth: api.width ? Math.round(api.width * TOPOLOGY_WIDTH_FRACTION) : undefined,
+  });
   api.getPanel("devices")?.api.setActive();
 }
 
-// Re-open the Node info panel if it was closed (right of the topology). No-op if it already exists.
+// Re-open the Node info panel if it was closed (as a tab alongside Devices/Lab Configuration/…).
+// No-op if it already exists.
 function showNodeInfo(api: DockviewApi) {
   if (api.getPanel("node-info")) {
     api.getPanel("node-info")?.api.setActive();
     return;
   }
-  const topo = api.getPanel("topology");
+  const devices = api.getPanel("devices");
   api.addPanel({
     id: "node-info",
     component: "node-info",
     title: "Node info",
-    position: topo ? { referencePanel: "topology", direction: "right" } : undefined,
+    position: devices ? { referencePanel: "devices", direction: "within" } : undefined,
   });
 }
 
 // Collapse every group NOT in `keep` to a header strip, in place (no moving/swapping panels).
 // Groups stacked above/below the union of the kept groups collapse their height; groups
 // side-by-side collapse their width. Resize-only, so terminal sessions survive; each collapsed
-// group reopens via its own header chevron (or Layout → Balanced).
+// group reopens via its own header chevron (or Layout → Default).
 function collapseOthers(api: DockviewApi, keep: Set<DockviewGroupPanel>) {
   const rects = [...keep].map((g) => g.element.getBoundingClientRect());
   const target = {
@@ -270,35 +284,26 @@ function tileTerminals(api: DockviewApi) {
   }
 }
 
-// Balanced (the default): topology on top, the tool panels stacked below, and all terminals
-// grouped to the right of the topology. Without unmounting anything.
+// Default: one shared tab group on the left with the inspector, every tool panel, and every open
+// terminal; the topology full-height on the right. Without unmounting anything.
 function resetLayout(api: DockviewApi) {
-  const topo = api.getPanel("topology");
   const devices = api.getPanel("devices");
-  if (!topo || !devices) return;
-  for (const id of ["files", "runtime-fs", "stats"]) {
-    api.getPanel(id)?.api.moveTo({ group: devices.api.group });
-  }
-  devices.api.group.api.moveTo({ group: topo.api.group, position: "bottom" as const });
-  const terms = terminalPanelsOf(api);
-  if (terms.length) {
-    // Extract the first terminal into a fresh group right of topology (this pulls it out even if it
-    // was merged with another group, e.g. after "Focus terminals"), then gather the rest into it.
-    terms[0].api.moveTo({ group: topo.api.group, position: "right" as const });
-    const tg = terms[0].api.group;
-    for (const p of terms.slice(1)) p.api.moveTo({ group: tg });
-  }
+  const topo = api.getPanel("topology");
+  if (!devices || !topo) return;
   // Reset shouldn't leave the inspector hidden — bring it back if it was closed.
   if (!api.getPanel("node-info")) showNodeInfo(api);
+  for (const id of ["node-info", "files", "runtime-fs", "stats"]) {
+    api.getPanel(id)?.api.moveTo({ group: devices.api.group });
+  }
+  for (const p of terminalPanelsOf(api)) p.api.moveTo({ group: devices.api.group });
+  topo.api.group.api.moveTo({ group: devices.api.group, position: "right" as const });
   // Undo any collapse pinning left by a "Focus …" preset, on every group (not just tools) — any of
   // them can end up shrunk depending on which preset ran last.
   for (const g of api.groups) {
     g.api.setConstraints({ minimumHeight: 100, minimumWidth: 100 });
   }
-  const toolsGroupApi = api.getPanel("devices")?.api.group.api;
-  toolsGroupApi?.setSize({ height: RESTORE_GROUP_HEIGHT });
-  const nodeInfoGroupApi = api.getPanel("node-info")?.api.group.api;
-  nodeInfoGroupApi?.setSize({ width: RESTORE_PANEL_WIDTH });
+  topo.api.group.api.setSize({ width: Math.round(api.width * TOPOLOGY_WIDTH_FRACTION) });
+  devices.api.setActive();
 }
 
 // Topology takes almost the whole screen; the tool panels and the node-info inspector collapse to
@@ -468,18 +473,18 @@ export function WorkspacePage() {
     const num = (termCounter.current[machine] ?? 0) + 1;
     termCounter.current[machine] = num;
     const existingTerminal = dockApi.panels.find((p) => p.id.startsWith("terminal:"));
-    const topology = dockApi.getPanel("topology");
+    const devices = dockApi.getPanel("devices");
     dockApi.addPanel({
       id: `terminal:${machine}:${num}`,
       component: "terminal",
       title: `${machine} #${num}`,
       params: { machine },
-      // Group with existing terminals (as tabs) if any; else split to the right of the topology;
-      // else just drop into a new/active group.
+      // Group with existing terminals (as tabs) if any; else land as a tab alongside the tool
+      // panels (Devices, Lab Configuration, …) on the left; else just drop into a new/active group.
       position: existingTerminal
         ? { referenceGroup: existingTerminal.group, direction: "within" }
-        : topology
-          ? { referencePanel: "topology", direction: "right" }
+        : devices
+          ? { referencePanel: "devices", direction: "within" }
           : undefined,
     });
   }, []);
@@ -634,12 +639,21 @@ export function WorkspacePage() {
       }
     : null;
 
+  // Unlike `ctxValue` above (rebuilt fresh every render because it bundles the genuinely-volatile
+  // `deviceActions`), every field here is independently stable across unrelated re-renders — so
+  // `useMemo` actually keeps this object's identity stable for the tree-heavy Files/Runtime FS
+  // panels, instead of them re-rendering on every unrelated workspace interaction.
+  const coreCtxValue = useMemo(
+    () => (detail ? { labName: name, detail, onRefresh: load, runtimeFsPreferredMachine, setContextMenu: setCtxMenu } : null),
+    [name, detail, load, runtimeFsPreferredMachine],
+  );
+
   const runningMachines = deviceMachines.filter((m) => m.running);
 
-  function applyPreset(preset: "balanced" | "topology" | "editing" | "terminals") {
+  function applyPreset(preset: "default" | "topology" | "editing" | "terminals") {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
-    if (preset === "balanced") {
+    if (preset === "default") {
       resetLayout(dockApi);
     } else if (preset === "topology") {
       focusTopology(dockApi);
@@ -826,7 +840,7 @@ export function WorkspacePage() {
                   ))}
                 </DropdownButton>
                 <DropdownButton size="sm" variant="outline-secondary" title="Layout">
-                  <Dropdown.Item onClick={() => applyPreset("balanced")}>Balanced</Dropdown.Item>
+                  <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
                   <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
                   <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
                   <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
@@ -848,15 +862,17 @@ export function WorkspacePage() {
         </header>
 
         <div className="kt-ws-dockarea">
-          {ctxValue ? (
+          {ctxValue && coreCtxValue ? (
             <WorkspaceProvider value={ctxValue}>
-              <DockviewReact
-                components={DOCK_COMPONENTS}
-                tabComponents={DOCK_TAB_COMPONENTS}
-                rightHeaderActionsComponent={GroupHeaderActions}
-                onReady={onDockReady}
-                theme={ktTheme === "dark" ? themeDark : themeLight}
-              />
+              <WorkspaceCoreProvider value={coreCtxValue}>
+                <DockviewReact
+                  components={DOCK_COMPONENTS}
+                  tabComponents={DOCK_TAB_COMPONENTS}
+                  rightHeaderActionsComponent={GroupHeaderActions}
+                  onReady={onDockReady}
+                  theme={ktTheme === "dark" ? themeDark : themeLight}
+                />
+              </WorkspaceCoreProvider>
             </WorkspaceProvider>
           ) : (
             <div className="kt-ws-empty">

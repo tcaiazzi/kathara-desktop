@@ -1,11 +1,11 @@
 import { FilePlus, FolderPlus, Info, Loader2, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps, type TreeApi } from "react-arborist";
 import { useConfirm } from "../context/ConfirmContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
-import { useWorkspace } from "../context/WorkspaceContext";
+import { useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useConfirmDiscard } from "../hooks/useConfirmDiscard";
 import { useElementSize } from "../hooks/useElementSize";
@@ -38,6 +38,15 @@ interface FsNode {
 
 function entryToNode(e: FsEntry): FsNode {
   return { name: e.name, path: e.path, dir: e.is_dir };
+}
+
+// lab.conf is the only entry that's never deletable, draggable, or renamable here. Everything
+// else is fair game, including a machine's own <name>.startup — it's just a real file sitting at
+// the lab root, same as any other — and the bare device-root node itself, since this tab never
+// touches a running device; acting on it only ever rewrites the lab's own on-disk files. Module-
+// scope (not a closure) so it's a stable reference for the memoized RowActions object below.
+function canModify(path: string): boolean {
+  return path !== "/lab.conf";
 }
 
 // Lets the module-level `Node` row renderer (which react-arborist requires to keep a stable
@@ -272,22 +281,22 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
     setTree(await reloadLevel(merged));
   }
 
-  // lab.conf is the only entry that's never deletable, draggable, or renamable here. Everything
-  // else is fair game, including a machine's own <name>.startup — it's just a real file sitting
-  // at the lab root, same as any other — and the bare device-root node itself, since this tab
-  // never touches a running device; acting on it only ever rewrites the lab's own on-disk files.
-  function canModify(path: string): boolean {
-    return path !== "/lab.conf";
-  }
+  // Guards selectDir/selectFile against out-of-order responses: clicking file A then quickly file
+  // B could otherwise let A's slower fetch land after B's and clobber the editor with stale
+  // content. Each call captures its own generation at the start; any `setState` after an `await`
+  // is skipped once a newer call has bumped the counter past it.
+  const selectGenRef = useRef(0);
 
   // Selecting a folder row only needs to move the toolbar's Delete/rename target — there's no
   // content to load, and the editor pane just goes blank/disabled for it.
   async function selectDir(path: string) {
+    const gen = ++selectGenRef.current;
     const ok = await confirmDiscard({
       currentPath: selected,
       nextPath: path,
       hasUnsavedChanges: !!selected && editorText !== loadedText,
     });
+    if (selectGenRef.current !== gen) return;
     if (!ok) {
       revealAndSelect(selected);
       return;
@@ -299,11 +308,13 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   }
 
   async function selectFile(path: string) {
+    const gen = ++selectGenRef.current;
     const ok = await confirmDiscard({
       currentPath: selected,
       nextPath: path,
       hasUnsavedChanges: !!selected && editorText !== loadedText,
     });
+    if (selectGenRef.current !== gen) return;
     if (!ok) {
       revealAndSelect(selected);
       return;
@@ -320,6 +331,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       await runBusy(setBusy, "Open file", async () => {
         try {
           const resp = await api.fsReadTextOffline(labName, path);
+          if (selectGenRef.current !== gen) return;
           setSelected(path);
           setEditorText(resp.content);
           setLoadedText(resp.content);
@@ -328,6 +340,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
           if (e instanceof ApiError && e.errorType === "BinaryFileError") {
             // Not a failure from the user's point of view: select the file so Download/Delete/
             // Rename work, just without a text preview.
+            if (selectGenRef.current !== gen) return;
             setSelected(path);
             setEditorText("");
             setLoadedText("");
@@ -338,7 +351,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
         }
       });
     } finally {
-      setLoadingPath((prev) => (prev === path ? null : prev));
+      if (selectGenRef.current === gen) setLoadingPath((prev) => (prev === path ? null : prev));
     }
   }
 
@@ -525,21 +538,51 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   // (also tracked via loadingPath, for the tree row spinner) has nothing to do with the editor.
   const loadingFile = loadingPath && !(findNode(tree, loadingPath)?.dir ?? false) ? loadingPath : null;
 
-  const rowActions: RowActions = {
-    onNewFile: (dir) => void handleNewFile(dir),
-    onRename: (path) => void treeRef.current?.edit(path),
-    onDelete: (path) => void handleDelete(path),
-    canModify,
-    isLoading: (path) => path === loadingPath,
-  };
+  // Holds the latest closures for everything below reads through it — so the memoized RowActions
+  // object and the <Tree> callback props stay referentially stable across renders (in particular,
+  // across every keystroke in the editor) instead of forcing every visible tree row to re-render
+  // via RowActionsCtx. Same "ref holds the current callback" pattern as CodeEditor's onChangeRef.
+  const latestRef = useRef({ handleNewFile, handleDelete, ensureLoaded, selectDir, selectFile, handleRename, handleTreeMove });
+  latestRef.current = { handleNewFile, handleDelete, ensureLoaded, selectDir, selectFile, handleRename, handleTreeMove };
 
-  useSaveShortcut(
-    rootRef,
-    () => {
-      if (!busy && selected && !isBinary && !selectedIsDir) void handleSave();
-    },
-    [busy, selected, editorText, loadedText, isBinary, selectedIsDir],
+  const rowActions = useMemo<RowActions>(
+    () => ({
+      onNewFile: (dir) => void latestRef.current.handleNewFile(dir),
+      onRename: (path) => void treeRef.current?.edit(path),
+      onDelete: (path) => void latestRef.current.handleDelete(path),
+      canModify,
+      isLoading: (path) => path === loadingPath,
+    }),
+    [loadingPath],
   );
+
+  const onTreeToggle = useCallback((id: string) => {
+    if (treeRef.current?.isOpen(id)) void latestRef.current.ensureLoaded(id);
+  }, []);
+
+  const onTreeSelect = useCallback((nodes: NodeApi<FsNode>[]) => {
+    const node = nodes[0];
+    if (!node) return;
+    if (node.data.path === selectedRef.current) return;
+    if (node.data.path === pendingSelectPathRef.current) return;
+    pendingSelectPathRef.current = node.data.path;
+    const run = node.data.dir ? latestRef.current.selectDir(node.data.path) : latestRef.current.selectFile(node.data.path);
+    void run.finally(() => {
+      if (pendingSelectPathRef.current === node.data.path) pendingSelectPathRef.current = null;
+    });
+  }, []);
+
+  const onTreeRename = useCallback(({ id, name }: { id: string; name: string }) => {
+    void latestRef.current.handleRename(id, name);
+  }, []);
+
+  const onTreeMove = useCallback(({ dragIds, parentId }: { dragIds: string[]; parentId: string | null }) => {
+    void latestRef.current.handleTreeMove(dragIds, parentId);
+  }, []);
+
+  useSaveShortcut(rootRef, () => {
+    if (!busy && selected && !isBinary && !selectedIsDir) void handleSave();
+  });
 
   return (
     <div ref={rootRef} className="kt-explorer" style={{ display: "flex", flexDirection: "row", gap: 12, minHeight: 0 }}>
@@ -631,22 +674,10 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
                 disableDrop={({ parentNode, dragNodes }) =>
                   dragNodes.some((n) => isSubPath(parentNode.data.path, n.data.path) || n.data.path === parentNode.data.path)
                 }
-                onToggle={(id) => {
-                  if (treeRef.current?.isOpen(id)) void ensureLoaded(id);
-                }}
-                onSelect={(nodes) => {
-                  const node = nodes[0];
-                  if (!node) return;
-                  if (node.data.path === selectedRef.current) return;
-                  if (node.data.path === pendingSelectPathRef.current) return;
-                  pendingSelectPathRef.current = node.data.path;
-                  const run = node.data.dir ? selectDir(node.data.path) : selectFile(node.data.path);
-                  void run.finally(() => {
-                    if (pendingSelectPathRef.current === node.data.path) pendingSelectPathRef.current = null;
-                  });
-                }}
-                onRename={({ id, name }) => void handleRename(id, name)}
-                onMove={({ dragIds, parentId }) => void handleTreeMove(dragIds, parentId)}
+                onToggle={onTreeToggle}
+                onSelect={onTreeSelect}
+                onRename={onTreeRename}
+                onMove={onTreeMove}
               >
                 {Node}
               </Tree>
@@ -697,10 +728,12 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
 
 // Row renderer: VS-Code-ish icon + name, with inline rename input when the node is being edited.
 // onCreate/onDelete are intentionally left off <Tree> above — toolbar actions call the offline-fs
-// API directly instead of going through arborist's own create/delete UX.
-function Node({ node, style, dragHandle }: NodeRendererProps<FsNode>) {
+// API directly instead of going through arborist's own create/delete UX. Memoized so a render of
+// the parent that doesn't touch RowActionsCtx/setContextMenu (both stabilized above) doesn't
+// force every visible row to re-render.
+const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<FsNode>) {
   const rowActions = useContext(RowActionsCtx);
-  const { setContextMenu } = useWorkspace();
+  const { setContextMenu } = useWorkspaceCore();
 
   function openContextMenu(e: React.MouseEvent) {
     e.preventDefault();
@@ -743,7 +776,7 @@ function Node({ node, style, dragHandle }: NodeRendererProps<FsNode>) {
       {node.isEditing ? <NodeEditInput node={node} /> : <span className="font-monospace small">{node.data.name}</span>}
     </div>
   );
-}
+});
 
 function NodeEditInput({ node }: { node: NodeApi<FsNode> }) {
   const inputRef = useRef<HTMLInputElement | null>(null);

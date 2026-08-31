@@ -20,8 +20,9 @@ export function useElementSize<T extends HTMLElement>() {
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      const { width, height } = entry.contentRect;
-      setSize({ width, height });
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      setSize((prev) => (prev.width === width && prev.height === height ? prev : { width, height }));
     });
     observer.observe(node);
     return () => observer.disconnect();

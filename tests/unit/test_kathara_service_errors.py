@@ -124,9 +124,8 @@ def test_fs_read_bytes_rejects_directory_paths_before_cat():
     service = _service_with_running_machine()
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
-        if command == ["test", "-d", "/bin"]:
-            return (b"", b"", 0)
-        raise AssertionError("cat should not be called for directory paths")
+        assert command[:2] == ["sh", "-lc"]
+        return (b"", b"", KatharaService._FS_READ_IS_DIR_EXIT)
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
@@ -140,11 +139,8 @@ def test_fs_read_text_raises_binary_file_error_on_non_utf8_content():
     service = _service_with_running_machine()
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
-        if command == ["test", "-d", "/blob.bin"]:
-            return (b"", b"", 1)
-        if command == ["cat", "/blob.bin"]:
-            return (b"\xff\xfe\x00\x01", b"", 0)
-        raise AssertionError(f"Unexpected command: {command}")
+        assert command[:2] == ["sh", "-lc"]
+        return (b"\xff\xfe\x00\x01", b"", 0)
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
