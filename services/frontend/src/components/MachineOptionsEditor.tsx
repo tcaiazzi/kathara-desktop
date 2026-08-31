@@ -3,9 +3,11 @@ import { FolderOpen } from "lucide-react";
 import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
+import { useAvailableImages } from "../hooks/useAvailableImages";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
 import type { MachineDetail, MachineUpdatePayload, PortMapping, Ulimit, VolumeMount } from "../services/types";
+import { AutocompleteInput } from "./AutocompleteInput";
 import { HostPathPicker } from "./HostPathPicker";
 import { ModalSubmitFooter } from "./ModalSubmitFooter";
 import { RowListEditor } from "./RowListEditor";
@@ -124,6 +126,7 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
   const toast = useToast();
   const confirm = useConfirm();
   const runBusy = useBusyAction();
+  const availableImages = useAvailableImages();
 
   useEffect(() => {
     if (machine) {
@@ -221,12 +224,13 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
             <div className="row g-2 mb-3">
               <div className="col-6">
                 <Form.Label className="small mb-1">image</Form.Label>
-                <Form.Control
+                <AutocompleteInput
                   size="sm"
                   value={form.image}
                   disabled={disabled}
                   placeholder="kathara/base"
-                  onChange={(e) => set("image", e.target.value)}
+                  onChange={(v) => set("image", v)}
+                  options={availableImages}
                 />
               </div>
               <div className="col-3">

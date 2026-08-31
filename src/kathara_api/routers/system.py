@@ -73,3 +73,11 @@ def list_net_sysctls(service: KatharaService = Depends(get_service)) -> list[str
     """Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara's
     own sysctl validation accepts."""
     return service.list_net_sysctls()
+
+
+@router.get("/system/images", response_model=list[str])
+def list_available_images(service: KatharaService = Depends(get_service)) -> list[str]:
+    """Official Kathara device images published on Docker Hub — suggestions for an "image" field,
+    not a restriction (any valid Docker image is still accepted). 502s if Docker Hub is
+    unreachable; callers should treat that as non-fatal and fall back to plain manual entry."""
+    return service.list_available_images()

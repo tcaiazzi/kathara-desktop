@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Form } from "react-bootstrap";
+import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
+import { useAvailableImages } from "../hooks/useAvailableImages";
 import { api, ApiError } from "../services/api";
 import type { SettingsView, SystemInfo } from "../services/types";
 
@@ -27,6 +29,7 @@ export function SettingsPage() {
   const [lockedError, setLockedError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
+  const availableImages = useAvailableImages();
 
   const load = useCallback(async () => {
     try {
@@ -141,7 +144,7 @@ export function SettingsPage() {
           </Form.Group>
           <Form.Group className="mb-2">
             <Form.Label>Default image</Form.Label>
-            <Form.Control value={form.image} onChange={(e) => set("image", e.target.value)} />
+            <AutocompleteInput value={form.image} onChange={(v) => set("image", v)} options={availableImages} />
           </Form.Group>
           <Form.Group className="mb-2">
             <Form.Label>Device shell</Form.Label>

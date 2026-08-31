@@ -19,6 +19,7 @@ import os
 import posixpath
 import shlex
 import threading
+import time
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 
@@ -34,6 +35,7 @@ from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
 from Kathara.model.Machine import Machine
 from Kathara.setting.Setting import Setting
+from Kathara.webhooks.DockerHubApi import DockerHubApi
 from pydantic import ValidationError
 
 from ..config import get_settings
@@ -66,10 +68,19 @@ ROOT_MACHINE = "ROOT"
 class KatharaService:
     """Thread-safe wrapper around ``Kathara.get_instance()``."""
 
+    # How long a fetched Docker Hub image list stays valid before the next call re-fetches it.
+    # DockerHubApi.get_tagged_images() has no caching of its own and fans out one HTTP request per
+    # official image (~20-30) on every call — fine for the CLI's one-shot settings menu, too slow
+    # and too chatty to redo on every "Add device"/options-editor open in a long-lived UI session.
+    _IMAGES_CACHE_TTL = 300
+
     def __init__(self, store: Optional[LabStore] = None) -> None:
         self._instance: Optional[Kathara] = None
         self._mutate_lock = threading.RLock()
         self._init_lock = threading.Lock()
+        self._images_cache: Optional[list[str]] = None
+        self._images_cache_at: float = 0.0
+        self._images_cache_lock = threading.Lock()
         self.registry = LabRegistry()
         self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
         # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
@@ -126,6 +137,23 @@ class KatharaService:
 
     def check_image(self, image: str) -> None:
         self._facade().check_image(image)
+
+    def list_available_images(self) -> list[str]:
+        """Official Kathara device images published on Docker Hub (the ``kathara/`` org), via
+        Kathara's own CLI-settings lookup (``DockerHubApi.get_tagged_images``) — the same source
+        the `kathara settings` terminal menu uses to offer a default-image picker. Cached
+        in-process for ``_IMAGES_CACHE_TTL`` seconds; raises ``HTTPConnectionError`` (mapped to a
+        502 by ``errors.py``) if Docker Hub can't be reached, which callers should treat as
+        non-fatal — mirrors the CLI's own behavior of silently falling back to manual entry.
+        """
+        with self._images_cache_lock:
+            if self._images_cache is not None and time.monotonic() - self._images_cache_at < self._IMAGES_CACHE_TTL:
+                return self._images_cache
+        images = DockerHubApi.get_tagged_images()
+        with self._images_cache_lock:
+            self._images_cache = images
+            self._images_cache_at = time.monotonic()
+        return images
 
     def wipe(self) -> None:
         """Undeploy every lab kathara-ide itself has registered and deployed.

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
+import { useAvailableImages } from "./useAvailableImages";
 import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
@@ -35,6 +36,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
   const confirm = useConfirm();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
   const [startups, setStartups] = useState<Record<string, string>>({});
+  const availableImages = useAvailableImages();
 
   // Best-effort fetch of each device's real `<name>.startup` content so callers (the node-info
   // panel) can show it (same source + precedence as the Lab Configuration tab). Inspection-only,
@@ -92,7 +94,13 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
       submitLabel: "Add device",
       fields: [
         { name: "name", label: "Device name", required: true, placeholder: "pc1" },
-        { name: "image", label: "Image", value: "kathara/base", placeholder: "kathara/base" },
+        {
+          name: "image",
+          label: "Image",
+          value: "kathara/base",
+          placeholder: "kathara/base",
+          datalistOptions: availableImages,
+        },
         { name: "link", label: "Attach to domain (optional)", value: prefillLink || "", placeholder: "A" },
         {
           name: "bridged",

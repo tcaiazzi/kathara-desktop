@@ -1,15 +1,16 @@
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button, Form } from "react-bootstrap";
+import { AutocompleteInput } from "./AutocompleteInput";
 import "./LabExplorer.css";
 
 export interface RowColumn<T> {
   key: keyof T;
   label: string;
   type?: "text" | "number" | "select";
-  // "select": the fixed choices. "text": typeahead suggestions offered via a shared <datalist> —
-  // the field still accepts free text, this only helps the user find a value (used for sysctl
-  // names, which number in the thousands and shouldn't all render as literal <option>s).
+  // "select": the fixed choices. "text": typeahead suggestions via AutocompleteInput — the field
+  // still accepts free text, this only helps the user find a value (used for sysctl names, which
+  // number in the thousands and shouldn't all render as literal <option>s).
   options?: string[];
   placeholder?: string;
   min?: number; // for type "number"
@@ -39,8 +40,6 @@ export function RowListEditor<T extends object>({
   disabled = false,
   hint,
 }: RowListEditorProps<T>) {
-  const datalistIdBase = useId();
-
   function updateCell(index: number, key: keyof T, value: unknown) {
     const next = rows.slice();
     next[index] = { ...next[index], [key]: value };
@@ -76,12 +75,24 @@ export function RowListEditor<T extends object>({
                 </Form.Select>
               );
             }
-            const datalistId = col.options ? `${datalistIdBase}-${String(col.key)}` : undefined;
+            if (col.options) {
+              return (
+                <AutocompleteInput
+                  key={String(col.key)}
+                  size="sm"
+                  placeholder={col.placeholder ?? col.label}
+                  disabled={disabled}
+                  aria-label={col.label}
+                  value={raw == null ? "" : String(raw)}
+                  onChange={setValue}
+                  options={col.options}
+                />
+              );
+            }
             return (
               <Form.Control
                 key={String(col.key)}
                 size="sm"
-                list={datalistId}
                 type={col.type === "number" ? "number" : "text"}
                 min={col.min}
                 max={col.max}
@@ -119,16 +130,6 @@ export function RowListEditor<T extends object>({
       >
         <Plus size={14} />
       </Button>
-      {/* One shared <datalist> per text column with suggestions, not one per row. */}
-      {columns
-        .filter((col) => col.type !== "select" && !col.render && col.options)
-        .map((col) => (
-          <datalist id={`${datalistIdBase}-${String(col.key)}`} key={String(col.key)}>
-            {col.options!.map((opt) => (
-              <option key={opt} value={opt} />
-            ))}
-          </datalist>
-        ))}
     </div>
   );
 }

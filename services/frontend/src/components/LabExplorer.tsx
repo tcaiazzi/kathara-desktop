@@ -1,4 +1,4 @@
-import { FilePlus, FolderPlus, Info, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
+import { FilePlus, FolderPlus, Info, Loader2, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps, type TreeApi } from "react-arborist";
@@ -48,6 +48,7 @@ interface RowActions {
   onRename: (path: string) => void;
   onDelete: (path: string) => void;
   canModify: (path: string) => boolean;
+  isLoading: (path: string) => boolean;
 }
 const RowActionsCtx = createContext<RowActions | null>(null);
 
@@ -122,6 +123,9 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   const serverConfRef = useRef<string>("");
   const [confConflict, setConfConflict] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Path of the node currently being fetched — a directory being expanded for the first time, or
+  // a file whose content is being read — so the tree row can show a spinner while it's in flight.
+  const [loadingPath, setLoadingPath] = useState<string | null>(null);
   const toast = useToast();
   const prompt = usePrompt();
   const confirm = useConfirm();
@@ -130,6 +134,11 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
 
   const selectedRef = useRef(selected);
   const editorTextRef = useRef(editorText);
+  // react-arborist's onSelect fires more than once for a single click (its own focus + selection
+  // updates each trigger a callback) — without this, each firing independently runs the discard-
+  // confirmation + fetch flow for the same target before `selected` has committed from the first
+  // one, so `selectedRef.current` (checked below) hasn't caught up yet and doesn't dedupe them.
+  const pendingSelectPathRef = useRef<string | null>(null);
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
@@ -216,10 +225,13 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   async function ensureLoaded(path: string) {
     const node = findNode(treeRefValue.current, path);
     if (!node || !node.dir || node.children !== undefined) return;
+    setLoadingPath(path);
     try {
       await loadAndMerge(path);
     } catch (e) {
       toast.reportError("List directory", e);
+    } finally {
+      setLoadingPath((prev) => (prev === path ? null : prev));
     }
   }
 
@@ -303,26 +315,31 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       setIsBinary(false);
       return;
     }
-    await runBusy(setBusy, "Open file", async () => {
-      try {
-        const resp = await api.fsReadTextOffline(labName, path);
-        setSelected(path);
-        setEditorText(resp.content);
-        setLoadedText(resp.content);
-        setIsBinary(false);
-      } catch (e) {
-        if (e instanceof ApiError && e.errorType === "BinaryFileError") {
-          // Not a failure from the user's point of view: select the file so Download/Delete/
-          // Rename work, just without a text preview.
+    setLoadingPath(path);
+    try {
+      await runBusy(setBusy, "Open file", async () => {
+        try {
+          const resp = await api.fsReadTextOffline(labName, path);
           setSelected(path);
-          setEditorText("");
-          setLoadedText("");
-          setIsBinary(true);
-          return;
+          setEditorText(resp.content);
+          setLoadedText(resp.content);
+          setIsBinary(false);
+        } catch (e) {
+          if (e instanceof ApiError && e.errorType === "BinaryFileError") {
+            // Not a failure from the user's point of view: select the file so Download/Delete/
+            // Rename work, just without a text preview.
+            setSelected(path);
+            setEditorText("");
+            setLoadedText("");
+            setIsBinary(true);
+            return;
+          }
+          throw e;
         }
-        throw e;
-      }
-    });
+      });
+    } finally {
+      setLoadingPath((prev) => (prev === path ? null : prev));
+    }
   }
 
   async function handleSave() {
@@ -504,12 +521,16 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
 
   const canDelete = !!selected && canModify(selected);
   const selectedIsDir = !!selected && (findNode(tree, selected)?.dir ?? false);
+  // Only a file read should override the editor's path label — a directory being expanded
+  // (also tracked via loadingPath, for the tree row spinner) has nothing to do with the editor.
+  const loadingFile = loadingPath && !(findNode(tree, loadingPath)?.dir ?? false) ? loadingPath : null;
 
   const rowActions: RowActions = {
     onNewFile: (dir) => void handleNewFile(dir),
     onRename: (path) => void treeRef.current?.edit(path),
     onDelete: (path) => void handleDelete(path),
     canModify,
+    isLoading: (path) => path === loadingPath,
   };
 
   useSaveShortcut(
@@ -617,7 +638,12 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
                   const node = nodes[0];
                   if (!node) return;
                   if (node.data.path === selectedRef.current) return;
-                  void (node.data.dir ? selectDir(node.data.path) : selectFile(node.data.path));
+                  if (node.data.path === pendingSelectPathRef.current) return;
+                  pendingSelectPathRef.current = node.data.path;
+                  const run = node.data.dir ? selectDir(node.data.path) : selectFile(node.data.path);
+                  void run.finally(() => {
+                    if (pendingSelectPathRef.current === node.data.path) pendingSelectPathRef.current = null;
+                  });
                 }}
                 onRename={({ id, name }) => void handleRename(id, name)}
                 onMove={({ dragIds, parentId }) => void handleTreeMove(dragIds, parentId)}
@@ -641,7 +667,13 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
           <div className="text-muted small mb-1">Not on disk yet — saving will create it.</div>
         )}
         <EditorPane
-          pathLabel={isBinary ? `${selected} (binary)` : selected || "Select a file from the tree"}
+          pathLabel={
+            loadingFile && loadingFile !== selected
+              ? `Loading ${loadingFile}…`
+              : isBinary
+                ? `${selected} (binary)`
+                : selected || "Select a file from the tree"
+          }
           language={isBinary ? "plaintext" : languageForPath(selected)}
           value={editorText}
           onChange={setEditorText}
@@ -703,7 +735,11 @@ function Node({ node, style, dragHandle }: NodeRendererProps<FsNode>) {
       onContextMenu={openContextMenu}
     >
       {node.isInternal ? <span className="kt-explorer-chevron">{node.isOpen ? "▾" : "▸"}</span> : <span className="kt-explorer-chevron" />}
-      <span>{node.data.dir ? "📁" : fileIcon(node.data.name)}</span>
+      {rowActions?.isLoading(node.data.path) ? (
+        <Loader2 size={14} className="kt-explorer-spin" />
+      ) : (
+        <span>{node.data.dir ? "📁" : fileIcon(node.data.name)}</span>
+      )}
       {node.isEditing ? <NodeEditInput node={node} /> : <span className="font-monospace small">{node.data.name}</span>}
     </div>
   );

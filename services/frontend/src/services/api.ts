@@ -100,6 +100,9 @@ export const api = {
   browseHost: (path: string) => request<FsListResponse>("GET", `/system/browse?path=${encodeURIComponent(path)}`),
   // Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara accepts.
   listNetSysctls: () => request<string[]>("GET", "/system/sysctls"),
+  // Official Kathara device images published on Docker Hub — suggestions for an "image" field,
+  // not a restriction (any valid Docker image is still accepted).
+  listAvailableImages: () => request<string[]>("GET", "/system/images"),
 
   listLabs: () => request<LabSummary[]>("GET", "/labs"),
   getLab: (name: string) => request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
+import { Button, Dropdown, DropdownButton } from "react-bootstrap";
 import { AppWindow, FileEdit, FolderOpen, Plug, SlidersHorizontal, SquareTerminal, Unplug } from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
@@ -13,6 +13,7 @@ import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/
 import { deviceStateLabel, formatIface, formatPort } from "../services/topology";
 import type { LabDetail, StartupStatus } from "../services/types";
 import "./TopologyGraph.css";
+import { AutocompleteInput } from "./AutocompleteInput";
 import type { ContextMenuState } from "./TopologyContextMenu";
 
 // Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
@@ -357,21 +358,15 @@ export function TopologyGraph({
             </div>
           )}
           <div className="kt-topo-toolbar">
-            <Form.Control
+            <AutocompleteInput
               size="sm"
-              type="search"
               className="kt-topo-search"
               placeholder="Find device…"
-              list="kt-topo-devices"
-              value={search}
-              onChange={(e) => onSearch(e.target.value)}
               aria-label="Find device"
+              value={search}
+              onChange={onSearch}
+              options={model.nodes.filter((n) => n.type === "dev").map((n) => n.name)}
             />
-            <datalist id="kt-topo-devices">
-              {model.nodes.filter((n) => n.type === "dev").map((n) => (
-                <option key={n.id} value={n.name} />
-              ))}
-            </datalist>
             <Button size="sm" variant="outline-secondary" onClick={() => openAddDevice()}>
               + Device
             </Button>

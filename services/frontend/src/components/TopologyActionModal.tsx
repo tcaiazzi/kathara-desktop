@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
 import { Button, Form, Modal } from "react-bootstrap";
+import { AutocompleteInput } from "./AutocompleteInput";
 
 export interface TopoActionField {
   name: string;
   label: string;
   type?: "text" | "number" | "textarea" | "file";
   options?: { value: string; label: string }[]; // renders a <select> instead of an <input>
+  // Typeahead suggestions on an otherwise plain text input — the field still accepts free text,
+  // this only helps find a value (e.g. official Docker Hub image names). Ignored when `options`
+  // is set (that already renders a hard <select>).
+  datalistOptions?: string[];
   value?: string;
   placeholder?: string;
   required?: boolean;
@@ -89,6 +94,14 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
                     const input = e.target as HTMLInputElement;
                     setFiles((prev) => ({ ...prev, [f.name]: input.files?.[0] ?? null }));
                   }}
+                />
+              ) : f.datalistOptions ? (
+                <AutocompleteInput
+                  value={values[f.name] ?? ""}
+                  onChange={(v) => setValues((prev) => ({ ...prev, [f.name]: v }))}
+                  options={f.datalistOptions}
+                  placeholder={f.placeholder}
+                  required={f.required}
                 />
               ) : (
                 <Form.Control
