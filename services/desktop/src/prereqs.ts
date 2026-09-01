@@ -1,12 +1,15 @@
 /**
  * Startup prerequisite checks.
  *
- * The desktop app deliberately does not bundle Python, Kathara or Docker: it drives whatever
- * is installed on the machine. That trade keeps the installer small, but it means a missing
- * dependency is the single most likely first-run failure — so each check reports a remedy the
- * user can act on, and the shell shows them instead of a blank window.
+ * The desktop app deliberately does not bundle Python or Docker: it drives whatever is installed
+ * on the machine. Kathara/uvicorn/kathara-api-rest are different — a packaged build ships
+ * kathara-api-rest's own wheel and can install all three into a private venv itself (see
+ * install.ts, driven from the setup page's "Install automatically" button); only Python and
+ * Docker remain things the user installs. A missing dependency is still the most likely first-run
+ * failure, so each check reports a remedy the user can act on instead of a blank window.
  */
 import { execFile } from "node:child_process";
+import { app } from "electron";
 import { devVenvPython } from "./paths";
 import { readPrefs } from "./prefs";
 import { log } from "./logger";
@@ -27,6 +30,12 @@ export interface Preflight {
   checks: Check[];
   /** The interpreter that satisfied the Python checks, to launch the backend with. */
   python?: string;
+  /**
+   * The Python 3.10+ interpreter found, if any — set even when kathara_api/kathara/uvicorn are
+   * missing (unlike `python` above, which requires every check to pass). This is what a packaged
+   * app's "Install automatically" button (install.ts's runAutoInstall) creates a venv with.
+   */
+  systemPython?: string;
 }
 
 const EXEC_TIMEOUT_MS = 15_000;
@@ -195,28 +204,38 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
       label: "kathara-api-rest",
       ok: Boolean(result.kathara_api),
       detail: result.kathara_api ?? result.kathara_api_error ?? "not importable",
-      // Not on PyPI — it only exists in this checkout, so the fix is running the repo's own
-      // install script (scripts/install-<os>.{sh,ps1}), not a pip install of a package name
-      // that doesn't exist anywhere to install from.
+      // Not on PyPI. A packaged build ships its own wheel and can install it (plus kathara/
+      // uvicorn, its transitive deps) automatically — see the "Install automatically" button.
+      // A dev checkout has no bundled wheel, so the fix there is still the repo's install script.
       remedy: result.kathara_api
         ? undefined
-        : "Run this repo's scripts/install-<linux|macos>.sh (or install-windows.ps1) to set up a " +
-          "venv with everything this app needs, then point the app at its python.",
+        : app.isPackaged
+          ? "Use the “Install automatically” button below."
+          : "Run this repo's scripts/install-<linux|macos>.sh (or install-windows.ps1) to set up a " +
+            "venv with everything this app needs, then point the app at its python.",
     });
     checks.push({
       id: "kathara",
       label: "Kathara",
       ok: Boolean(result.kathara),
       detail: result.kathara ?? result.kathara_error ?? "not importable",
-      remedy: result.kathara ? undefined : "Install Kathara, then retry.",
-      docsUrl: result.kathara ? undefined : KATHARA_URL,
+      remedy: result.kathara
+        ? undefined
+        : app.isPackaged
+          ? "Use the “Install automatically” button below."
+          : "Install Kathara, then retry.",
+      docsUrl: result.kathara || app.isPackaged ? undefined : KATHARA_URL,
     });
     checks.push({
       id: "uvicorn",
       label: "uvicorn",
       ok: Boolean(result.uvicorn),
       detail: result.uvicorn ?? result.uvicorn_error ?? "not importable",
-      remedy: result.uvicorn ? undefined : `Install it: "${interpreter} -m pip install 'uvicorn[standard]'".`,
+      remedy: result.uvicorn
+        ? undefined
+        : app.isPackaged
+          ? "Use the “Install automatically” button below."
+          : `Install it: "${interpreter} -m pip install 'uvicorn[standard]'".`,
     });
   }
 
@@ -231,5 +250,5 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
 
   const ok = checks.every((c) => c.ok);
   log(`preflight ${ok ? "passed" : "failed"}: ${checks.map((c) => `${c.id}=${c.ok}`).join(" ")}`);
-  return { ok, checks, python: ok ? found?.interpreter : undefined };
+  return { ok, checks, python: ok ? found?.interpreter : undefined, systemPython: found?.interpreter };
 }

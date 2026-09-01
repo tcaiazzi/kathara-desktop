@@ -62,6 +62,11 @@
             </div>
           </li>`).join("");
 
+        // "Install automatically" only helps with these three — it can't fix a missing Docker
+        // or Python, which the app deliberately doesn't touch (prereqs.ts).
+        const installable = ["kathara_api", "kathara", "uvicorn"];
+        const canAutoInstall = status.checks.some((c) => !c.ok && installable.includes(c.id));
+
         app.innerHTML = `
           <h1>${status.state === "prereq-failed" ? "Missing prerequisites" : "Could not start"}</h1>
           <p class="sub">${status.state === "prereq-failed"
@@ -71,11 +76,20 @@
           ${status.error ? `<p class="sub">${esc(status.error)}</p>` : ""}
           ${status.logTail ? `<pre>${esc(status.logTail)}</pre>` : ""}
           <div class="actions">
-            <button class="primary" id="retry">Retry</button>
+            ${canAutoInstall ? '<button class="primary" id="install">Install automatically</button>' : ""}
+            <button class="${canAutoInstall ? "" : "primary"}" id="retry">Retry</button>
             <button id="pick">Choose Python interpreter…</button>
             <button id="log">Show backend log</button>
           </div>`;
 
+        if (canAutoInstall) {
+          document.getElementById("install").onclick = async () => {
+            renderStarting("Installing dependencies… this can take a minute.");
+            const result = await window.katharaDesktop.install();
+            if (!result.ok) renderStarting(`Install failed: ${result.error || "unknown error"} — see the log.`);
+            refresh();
+          };
+        }
         document.getElementById("retry").onclick = async () => {
           renderStarting("Rechecking…");
           await window.katharaDesktop.retryStartup();

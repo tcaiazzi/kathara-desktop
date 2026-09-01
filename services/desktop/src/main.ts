@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { backendLogPath, backendUrl, onBackendExit, startBackend, stopBackend } from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
+import { runAutoInstall } from "./install";
 import {
   openLabsDir,
   openSystemTerminal,
@@ -27,7 +28,7 @@ import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
 import { defaultLabsDir, frontendDir, labsDir } from "./paths";
 import { writePrefs } from "./prefs";
-import { runPreflight, type Check } from "./prereqs";
+import { runPreflight, type Check, type Preflight } from "./prereqs";
 import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
 
 // Electron derives userData's folder name from app.name, which defaults to package.json's
@@ -55,6 +56,8 @@ let win: BrowserWindow | null = null;
 let status: Status = { state: "starting", message: "Starting…" };
 /** A deep link that arrived before the UI was ready, replayed once it is. */
 let pendingDeepLink: string | null = null;
+/** The most recent preflight result, so status:install knows which system Python to use. */
+let lastPreflight: Preflight | null = null;
 
 function setStatus(next: Status): void {
   status = next;
@@ -67,6 +70,7 @@ async function startup(): Promise<void> {
 
   const staticDir = frontendDir();
   const preflight = await runPreflight(staticDir !== null);
+  lastPreflight = preflight;
   if (!preflight.ok || !preflight.python || !staticDir) {
     setStatus({ state: "prereq-failed", checks: preflight.checks });
     return;
@@ -104,6 +108,19 @@ function registerIpc(): void {
       log(`python interpreter set to ${chosen}`);
     }
     return chosen;
+  });
+
+  // Driven from the setup page's "Install automatically" button: installs kathara-api-rest
+  // (and its transitive kathara/uvicorn deps) into a private venv using whatever system Python
+  // preflight found, then re-runs startup() so a successful install proceeds straight to "ready".
+  ipcMain.handle("status:install", async () => {
+    const systemPython = lastPreflight?.systemPython;
+    if (!systemPython) return { ok: false, error: "no usable Python interpreter found" };
+    log("running automatic install");
+    const result = await runAutoInstall(systemPython);
+    if (result.ok) await startup();
+    else log(`automatic install failed: ${result.error}`);
+    return result;
   });
 
   ipcMain.handle("shell:show-log", () => shell.openPath(backendLogPath()));

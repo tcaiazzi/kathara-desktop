@@ -31,6 +31,7 @@ const api = {
   getStatus: () => ipcRenderer.invoke("status:get"),
   retryStartup: () => ipcRenderer.invoke("status:retry"),
   pickPython: () => ipcRenderer.invoke("status:pick-python"),
+  install: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("status:install"),
   showBackendLog: () => ipcRenderer.invoke("shell:show-log"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 

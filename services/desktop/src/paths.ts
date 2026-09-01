@@ -87,3 +87,34 @@ export function devVenvPython(): string | null {
       : path.join(repoRoot(), ".venv", "bin", "python");
   return fs.existsSync(candidate) ? candidate : null;
 }
+
+/**
+ * Where a packaged app's auto-installed venv lives: under userData, not inside the installed
+ * app bundle (read-only once signed/packaged on most platforms, and wiped on reinstall/update).
+ */
+export function packagedVenvDir(): string {
+  return path.join(app.getPath("userData"), "venv");
+}
+
+/** The interpreter inside that venv, once install.ts has created it. */
+export function packagedVenvPython(): string | null {
+  if (!app.isPackaged) return null;
+  const candidate =
+    process.platform === "win32"
+      ? path.join(packagedVenvDir(), "Scripts", "python.exe")
+      : path.join(packagedVenvDir(), "bin", "python");
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+/**
+ * kathara-api-rest's own wheel, built by CI and shipped as an extraResource (electron-builder.yml)
+ * so install.ts can `pip install` it without a git checkout — pulls in kathara/uvicorn/etc.
+ * transitively since they're already its own pyproject.toml dependencies. Packaged only: a dev
+ * checkout installs from source instead (scripts/install-<os>.{sh,ps1}).
+ */
+export function bundledWheelPath(): string | null {
+  if (!app.isPackaged) return null;
+  const dir = path.join(process.resourcesPath, "vendor");
+  const wheel = fs.existsSync(dir) ? fs.readdirSync(dir).find((f) => f.endsWith(".whl")) : undefined;
+  return wheel ? path.join(dir, wheel) : null;
+}

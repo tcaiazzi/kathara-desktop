@@ -20,6 +20,11 @@ extraResources:
   # runtime — the icon electron-builder bakes into the installer isn't reachable from code.
   - from: resources/icon.png
     to: icon.png
+  # kathara-api-rest's own wheel (built by CI just before this — see build-desktop.yml — into
+  # this gitignored directory), so a packaged app can `pip install` it into a private venv
+  # without needing a git checkout. Pure Python, one wheel works on every OS/arch.
+  - from: vendor
+    to: vendor
 
 # kathara://lab/<name> — the runtime side is in src/deeplink.ts.
 protocols:
