@@ -397,7 +397,12 @@ class LabStore:
             shutil.rmtree(tmp)
         tmp.mkdir(parents=True)
         try:
-            with zipfile.ZipFile(data) as archive:
+            # Read fully into a real BytesIO rather than handing zipfile the raw upload object:
+            # FastAPI backs `UploadFile.file` with a `SpooledTemporaryFile`, which on Python < 3.11
+            # has no `seekable()` (added in gh-95913) — zipfile's `_SharedFile` reads that attribute
+            # unconditionally, so `zipfile.ZipFile(data)` crashes with an AttributeError on 3.10.
+            # BytesIO always satisfies the full file-like protocol, on every supported Python version.
+            with zipfile.ZipFile(io.BytesIO(data.read())) as archive:
                 for member in archive.infolist():
                     rel = member.filename.lstrip("/")
                     if not rel:
