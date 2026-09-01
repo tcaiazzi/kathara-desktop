@@ -64,7 +64,9 @@ mac:
   identity: null
 
 win:
-  target: [nsis]
+  target:
+    - target: nsis
+      arch: [x64, arm64]
   icon: resources/icon.png
   # Deliberately unsigned — no code-signing certificate. SmartScreen will warn on first run
   # ("More info" → "Run anyway"). Docker Desktop with the WSL2 backend is a prerequisite.
