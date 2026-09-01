@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { backendLogPath, backendUrl, onBackendExit, startBackend, stopBackend } from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
+import { fixPathEnv } from "./env";
 import { runAutoInstall } from "./install";
 import {
   openLabsDir,
@@ -26,7 +27,7 @@ import {
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { defaultLabsDir, frontendDir, labsDir } from "./paths";
+import { defaultLabsDir, frontendDir, labsDir, packagedVenvPython } from "./paths";
 import { writePrefs } from "./prefs";
 import { runPreflight, type Check, type Preflight } from "./prereqs";
 import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
@@ -118,8 +119,19 @@ function registerIpc(): void {
     if (!systemPython) return { ok: false, error: "no usable Python interpreter found" };
     log("running automatic install");
     const result = await runAutoInstall(systemPython);
-    if (result.ok) await startup();
-    else log(`automatic install failed: ${result.error}`);
+    if (result.ok) {
+      // Point the app at the venv install.ts just created — otherwise the next preflight probes
+      // the same interpreter as before (which was never installed into) and reports the exact
+      // same "missing" checks, as if nothing happened.
+      const venvPython = packagedVenvPython();
+      if (venvPython) {
+        writePrefs({ pythonPath: venvPython });
+        log(`python interpreter set to ${venvPython}`);
+      }
+      await startup();
+    } else {
+      log(`automatic install failed: ${result.error}`);
+    }
     return result;
   });
 
@@ -334,6 +346,10 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     log(`Kathara IDE ${app.getVersion()} starting (packaged=${app.isPackaged})`);
+    // Before anything that shells out (Docker/Python checks, terminal integration): a
+    // double-clicked GUI app doesn't inherit the Terminal's PATH, so Homebrew/Docker Desktop
+    // binaries would otherwise be invisible even though they work fine from a shell.
+    fixPathEnv();
     registerProtocol();
     registerIpc();
     buildMenu();

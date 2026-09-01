@@ -31,6 +31,10 @@ protocols:
   - name: Kathara-IDE
     schemes: [kathara]
 
+# See scripts/sign-mac-arm64.js: ad-hoc signs the arm64 .app before packaging. Only macOS/arm64
+# does anything here — a no-op on every other build.
+afterPack: scripts/sign-mac-arm64.js
+
 linux:
   # Primary target: Docker runs natively, no VM in between.
   # AppImage covers every distro; deb/rpm give apt- and dnf-based distros a native
@@ -63,8 +67,12 @@ mac:
   category: public.app-category.developer-tools
   icon: resources/icon.png
   # Unsigned and un-notarized: hardenedRuntime buys nothing without a signature, and enabling it
-  # makes the app harder to launch. First run needs right-click → Open, or
-  # `xattr -dr com.apple.quarantine "/Applications/Kathara IDE.app"`.
+  # makes the app harder to launch. `identity: null` skips *all* signing here, including the
+  # ad-hoc one Apple Silicon requires just to launch an app at all (Intel only needs Gatekeeper's
+  # "unidentified developer" bypassed, e.g. right-click → Open) — scripts/sign-mac-arm64.js
+  # applies that ad-hoc signature separately for the arm64 build, afterPack. First run still needs
+  # `xattr -dr com.apple.quarantine "/Applications/Kathara IDE.app"` (or right-click → Open) either
+  # way, since none of this is a real Developer ID signature.
   hardenedRuntime: false
   identity: null
 
