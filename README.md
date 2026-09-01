@@ -22,6 +22,20 @@ It has three parts:
   via the host Docker socket)
 - Python 3.10+ and Node 20+ — only for running outside Docker
 
+To install Docker, Python and Kathara in one step (into this checkout's own `.venv`, which
+both the backend and the desktop app already look for first), run the script for your OS:
+
+```bash
+scripts/install-linux.sh     # Debian/Ubuntu (apt), Fedora/RHEL (dnf) or Arch (pacman)
+scripts/install-macos.sh     # needs Homebrew
+```
+```powershell
+scripts\install-windows.ps1  # needs winget (built into Windows 10 1809+/11)
+```
+
+Docker Desktop's own first-run setup (license, WSL2 on Windows) isn't scriptable — the script
+starts it and tells you when a manual step is needed. Safe to re-run after finishing one.
+
 ## Running
 
 ### With Docker Compose (recommended)

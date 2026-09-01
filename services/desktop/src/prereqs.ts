@@ -195,9 +195,13 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
       label: "kathara-api-rest",
       ok: Boolean(result.kathara_api),
       detail: result.kathara_api ?? result.kathara_api_error ?? "not importable",
+      // Not on PyPI — it only exists in this checkout, so the fix is running the repo's own
+      // install script (scripts/install-<os>.{sh,ps1}), not a pip install of a package name
+      // that doesn't exist anywhere to install from.
       remedy: result.kathara_api
         ? undefined
-        : `Install the API into this interpreter: "${interpreter} -m pip install kathara-api-rest".`,
+        : "Run this repo's scripts/install-<linux|macos>.sh (or install-windows.ps1) to set up a " +
+          "venv with everything this app needs, then point the app at its python.",
     });
     checks.push({
       id: "kathara",

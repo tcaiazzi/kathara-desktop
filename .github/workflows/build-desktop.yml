@@ -1,0 +1,74 @@
+name: Build desktop app
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms to build
+        type: choice
+        default: all
+        options:
+          - all
+          - linux
+          - mac
+          - windows
+
+jobs:
+  linux:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'linux' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: services/frontend
+      - run: npm ci
+        working-directory: services/desktop
+      - run: npm run dist:linux
+        working-directory: services/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kathara-ide-linux
+          path: |
+            services/desktop/release/*.AppImage
+            services/desktop/release/*.deb
+
+  mac:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'mac' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: services/frontend
+      - run: npm ci
+        working-directory: services/desktop
+      - run: npm run dist:mac
+        working-directory: services/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kathara-ide-mac
+          path: services/desktop/release/*.dmg
+
+  windows:
+    if: ${{ inputs.platforms == 'all' || inputs.platforms == 'windows' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: services/frontend
+      - run: npm ci
+        working-directory: services/desktop
+      - run: npm run dist:win
+        working-directory: services/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kathara-ide-windows
+          path: services/desktop/release/*.exe
