@@ -108,7 +108,7 @@ export interface UseFsTree {
   onTreeMove: (args: { dragIds: string[]; parentId: string | null }) => void;
   handleSave: () => Promise<void>;
   handleNewFile: (defaultDir?: string) => Promise<void>;
-  handleNewDirectory: () => Promise<void>;
+  handleNewDirectory: (defaultDir?: string) => Promise<void>;
   handleUpload: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   handleDelete: (path: string) => Promise<void>;
   handleDownload: (path: string) => Promise<void>;
@@ -122,6 +122,7 @@ export interface UseFsTree {
 // can't be redefined as a closure per render) reaches back into to build its right-click menu.
 export interface FsRowActions {
   onNewFile: (dir: string) => void;
+  onNewDirectory: (dir: string) => void;
   onDownload: ((path: string) => void) | null;
   onRename: (path: string) => void;
   onDelete: (path: string) => void;
@@ -435,8 +436,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     [defaultDir, prompt, refreshDir, runBusy, selectFile],
   );
 
-  const handleNewDirectory = useCallback(async () => {
-    const dir = defaultDir();
+  const handleNewDirectory = useCallback(async (dirOverride?: string) => {
+    const dir = dirOverride ?? defaultDir();
     const { title, message, placeholder } = sourceRef.current.labels.newDirectoryPrompt;
     const answer = await prompt({
       title,
@@ -568,13 +569,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const rowActions = useMemo<FsRowActions>(
     () => ({
       onNewFile: (dir) => void handleNewFile(dir),
+      onNewDirectory: (dir) => void handleNewDirectory(dir),
       onDownload: hasDownload ? (path) => void handleDownload(path) : null,
       onRename: (path) => void treeRef.current?.edit(path),
       onDelete: (path) => void handleDelete(path),
       canModify,
       isLoading: (path) => path === loadingPath,
     }),
-    [canModify, handleDelete, handleDownload, handleNewFile, hasDownload, loadingPath],
+    [canModify, handleDelete, handleDownload, handleNewDirectory, handleNewFile, hasDownload, loadingPath],
   );
 
   const onTreeToggle = useCallback(

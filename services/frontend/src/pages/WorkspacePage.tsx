@@ -114,12 +114,23 @@ const DOCK_COMPONENTS = {
   terminal: TerminalPanel,
 };
 
-// Tab renderer without a close button — used for the fixed core panels so they can't be closed
-// (only on-demand terminal panels, which use the default closable tab, can be).
-function FixedTab(props: IDockviewPanelHeaderProps) {
-  return <DockviewDefaultTab {...props} hideClose />;
+// Every panel in this dock is a fixed part of the workspace except the terminals, which are
+// opened on demand (one per session) and are the only ones a user should be able to close.
+function isFixedPanel(id: string): boolean {
+  return !id.startsWith("terminal:");
 }
-const DOCK_TAB_COMPONENTS = { fixed: FixedTab };
+
+// Tab renderer for every panel: the close button appears only on the panels that are actually
+// closable. Wired as dockview's `defaultTabComponent` rather than per-panel, so it also governs a
+// layout restored from localStorage — a saved layout replays each panel's own `tabComponent`, so
+// a per-panel opt-in could never reach a panel that was already persisted without one (which is
+// how "Node info" ended up with a close button while its siblings had none).
+function DockTab(props: IDockviewPanelHeaderProps) {
+  return <DockviewDefaultTab {...props} hideClose={isFixedPanel(props.api.id)} />;
+}
+// Still registered under the name older saved layouts persisted for the core panels, so restoring
+// one resolves to a real component instead of failing.
+const DOCK_TAB_COMPONENTS = { fixed: DockTab };
 
 // A collapse/expand toggle rendered in every group's header (right side). Collapsing shrinks the
 // group to a header strip; the toggle (and clicking the strip) expands it again. Gives the bottom
@@ -199,16 +210,15 @@ function buildDefaultLayout(api: DockviewApi) {
   // One shared tab group on the left: the inspector plus every tool panel. Node info goes in
   // first so it lands as the left-most tab.
   api.addPanel({ id: "node-info", component: "node-info", title: "Node info" });
-  api.addPanel({ id: "devices", component: "devices", title: "Devices", tabComponent: "fixed", position: { referencePanel: "node-info", direction: "within" } });
-  api.addPanel({ id: "files", component: "files", title: "Lab Configuration", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
-  api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime FS", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
-  api.addPanel({ id: "stats", component: "stats", title: "Stats", tabComponent: "fixed", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "devices", component: "devices", title: "Devices", position: { referencePanel: "node-info", direction: "within" } });
+  api.addPanel({ id: "files", component: "files", title: "Lab Configuration", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime FS", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "stats", component: "stats", title: "Stats", position: { referencePanel: "devices", direction: "within" } });
   // Topology: its own full-height column to the right of that shared group.
   api.addPanel({
     id: "topology",
     component: "topology",
     title: "Topology",
-    tabComponent: "fixed",
     position: { referencePanel: "devices", direction: "right" },
     initialWidth: api.width ? Math.round(api.width * TOPOLOGY_WIDTH_FRACTION) : undefined,
   });
@@ -868,6 +878,7 @@ export function WorkspacePage() {
                 <DockviewReact
                   components={DOCK_COMPONENTS}
                   tabComponents={DOCK_TAB_COMPONENTS}
+                  defaultTabComponent={DockTab}
                   rightHeaderActionsComponent={GroupHeaderActions}
                   onReady={onDockReady}
                   theme={ktTheme === "dark" ? themeDark : themeLight}

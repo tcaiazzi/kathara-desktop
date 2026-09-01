@@ -57,6 +57,7 @@ export function FsTreePanel({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { ref: treeSizeRef, width: treeWidth, height: treeHeight } = useElementSize<HTMLDivElement>();
+  const { setContextMenu } = useWorkspaceCore();
 
   const { selected, selectedIsDir, isBinary, busy } = tree;
   const disabled = !selected || selectedIsDir || isBinary || editorReadOnly;
@@ -151,7 +152,19 @@ export function FsTreePanel({
                 onChange={(e) => void tree.handleUpload(e)}
               />
             </div>
-            <div ref={treeSizeRef} className="kt-explorer-tree border rounded" style={{ flex: 1, minHeight: 0 }}>
+            <div
+              ref={treeSizeRef}
+              className="kt-explorer-tree border rounded"
+              style={{ flex: 1, minHeight: 0 }}
+              // Right-clicking the background below/around the rows targets the tree root. A row's
+              // own handler runs first (events bubble child → parent) and has already put its menu
+              // up, so bail out when the click actually landed on one.
+              onContextMenu={(e) => {
+                if ((e.target as HTMLElement).closest(".kt-explorer-row")) return;
+                e.preventDefault();
+                setContextMenu({ x: e.clientX, y: e.clientY, items: createItems(tree, "/") });
+              }}
+            >
               {!tree.loaded ? (
                 <p className="text-muted small p-2">Loading…</p>
               ) : (
@@ -224,6 +237,14 @@ export function FsTreePanel({
   );
 }
 
+// The create actions offered wherever there is no file to act on — the tree's own background.
+function createItems(tree: UseFsTree, dir: string): ContextMenuItem[] {
+  return [
+    { label: "New File", action: () => void tree.handleNewFile(dir) },
+    { label: "New Folder", action: () => void tree.handleNewDirectory(dir) },
+  ];
+}
+
 // Row renderer: VS-Code-ish icon + name, with inline rename input when the node is being edited.
 // onCreate/onDelete are intentionally left off <Tree> above — toolbar actions call the filesystem
 // API directly instead of going through arborist's own create/delete UX. Memoized so a render of
@@ -245,7 +266,11 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
       { label: "Delete", danger: true, disabled: !modifiable, title: lockedTitle, action: () => rowActions.onDelete(path) },
     ];
     const items: ContextMenuItem[] = node.data.dir
-      ? [{ label: "New File", action: () => rowActions.onNewFile(path) }, ...renameDelete]
+      ? [
+          { label: "New File", action: () => rowActions.onNewFile(path) },
+          { label: "New Folder", action: () => rowActions.onNewDirectory(path) },
+          ...renameDelete,
+        ]
       : rowActions.onDownload
         ? [{ label: "Download", action: () => rowActions.onDownload!(path) }, ...renameDelete]
         : renameDelete;
