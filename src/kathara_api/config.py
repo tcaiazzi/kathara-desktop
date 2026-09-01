@@ -26,6 +26,12 @@ class ApiSettings(BaseSettings):
     # per-lab (see lab_builder.build_lab), so nothing here is ever bind-mounted into a device.
     labs_dir: str = "./data/labs"
 
+    # Directory holding the built frontend (services/frontend/dist). Unset by default: the SPA
+    # is normally served by Vite in dev and by the nginx reverse proxy in Docker Compose. The
+    # desktop app has neither, so it sets this and lets this process serve the SPA itself,
+    # keeping the renderer same-origin with the API (see spa.mount_spa).
+    static_dir: Optional[str] = None
+
     # Kathara settings applied via Setting.load_from_dict() before the first backend use.
     manager_type: Optional[str] = None
     default_image: Optional[str] = Field(default=None)
@@ -36,6 +42,19 @@ class ApiSettings(BaseSettings):
     def labs_dir_path(self) -> Path:
         """Absolute path to the lab storage root."""
         return Path(self.labs_dir).expanduser().resolve()
+
+    def static_dir_path(self) -> Optional[Path]:
+        """Absolute path to the built frontend, or None if not configured or absent.
+
+        A configured-but-missing directory is treated as "not configured" rather than an
+        error: the API must still start and serve /api even when the frontend hasn't been
+        built yet.
+        """
+        configured = (self.static_dir or "").strip()
+        if not configured:
+            return None
+        path = Path(configured).expanduser().resolve()
+        return path if path.is_dir() else None
 
     def kathara_overrides(self) -> dict:
         """Return the subset of settings to forward to Kathara's Setting."""

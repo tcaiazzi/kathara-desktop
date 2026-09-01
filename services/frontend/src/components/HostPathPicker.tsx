@@ -1,3 +1,4 @@
+import { Folder } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, Modal } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
@@ -96,7 +97,10 @@ export function HostPathPicker({ show, initialPath, onClose, onSelect }: HostPat
                 onDoubleClick={() => onSelect(entry.path)}
                 title="Click to open, double-click to select"
               >
-                <span className="font-monospace small">📁 {entry.name}</span>
+                <span className="font-monospace small d-inline-flex align-items-center gap-1">
+                  <Folder size={14} />
+                  {entry.name}
+                </span>
               </div>
             ))
           ) : (

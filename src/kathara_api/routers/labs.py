@@ -25,6 +25,7 @@ from ..schemas.lab import (
     LabCreate,
     LabDetail,
     LabLayout,
+    LabLocation,
     LabRename,
     LabSummary,
     UndeployOptions,
@@ -134,6 +135,16 @@ def update_lab_conf(
     submitted text verbatim. 409 if deployed."""
     lab = service.update_lab_conf(lab_name, payload.content)
     return serializers.lab_to_detail(lab)
+
+
+@router.get("/{lab_name}/location", response_model=LabLocation)
+def get_lab_location(lab_name: str, service: KatharaService = Depends(get_service)) -> LabLocation:
+    """Return the lab's directory on the host filesystem.
+
+    For desktop integrations (services/desktop): revealing a lab in the OS file manager and
+    launching a system terminal in it both need a real host path.
+    """
+    return LabLocation(path=str(service.lab_location(lab_name)))
 
 
 @router.get("/{lab_name}/layout", response_model=LabLayout)

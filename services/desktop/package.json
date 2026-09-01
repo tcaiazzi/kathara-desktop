@@ -1,0 +1,32 @@
+{
+  "name": "kathara-ide-desktop",
+  "productName": "Kathara IDE",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell for the Kathara IDE: supervises a local Kathara REST API and renders its UI.",
+  "license": "GPL-3.0",
+  "author": {
+    "name": "Kathara Framework",
+    "email": "tommaso@kathara.org"
+  },
+  "main": "build/main.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:shell": "node scripts/build.mjs",
+    "build:frontend": "npm --prefix ../frontend run build",
+    "build": "npm run typecheck && npm run build:shell",
+    "start": "npm run build:shell && node scripts/start.mjs",
+    "dist": "npm run build:frontend && npm run build && electron-builder --config electron-builder.yml",
+    "dist:linux": "npm run dist -- --linux",
+    "dist:mac": "npm run dist -- --mac",
+    "dist:win": "npm run dist -- --win"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.15",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.4"
+  },
+  "homepage": "https://www.kathara.org/"
+}

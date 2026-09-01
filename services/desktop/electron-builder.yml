@@ -1,0 +1,70 @@
+appId: org.kathara.ide
+productName: Kathara-IDE
+copyright: Kathara Framework
+
+directories:
+  output: release
+  buildResources: resources
+
+# Only the built shell needs to ship; src/ and the toolchain do not.
+files:
+  - build/**/*
+  - package.json
+
+# The SPA the backend serves at runtime (KATHARA_API_STATIC_DIR points here — see
+# src/paths.ts). Built by `npm run build:frontend`, which `npm run dist` runs first.
+extraResources:
+  - from: ../frontend/dist
+    to: frontend
+  # Also shipped as a plain file because BrowserWindow's `icon` option needs a real path at
+  # runtime — the icon electron-builder bakes into the installer isn't reachable from code.
+  - from: resources/icon.png
+    to: icon.png
+
+# kathara://lab/<name> — the runtime side is in src/deeplink.ts.
+protocols:
+  - name: Kathara-IDE
+    schemes: [kathara]
+
+linux:
+  # Primary target: Docker runs natively, no VM in between.
+  target: [AppImage, deb]
+  category: Development
+  synopsis: IDE for the Kathara network emulation framework
+  icon: resources/icon.png
+
+deb:
+  # Required by fpm; taken from package.json's author, stated here so it is obvious where to
+  # change it when the project has a dedicated packaging address.
+  maintainer: Kathara Framework <tommaso@kathara.org>
+  # Declared as recommendations rather than hard dependencies: Kathara and the API are installed
+  # with pip, which apt cannot see, so a hard dependency would make the package uninstallable on
+  # a perfectly working setup. The app checks for them at startup instead (src/prereqs.ts).
+  recommends: [docker.io, python3]
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  category: public.app-category.developer-tools
+  icon: resources/icon.png
+  # Unsigned and un-notarized: hardenedRuntime buys nothing without a signature, and enabling it
+  # makes the app harder to launch. First run needs right-click → Open, or
+  # `xattr -dr com.apple.quarantine "/Applications/Kathara IDE.app"`.
+  hardenedRuntime: false
+  identity: null
+
+win:
+  target: [nsis]
+  icon: resources/icon.png
+  # Deliberately unsigned — no code-signing certificate. SmartScreen will warn on first run
+  # ("More info" → "Run anyway"). Docker Desktop with the WSL2 backend is a prerequisite.
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+
+# No autoUpdater: it is unreliable on unsigned Windows and macOS builds. Releases are published
+# and installed manually.
+publish: null

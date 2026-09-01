@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Kathara IDE</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0; padding: 2.5rem clamp(1.5rem, 6vw, 4rem);
+        background: #1e1e1e; color: #e6e6e6;
+        font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      h1 { font-size: 1.35rem; margin: 0 0 .35rem; font-weight: 600; }
+      .sub { color: #9aa0a6; margin: 0 0 1.75rem; }
+      ul { list-style: none; padding: 0; margin: 0 0 1.75rem; }
+      li { display: grid; grid-template-columns: 1.4rem 1fr; gap: .65rem;
+           padding: .7rem 0; border-bottom: 1px solid #2f2f2f; }
+      .mark { font-weight: 700; }
+      .ok .mark { color: #4caf7d; }
+      .bad .mark { color: #e5686b; }
+      .name { font-weight: 600; }
+      .detail { color: #9aa0a6; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: .82rem; word-break: break-word; }
+      .remedy { margin-top: .3rem; color: #d8b563; }
+      a { color: #6ea8fe; }
+      .actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+      button {
+        font: inherit; padding: .5rem 1rem; border-radius: 6px; cursor: pointer;
+        border: 1px solid #3d3d3d; background: #2b2b2b; color: #e6e6e6;
+      }
+      button.primary { background: #2f6feb; border-color: #2f6feb; }
+      button:hover { filter: brightness(1.15); }
+      pre { background: #161616; border: 1px solid #2f2f2f; border-radius: 6px;
+            padding: .8rem; overflow: auto; max-height: 15rem; font-size: .78rem; }
+      .spinner { display: inline-block; width: .85rem; height: .85rem; border-radius: 50%;
+                 border: 2px solid #3d3d3d; border-top-color: #6ea8fe; animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <main id="app"><p class="sub"><span class="spinner"></span> Starting…</p></main>
+    <script>
+      const app = document.getElementById("app");
+      const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+      function renderStarting(message) {
+        app.innerHTML = `<h1>Kathara IDE</h1>
+          <p class="sub"><span class="spinner"></span> ${esc(message)}</p>`;
+      }
+
+      function renderChecks(status) {
+        const items = status.checks.map((c) => `
+          <li class="${c.ok ? "ok" : "bad"}">
+            <span class="mark">${c.ok ? "✓" : "✕"}</span>
+            <div>
+              <div class="name">${esc(c.label)}</div>
+              <div class="detail">${esc(c.detail)}</div>
+              ${c.remedy ? `<div class="remedy">${esc(c.remedy)}${
+                c.docsUrl ? ` <a href="#" data-url="${esc(c.docsUrl)}">Learn more</a>` : ""
+              }</div>` : ""}
+            </div>
+          </li>`).join("");
+
+        app.innerHTML = `
+          <h1>${status.state === "prereq-failed" ? "Missing prerequisites" : "Could not start"}</h1>
+          <p class="sub">${status.state === "prereq-failed"
+            ? "Kathara IDE drives the Kathara and Docker installed on this machine. Install what is missing below, then retry."
+            : "The prerequisites are satisfied, but the backend did not start."}</p>
+          <ul>${items}</ul>
+          ${status.error ? `<p class="sub">${esc(status.error)}</p>` : ""}
+          ${status.logTail ? `<pre>${esc(status.logTail)}</pre>` : ""}
+          <div class="actions">
+            <button class="primary" id="retry">Retry</button>
+            <button id="pick">Choose Python interpreter…</button>
+            <button id="log">Show backend log</button>
+          </div>`;
+
+        document.getElementById("retry").onclick = async () => {
+          renderStarting("Rechecking…");
+          await window.katharaDesktop.retryStartup();
+          refresh();
+        };
+        document.getElementById("pick").onclick = async () => {
+          if (await window.katharaDesktop.pickPython()) {
+            renderStarting("Rechecking…");
+            await window.katharaDesktop.retryStartup();
+          }
+          refresh();
+        };
+        document.getElementById("log").onclick = () => window.katharaDesktop.showBackendLog();
+        app.querySelectorAll("a[data-url]").forEach((a) => {
+          a.onclick = (e) => { e.preventDefault(); window.katharaDesktop.openExternal(a.dataset.url); };
+        });
+      }
+
+      async function refresh() {
+        const status = await window.katharaDesktop.getStatus();
+        if (status.state === "starting") {
+          renderStarting(status.message || "Starting the Kathara API…");
+          // The shell navigates away once the backend is healthy, so polling only continues
+          // while this page is still the one on screen.
+          setTimeout(refresh, 500);
+        } else {
+          renderChecks(status);
+        }
+      }
+
+      refresh();
+    </script>
+  </body>
+</html>

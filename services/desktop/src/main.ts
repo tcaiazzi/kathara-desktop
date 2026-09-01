@@ -1,0 +1,393 @@
+/**
+ * Electron main process: supervises the Kathara REST API and renders its UI.
+ *
+ * Startup sequence — the window appears first and reports progress, so a slow or failing
+ * prerequisite check is never a blank screen:
+ *   1. show the status page
+ *   2. preflight (Docker, Python, kathara-api, Kathara, uvicorn, bundled UI)
+ *   3. start the backend on a free loopback port, serving the bundled SPA
+ *   4. load http://127.0.0.1:<port>/
+ */
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import fs from "node:fs";
+import path from "node:path";
+
+import { backendLogPath, backendUrl, onBackendExit, startBackend, stopBackend } from "./backend";
+import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
+import {
+  openLabsDir,
+  openSystemTerminal,
+  pickLabArchive,
+  pickLabsDirectory,
+  pickPythonInterpreter,
+  revealPath,
+  saveFile,
+} from "./integrations";
+import { log, tailLog } from "./logger";
+import { buildMenu } from "./menu";
+import { defaultLabsDir, frontendDir, labsDir } from "./paths";
+import { writePrefs } from "./prefs";
+import { runPreflight, type Check } from "./prereqs";
+import { createMainWindow, installNavigationPolicy, showSetupPage } from "./windows";
+
+// Electron derives userData's folder name from app.name, which defaults to package.json's
+// productName ("Kathara IDE") — a folder with a space and mixed case. Override it to this
+// repo's own lowercase-hyphenated convention instead, using a fresh path built from the
+// platform-correct base ('appData': %APPDATA% / ~/Library/Application Support / ~/.config)
+// so this stays correct on every platform, not just Linux.
+//
+// Deliberately app.setPath('userData', ...) rather than app.setName('kathara-ide'): setName
+// would also rename the macOS menu-bar app label and Dock name, which is not what was asked.
+// Must run before requestSingleInstanceLock() below — the single-instance lock file is
+// itself written under userData, so calling this any later would leave it in the old folder.
+// Existing data already at the old path (labs, preferences.json) is left there untouched,
+// not moved — same "leave old data behind, don't migrate silently" choice already made for
+// the labs-directory setting itself.
+app.setPath("userData", path.join(app.getPath("appData"), "kathara-ide"));
+
+type Status =
+  | { state: "starting"; message: string }
+  | { state: "prereq-failed"; checks: Check[] }
+  | { state: "backend-failed"; checks: Check[]; error: string; logTail: string }
+  | { state: "ready" };
+
+let win: BrowserWindow | null = null;
+let status: Status = { state: "starting", message: "Starting…" };
+/** A deep link that arrived before the UI was ready, replayed once it is. */
+let pendingDeepLink: string | null = null;
+
+function setStatus(next: Status): void {
+  status = next;
+}
+
+/** Run preflight, start the backend, and load the UI. Safe to call again on "Retry". */
+async function startup(): Promise<void> {
+  if (!win) return;
+  setStatus({ state: "starting", message: "Checking prerequisites…" });
+
+  const staticDir = frontendDir();
+  const preflight = await runPreflight(staticDir !== null);
+  if (!preflight.ok || !preflight.python || !staticDir) {
+    setStatus({ state: "prereq-failed", checks: preflight.checks });
+    return;
+  }
+
+  setStatus({ state: "starting", message: "Starting the Kathara API…" });
+  try {
+    const handle = await startBackend(preflight.python, staticDir);
+    setStatus({ state: "ready" });
+    await win.loadURL(handle.baseUrl);
+    if (pendingDeepLink) {
+      handleDeepLink(win, pendingDeepLink);
+      pendingDeepLink = null;
+    }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log(`startup failed: ${error}`);
+    setStatus({ state: "backend-failed", checks: preflight.checks, error, logTail: tailLog() });
+    showSetupPage(win);
+  }
+}
+
+function registerIpc(): void {
+  ipcMain.handle("status:get", () => status);
+
+  ipcMain.handle("status:retry", async () => {
+    await stopBackend();
+    await startup();
+  });
+
+  ipcMain.handle("status:pick-python", async () => {
+    const chosen = await pickPythonInterpreter(win);
+    if (chosen) {
+      writePrefs({ pythonPath: chosen });
+      log(`python interpreter set to ${chosen}`);
+    }
+    return chosen;
+  });
+
+  ipcMain.handle("shell:show-log", () => shell.openPath(backendLogPath()));
+
+  ipcMain.handle("shell:open-external", (_e, url: string) => {
+    // Never hand an arbitrary scheme to the OS: file://, and worse, would be a real hole here.
+    if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+    log(`refused shell:open-external for ${url}`);
+  });
+
+  // The View/Help menu items the app draws itself act on the window or the shell, not on the
+  // page, so they come back here rather than being handled in React.
+  ipcMain.handle("shell:app-info", () => ({
+    version: app.getVersion(),
+    platform: process.platform,
+  }));
+
+  ipcMain.handle("window:zoom", (_e, direction: "in" | "out" | "reset") => {
+    const contents = win?.webContents;
+    if (!contents) return;
+    const current = contents.getZoomLevel();
+    contents.setZoomLevel(
+      direction === "reset" ? 0 : direction === "in" ? current + 0.5 : current - 0.5,
+    );
+  });
+
+  ipcMain.handle("window:toggle-full-screen", () => {
+    if (win) win.setFullScreen(!win.isFullScreen());
+  });
+
+  ipcMain.handle("window:toggle-dev-tools", () => win?.webContents.toggleDevTools());
+
+  ipcMain.handle("window:quit", () => app.quit());
+
+  // Custom caption buttons (TitleBar.tsx draws them on Windows/Linux, replacing the window
+  // controls Chromium would otherwise overlay — see createMainWindow's comment in windows.ts).
+  // win.close() rather than app.quit(): a red "close" button should behave like the platform's
+  // own close control, which on macOS hides the window without quitting the whole app.
+  ipcMain.handle("window:minimize", () => win?.minimize());
+  ipcMain.handle("window:maximize", () => win?.maximize());
+  ipcMain.handle("window:unmaximize", () => win?.unmaximize());
+  ipcMain.handle("window:close", () => win?.close());
+  ipcMain.handle("window:is-maximized", () => win?.isMaximized() ?? false);
+
+  ipcMain.handle("fs:pick-lab-archive", () => pickLabArchive(win));
+  ipcMain.handle("fs:save", (_e, name: string, data: Uint8Array) => saveFile(win, name, data));
+  ipcMain.handle("fs:open-labs-folder", () => openLabsDir());
+
+  ipcMain.handle("fs:reveal-lab", async (_e, labName: string) => {
+    revealPath(await labDirectory(labName));
+  });
+
+  ipcMain.handle("terminal:open-system", async (_e, labName: string, machine: string) => {
+    await openSystemTerminal(await labDirectory(labName), machine);
+  });
+
+  ipcMain.handle("labs:get-dir", () => labsDir());
+  ipcMain.handle("labs:default-dir", () => defaultLabsDir());
+  ipcMain.handle("labs:pick-dir", () => pickLabsDirectory(win));
+  ipcMain.handle("labs:set-dir", (_e, path: string) => setLabsDir(path));
+  ipcMain.handle("labs:reset-dir", () => setLabsDir(defaultLabsDir()));
+}
+
+/**
+ * Apply a new lab storage root: validated, gated on deployed labs, then a full backend restart
+ * (the only safe way to change it — labs_dir is read once at backend process startup, see
+ * src/kathara_api/dependencies.py; a live directory swap would leave already-registered labs
+ * holding filesystem handles bound to the old root). Existing labs in the old directory are left
+ * on disk untouched, by design — this never moves anything.
+ *
+ * Resolves `true` if the change was applied (a restart is now in flight — startup()'s own
+ * win.loadURL/showSetupPage calls take it from here), `false` if the user cancelled at the
+ * deployed-labs prompt (no changes made, nothing to undo). Throws for a directory that isn't
+ * writable, so the caller sees the problem immediately instead of after a restart that would
+ * then fail.
+ */
+async function setLabsDir(path: string): Promise<boolean> {
+  try {
+    // mkdir, not just an access check: the directory may not exist yet — the default one is
+    // only ever created lazily by backend.ts right before spawning uvicorn, and the same is true
+    // of a fresh custom directory the first time it's chosen. This also validates writability as
+    // a side effect (throws EACCES/EROFS/ENOTDIR for a path that can't actually be used).
+    fs.mkdirSync(path, { recursive: true });
+    fs.accessSync(path, fs.constants.W_OK);
+  } catch (err) {
+    throw new Error(`"${path}" is not usable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const proceed = await confirmProceedWithDeployedLabs({
+    primaryLabel: "Undeploy all and continue",
+    secondaryLabel: "Continue anyway",
+    detail:
+      "Changing the labs folder restarts the backend. Their containers will keep running, but " +
+      "won't appear in the app until you undeploy them manually.",
+  });
+  if (!proceed) return false;
+
+  writePrefs({ labsDir: path === defaultLabsDir() ? undefined : path });
+  log(`labs directory set to ${path}`);
+  await stopBackend();
+  await startup();
+  return true;
+}
+
+/**
+ * Ask the backend where a lab lives (GET /api/labs/{name}/location) rather than deriving the
+ * path here: only the backend knows its storage root and which names it considers valid, and it
+ * refuses an unsafe name instead of returning a path outside that root.
+ */
+async function labDirectory(labName: string): Promise<string> {
+  const base = backendUrl();
+  if (!base) throw new Error("the backend is not running");
+  const res = await fetch(`${base}/api/labs/${encodeURIComponent(labName)}/location`);
+  if (!res.ok) throw new Error(`could not resolve lab directory (HTTP ${res.status})`);
+  return ((await res.json()) as { path: string }).path;
+}
+
+interface DeployedLabsPromptOptions {
+  /** Label for the button that undeploys everything and then proceeds. */
+  primaryLabel: string;
+  /** Label for the button that proceeds without undeploying. */
+  secondaryLabel: string;
+  /** Second line of the dialog, explaining what proceeding without undeploying costs. */
+  detail: string;
+}
+
+/**
+ * Deployed labs are Docker containers that outlive this process, so an action that would make
+ * them inaccessible (quitting, or restarting the backend against a different labs directory)
+ * must ask first rather than silently strand them. Shared by confirmQuitWithDeployedLabs and
+ * setLabsDir — same GET /api/labs check, same three-way choice, only the wording differs.
+ *
+ * Resolves `true` if the caller should proceed (undeploying first if the user asked for that),
+ * `false` if the user cancelled.
+ */
+async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): Promise<boolean> {
+  const base = backendUrl();
+  if (!base) return true;
+
+  let deployed: string[] = [];
+  try {
+    const res = await fetch(`${base}/api/labs`);
+    if (!res.ok) return true;
+    const labs = (await res.json()) as { name: string | null; deployed: boolean }[];
+    deployed = labs.filter((l) => l.deployed).map((l) => l.name ?? "(unnamed)");
+  } catch {
+    // If we can't tell, don't stand in the way.
+    return true;
+  }
+  if (deployed.length === 0) return true;
+
+  // Captured into a const: `win` is module-level and mutable, so TypeScript can't keep the
+  // non-null narrowing across the closure below.
+  const parent = win;
+  const messageBox = parent
+    ? (o: Electron.MessageBoxOptions) => dialog.showMessageBox(parent, o)
+    : (o: Electron.MessageBoxOptions) => dialog.showMessageBox(o);
+  const { response } = await messageBox({
+    type: "warning",
+    buttons: [opts.primaryLabel, opts.secondaryLabel, "Cancel"],
+    defaultId: 0,
+    cancelId: 2,
+    message: `${deployed.length} lab${deployed.length > 1 ? "s are" : " is"} still deployed`,
+    detail: `${deployed.join(", ")}\n\n${opts.detail}`,
+  });
+
+  if (response === 2) return false;
+  if (response === 0) {
+    for (const name of deployed) {
+      try {
+        log(`undeploying ${name}`);
+        await fetch(`${base}/api/labs/${encodeURIComponent(name)}/undeploy`, { method: "POST" });
+      } catch (err) {
+        log(`undeploy of ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }
+  return true;
+}
+
+function confirmQuitWithDeployedLabs(): Promise<boolean> {
+  return confirmProceedWithDeployedLabs({
+    primaryLabel: "Undeploy all and quit",
+    secondaryLabel: "Quit anyway",
+    detail: "Their containers keep running after the app closes.",
+  });
+}
+
+// A second launch must hand its deep link to the running instance instead of starting a rival
+// backend on another port.
+if (!app.requestSingleInstanceLock()) {
+  // Say so before leaving: a silent exit here looks exactly like the app failing to launch.
+  // The usual cause is a genuine second launch (whose deep link the running instance handles
+  // via "second-instance" below), but a stale SingletonLock in userData — left behind when a
+  // previous run was SIGKILLed — produces the same result with no window to focus.
+  log("another instance already holds the single-instance lock; exiting");
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const url = deepLinkFromArgv(argv);
+    if (url) handleDeepLink(win, url);
+    else win?.focus();
+  });
+
+  // macOS delivers deep links as an event, which can fire before the app is ready.
+  app.on("open-url", (event, url) => {
+    event.preventDefault();
+    if (status.state === "ready") handleDeepLink(win, url);
+    else pendingDeepLink = url;
+  });
+
+  app.whenReady().then(async () => {
+    log(`Kathara IDE ${app.getVersion()} starting (packaged=${app.isPackaged})`);
+    registerProtocol();
+    registerIpc();
+    buildMenu();
+    // Before any window exists, so no WebContents is ever created unguarded.
+    installNavigationPolicy(backendUrl);
+
+    win = createMainWindow();
+    win.on("closed", () => {
+      win = null;
+    });
+    showSetupPage(win);
+
+    onBackendExit((info) => {
+      // An unexpected exit leaves the renderer pointing at a dead origin; show the log instead.
+      if (!win) return;
+      setStatus({
+        state: "backend-failed",
+        checks: [],
+        error: `The Kathara API stopped unexpectedly (code ${info.code ?? "unknown"}, signal ${info.signal ?? "none"}).`,
+        logTail: tailLog(),
+      });
+      showSetupPage(win);
+    });
+
+    pendingDeepLink ??= deepLinkFromArgv(process.argv);
+    await startup();
+  });
+
+  let quitConfirmed = false;
+  app.on("before-quit", (event) => {
+    if (quitConfirmed) return;
+    event.preventDefault();
+    void confirmQuitWithDeployedLabs().then((proceed) => {
+      if (!proceed) return;
+      quitConfirmed = true;
+      app.quit();
+    });
+  });
+
+  // Last chance to reap the child: an orphaned uvicorn holds the labs directory and a port.
+  app.on("will-quit", (event) => {
+    event.preventDefault();
+    void stopBackend().finally(() => {
+      app.exit(0);
+    });
+  });
+
+  // Electron installs no handler for these, so a terminal Ctrl+C or a session logout would
+  // kill the shell and leave uvicorn — and the containers it manages — running. Route them
+  // through the normal quit path instead. SIGKILL is unhandleable by definition; the OS
+  // reparents the child and there is nothing to be done about that.
+  //
+  // SIGHUP is deliberately absent: a windowed app should survive its launching terminal going
+  // away, and merely installing a handler cancels the SIGHUP-ignore that nohup sets up — which
+  // made the app exit silently the moment the shell that started it closed.
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      log(`received ${signal}; quitting`);
+      app.quit();
+    });
+  }
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0 && status.state === "ready") {
+      win = createMainWindow();
+      const base = backendUrl();
+      if (base) void win.loadURL(base);
+    }
+  });
+}

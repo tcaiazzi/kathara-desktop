@@ -132,3 +132,9 @@ class UndeployOptions(BaseModel):
     selected_machines: Optional[list[str]] = None
     excluded_machines: Optional[list[str]] = None
     selected_links: Optional[list[str]] = None
+
+
+class LabLocation(BaseModel):
+    """Where a lab lives on the host filesystem (used by the desktop shell)."""
+
+    path: str

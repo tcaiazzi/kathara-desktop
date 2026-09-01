@@ -1,50 +1,16 @@
-import { useEffect, useState } from "react";
 import { Badge, Button, Container, Nav, Navbar } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
-import { api } from "../services/api";
+import { useHealth } from "../hooks/useHealth";
+import { useTheme } from "../hooks/useTheme";
 
-type Health = "checking" | "ok" | "down";
-type ThemeMode = "light" | "dark";
-
-const THEME_STORAGE_KEY = "kt-ui-theme";
-
-function getInitialTheme(): ThemeMode {
-  if (typeof window === "undefined") return "light";
-  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-  return "light";
-}
-
+// The browser top bar. In the Electron shell it is replaced by desktop/TitleBar.tsx, which folds
+// the same content into the window's own title strip — see App.tsx.
 export function AppNavbar() {
-  const [health, setHealth] = useState<Health>("checking");
-  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+  const health = useHealth();
+  const { theme, dark, toggle } = useTheme();
 
-  useEffect(() => {
-    const root = document.documentElement;
-    root.setAttribute("data-bs-theme", theme);
-    root.setAttribute("data-kt-theme", theme);
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        await api.health();
-        if (cancelled) return;
-        setHealth("ok");
-      } catch {
-        if (!cancelled) setHealth("down");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const dark = theme === "dark";
   return (
     <Navbar bg={theme} variant={theme} expand="sm" className="mb-3">
       <Container fluid>
@@ -61,11 +27,7 @@ export function AppNavbar() {
           </Nav.Link>
         </Nav>
         <Navbar.Text className="d-flex align-items-center gap-2">
-          <Button
-            variant={dark ? "outline-light" : "outline-dark"}
-            size="sm"
-            onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
-          >
+          <Button variant={dark ? "outline-light" : "outline-dark"} size="sm" onClick={toggle}>
             {theme === "light" ? "Dark theme" : "Light theme"}
           </Button>
           <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>

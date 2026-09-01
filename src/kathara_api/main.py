@@ -11,6 +11,7 @@ from .dependencies import get_service
 from .errors import register_exception_handlers
 from .routers import exec as exec_router
 from .routers import labs, links, machines, stats, system
+from .spa import mount_spa
 
 logging.basicConfig(level=logging.INFO)
 
@@ -52,6 +53,13 @@ def create_app() -> FastAPI:
     app.include_router(links.router, prefix=API_PREFIX)
     app.include_router(exec_router.router, prefix=API_PREFIX)
     app.include_router(stats.router, prefix=API_PREFIX)
+
+    # Strictly last: mount_spa adds a catch-all route, and Starlette matches routes in
+    # registration order, so anything registered after it would be unreachable.
+    static_dir = settings.static_dir_path()
+    if static_dir:
+        logging.info("Serving frontend from %s", static_dir)
+        mount_spa(app, static_dir, API_PREFIX)
 
     return app
 

@@ -373,6 +373,20 @@ class KatharaService:
         text = self.store.read_lab_conf_text(clean)
         return LabConfView(content=text or "", exists=text is not None)
 
+    def lab_location(self, name: str) -> Path:
+        """Absolute host path of the lab's directory.
+
+        Exists for the desktop shell (services/desktop), which needs a real host path to hand to
+        the OS file manager and to a system terminal. The shell knows neither the storage root
+        nor the name rules, so it asks rather than guessing; an unsafe name is rejected here,
+        never resolved into a path that could escape the root.
+        """
+        clean = lab_store.sanitize_lab_name(name)
+        lab_dir = self.store.lab_dir(clean)
+        if not lab_dir.is_dir():
+            self.get_lab_or_reconstruct(clean)  # raises LabNotFoundError if it isn't a known lab
+        return lab_dir
+
     # -- fixed topology layout -------------------------------------------------
 
     def get_lab_layout(self, name: str) -> LabLayout:

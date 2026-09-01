@@ -36,6 +36,11 @@
   flex-shrink: 0;
 }
 
+.kt-explorer-icon {
+  flex-shrink: 0;
+  color: var(--bs-secondary-color);
+}
+
 .kt-explorer-edit {
   flex: 1;
   min-width: 0;

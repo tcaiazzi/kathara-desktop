@@ -1,0 +1,68 @@
+// Typed access to the Electron shell (services/desktop), which injects `window.katharaDesktop`
+// via its preload script. Everything here is optional by design: the same build runs in a plain
+// browser through Vite's dev server or the nginx reverse proxy, where `desktop()` returns null
+// and every desktop-only affordance is simply not rendered.
+
+/** Menu commands the shell can send. Mirrors MenuAction in services/desktop/src/menu.ts. */
+export type DesktopMenuAction =
+  | "lab:new"
+  | "lab:import"
+  | "lab:save"
+  | "lab:deploy"
+  | "lab:undeploy"
+  | "lab:reload"
+  | "view:settings";
+
+export interface DesktopApi {
+  isDesktop: true;
+  platform: string;
+  /** Window/shell actions behind the app-drawn menu bar (see TitleBar.tsx). */
+  getAppInfo(): Promise<{ version: string; platform: string }>;
+  zoom(direction: "in" | "out" | "reset"): Promise<void>;
+  toggleFullScreen(): Promise<void>;
+  toggleDevTools(): Promise<void>;
+  quit(): Promise<void>;
+  /** Custom caption buttons TitleBar.tsx draws on Windows/Linux (macOS keeps native traffic
+   * lights and never calls these). */
+  minimizeWindow(): Promise<void>;
+  maximizeWindow(): Promise<void>;
+  unmaximizeWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  isWindowMaximized(): Promise<boolean>;
+  showBackendLog(): Promise<void>;
+  openExternal(url: string): Promise<void>;
+  /** Native "Import lab" picker; null when the user cancels. */
+  pickLabArchive(): Promise<{ name: string; data: Uint8Array } | null>;
+  saveFile(name: string, data: Uint8Array): Promise<string | null>;
+  revealLab(labName: string): Promise<void>;
+  openLabsFolder(): Promise<void>;
+  openSystemTerminal(labName: string, machine: string): Promise<void>;
+  /** Lab storage directory (Settings). See SettingsPage.tsx's "Desktop" panel. */
+  getLabsDir(): Promise<string>;
+  getDefaultLabsDir(): Promise<string>;
+  /** Native folder picker; null when the user cancels. Selection only — apply via setLabsDir. */
+  pickLabsDir(): Promise<string | null>;
+  /** Resolves true if applied (a restart is now in flight), false if the user cancelled at the
+   * deployed-labs prompt. Rejects if the directory isn't usable. */
+  setLabsDir(path: string): Promise<boolean>;
+  resetLabsDir(): Promise<boolean>;
+  /** All three return an unsubscribe function. */
+  onMenuAction(cb: (action: DesktopMenuAction) => void): () => void;
+  onDeepLink(cb: (route: string) => void): () => void;
+  onWindowStateChange(cb: (state: { maximized: boolean }) => void): () => void;
+}
+
+declare global {
+  interface Window {
+    katharaDesktop?: DesktopApi;
+  }
+}
+
+/** The shell API, or null when running in a browser. */
+export function desktop(): DesktopApi | null {
+  return typeof window !== "undefined" && window.katharaDesktop ? window.katharaDesktop : null;
+}
+
+export function isDesktop(): boolean {
+  return desktop() !== null;
+}

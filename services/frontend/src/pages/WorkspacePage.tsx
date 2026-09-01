@@ -25,6 +25,7 @@ import { TopologyActionModal } from "../components/TopologyActionModal";
 import { TopologyContextMenu, type ContextMenuState } from "../components/TopologyContextMenu";
 import { TopologyGraph } from "../components/TopologyGraph";
 import { UploadLabModal } from "../components/UploadLabModal";
+import { useDesktopCommand } from "../desktop/DesktopCommands";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import { useToast } from "../context/ToastContext";
@@ -589,6 +590,22 @@ export function WorkspacePage() {
       await load();
     });
   }
+
+  // Electron's native menu (File / Lab) drives the same handlers as the on-screen controls.
+  // No-ops in the browser build. Deploy and Undeploy are separate menu items over one toggle,
+  // so each checks the current state — otherwise "Deploy" on a running lab would tear it down.
+  useDesktopCommand("lab:new", () => setShowNew(true));
+  useDesktopCommand("lab:import", () => setShowUpload(true));
+  useDesktopCommand("lab:deploy", () => {
+    if (detail && !detail.deployed) void handleDeployToggle();
+  });
+  useDesktopCommand("lab:undeploy", () => {
+    if (detail?.deployed) void handleDeployToggle();
+  });
+  useDesktopCommand("lab:reload", async () => {
+    await load();
+    await reloadLabs();
+  });
 
   async function handleDownload(labName: string = name) {
     try {

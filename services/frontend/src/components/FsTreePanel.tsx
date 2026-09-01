@@ -1,4 +1,4 @@
-import { Download, FilePlus, FolderPlus, Info, Loader2, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
+import { Download, FilePlus, Folder, FolderPlus, Info, Loader2, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useRef, type ReactNode } from "react";
 import { Button } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps } from "react-arborist";
@@ -277,6 +277,8 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   }
 
+  const Icon = node.data.dir ? Folder : fileIcon(node.data.name);
+
   return (
     <div
       ref={dragHandle}
@@ -298,7 +300,7 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
       {rowActions?.isLoading(node.data.path) ? (
         <Loader2 size={14} className="kt-explorer-spin" />
       ) : (
-        <span>{node.data.dir ? "📁" : fileIcon(node.data.name)}</span>
+        <Icon size={14} className="kt-explorer-icon" />
       )}
       {node.isEditing ? <NodeEditInput node={node} /> : <span className="font-monospace small">{node.data.name}</span>}
     </div>

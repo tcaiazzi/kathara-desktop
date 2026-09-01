@@ -3,9 +3,94 @@ import { Alert, Button, Form } from "react-bootstrap";
 import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
+import { desktop, isDesktop } from "../desktop/bridge";
 import { useAvailableImages } from "../hooks/useAvailableImages";
 import { api, ApiError } from "../services/api";
 import type { SettingsView, SystemInfo } from "../services/types";
+
+// This app's own storage location for lab data — a desktop-shell concept (services/desktop),
+// not a Kathara framework setting, so it has no GET/PUT /settings field and lives in its own
+// panel outside the <Form> below. Renders nothing in the browser build.
+//
+// Changing it restarts the backend process: labs_dir is read once at backend startup (see
+// src/kathara_api/dependencies.py) and can't be swapped under a running process without
+// desyncing already-registered labs' filesystem handles. A successful change therefore always
+// ends with the window navigating to the freshly restarted backend (or, on failure, to the
+// setup screen) — this component's "restarting" state is simply however long that takes to show
+// before the page is torn down by that navigation; there is no "success" state to render here.
+function DesktopLabsDirSettings() {
+  const [labsDir, setLabsDirValue] = useState<string | null>(null);
+  const [defaultDir, setDefaultDir] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
+  const toast = useToast();
+
+  useEffect(() => {
+    const shell = desktop();
+    if (!shell) return;
+    void Promise.all([shell.getLabsDir(), shell.getDefaultLabsDir()]).then(([dir, def]) => {
+      setLabsDirValue(dir);
+      setDefaultDir(def);
+    });
+  }, []);
+
+  async function handleChange() {
+    const shell = desktop();
+    if (!shell) return;
+    const picked = await shell.pickLabsDir();
+    if (!picked) return; // cancelled the native folder picker
+
+    setRestarting(true);
+    try {
+      const applied = await shell.setLabsDir(picked);
+      // `false` means the user backed out at the "labs are still deployed" prompt — nothing
+      // changed, stay on this page. `true` means a restart is in flight; the window is about to
+      // navigate away on its own, so there's nothing further to do here.
+      if (!applied) setRestarting(false);
+    } catch (err) {
+      setRestarting(false);
+      toast.reportError("Change labs folder", err);
+    }
+  }
+
+  async function handleReset() {
+    const shell = desktop();
+    if (!shell) return;
+    setRestarting(true);
+    try {
+      const applied = await shell.resetLabsDir();
+      if (!applied) setRestarting(false);
+    } catch (err) {
+      setRestarting(false);
+      toast.reportError("Reset labs folder", err);
+    }
+  }
+
+  if (!isDesktop()) return null;
+
+  const isDefault = defaultDir != null && labsDir === defaultDir;
+
+  return (
+    <Panel title="Desktop" className="mb-3">
+      <Form.Group className="mb-2">
+        <Form.Label>Labs folder</Form.Label>
+        <Form.Control readOnly className="font-monospace" value={labsDir ?? "Loading…"} />
+        <Form.Text className="text-muted">
+          Existing labs stay on disk if you change this — nothing is moved automatically.
+        </Form.Text>
+      </Form.Group>
+      <div className="d-flex gap-2">
+        <Button type="button" size="sm" variant="outline-secondary" disabled={restarting} onClick={handleChange}>
+          {restarting ? "Restarting…" : "Change…"}
+        </Button>
+        {!isDefault && (
+          <Button type="button" size="sm" variant="outline-secondary" disabled={restarting} onClick={handleReset}>
+            Reset to default
+          </Button>
+        )}
+      </div>
+    </Panel>
+  );
+}
 
 const DEBUG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "EXCEPTION"];
 const VOLUME_MOUNT_POLICIES = ["Always", "Prompt", "Never"];
@@ -118,6 +203,8 @@ export function SettingsPage() {
           )}
         </Panel>
       )}
+
+      <DesktopLabsDirSettings />
 
       {lockedError && (
         <Alert variant="warning" dismissible onClose={() => setLockedError(null)}>
