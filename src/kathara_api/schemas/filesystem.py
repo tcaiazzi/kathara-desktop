@@ -1,6 +1,6 @@
 """Schemas for runtime machine filesystem operations."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class FsEntry(BaseModel):
@@ -44,12 +44,8 @@ class FsMkdirRequest(BaseModel):
 class FsMoveRequest(BaseModel):
     """Move or rename a filesystem path."""
 
-    source_path: str = Field(alias="sourcePath")
-    destination_path: str = Field(alias="destinationPath")
-
-    model_config = {
-        "populate_by_name": True,
-    }
+    source_path: str
+    destination_path: str
 
 
 class FsDeleteRequest(BaseModel):

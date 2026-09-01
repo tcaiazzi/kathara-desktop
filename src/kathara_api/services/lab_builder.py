@@ -12,6 +12,7 @@ from Kathara.model.ExternalLink import ExternalLink
 from Kathara.model.Lab import Lab
 from Kathara.model.Machine import Machine
 
+from ..errors import ApiError
 from ..schemas.lab import LabCreate
 from ..schemas.machine import MachineCreate, MachineOptionsBase
 
@@ -33,7 +34,7 @@ def build_external_link(spec: str) -> ExternalLink:
         return ExternalLink(spec)
     iface, vlan = match.group("iface"), int(match.group("vlan"))
     if not 1 <= vlan <= 4094:
-        raise ValueError(f"VLAN ID must be in range [1, 4094], got {vlan}.")
+        raise ApiError(f"VLAN ID must be in range [1, 4094], got {vlan}.")
     return ExternalLink(iface, vlan)
 
 

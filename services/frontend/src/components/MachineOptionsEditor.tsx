@@ -137,6 +137,9 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
       setForm(null);
       setInitial(null);
     }
+    // Keyed on the device's *name*, not the object: `machine` gets a fresh identity on every lab
+    // refresh, and reseeding the form then would silently discard edits in progress.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [machine?.name, show]);
 
   // If the open device disappears from the lab (e.g. removed via the same context menu while this

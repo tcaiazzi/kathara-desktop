@@ -21,6 +21,10 @@ export function PromptProvider({ children }: { children: ReactNode }) {
   const resolveRef = useRef<((value: string | null) => void) | null>(null);
 
   const prompt = useCallback<PromptApi>((opts) => {
+    // Settle whatever is still pending before taking over the single `resolveRef` slot — see the
+    // same guard in ConfirmContext for why an unresolved promise here wedges its caller.
+    resolveRef.current?.(null);
+    resolveRef.current = null;
     setOptions(opts);
     setValue(opts.defaultValue || "");
     return new Promise<string | null>((resolve) => {

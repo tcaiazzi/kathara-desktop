@@ -18,6 +18,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const resolveRef = useRef<((value: boolean) => void) | null>(null);
 
   const confirm = useCallback<ConfirmApi>((opts) => {
+    // Settle whatever is still pending before taking over the single `resolveRef` slot: a second
+    // confirm() opened while the first dialog is up would otherwise leave the first caller awaiting
+    // a promise nothing can ever resolve — and with `runBusy` around it, its `busy` flag stuck on.
+    resolveRef.current?.(false);
+    resolveRef.current = null;
     setOptions(opts);
     return new Promise<boolean>((resolve) => {
       resolveRef.current = resolve;

@@ -109,7 +109,9 @@ class MachineDetail(BaseModel):
     mem: Optional[str] = None
     cpus: Optional[float] = None
     ports: list[PortMapping] = Field(default_factory=list)
-    envs: dict[str, Union[str, int]] = Field(default_factory=dict)
+    # `dict[str, str]`, matching MachineOptionsBase: this response feeds straight back into a PUT,
+    # so a looser type here would produce a body its own request schema rejects.
+    envs: dict[str, str] = Field(default_factory=dict)
     sysctls: dict[str, Union[str, int]] = Field(default_factory=dict)
     exec_commands: list[str] = Field(default_factory=list)
     volumes: list[VolumeMount] = Field(default_factory=list)

@@ -5,7 +5,7 @@ import { AutocompleteInput } from "./AutocompleteInput";
 export interface TopoActionField {
   name: string;
   label: string;
-  type?: "text" | "number" | "textarea" | "file";
+  type?: "text" | "number" | "textarea";
   options?: { value: string; label: string }[]; // renders a <select> instead of an <input>
   // Typeahead suggestions on an otherwise plain text input — the field still accepts free text,
   // this only helps find a value (e.g. official Docker Hub image names). Ignored when `options`
@@ -16,18 +16,16 @@ export interface TopoActionField {
   required?: boolean;
   hint?: string;
   min?: number;
-  accept?: string; // for type "file"
 }
 
 export interface TopoActionConfig {
   title: string;
   hint?: string;
   submitLabel?: string;
-  danger?: boolean;
   fields: TopoActionField[];
-  /** Returns whether the action succeeded — the modal stays open (so the user can fix input)
-   * on failure, and closes on success. `files` carries any `type: "file"` field selections. */
-  onSubmit: (values: Record<string, string>, files: Record<string, File | null>) => Promise<boolean>;
+  /** Returns whether the action succeeded — the modal stays open (so the user can fix input) on
+   * failure, and closes on success. */
+  onSubmit: (values: Record<string, string>) => Promise<boolean>;
 }
 
 interface TopologyActionModalProps {
@@ -36,10 +34,9 @@ interface TopologyActionModalProps {
 }
 
 // Generic field-driven modal reused for every topology mutation (add device/domain/interface,
-// disconnect, remove, copy-file).
+// connect, disconnect).
 export function TopologyActionModal({ config, onClose }: TopologyActionModalProps) {
   const [values, setValues] = useState<Record<string, string>>({});
-  const [files, setFiles] = useState<Record<string, File | null>>({});
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -47,7 +44,6 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
     const initial: Record<string, string> = {};
     for (const f of config.fields) initial[f.name] = f.value ?? (f.options ? f.options[0]?.value ?? "" : "");
     setValues(initial);
-    setFiles({});
   }, [config]);
 
   if (!config) return null;
@@ -57,7 +53,7 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
     if (!config) return;
     setSubmitting(true);
     try {
-      const ok = await config.onSubmit(values, files);
+      const ok = await config.onSubmit(values);
       if (ok) onClose();
     } finally {
       setSubmitting(false);
@@ -86,15 +82,6 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
                     </option>
                   ))}
                 </Form.Select>
-              ) : f.type === "file" ? (
-                <Form.Control
-                  type="file"
-                  accept={f.accept}
-                  onChange={(e) => {
-                    const input = e.target as HTMLInputElement;
-                    setFiles((prev) => ({ ...prev, [f.name]: input.files?.[0] ?? null }));
-                  }}
-                />
               ) : f.datalistOptions ? (
                 <AutocompleteInput
                   value={values[f.name] ?? ""}
@@ -124,7 +111,7 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant={config.danger ? "danger" : "primary"} type="submit" disabled={submitting}>
+          <Button variant="primary" type="submit" disabled={submitting}>
             {config.submitLabel || "Apply"}
           </Button>
         </Modal.Footer>

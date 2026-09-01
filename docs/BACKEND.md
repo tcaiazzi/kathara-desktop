@@ -74,7 +74,10 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/settings` | Current Kathara settings | — | `SettingsView` |
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |
 | POST | `/api/system/images/check` | Validate an image is available (503 if registry unreachable) | `{image}` | `Message` |
-| POST | `/api/system/wipe` | Undeploy all of the user's running scenarios | — | `Message` |
+| POST | `/api/system/wipe` | Undeploy every lab this backend deployed (scenarios started by other tools are left alone) | — | `Message` |
+| GET | `/api/system/browse` | List a directory on the *host's own* filesystem — backs the volume host-path picker | `?path=/` | `FsListResponse` |
+| GET | `/api/system/sysctls` | Every `net.*` sysctl key this host's kernel exposes (the only namespace Kathara accepts) | — | `string[]` |
+| GET | `/api/system/images` | Official Kathara images on Docker Hub, as suggestions (502 if Docker Hub is unreachable — callers should treat that as non-fatal) | — | `string[]` |
 
 ## Labs — `/api/labs`
 
@@ -96,7 +99,7 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/labs/{lab}/fs/text` | Read a UTF-8 text file (`/lab.conf` routes to the same verbatim read as `GET lab-conf`) | `?path=` | `FsReadTextResponse` |
 | PUT | `/api/labs/{lab}/fs/text` | Write a text file (`/lab.conf` routes to the same verbatim apply as `PUT lab-conf`) | `FsWriteTextRequest {path, content}` | `Message` |
 | POST | `/api/labs/{lab}/fs/mkdir` | Create a directory (and any missing parents) | `FsMkdirRequest {path}` | `Message` |
-| POST | `/api/labs/{lab}/fs/move` | Move/rename a path, including across two devices | `FsMoveRequest {sourcePath, destinationPath}` | `Message` |
+| POST | `/api/labs/{lab}/fs/move` | Move/rename a path, including across two devices | `FsMoveRequest {source_path, destination_path}` | `Message` |
 | DELETE | `/api/labs/{lab}/fs` | Delete a path (`lab.conf` rejected) | `FsDeleteRequest {path, recursive?}` | `Message` |
 | POST | `/api/labs/{lab}/fs/upload` | Upload a file (binary-safe) | multipart: `path`, `file` | `FsUploadResponse` |
 | GET | `/api/labs/{lab}/fs/download` | Download a file (octet-stream) | `?path=` | binary |
@@ -117,11 +120,13 @@ Errors return `{"detail": str, "error_type": str}`.
 | POST | `…/machines/{m}/connect` | Attach to a collision domain (running → runtime; stopped → lab.conf) | `?link=` `&interface_number=` `&mac_address=` | `MachineDetail` |
 | POST | `…/machines/{m}/disconnect` | Detach from a collision domain | `?link=` `&keep_link=false` | `Message` |
 | POST | `…/machines/{m}/files` | Copy inline text files into a running device | `CopyFilesRequest {files}` | `Message` |
+| GET | `…/machines/{m}/shells` | Shells actually present in the running device (populates the terminal picker) | — | `string[]` |
+| GET | `…/machines/{m}/startup-status` | Boot-time startup log tail + whether the startup commands have finished | — | `StartupStatus {log, finished}` |
 | GET | `…/machines/{m}/fs/list` | List a runtime directory | `?path=/` | `FsListResponse` |
 | GET | `…/machines/{m}/fs/text` | Read a UTF-8 text file | `?path=` | `FsReadTextResponse` |
 | PUT | `…/machines/{m}/fs/text` | Write a text file | `FsWriteTextRequest {path, content}` | `Message` |
 | POST | `…/machines/{m}/fs/mkdir` | Create a directory (`mkdir -p`) | `FsMkdirRequest {path}` | `Message` |
-| POST | `…/machines/{m}/fs/move` | Move/rename a path | `FsMoveRequest {sourcePath, destinationPath}` | `Message` |
+| POST | `…/machines/{m}/fs/move` | Move/rename a path | `FsMoveRequest {source_path, destination_path}` | `Message` |
 | DELETE | `…/machines/{m}/fs` | Delete a path | `FsDeleteRequest {path, recursive?}` | `Message` |
 | POST | `…/machines/{m}/fs/upload` | Upload a file (binary) | multipart: `path`, `file` | `FsUploadResponse` |
 | GET | `…/machines/{m}/fs/download` | Download a file (octet-stream) | `?path=` | binary |

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import get_service
+from ..downloads import attachment_headers
 from ..schemas.common import Message
 from ..schemas.exec import CopyFilesRequest
 from ..schemas.filesystem import (
@@ -242,5 +243,6 @@ def download_runtime_file(
     normalized = service.normalize_guest_path(path)
     data = service.fs_read_bytes(lab_name, machine_name, normalized)
     filename = posixpath.basename(normalized) or "download.bin"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-    return StreamingResponse(iter([data]), media_type="application/octet-stream", headers=headers)
+    return StreamingResponse(
+        iter([data]), media_type="application/octet-stream", headers=attachment_headers(filename)
+    )

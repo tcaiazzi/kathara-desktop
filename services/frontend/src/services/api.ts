@@ -1,6 +1,5 @@
 import type {
   ErrorResponse,
-  ExecResult,
   FsListResponse,
   FsReadTextResponse,
   FsUploadResponse,
@@ -36,55 +35,59 @@ export class ApiError extends Error {
   }
 }
 
+// Parse an error response body and throw the ApiError it describes — the one place that maps a
+// non-2xx response to this client's error type, shared by the JSON helpers and by the blob
+// downloads (which can't use those: a binary success body must not be read as text).
+async function throwApiError(res: Response): Promise<never> {
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+  const err = data as Partial<ErrorResponse> | null;
+  throw new ApiError(
+    err?.detail || res.statusText || `HTTP ${res.status}`,
+    err?.error_type || `HTTP ${res.status}`,
+    res.status,
+  );
+}
+
+async function parseJsonResponse<T>(res: Response): Promise<T> {
+  if (!res.ok) await throwApiError(res);
+  const text = await res.text();
+  if (!text) return null as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as T;
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method, headers: {} };
   if (body !== undefined) {
     (init.headers as Record<string, string>)["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
-  const res = await fetch(`${API_BASE}${path}`, init);
-  const text = await res.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-  }
-  if (!res.ok) {
-    const err = data as Partial<ErrorResponse> | null;
-    throw new ApiError(
-      err?.detail || res.statusText || `HTTP ${res.status}`,
-      err?.error_type || `HTTP ${res.status}`,
-      res.status,
-    );
-  }
-  return data as T;
+  return parseJsonResponse<T>(await fetch(`${API_BASE}${path}`, init));
 }
 
 // Multipart POST (file upload). Unlike request<T>, this must NOT set Content-Type: the browser
 // sets multipart/form-data plus the boundary itself from the FormData body.
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
-  const text = await res.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-  }
-  if (!res.ok) {
-    const err = data as Partial<ErrorResponse> | null;
-    throw new ApiError(
-      err?.detail || res.statusText || `HTTP ${res.status}`,
-      err?.error_type || `HTTP ${res.status}`,
-      res.status,
-    );
-  }
-  return data as T;
+  return parseJsonResponse<T>(await fetch(`${API_BASE}${path}`, { method: "POST", body: form }));
+}
+
+// GET a binary body (a .zip export, a file download), surfacing a non-2xx as an ApiError the same
+// way the JSON paths do.
+async function requestBlob(path: string): Promise<Blob> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "GET" });
+  if (!res.ok) await throwApiError(res);
+  return res.blob();
 }
 
 export const api = {
@@ -145,27 +148,7 @@ export const api = {
     request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/rename`, { name: newName }),
   // Download a lab as a .zip of its on-disk directory. Binary response, so it uses the same
   // error-checked raw fetch as fsDownload rather than the JSON `request` wrapper.
-  downloadLab: async (name: string) => {
-    const res = await fetch(`${API_BASE}/labs/${encodeURIComponent(name)}/download`, { method: "GET" });
-    if (!res.ok) {
-      const text = await res.text();
-      let data: unknown = null;
-      if (text) {
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = text;
-        }
-      }
-      const err = data as Partial<ErrorResponse> | null;
-      throw new ApiError(
-        err?.detail || res.statusText || `HTTP ${res.status}`,
-        err?.error_type || `HTTP ${res.status}`,
-        res.status,
-      );
-    }
-    return res.blob();
-  },
+  downloadLab: (name: string) => requestBlob(`/labs/${encodeURIComponent(name)}/download`),
 
   // -- Lab Configuration tab: the lab's own on-disk directory, browsed/edited directly (real
   // reads/writes on every call — no separate cache, so nothing here can ever drift from disk). --
@@ -180,7 +163,10 @@ export const api = {
   fsMkdirOffline: (labName: string, path: string) =>
     request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/mkdir`, { path }),
   fsMoveOffline: (labName: string, sourcePath: string, destinationPath: string) =>
-    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/move`, { sourcePath, destinationPath }),
+    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/move`, {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+    }),
   fsDeleteOffline: (labName: string, path: string, recursive = false) =>
     request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/fs`, { path, recursive }),
   fsUploadOffline: async (labName: string, path: string, file: File) => {
@@ -189,37 +175,9 @@ export const api = {
     form.append("file", file);
     return requestForm<FsUploadResponse>(`/labs/${encodeURIComponent(labName)}/fs/upload`, form);
   },
-  fsDownloadOffline: async (labName: string, path: string) => {
-    const res = await fetch(
-      `${API_BASE}/labs/${encodeURIComponent(labName)}/fs/download?path=${encodeURIComponent(path)}`,
-      { method: "GET" },
-    );
-    if (!res.ok) {
-      const text = await res.text();
-      let data: unknown = null;
-      if (text) {
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = text;
-        }
-      }
-      const err = data as Partial<ErrorResponse> | null;
-      throw new ApiError(
-        err?.detail || res.statusText || `HTTP ${res.status}`,
-        err?.error_type || `HTTP ${res.status}`,
-        res.status,
-      );
-    }
-    return res.blob();
-  },
+  fsDownloadOffline: (labName: string, path: string) =>
+    requestBlob(`/labs/${encodeURIComponent(labName)}/fs/download?path=${encodeURIComponent(path)}`),
 
-  copyFiles: (labName: string, machineName: string, files: Record<string, string>) =>
-    request<Message>(
-      "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/files`,
-      { files },
-    ),
   fsList: (labName: string, machineName: string, path: string) =>
     request<FsListResponse>(
       "GET",
@@ -246,7 +204,7 @@ export const api = {
     request<Message>(
       "POST",
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/move`,
-      { sourcePath, destinationPath },
+      { source_path: sourcePath, destination_path: destinationPath },
     ),
   fsDelete: (labName: string, machineName: string, path: string, recursive = false) =>
     request<Message>(
@@ -263,42 +221,16 @@ export const api = {
       form,
     );
   },
-  fsDownload: async (labName: string, machineName: string, path: string) => {
-    const res = await fetch(
-      `${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/download?path=${encodeURIComponent(path)}`,
-      { method: "GET" },
-    );
-    if (!res.ok) {
-      const text = await res.text();
-      let data: unknown = null;
-      if (text) {
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = text;
-        }
-      }
-      const err = data as Partial<ErrorResponse> | null;
-      throw new ApiError(
-        err?.detail || res.statusText || `HTTP ${res.status}`,
-        err?.error_type || `HTTP ${res.status}`,
-        res.status,
-      );
-    }
-    return res.blob();
-  },
+  fsDownload: (labName: string, machineName: string, path: string) =>
+    requestBlob(
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/download?path=${encodeURIComponent(path)}`,
+    ),
   // Live boot-time startup log + finished flag for a running device — poll while a node's info
   // panel is open and startup hasn't finished yet (see TopologyGraph's node-info block).
   getStartupStatus: (labName: string, machineName: string) =>
     request<StartupStatus>(
       "GET",
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/startup-status`,
-    ),
-  execCommand: (labName: string, machineName: string, command: string | string[], wait = false) =>
-    request<ExecResult>(
-      "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/exec`,
-      { command, wait },
     ),
 
   // Shells actually available in a running device (for the live-terminal picker).

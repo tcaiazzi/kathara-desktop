@@ -1,3 +1,10 @@
+> **Historical.** This plan has been carried out and the codebase has since moved on: the
+> client-side "pending files" model it revolves around, and the `*/pending-files` routes it
+> describes, no longer exist — both filesystem panels now read and write the real filesystem on
+> every call (see `services/frontend/src/hooks/useFsTree.ts` and
+> `src/kathara_api/services/kathara_service.py`'s `fs_*_offline` methods). Kept for the design
+> rationale and the decision record; `docs/BACKEND.md` is the current API reference.
+
 # Kathara API REST — Frontend/Deployment Refactor Plan (v2)
 
 **Status:**

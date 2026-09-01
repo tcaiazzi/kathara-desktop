@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from ..dependencies import get_service
+from ..downloads import attachment_headers
 from ..schemas.common import Message
 from ..schemas.filesystem import (
     FsDeleteRequest,
@@ -68,7 +69,10 @@ def import_lab(payload: LabImportRequest, service: KatharaService = Depends(get_
     """
     lab, warnings = service.import_lab(payload.name, payload.files, payload.dirs, payload.skipped_files)
     if payload.deploy:
-        lab = service.deploy_lab(payload.name)
+        # `lab.name`, not `payload.name`: import_lab stores/registers the lab under
+        # `sanitize_lab_name(payload.name)`, which strips surrounding whitespace — deploying by the
+        # raw submitted name would 404 on a lab that was just created successfully.
+        lab = service.deploy_lab(lab.name)
     return _import_result(lab, warnings)
 
 
@@ -106,8 +110,9 @@ def get_lab(lab_name: str, service: KatharaService = Depends(get_service)) -> La
 def download_lab(lab_name: str, service: KatharaService = Depends(get_service)) -> StreamingResponse:
     """Download a lab as a .zip archive of its on-disk directory."""
     buf = service.export_lab_zip(lab_name)
-    headers = {"Content-Disposition": f'attachment; filename="{lab_name}.zip"'}
-    return StreamingResponse(buf, media_type="application/zip", headers=headers)
+    return StreamingResponse(
+        buf, media_type="application/zip", headers=attachment_headers(f"{lab_name}.zip")
+    )
 
 
 @router.get("/{lab_name}/lab-conf", response_model=LabConfView)
@@ -238,8 +243,9 @@ def download_lab_file(
     normalized = service.normalize_guest_path(path)
     data = service.fs_read_bytes_offline(lab_name, normalized)
     filename = posixpath.basename(normalized) or "download.bin"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-    return StreamingResponse(iter([data]), media_type="application/octet-stream", headers=headers)
+    return StreamingResponse(
+        iter([data]), media_type="application/octet-stream", headers=attachment_headers(filename)
+    )
 
 
 @router.get("/{lab_name}/fs/startups", response_model=dict[str, str])

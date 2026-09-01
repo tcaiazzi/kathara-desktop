@@ -249,13 +249,9 @@ def parse_lab_ext(text: str) -> list[LinkCreate]:
     return list(links.values())
 
 
-def _collect_folder(files: dict, prefix: str) -> dict:
-    out = {}
-    for path, text in files.items():
-        if not path.startswith(prefix) or path == prefix:
-            continue
-        out["/" + path[len(prefix) :]] = text
-    return out
+def _has_folder(files: dict, prefix: str) -> bool:
+    """Whether any file sits under ``prefix`` (which must end in ``/``)."""
+    return any(path.startswith(prefix) and path != prefix for path in files)
 
 
 @dataclass
@@ -340,7 +336,7 @@ def translate_lab_files(
     # rewrite files that don't belong to the source archive, breaking verbatim import), it is left
     # on disk untouched and simply not surfaced as pending state — with a warning so the omission is
     # visible instead of silent.
-    if _collect_folder(files, "shared/"):
+    if _has_folder(files, "shared/"):
         warnings.append("shared/ folder is not applied to devices yet — left on disk, ignored")
 
     if skipped:

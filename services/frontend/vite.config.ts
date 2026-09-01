@@ -8,12 +8,6 @@ const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:8000";
 
 export default defineConfig({
   plugins: [react()],
-  // react-rnd's react-draggable dependency reads process.env.NODE_ENV directly (a CJS-era
-  // pattern); Vite doesn't polyfill `process` in the browser bundle like webpack does, so without
-  // this it throws `ReferenceError: process is not defined` the moment a drag starts.
-  define: {
-    "process.env.NODE_ENV": JSON.stringify(process.env.NODE_ENV || "development"),
-  },
   server: {
     port: 5173,
     proxy: {

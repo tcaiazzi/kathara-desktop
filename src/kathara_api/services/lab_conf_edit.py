@@ -11,6 +11,13 @@ Line classification is delegated to ``lab_import``'s own regex/constants (``CONF
 ``LAB_META_KEYS``, ``RESERVED_NAMES``), so this module can never disagree with the parser about
 what a line means. Every public operation re-parses (and, for structural changes, rebuilds) its
 own result and refuses to return text that would not load back — see ``validate``.
+
+The module intentionally exposes the *complete* set of lab.conf edits, not just the subset the
+API currently issues: ``set_meta``/``unset_meta``/``set_lab_metadata``/``renumber_interfaces`` and
+the read helpers have no caller in ``kathara_service`` today and are covered by
+``tests/unit/test_lab_conf_edit.py`` alone. They are kept — and tested — because a partial editing
+surface is what pushed earlier code back into "rebuild the whole file from the model", which is
+exactly the lossy behaviour this module exists to replace.
 """
 
 import re
@@ -186,8 +193,6 @@ class LabConfDoc:
         separator line if the file doesn't already end in one."""
         if self._lines and self._lines[-1].kind != _Kind.BLANK:
             self._lines.append(_Line(raw="", kind=_Kind.BLANK))
-        elif not self._lines:
-            pass
         for raw in lines:
             self._lines.append(_classify(raw))
         self._trailing_newline = True

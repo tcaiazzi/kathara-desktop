@@ -610,7 +610,6 @@ export function useForceLayout(
       engineRef.current = null;
       canvas.replaceChildren();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model, relayoutNonce]);
 
   const fit = useCallback(() => {

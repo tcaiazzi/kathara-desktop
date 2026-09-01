@@ -177,7 +177,6 @@ export function useLiveTty(enabled: boolean, options: UseLiveTtyOptions): UseLiv
     };
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => disconnect, []);
 
   return { containerRef, terminalRef, connected, connecting, connect, disconnect, fit };

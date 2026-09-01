@@ -46,7 +46,7 @@ export function TerminalPanel(props: IDockviewPanelProps<{ machine: string }>) {
       if (!term) return;
       switch (event.event) {
         case "output":
-          term.write(event.text);
+          term.write(event.bytes);
           break;
         case "ready":
           term.write(`\r\nConnected to ${machine} (${shell})\r\n`);

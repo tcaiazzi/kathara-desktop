@@ -2,6 +2,7 @@
 
 import pytest
 
+from kathara_api.errors import ApiError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 
@@ -81,8 +82,11 @@ def test_build_external_link_splits_vlan_tag():
 
 
 def test_build_external_link_rejects_out_of_range_vlan():
-    with pytest.raises(ValueError):
+    # ApiError (400), not a bare ValueError: ValueError isn't in errors.KATHARA_STATUS_MAP, so it
+    # would surface to the client as a 500 for what is plainly a bad request.
+    with pytest.raises(ApiError) as excinfo:
         lab_builder.build_external_link("eth0.5000")
+    assert excinfo.value.status_code == 400
 
 
 def test_build_lab_wires_external_link_vlan():

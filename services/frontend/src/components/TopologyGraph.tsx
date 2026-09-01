@@ -170,7 +170,7 @@ export function TopologyGraph({
     return () => {
       live = false;
     };
-  }, [labName]);
+  }, [labName, toast]);
 
   // Re-read on lab switch, model change (a device added), Re-layout, and layout arrival.
   const initialPositions = useMemo(

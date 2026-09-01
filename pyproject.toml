@@ -18,6 +18,11 @@ dependencies = [
     "sse-starlette>=2.0",
     "kathara>=3.8.3",
     "python-multipart>=0.0.9",
+    # Imported directly by this package (routers/exec.py, services/kathara_service.py). Both also
+    # arrive as transitive dependencies of `kathara`, but a direct import deserves a direct
+    # declaration — otherwise an upstream that drops either one breaks this package silently.
+    "chardet>=5.0",
+    "fs>=2.4",
 ]
 
 [project.optional-dependencies]

@@ -695,7 +695,7 @@ class KatharaService:
                 raise PathNotFoundError(f"Path `{path}` not found.")
             # guest == "/" with nothing materialized yet (a device with no machine.fs) is a
             # legitimate empty listing, not an error.
-        return sorted(entries.values(), key=lambda e: (not e.is_dir, e.name))
+        return sorted(entries.values(), key=lambda e: (not e.is_dir, e.name.lower()))
 
     def fs_read_text_offline(self, lab_name: str, path: str) -> str:
         if path.strip("/") == "lab.conf":
@@ -1169,7 +1169,18 @@ class KatharaService:
             new_conf = lab_conf_edit.add_device(base, spec) if base is not None else None
             machine = lab_builder.build_machine(lab, spec)
             if lab_deployed:
-                self._facade().deploy_machine(machine)
+                try:
+                    self._facade().deploy_machine(machine)
+                except Exception:
+                    # Take the device back out of the model. Without this, a failed deploy leaves a
+                    # device that exists in the topology but in neither lab.conf (not written yet,
+                    # see below) nor the backend — and it would keep reappearing until the lab is
+                    # reloaded from disk. Nothing on disk to clean up: build_machine only builds
+                    # the model, and `machine.fs` is non-None only for a folder that already
+                    # existed (Machine.__init__), which is not ours to delete.
+                    self._compact_interfaces(machine)
+                    lab.remove_machine(name=spec.name, delete_fs=False)
+                    raise
             if new_conf is not None:
                 self.store.write_lab_conf_text(lab_name, new_conf)
         return machine
@@ -1359,10 +1370,7 @@ class KatharaService:
         # `/bin -> usr/bin`) without following symlinks encountered among the listed children —
         # plain `find` (`-P`) treats a symlinked `path` as a leaf at depth 0, so with `-mindepth 1`
         # excluding that depth-0 node, listing a symlinked directory silently returns zero entries.
-        cmd = (
-            f"find -H {quoted} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%Y\\t%s\\t%m\\t%T@\\n' "
-            "| LC_ALL=C sort"
-        )
+        cmd = f"find -H {quoted} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%Y\\t%s\\t%m\\t%T@\\n'"
         stdout, _ = self._exec_checked(
             lab_name,
             machine_name,
@@ -1396,7 +1404,9 @@ class KatharaService:
             except ValueError:
                 entry["mtime"] = None
             entries.append(entry)
-        return entries
+        # Same order as the offline tree and the host browser — directories first, then
+        # case-insensitive by name — rather than whatever `find` happened to emit.
+        return sorted(entries, key=lambda e: (not e["is_dir"], e["name"].lower()))
 
     # Exit code used to signal "path is a directory" from the combined test+cat below — distinct
     # from `cat`'s own exit codes (1 on error) and from a shell's own low-numbered exit codes.

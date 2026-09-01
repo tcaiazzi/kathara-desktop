@@ -56,7 +56,11 @@ export function SettingsPage() {
     setBusy(true);
     setLockedError(null);
     try {
-      const updated = await api.updateSettings(form);
+      // `last_checked` is Kathara's own "when did I last check for a release" bookkeeping: it is
+      // shown above, never edited here, and PUTting it back would write a client-side echo over
+      // whatever the backend has since recorded.
+      const { last_checked: _lastChecked, ...payload } = form;
+      const updated = await api.updateSettings(payload);
       setForm(updated);
       toast.show("Settings saved.", "success");
     } catch (err) {

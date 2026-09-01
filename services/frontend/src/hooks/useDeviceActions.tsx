@@ -190,17 +190,24 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
       toast.show("No devices available in this lab.", "danger");
       return;
     }
-    const byName = new Map((detail?.machines ?? []).map((m) => [m.name, m]));
-    const def = names[0];
-    const defUsed = (byName.get(def)?.interfaces ?? []).map((i) => i.num);
-    const defNext = defUsed.length ? Math.max(...defUsed) + 1 : 0;
     setActionConfig({
       title: `Add interface to ${domainNode.name}`,
       hint: "Mode follows the chosen device's state: a stopped device edits lab.conf (uses the interface number); a running device is a runtime change (auto-numbered, not saved to lab.conf).",
       submitLabel: "Add interface",
       fields: [
-        { name: "machine", label: "Device", options: names.map((v) => ({ value: v, label: v })), value: def },
-        { name: "interface_number", label: "Interface number (stopped devices only)", type: "number", value: String(defNext), min: 0 },
+        { name: "machine", label: "Device", options: names.map((v) => ({ value: v, label: v })), value: names[0] },
+        // Deliberately left empty rather than pre-filled with the first device's next free
+        // number: this modal's device is a dropdown, and a pre-filled number would go stale the
+        // moment the user picks a different device — submitting a number that device already
+        // uses. Empty means "next free one", resolved server-side against the real lab.conf.
+        {
+          name: "interface_number",
+          label: "Interface number (stopped devices only)",
+          type: "number",
+          value: "",
+          min: 0,
+          hint: "Leave empty to use the device's next free interface number.",
+        },
         { name: "mac_address", label: "MAC address (optional)", placeholder: "02:00:00:00:00:01" },
       ],
       onSubmit: async ({ machine, interface_number, mac_address }) => {
@@ -209,7 +216,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
         const running = detail?.machines.find((m) => m.name === clean)?.running ?? false;
         const mac = mac_address.trim() || undefined;
         let num: number | undefined;
-        if (!running) {
+        if (!running && interface_number.trim()) {
           num = Number.parseInt(interface_number, 10);
           if (!Number.isInteger(num) || num < 0) {
             toast.show("Interface number must be an integer >= 0.", "danger");
@@ -220,7 +227,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
           () => api.connectMachine(labName, clean, domainNode.name, num, mac),
           running
             ? `Added interface on ${clean} → ${domainNode.name} (runtime).`
-            : `Added eth${num} on ${clean} to ${domainNode.name}.`,
+            : `Added ${num === undefined ? "an interface" : `eth${num}`} on ${clean} to ${domainNode.name}.`,
         );
       },
     });

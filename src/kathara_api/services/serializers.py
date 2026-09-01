@@ -69,7 +69,7 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
         mem=machine.meta.get("mem"),
         cpus=machine.meta.get("cpus"),
         ports=_ports_to_schema(machine.get_ports()),
-        envs=machine.get_envs(),
+        envs={k: str(v) for k, v in machine.get_envs().items()},
         sysctls=machine.get_sysctls(),
         exec_commands=machine.get_exec_commands(),
         # Read straight from `meta` rather than the `is_privileged()`/`is_ipv6_enabled()`/
@@ -81,7 +81,10 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
         ulimits=_ulimits_to_schema(machine.meta.get("ulimits", {})),
         interfaces=interfaces,
         privileged=bool(machine.meta.get("privileged", False)),
-        bridged=machine.is_bridged(),
+        # `is_bridged()` happens to be a plain `meta` read with a False default, unlike the
+        # getters the comment above rules out — but reading `meta` directly here keeps every flag
+        # on this form answering the same question: what did *this device* declare.
+        bridged=bool(machine.meta.get("bridged", False)),
         ipv6=machine.meta.get("ipv6"),
         shell=machine.meta.get("shell"),
         num_terms=machine.meta.get("num_terms"),
