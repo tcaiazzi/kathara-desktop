@@ -51,6 +51,7 @@ export interface UseForceLayoutCallbacks {
   onSelect: (id: string | null) => void;
   onDismissContextMenu: () => void;
   onNodeContextMenu: (node: TopoNode, clientX: number, clientY: number) => void;
+  onPaneContextMenu: (clientX: number, clientY: number) => void;
   onNodeDoubleClick: (node: TopoNode) => void;
 }
 
@@ -479,6 +480,9 @@ export function useForceLayout(
     }
 
     function onBgPointerDown(ev: PointerEvent) {
+      // Right-click is handled entirely by the contextmenu listener below (see onNodePointerDown's
+      // matching guard for why: otherwise this pointerdown's pan setup would fire alongside it).
+      if (ev.button !== 0) return;
       callbacksRef.current.onDismissContextMenu();
       hideTooltip();
       selectNode(null);
@@ -565,6 +569,12 @@ export function useForceLayout(
     selectNode(keepSelected != null && byId[keepSelected] ? keepSelected : null);
 
     svgNode.addEventListener("pointerdown", onBgPointerDown as EventListener);
+    svgNode.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      hideTooltip();
+      selectNode(null);
+      callbacksRef.current.onPaneContextMenu((ev as MouseEvent).clientX, (ev as MouseEvent).clientY);
+    });
     svgNode.addEventListener(
       "wheel",
       (ev: WheelEvent) => {

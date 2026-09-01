@@ -244,6 +244,16 @@ export function TopologyGraph({
         const items = nd.type === "dev" ? deviceContextItems(nd) : domainContextItems(nd);
         setContextMenu({ x, y, items });
       },
+      onPaneContextMenu: (x, y) => {
+        setContextMenu({
+          x,
+          y,
+          items: [
+            { label: "New device", action: () => openAddDevice() },
+            { label: "New collision domain", action: openAddDomain },
+          ],
+        });
+      },
       onNodeDoubleClick: (nd) => {
         if (nd.type === "dev") onEditFiles();
         else openAddDevice(nd.name);

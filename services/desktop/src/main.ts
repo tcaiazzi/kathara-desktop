@@ -28,7 +28,7 @@ import { buildMenu } from "./menu";
 import { defaultLabsDir, frontendDir, labsDir } from "./paths";
 import { writePrefs } from "./prefs";
 import { runPreflight, type Check } from "./prereqs";
-import { createMainWindow, installNavigationPolicy, showSetupPage } from "./windows";
+import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
 
 // Electron derives userData's folder name from app.name, which defaults to package.json's
 // productName ("Kathara IDE") — a folder with a space and mixed case. Override it to this
@@ -322,6 +322,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     // Before any window exists, so no WebContents is ever created unguarded.
     installNavigationPolicy(backendUrl);
+    installEditContextMenu();
 
     win = createMainWindow();
     win.on("closed", () => {

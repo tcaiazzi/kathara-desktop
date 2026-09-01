@@ -1,5 +1,5 @@
 /** Window creation and the navigation policy that keeps the renderer pinned to the backend. */
-import { app, BrowserWindow, shell } from "electron";
+import { app, BrowserWindow, Menu, shell } from "electron";
 import path from "node:path";
 import { log } from "./logger";
 import { iconPath, setupPage } from "./paths";
@@ -85,6 +85,26 @@ function applyNavigationPolicy(contents: Electron.WebContents, origin: () => str
       event.preventDefault();
       openExternally(url);
     }
+  });
+}
+
+/**
+ * Native Cut/Copy/Paste for every editable element in every WebContents the app ever creates
+ * (the main window and the terminal popups alike) — Electron shows no context menu at all by
+ * default, so without this a right-click inside the CodeMirror editor (or any text input) does
+ * nothing. Scoped to `params.isEditable` so it never appears over read-only content.
+ */
+export function installEditContextMenu(): void {
+  app.on("web-contents-created", (_event, contents) => {
+    contents.on("context-menu", (_e, params) => {
+      if (!params.isEditable) return;
+      const { editFlags } = params;
+      Menu.buildFromTemplate([
+        { label: "Cut", role: "cut", enabled: editFlags.canCut },
+        { label: "Copy", role: "copy", enabled: editFlags.canCopy },
+        { label: "Paste", role: "paste", enabled: editFlags.canPaste },
+      ]).popup({ window: BrowserWindow.fromWebContents(contents) ?? undefined });
+    });
   });
 }
 
