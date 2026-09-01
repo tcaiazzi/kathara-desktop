@@ -30,10 +30,30 @@ jobs:
         working-directory: services/desktop
       - uses: actions/upload-artifact@v7
         with:
-          name: kathara-ide-linux
           path: |
             services/desktop/release/*.AppImage
-            services/desktop/release/*.deb
+            !services/desktop/release/*-arm64.AppImage
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: services/desktop/release/*-arm64.AppImage
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: services/desktop/release/*_amd64.deb
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: services/desktop/release/*_arm64.deb
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: services/desktop/release/*.x86_64.rpm
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: services/desktop/release/*.aarch64.rpm
+          archive: false
 
   mac:
     if: ${{ inputs.platforms == 'all' || inputs.platforms == 'mac' }}
@@ -51,8 +71,14 @@ jobs:
         working-directory: services/desktop
       - uses: actions/upload-artifact@v7
         with:
-          name: kathara-ide-mac
-          path: services/desktop/release/*.dmg
+          path: |
+            services/desktop/release/*.dmg
+            !services/desktop/release/*-arm64.dmg
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          path: services/desktop/release/*-arm64.dmg
+          archive: false
 
   windows:
     if: ${{ inputs.platforms == 'all' || inputs.platforms == 'windows' }}
@@ -70,5 +96,5 @@ jobs:
         working-directory: services/desktop
       - uses: actions/upload-artifact@v7
         with:
-          name: kathara-ide-windows
           path: services/desktop/release/*.exe
+          archive: false

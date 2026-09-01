@@ -28,7 +28,16 @@ protocols:
 
 linux:
   # Primary target: Docker runs natively, no VM in between.
-  target: [AppImage, deb]
+  # AppImage covers every distro; deb/rpm give apt- and dnf-based distros a native
+  # package. All three build for x64 and arm64 (no native node modules to rebuild,
+  # so this cross-builds fine from the x64 CI runner).
+  target:
+    - target: AppImage
+      arch: [x64, arm64]
+    - target: deb
+      arch: [x64, arm64]
+    - target: rpm
+      arch: [x64, arm64]
   category: Development
   synopsis: IDE for the Kathara network emulation framework
   icon: resources/icon.png
