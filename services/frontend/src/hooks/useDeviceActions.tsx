@@ -74,6 +74,11 @@ export function useDeviceActions({
     return nd && nd.type === "dev" ? nd : null;
   }
 
+  function findDomainNode(name: string): DomainNode | null {
+    const nd = model.nodes.find((n) => n.id === `cd:${name}`);
+    return nd && nd.type === "cd" ? nd : null;
+  }
+
   async function withRefresh(work: () => Promise<unknown>, okMsg: string): Promise<boolean> {
     try {
       await work();
@@ -343,6 +348,7 @@ export function useDeviceActions({
     actionConfig,
     setActionConfig,
     findDeviceNode,
+    findDomainNode,
     deviceContextItems,
     domainContextItems,
     openAddDevice,

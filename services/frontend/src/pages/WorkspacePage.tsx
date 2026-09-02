@@ -534,7 +534,8 @@ export function WorkspacePage() {
     onOpenOptions: openOptionsEditor,
     onOpenAddDevice: openAddDeviceModal,
   });
-  const { deviceContextItems, findDeviceNode, actionConfig, setActionConfig } = deviceActions;
+  const { deviceContextItems, findDeviceNode, domainContextItems, findDomainNode, actionConfig, setActionConfig } =
+    deviceActions;
 
   // Close terminal panels whose device no longer exists in the lab (matches the old grid behavior).
   useEffect(() => {
@@ -670,6 +671,14 @@ export function WorkspacePage() {
     const nd = findDeviceNode(machine);
     if (!nd) return;
     setCtxMenu({ x: e.clientX, y: e.clientY, items: deviceContextItems(nd) });
+  }
+
+  // Same menu as a right-click on this collision domain in the topology canvas (useDeviceActions).
+  function openDomainMenu(e: React.MouseEvent, domain: string) {
+    e.preventDefault();
+    const nd = findDomainNode(domain);
+    if (!nd) return;
+    setCtxMenu({ x: e.clientX, y: e.clientY, items: domainContextItems(nd) });
   }
 
   const deviceMachines = detail?.machines ?? [];
@@ -830,7 +839,8 @@ export function WorkspacePage() {
                         key={lk.name}
                         className={`kt-ws-row ${selectedId === `cd:${lk.name}` ? "active" : ""}`}
                         onClick={() => setSelectedId(`cd:${lk.name}`)}
-                        title="Select in topology"
+                        onContextMenu={(e) => openDomainMenu(e, lk.name)}
+                        title="Click to select · right-click for actions"
                       >
                         <span className={`kt-ws-dot ${lk.running ? "running" : "stopped"}`} />
                         <span className="kt-ws-row-name">{lk.name}</span>
