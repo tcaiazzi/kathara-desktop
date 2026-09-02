@@ -10,7 +10,7 @@ import {
   type IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { Loader2, SquareTerminal } from "lucide-react";
+import { Loader2, ShieldAlert, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -947,6 +947,17 @@ export function WorkspacePage() {
                 {detail.name || "(unnamed)"}
               </h5>
               <Badge bg={detail.deployed ? "success" : "secondary"}>{detail.deployed ? "deployed" : "undeployed"}</Badge>
+              {detail.machines.some((m) => m.privileged) && (
+                <Badge
+                  bg="warning"
+                  text="dark"
+                  className="d-flex align-items-center gap-1"
+                  title="This lab has privileged devices — deploying it requires administrator privileges."
+                >
+                  <ShieldAlert size={12} />
+                  privileged
+                </Badge>
+              )}
               <div className="ms-auto d-flex gap-2">
                 <DropdownButton
                   size="sm"
