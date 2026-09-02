@@ -7,6 +7,7 @@ from Kathara.exceptions import (
     LabNotFoundError,
     MachineAlreadyExistsError,
     MachineOptionError,
+    PrivilegeError,
 )
 from kathara_api.errors import SettingsLockedError, register_exception_handlers
 
@@ -37,6 +38,13 @@ def test_already_exists_maps_to_409():
 def test_machine_option_maps_to_400():
     client = _client_raising(MachineOptionError("bad option"))
     assert client.get("/boom").status_code == 400
+
+
+def test_privilege_error_maps_to_403():
+    client = _client_raising(PrivilegeError("You must be root in order to start device `pc1`."))
+    resp = client.get("/boom")
+    assert resp.status_code == 403
+    assert resp.json()["error_type"] == "PrivilegeError"
 
 
 def test_settings_locked_maps_to_409():

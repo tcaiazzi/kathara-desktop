@@ -28,5 +28,8 @@
     "esbuild": "^0.24.0",
     "typescript": "^5.5.4"
   },
-  "homepage": "https://www.kathara.org/"
+  "homepage": "https://www.kathara.org/",
+  "dependencies": {
+    "@vscode/sudo-prompt": "^9.3.2"
+  }
 }

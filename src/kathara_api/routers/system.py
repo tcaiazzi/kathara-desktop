@@ -1,5 +1,8 @@
 """System, health, and settings endpoints."""
 
+import os
+import signal
+
 from fastapi import APIRouter, Depends
 
 from ..dependencies import get_service
@@ -26,6 +29,19 @@ def health() -> dict:
 def system_info(service: KatharaService = Depends(get_service)) -> SystemInfo:
     """Return the active manager, release version, and available managers."""
     return SystemInfo.model_validate(service.system_info())
+
+
+@router.post("/system/shutdown", response_model=Message)
+def shutdown() -> Message:
+    """Gracefully stop this process (SIGTERM, same as an interactive Ctrl-C).
+
+    The desktop shell's only way to stop a `sudo`-elevated backend: once this process is running
+    as root, the shell (running unprivileged) can no longer deliver it a process signal directly
+    (`kill()` across that privilege boundary fails with EPERM) — but it can still reach this
+    still-listening localhost port over plain HTTP regardless of this process's UID.
+    """
+    os.kill(os.getpid(), signal.SIGTERM)
+    return Message(detail="Shutting down.")
 
 
 @router.get("/settings", response_model=SettingsView)

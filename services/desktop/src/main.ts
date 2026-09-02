@@ -12,7 +12,16 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
-import { backendLogPath, backendUrl, onBackendExit, startBackend, stopBackend } from "./backend";
+import {
+  backendLogPath,
+  backendUrl,
+  onBackendExit,
+  startBackend,
+  startBackendElevatedLinux,
+  startBackendElevatedNative,
+  stopBackend,
+  type ElevateResult,
+} from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
 import { fixPathEnv } from "./env";
 import { runAutoInstall } from "./install";
@@ -27,7 +36,7 @@ import {
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { defaultLabsDir, frontendDir, labsDir, packagedVenvPython } from "./paths";
+import { defaultLabsDir, labsDir, packagedVenvPython, resolveStaticDir } from "./paths";
 import { writePrefs } from "./prefs";
 import { runPreflight, type Check, type Preflight } from "./prereqs";
 import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
@@ -64,12 +73,18 @@ function setStatus(next: Status): void {
   status = next;
 }
 
-/** Run preflight, start the backend, and load the UI. Safe to call again on "Retry". */
-async function startup(): Promise<void> {
+/**
+ * Run preflight, start the backend, and load the UI. Safe to call again on "Retry".
+ *
+ * `resumePath`, if given, is appended to the loaded URL (e.g. `/workspace/<lab>` from
+ * elevation:drop below) so a backend restart triggered *from inside* an already-open lab lands
+ * back there instead of the bare root every other caller of startup() wants.
+ */
+async function startup(resumePath?: string): Promise<void> {
   if (!win) return;
   setStatus({ state: "starting", message: "Checking prerequisites…" });
 
-  const staticDir = frontendDir();
+  const staticDir = resolveStaticDir();
   const preflight = await runPreflight(staticDir !== null);
   lastPreflight = preflight;
   if (!preflight.ok || !preflight.python || !staticDir) {
@@ -81,7 +96,7 @@ async function startup(): Promise<void> {
   try {
     const handle = await startBackend(preflight.python, staticDir);
     setStatus({ state: "ready" });
-    await win.loadURL(handle.baseUrl);
+    await win.loadURL(resumePath ? `${handle.baseUrl}${resumePath}` : handle.baseUrl);
     if (pendingDeepLink) {
       handleDeepLink(win, pendingDeepLink);
       pendingDeepLink = null;
@@ -100,6 +115,68 @@ function registerIpc(): void {
   ipcMain.handle("status:retry", async () => {
     await stopBackend();
     await startup();
+  });
+
+  // Driven from the renderer's elevation prompt (see ElevationContext.tsx), triggered when a
+  // deploy needs a privileged device. `password` is required on Linux (fed to `sudo -S`) and
+  // ignored elsewhere, where the OS shows its own native admin-password dialog instead.
+  // `resumeLab`, if given, is the lab the caller was trying to deploy — reflected into the
+  // reload URL below so the SPA can continue that deploy on its own once it's back up, instead
+  // of leaving the user to notice the reload finished and click Deploy again.
+  //
+  // On success this mirrors startup(): the SPA is reloaded against the new (now-elevated)
+  // backend's origin, which tears down the calling renderer mid-flight — the invoking IPC call
+  // typically never observes this resolution, only a failure one. That's expected; the renderer
+  // must not depend on a success response here.
+  ipcMain.handle("elevation:elevate", async (_e, password?: string, resumeLab?: string): Promise<ElevateResult> => {
+    const python = lastPreflight?.python;
+    const staticDir = resolveStaticDir();
+    if (!python || !staticDir) {
+      return { ok: false, reason: "error", message: "backend is not ready to be restarted" };
+    }
+    log("elevation requested");
+    const result =
+      process.platform === "linux"
+        ? await startBackendElevatedLinux(python, staticDir, password ?? "")
+        : await startBackendElevatedNative(python, staticDir);
+
+    if (!result.ok) {
+      log(`elevation failed: ${result.reason} — ${result.message}`);
+      return result;
+    }
+
+    setStatus({ state: "ready" });
+    if (win) {
+      const url = new URL(result.handle.baseUrl);
+      if (resumeLab) {
+        url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
+        url.searchParams.set("resumeDeploy", "1");
+      }
+      await win.loadURL(url.toString());
+    }
+    return result;
+  });
+
+  // Driven after a successful undeploy (see useLabLifecycleActions.ts): least-privilege — an
+  // elevated backend shouldn't keep running as root once nothing it's doing needs that. There's
+  // no in-place "un-sudo" for a running process, so this is the same stop-and-restart dance as
+  // elevating, just back to the plain unprivileged backend; reuses startup() (preflight +
+  // startBackend + loadURL + status) rather than duplicating it, same as status:retry above. A
+  // cheap no-op — no restart, no reload — when the backend isn't currently elevated at all,
+  // which is the common case (most undeploys aren't for a privileged-device lab).
+  ipcMain.handle("elevation:drop", async (_e, openLab?: string): Promise<{ dropped: boolean }> => {
+    const baseUrl = backendUrl();
+    if (!baseUrl) return { dropped: false };
+    try {
+      const info = await fetch(`${baseUrl}/api/system`).then((r) => r.json());
+      if (!info.is_admin) return { dropped: false };
+    } catch {
+      return { dropped: false };
+    }
+    log("dropping elevated privileges (lab undeployed)");
+    await stopBackend();
+    await startup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
+    return { dropped: true };
   });
 
   ipcMain.handle("status:pick-python", async () => {

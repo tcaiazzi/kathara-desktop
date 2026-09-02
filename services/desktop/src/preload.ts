@@ -35,6 +35,25 @@ const api = {
   showBackendLog: () => ipcRenderer.invoke("shell:show-log"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 
+  // -- privileged-device elevation (see ElevationContext.tsx) --
+  /** `password` is required on Linux, ignored on macOS/Windows (native OS prompt instead).
+   * `resumeLab`, if given, is reflected into the post-reload URL so the SPA can continue that
+   * lab's deploy on its own once it's back up. On success the window reloads against the
+   * newly-elevated backend, tearing this page down before this call typically resolves —
+   * callers must not rely on a success response. */
+  elevateBackend: (
+    password?: string,
+    resumeLab?: string,
+  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }> =>
+    ipcRenderer.invoke("elevation:elevate", password, resumeLab),
+  /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
+   * window against the new instance) so it doesn't keep running with more privilege than
+   * whatever's deployed right now actually needs. A no-op (resolves `{ dropped: false }`,
+   * no reload) if it wasn't elevated to begin with. `openLab`, if given, is reflected into the
+   * post-reload URL so the reload lands back on the lab that was open instead of the bare root. */
+  dropElevation: (openLab?: string): Promise<{ dropped: boolean }> =>
+    ipcRenderer.invoke("elevation:drop", openLab),
+
   // -- window / shell actions behind the app-drawn menu bar --
   getAppInfo: (): Promise<{ version: string; platform: string }> =>
     ipcRenderer.invoke("shell:app-info"),

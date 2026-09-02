@@ -29,6 +29,7 @@ from Kathara.exceptions import (
     MachineOptionError,
     NonSequentialMachineInterfaceError,
     NotSupportedError,
+    PrivilegeError,
     SettingsError,
 )
 
@@ -116,6 +117,11 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     InvalidImageArchitectureError: status.HTTP_400_BAD_REQUEST,
     NotSupportedError: status.HTTP_400_BAD_REQUEST,
     SettingsError: status.HTTP_400_BAD_REQUEST,
+    # 403 Forbidden
+    # Raised by Kathara itself (e.g. DockerMachine.create) when a privileged device is started
+    # without the whole process's real UID being 0 — distinct error_type so the frontend can
+    # offer to relaunch the backend elevated instead of just showing a generic error.
+    PrivilegeError: status.HTTP_403_FORBIDDEN,
     # 502 / 503 infrastructure
     DockerDaemonConnectionError: status.HTTP_503_SERVICE_UNAVAILABLE,
     HTTPConnectionError: status.HTTP_502_BAD_GATEWAY,

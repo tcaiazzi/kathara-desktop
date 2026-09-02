@@ -31,6 +31,22 @@ export interface DesktopApi {
   isWindowMaximized(): Promise<boolean>;
   showBackendLog(): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** `password` is required on Linux (fed to `sudo -S`); ignored on macOS/Windows, where the OS
+   * shows its own native admin-password dialog instead. `resumeLab`, if given, is reflected into
+   * the post-reload URL so the SPA can continue that lab's deploy on its own once it's back up.
+   * On success the window reloads against the newly-elevated backend, tearing this page down
+   * before this call typically resolves — do not rely on a success response, only on a failure
+   * one. */
+  elevateBackend(
+    password?: string,
+    resumeLab?: string,
+  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }>;
+  /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
+   * window) so it doesn't keep running with more privilege than whatever's deployed right now
+   * actually needs. A no-op (no reload) if it wasn't elevated to begin with — call freely after
+   * any undeploy, not just ones you know were privileged. `openLab`, if given, is reflected into
+   * the post-reload URL so the reload lands back on the lab that was open instead of bare root. */
+  dropElevation(openLab?: string): Promise<{ dropped: boolean }>;
   /** Native "Import lab" picker; null when the user cancels. */
   pickLabArchive(): Promise<{ name: string; data: Uint8Array } | null>;
   saveFile(name: string, data: Uint8Array): Promise<string | null>;

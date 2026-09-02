@@ -1,5 +1,6 @@
 /** Filesystem locations the shell needs, resolved differently in dev and when packaged. */
 import { app } from "electron";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -24,6 +25,50 @@ export function frontendDir(): string | null {
     ? path.join(process.resourcesPath, "frontend")
     : path.join(repoRoot(), "services", "frontend", "dist");
   return fs.existsSync(path.join(candidate, "index.html")) ? candidate : null;
+}
+
+/**
+ * `frontendDir()`, but safe to hand to a backend that might run as a *different* user (i.e. a
+ * `sudo`-elevated backend — see backend.ts's startBackendElevatedLinux/Native).
+ *
+ * An AppImage doesn't run its contents directly: its own runtime FUSE-mounts itself under
+ * `/tmp/.mountXXXXXX/` as the launching user first, and `frontendDir()`'s packaged candidate
+ * resolves inside that mount. FUSE mounts are only readable by the mounting user unless made
+ * with `allow_other` — unlike a real filesystem, root does *not* automatically bypass this — so
+ * an elevated backend gets `PermissionError` trying to read it. Detected via `$APPIMAGE`, which
+ * the AppImage runtime sets to the AppImage's own path — the standard way an app tells it's
+ * running from one. Not an issue for a dev checkout or a .deb/.rpm install: both resolve to a
+ * real directory on disk that any UID can read.
+ *
+ * Copies the frontend out to a stable, real on-disk location once (cached across launches) and
+ * returns that instead. Keyed on a hash of `index.html`'s own content, not `app.getVersion()`:
+ * Vite fingerprints every asset's filename into the script/link tags `index.html` references, so
+ * any real change to the build changes this file's bytes too — a version bump reliably causes
+ * one anyway, but keying on content instead also self-invalidates a rebuild that ships under the
+ * *same* version (e.g. a local dev/test cycle), which version-only keying silently kept serving
+ * a stale copy for.
+ */
+export function resolveStaticDir(): string | null {
+  const candidate = frontendDir();
+  if (!candidate || !process.env.APPIMAGE) return candidate;
+
+  const indexHtml = fs.readFileSync(path.join(candidate, "index.html"));
+  const key = crypto.createHash("sha256").update(indexHtml).digest("hex").slice(0, 16);
+
+  const cacheRoot = path.join(app.getPath("userData"), "frontend-cache");
+  const cached = path.join(cacheRoot, key);
+  if (!fs.existsSync(path.join(cached, "index.html"))) {
+    fs.mkdirSync(cacheRoot, { recursive: true });
+    fs.rmSync(cached, { recursive: true, force: true });
+    fs.cpSync(candidate, cached, { recursive: true });
+
+    // Drop every other cached copy — there's normally at most one (the previous build's), never
+    // worth keeping once this launch has a fresh one of its own.
+    for (const entry of fs.readdirSync(cacheRoot)) {
+      if (entry !== key) fs.rmSync(path.join(cacheRoot, entry), { recursive: true, force: true });
+    }
+  }
+  return cached;
 }
 
 /**

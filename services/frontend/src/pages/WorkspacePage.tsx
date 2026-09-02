@@ -13,7 +13,7 @@ import "dockview-react/dist/styles/dockview.css";
 import { Loader2, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { DevicesTable } from "../components/DevicesTable";
 import { LabExplorer } from "../components/LabExplorer";
 import { LinksTable } from "../components/LinksTable";
@@ -386,6 +386,7 @@ function focusTerminals(api: DockviewApi) {
 export function WorkspacePage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
   const ktTheme = useKtTheme();
   const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
@@ -615,7 +616,7 @@ export function WorkspacePage() {
     if (!detail) return;
     setDeployAction(detail.deployed ? "undeploy" : "deploy");
     try {
-      await deployToggle({ name, deployed: detail.deployed }, setBusy, async () => {
+      await deployToggle({ name, deployed: detail.deployed, machines: detail.machines }, setBusy, async () => {
         await load();
         await reloadLabs();
       });
@@ -623,6 +624,30 @@ export function WorkspacePage() {
       setDeployAction(null);
     }
   }
+
+  // After an elevation-triggered restart (see ElevationContext.tsx / services/desktop's
+  // main.ts), the shell reloads straight into /workspace/<name>?resumeDeploy=1 — continue the
+  // deploy the user was trying to do automatically instead of leaving them to notice the reload
+  // finished and click Deploy again. Guarded by a ref, not just stripping the query param, so
+  // this can only ever fire once per page load.
+  const resumedDeployRef = useRef(false);
+  useEffect(() => {
+    if (resumedDeployRef.current || !detail || searchParams.get("resumeDeploy") !== "1") return;
+    resumedDeployRef.current = true;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("resumeDeploy");
+        return next;
+      },
+      { replace: true },
+    );
+    if (!detail.deployed) {
+      toast.show("Administrator privileges granted — deploying now.", "success");
+      void handleDeployToggle();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detail, searchParams, setSearchParams]);
 
   // `labName` defaults to the open lab (the header button); the rail's context menu passes the
   // right-clicked lab, which may be a different one — in that case the open lab stays put.
@@ -645,7 +670,7 @@ export function WorkspacePage() {
   // Undeploys every running lab (not just this one) — the labs themselves (lab.conf etc.) stay on
   // disk, so refresh the list + the currently open lab's deployed state rather than navigating away.
   async function handleWipeAll() {
-    await wipeAll(setBusy, async () => {
+    await wipeAll(name || undefined, setBusy, async () => {
       await reloadLabs();
       await load();
     });

@@ -3,6 +3,7 @@ import { AppNavbar } from "./components/AppNavbar";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import { isDesktop } from "./desktop/bridge";
 import { DesktopCommandsProvider } from "./desktop/DesktopCommands";
+import { ElevationProvider } from "./desktop/ElevationContext";
 import { TitleBar } from "./desktop/TitleBar";
 import { PromptProvider } from "./context/PromptContext";
 import { ToastProvider } from "./context/ToastContext";
@@ -48,24 +49,28 @@ export function App() {
     <ToastProvider>
       <ConfirmProvider>
         <PromptProvider>
-          {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
-              commands. Inert in the browser build. */}
-          <DesktopCommandsProvider>
-            <Routes>
-              {/* The Workspace is the app; "/" redirects into it. */}
-              <Route path="/" element={<Navigate to="/workspace" replace />} />
-              <Route element={<AppLayout />}>
-                <Route path="/settings" element={<SettingsPage />} />
-              </Route>
-              <Route element={<AppLayoutFull />}>
-                <Route path="/workspace" element={<WorkspacePage />} />
-                <Route path="/workspace/:name" element={<WorkspacePage />} />
-              </Route>
-              {/* No AppLayout: opened as its own bare browser window/tab (see
-                  services/terminalWindow.ts), not navigated to within the app shell. */}
-              <Route path="/labs/:name/terminal/:machine" element={<TerminalWindowPage />} />
-            </Routes>
-          </DesktopCommandsProvider>
+          {/* Inert in the browser build (no backend process for the page to elevate) — see
+              ElevationContext.tsx. */}
+          <ElevationProvider>
+            {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
+                commands. Inert in the browser build. */}
+            <DesktopCommandsProvider>
+              <Routes>
+                {/* The Workspace is the app; "/" redirects into it. */}
+                <Route path="/" element={<Navigate to="/workspace" replace />} />
+                <Route element={<AppLayout />}>
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Route>
+                <Route element={<AppLayoutFull />}>
+                  <Route path="/workspace" element={<WorkspacePage />} />
+                  <Route path="/workspace/:name" element={<WorkspacePage />} />
+                </Route>
+                {/* No AppLayout: opened as its own bare browser window/tab (see
+                    services/terminalWindow.ts), not navigated to within the app shell. */}
+                <Route path="/labs/:name/terminal/:machine" element={<TerminalWindowPage />} />
+              </Routes>
+            </DesktopCommandsProvider>
+          </ElevationProvider>
         </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>

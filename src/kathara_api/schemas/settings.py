@@ -11,6 +11,11 @@ class SystemInfo(BaseModel):
     manager: str
     version: str
     available_managers: dict[str, str]
+    # Whether this process's real UID is 0 — Kathara's own gate for privileged devices
+    # (DockerMachine.create -> Kathara.utils.is_admin()) checks the process's real UID, not
+    # Docker socket access, so this is what the frontend needs to know before offering an
+    # elevation prompt for a lab with privileged devices.
+    is_admin: bool
 
 
 class SettingsView(BaseModel):

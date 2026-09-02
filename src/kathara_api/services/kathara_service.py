@@ -35,6 +35,7 @@ from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
 from Kathara.model.Machine import Machine
 from Kathara.setting.Setting import Setting
+from Kathara.utils import is_admin
 from Kathara.webhooks.DockerHubApi import DockerHubApi
 from pydantic import ValidationError
 
@@ -133,6 +134,7 @@ class KatharaService:
             "manager": facade.get_formatted_manager_name(),
             "version": facade.get_release_version(),
             "available_managers": Kathara.get_available_managers_name(),
+            "is_admin": is_admin(),
         }
 
     def check_image(self, image: str) -> None:

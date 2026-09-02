@@ -13,6 +13,9 @@ export interface SystemInfo {
   manager: string;
   version: string;
   available_managers: Record<string, string>;
+  // Whether the backend process's real UID is 0 — Kathara's own gate for privileged devices
+  // checks this, not Docker socket access. See ElevationContext.tsx.
+  is_admin: boolean;
 }
 
 // Mirrors Kathara's Setting class plus whichever manager addon is active (extra="allow" on the
