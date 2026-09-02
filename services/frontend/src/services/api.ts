@@ -36,6 +36,21 @@ export class ApiError extends Error {
   }
 }
 
+// The backend always sends `detail` as a string (see errors.py's RequestValidationError
+// handler). This is a defensive fallback only, for a response that bypasses that — e.g. a body
+// a proxy/gateway generated itself — so a shape change degrades to a readable joined message
+// instead of `String(anArray)` -> "[object Object]".
+function coerceDetail(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((entry) => (entry && typeof entry === "object" && "msg" in entry ? String((entry as { msg: unknown }).msg) : null))
+      .filter((msg): msg is string => !!msg);
+    if (messages.length) return messages.join("; ");
+  }
+  return undefined;
+}
+
 // Parse an error response body and throw the ApiError it describes — the one place that maps a
 // non-2xx response to this client's error type, shared by the JSON helpers and by the blob
 // downloads (which can't use those: a binary success body must not be read as text).
@@ -51,7 +66,7 @@ async function throwApiError(res: Response): Promise<never> {
   }
   const err = data as Partial<ErrorResponse> | null;
   throw new ApiError(
-    err?.detail || res.statusText || `HTTP ${res.status}`,
+    coerceDetail(err?.detail) || res.statusText || `HTTP ${res.status}`,
     err?.error_type || `HTTP ${res.status}`,
     res.status,
   );

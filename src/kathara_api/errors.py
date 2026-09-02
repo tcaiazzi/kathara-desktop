@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from Kathara.exceptions import (
@@ -138,6 +139,24 @@ def _error_response(exc: Exception, code: int) -> JSONResponse:
     return JSONResponse(status_code=code, content=body.model_dump())
 
 
+def _validation_error_response(exc: RequestValidationError) -> JSONResponse:
+    """Flatten FastAPI's default validation-error body (``{"detail": [{"loc", "msg", "type", ...},
+    ...]}``) into this API's uniform ``ErrorResponse`` — every other handler here returns
+    ``detail`` as a plain string, and a client that doesn't special-case this one shape would
+    otherwise render the raw list (e.g. JS: ``String(anErrorList)`` -> ``"[object Object]"``).
+    """
+    messages = []
+    for err in exc.errors():
+        # `loc`'s first element is always where the value came from (``"body"``, ``"query"``,
+        # ``"path"``, ...) - useful for a debugger, not for a user-facing message.
+        field = ".".join(str(p) for p in err.get("loc", ())[1:])
+        msg = err.get("msg") or "Invalid value."
+        messages.append(f"{field}: {msg}" if field else msg)
+    detail = "; ".join(messages) or "Invalid request."
+    body = ErrorResponse(detail=detail, error_type="RequestValidationError")
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content=body.model_dump())
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach exception handlers mapping Kathara/API errors to HTTP responses.
 
@@ -159,6 +178,15 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     # Kathara raises SyntaxError for invalid device names / lab.conf values.
     app.add_exception_handler(SyntaxError, make_handler(status.HTTP_422_UNPROCESSABLE_CONTENT))
+
+    # Pydantic request-body/query-param validation (e.g. a device name failing its `Field`
+    # pattern) raises this before a route body ever runs. Without this handler it falls through
+    # to FastAPI's own default, whose body shape (`detail` as a list of {loc, msg, type}) doesn't
+    # match `ErrorResponse` — see `_validation_error_response`.
+    async def _handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        return _validation_error_response(exc)
+
+    app.add_exception_handler(RequestValidationError, _handle_validation_error)
 
     for exc_class, code in KATHARA_STATUS_MAP.items():
         app.add_exception_handler(exc_class, make_handler(code))
