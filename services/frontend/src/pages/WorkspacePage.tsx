@@ -921,7 +921,7 @@ export function WorkspacePage() {
               >
                 {detail.name || "(unnamed)"}
               </h5>
-              <Badge bg={detail.deployed ? "success" : "secondary"}>{detail.deployed ? "deployed" : "defined"}</Badge>
+              <Badge bg={detail.deployed ? "success" : "secondary"}>{detail.deployed ? "deployed" : "undeployed"}</Badge>
               <div className="ms-auto d-flex gap-2">
                 <DropdownButton
                   size="sm"
