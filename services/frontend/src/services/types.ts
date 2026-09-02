@@ -153,6 +153,19 @@ export interface LabImportResult extends LabDetail {
   warnings: string[];
 }
 
+// One bundled example network scenario (backend schemas/examples.py's ExampleSummary) — the
+// "start from an example" list on the frontend's welcome screen.
+export interface ExampleLab {
+  // The examples catalog's directory name; also the default lab name if installed as-is.
+  id: string;
+  description: string | null;
+  author: string | null;
+  n_machines: number;
+  // Whether a lab with this id already exists — the welcome screen renders "Open" instead of
+  // "Create" when true.
+  installed: boolean;
+}
+
 // A lab's fixed topology layout — the content of its `lab.layout` file (backend schemas/lab.py's
 // LabLayout). Keys are topology node ids (`dev:<machine>` / `cd:<collision domain>`); an empty
 // `nodes` map means the lab has no fixed layout.

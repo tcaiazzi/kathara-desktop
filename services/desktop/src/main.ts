@@ -24,8 +24,8 @@ import {
   type ElevateResult,
 } from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
-import { fixPathEnv } from "./env";
-import { runAutoInstall } from "./install";
+import { ensurePathEnv } from "./env";
+import { runAutoInstall, type InstallProgress, type InstallStep } from "./install";
 import {
   openLabsDir,
   openSystemTerminal,
@@ -38,8 +38,8 @@ import {
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
 import { defaultLabsDir, labsDir, packagedVenvPython, resolveStaticDir } from "./paths";
-import { writePrefs } from "./prefs";
-import { runPreflight, type Check, type Preflight } from "./prereqs";
+import { readPrefs, writePrefs } from "./prefs";
+import { runPreflight, type Check, type Preflight, type PreflightProgress } from "./prereqs";
 import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
 
 // Electron derives userData's folder name from app.name, which defaults to package.json's
@@ -65,14 +65,39 @@ app.setPath("userData", path.join(app.getPath("appData"), "kathara-ide"));
 // spinning forever with nothing to show for it.
 const BACKEND_QUERY_TIMEOUT_MS = 5_000;
 
+/** Ordered boot phases. KEEP IN SYNC with the PHASE_COPY table in setup.html. */
+export type BootPhase =
+  | "environment"     // querying the login shell for PATH
+  | "frontend"        // locating (and, under AppImage, copying) the bundled SPA
+  | "docker"          // `docker info` round trip to the daemon
+  | "python"          // interpreter discovery + the import probe
+  | "backend"         // spawning uvicorn and waiting for /api/health
+  | "install-venv"
+  | "install-pip"
+  | "install-wheel";
+
 type Status =
-  | { state: "starting"; message: string }
-  | { state: "prereq-failed"; checks: Check[] }
+  | {
+      state: "starting";
+      phase: BootPhase;
+      /** Free-text fallback; the page prefers its own copy for `phase`. */
+      message: string;
+      /** Epoch ms this attempt began, so the page can render elapsed time between polls. */
+      startedAt: number;
+      /** Checks decided so far this attempt, in display order. Grows as preflight proceeds. */
+      checks: Check[];
+      /** A live tail of subprocess output — install phases only. */
+      output?: string;
+      /** True until the first backend has ever come up healthy on this machine. Shapes the
+       * setup page's first-run copy ("Welcome to…" vs. "Starting…"). */
+      firstRun: boolean;
+    }
+  | { state: "prereq-failed"; checks: Check[]; notice?: string }
   | { state: "backend-failed"; checks: Check[]; error: string; logTail: string }
   | { state: "ready" };
 
 let win: BrowserWindow | null = null;
-let status: Status = { state: "starting", message: "Starting…" };
+let status: Status = { state: "starting", phase: "environment", message: "Starting…", startedAt: Date.now(), checks: [], firstRun: isFirstRun() };
 /** A deep link that arrived before the UI was ready, replayed once it is. */
 let pendingDeepLink: string | null = null;
 /** The most recent preflight result, so status:install knows which system Python to use. */
@@ -80,6 +105,89 @@ let lastPreflight: Preflight | null = null;
 
 function setStatus(next: Status): void {
   status = next;
+}
+
+/** No backend has ever come up healthy on this machine — see backend.ts's rememberPort, which is
+ * the only writer of launchCount. Read once per boot attempt (startup() below), not live, so an
+ * install completing mid-attempt doesn't flip the copy out from under the user half-way through. */
+function isFirstRun(): boolean {
+  return !(readPrefs().launchCount ?? 0);
+}
+
+let bootStartedAt = Date.now();
+let bootChecks: Check[] = [];
+
+/** Sets a "starting" status, carrying forward the checks/output accumulated so far this attempt
+ * unless the caller supplies fresh ones. The one place that assembles the "starting" payload, so
+ * every call site only has to say what changed. */
+function setPhase(phase: BootPhase, message: string, extra?: { checks?: Check[]; output?: string }): void {
+  if (extra?.checks) bootChecks = extra.checks;
+  setStatus({
+    state: "starting",
+    phase,
+    message,
+    startedAt: bootStartedAt,
+    checks: bootChecks,
+    output: extra?.output,
+    firstRun: isFirstRun(),
+  });
+}
+
+/**
+ * True while the main window is showing (or loading) setup.html.
+ *
+ * Tracked rather than derived from `win.webContents.getURL()`: during an in-flight load that
+ * still reports the *previous* URL (or ""), so it would guess wrong in exactly the case that
+ * matters — deciding whether a failure needs to navigate back to the setup page. Cleared from
+ * did-navigate below, so the elevation handlers' own loadURL calls keep it correct without
+ * needing edits inside their control flow.
+ */
+let onSetupPage = false;
+
+/**
+ * Show the setup page, unless it is already the page on screen.
+ *
+ * The guard is what makes this safe to call from every failure path, including the cold-start
+ * one where setup.html is already loaded and mid-poll: reloading it there would restart its
+ * polling loop and redraw from scratch for no reason.
+ */
+function showSetup(target: BrowserWindow): void {
+  if (onSetupPage) return;
+  onSetupPage = true;
+  showSetupPage(target);
+}
+
+/** Messages for runPreflight's two incremental phases — see prereqs.ts's PreflightProgress. */
+const PREFLIGHT_PHASE_MESSAGE: Record<"docker" | "python", string> = {
+  docker: "Contacting Docker…",
+  python: "Looking for Python and the Kathara packages…",
+};
+
+const INSTALL_PHASE: Record<InstallStep, BootPhase> = {
+  venv: "install-venv",
+  pip: "install-pip",
+  wheel: "install-wheel",
+};
+
+const INSTALL_MESSAGE: Record<InstallStep, string> = {
+  venv: "Creating a private Python environment…",
+  pip: "Updating pip…",
+  wheel: "Installing Kathara and the Kathara API — this can take several minutes…",
+};
+
+const INSTALL_TAIL_LINES = 12;
+
+/**
+ * pip draws its progress bars with a bare "\r" between redraws, not "\n" — appending each raw
+ * chunk would fill the tail with dozens of half-drawn bars instead of the handful of real lines
+ * that matter. Splitting on both keeps only the latest state of each redrawn line.
+ */
+function appendInstallTail(tail: string[], chunk: string): string[] {
+  const lines = chunk
+    .split(/\r?\n|\r/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return [...tail, ...lines].slice(-INSTALL_TAIL_LINES);
 }
 
 /**
@@ -91,17 +199,32 @@ function setStatus(next: Status): void {
  */
 async function startup(resumePath?: string): Promise<void> {
   if (!win) return;
-  setStatus({ state: "starting", message: "Checking prerequisites…" });
+  bootStartedAt = Date.now();
+  bootChecks = [];
 
+  // Before anything that shells out (Docker/Python checks, terminal integration): a
+  // double-clicked GUI app doesn't inherit the Terminal's PATH, so Homebrew/Docker Desktop
+  // binaries would otherwise be invisible even though they work fine from a shell. Awaited here,
+  // not at whenReady(), so the window is already up reporting this instead of showing nothing.
+  setPhase("environment", "Reading your shell environment…");
+  await ensurePathEnv();
+
+  setPhase("frontend", "Preparing the interface…");
   const staticDir = resolveStaticDir();
-  const preflight = await runPreflight(staticDir !== null);
+
+  const preflight = await runPreflight(staticDir !== null, (p: PreflightProgress) =>
+    setPhase(p.phase, PREFLIGHT_PHASE_MESSAGE[p.phase], { checks: p.checks }));
   lastPreflight = preflight;
   if (!preflight.ok || !preflight.python || !staticDir) {
     setStatus({ state: "prereq-failed", checks: preflight.checks });
+    // Not just for the cold start (where this page is already up): status:retry, setLabsDir and
+    // elevation:drop all reach here after stopBackend(), so without this the window would sit on
+    // a dead http://127.0.0.1:<old port> origin with no way back.
+    showSetup(win);
     return;
   }
 
-  setStatus({ state: "starting", message: "Starting the Kathara API…" });
+  setPhase("backend", "Starting the local Kathara API…", { checks: preflight.checks });
   try {
     const handle = await startBackend(preflight.python, staticDir);
     setStatus({ state: "ready" });
@@ -114,7 +237,7 @@ async function startup(resumePath?: string): Promise<void> {
     const error = err instanceof Error ? err.message : String(err);
     log(`startup failed: ${error}`);
     setStatus({ state: "backend-failed", checks: preflight.checks, error, logTail: tailLog() });
-    showSetupPage(win);
+    showSetup(win);
   }
 }
 
@@ -218,7 +341,17 @@ function registerIpc(): void {
     const systemPython = lastPreflight?.systemPython;
     if (!systemPython) return { ok: false, error: "no usable Python interpreter found" };
     log("running automatic install");
-    const result = await runAutoInstall(systemPython);
+    bootStartedAt = Date.now();
+    // Seeds the checks setPhase carries forward below with the full list from the preflight that
+    // led here — its own onProgress only ever accumulated up to the docker+python checks, not the
+    // later kathara_api/kathara/uvicorn/frontend ones, and the page still wants to show the whole
+    // list (what's being fixed) alongside the install output.
+    bootChecks = lastPreflight?.checks ?? [];
+    let tail: string[] = [];
+    const result = await runAutoInstall(systemPython, ({ step, line }: InstallProgress) => {
+      if (line) tail = appendInstallTail(tail, line);
+      setPhase(INSTALL_PHASE[step], INSTALL_MESSAGE[step], { output: tail.join("\n") });
+    });
     if (result.ok) {
       // Point the app at the venv install.ts just created — otherwise the next preflight probes
       // the same interpreter as before (which was never installed into) and reports the exact
@@ -231,6 +364,13 @@ function registerIpc(): void {
       await startup();
     } else {
       log(`automatic install failed: ${result.error}`);
+      // Previously just logged: the page's own static "Install failed: …" line (setup.html) was
+      // immediately overwritten by the next poll's refresh(), so the user saw nothing.
+      setStatus({
+        state: "prereq-failed",
+        checks: lastPreflight?.checks ?? [],
+        notice: `Automatic installation failed: ${result.error ?? "unknown error"}. Open the log for the full output.`,
+      });
     }
     return result;
   });
@@ -451,22 +591,31 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     log(`Kathara IDE ${app.getVersion()} starting (packaged=${app.isPackaged})`);
-    // Before anything that shells out (Docker/Python checks, terminal integration): a
-    // double-clicked GUI app doesn't inherit the Terminal's PATH, so Homebrew/Docker Desktop
-    // binaries would otherwise be invisible even though they work fine from a shell.
-    fixPathEnv();
-    registerProtocol();
+
+    // Everything before the window is pure in-memory registration — ipcMain.handle,
+    // app.on("web-contents-created"), Menu.setApplicationMenu — so nothing here can delay the
+    // first paint. Anything that shells out (the login shell's PATH, the Docker and Python
+    // probes) now happens inside startup(), below, with the window already up reporting it.
+    //
+    // registerIpc() first of all: setup.html calls status:get as soon as it loads.
     registerIpc();
-    buildMenu();
     // Before any window exists, so no WebContents is ever created unguarded.
     installNavigationPolicy(backendUrl);
     installEditContextMenu();
+    // Binds the keyboard accelerators the window is about to use.
+    buildMenu();
 
     win = createMainWindow();
     win.on("closed", () => {
       win = null;
     });
-    showSetupPage(win);
+    // Any navigation away from setup.html is the app itself being loaded (startup() and the
+    // elevation handlers are the only callers of loadURL), so this is where showSetup's guard
+    // gets reset — no bookkeeping needed at those call sites.
+    win.webContents.on("did-navigate", (_e, url) => {
+      if (!url.startsWith("file://")) onSetupPage = false;
+    });
+    showSetup(win);
 
     onBackendExit((info) => {
       // An unexpected exit leaves the renderer pointing at a dead origin; show the log instead.
@@ -477,7 +626,7 @@ if (!app.requestSingleInstanceLock()) {
         error: `The Kathara API stopped unexpectedly (code ${info.code ?? "unknown"}, signal ${info.signal ?? "none"}).`,
         logTail: tailLog(),
       });
-      showSetupPage(win);
+      showSetup(win);
     });
 
     // A backend that couldn't be stopped — most likely one still running as root after a failed
@@ -496,6 +645,11 @@ if (!app.requestSingleInstanceLock()) {
           `for example${info.pid ? `, \`sudo kill ${info.pid}\`` : " via your system's process manager"}.`,
       });
     });
+
+    // After the window, deliberately: on Linux app.setAsDefaultProtocolClient can shell out to
+    // xdg-settings, and nothing during boot depends on the kathara: scheme being registered yet
+    // (a deep link that arrives before the UI is ready is buffered in pendingDeepLink anyway).
+    registerProtocol();
 
     pendingDeepLink ??= deepLinkFromArgv(process.argv);
     await startup();

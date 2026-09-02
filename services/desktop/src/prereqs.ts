@@ -25,6 +25,15 @@ export interface Check {
   docsUrl?: string;
 }
 
+/** Reported incrementally as runPreflight proceeds, so the setup page can show something more
+ * honest than a single static "Checking prerequisites…" for up to tens of seconds. */
+export interface PreflightProgress {
+  /** The phase now starting. */
+  phase: "docker" | "python";
+  /** Every check decided so far, in display order. */
+  checks: Check[];
+}
+
 export interface Preflight {
   ok: boolean;
   checks: Check[];
@@ -79,7 +88,8 @@ async function checkDocker(): Promise<Check> {
       label: "Docker",
       ok: false,
       detail: "The docker command was not found on PATH.",
-      remedy: "Install Docker Engine (Linux) or Docker Desktop (macOS/Windows), then retry.",
+      remedy: "Install Docker Desktop (macOS, Windows) or Docker Engine (Linux), start it, " +
+        "then choose “Check again”.",
       docsUrl: DOCKER_URL,
     };
   }
@@ -91,8 +101,9 @@ async function checkDocker(): Promise<Check> {
       ok: false,
       detail: (res.stderr.trim() || "docker info failed").split("\n")[0],
       remedy:
-        "Docker is installed but its daemon is not reachable. Start Docker (or Docker Desktop) " +
-        "and make sure your user can access the Docker socket, then retry.",
+        "Docker is installed but not answering. Start Docker Desktop — on Linux, run " +
+        "“sudo systemctl start docker” — and make sure your user is in the “docker” group. " +
+        "Then choose “Check again”.",
       docsUrl: DOCKER_URL,
     };
   }
@@ -159,8 +170,13 @@ function pythonCandidates(): string[] {
   return [...new Set(candidates)];
 }
 
-export async function runPreflight(frontendPresent: boolean): Promise<Preflight> {
+export async function runPreflight(
+  frontendPresent: boolean,
+  onProgress?: (p: PreflightProgress) => void,
+): Promise<Preflight> {
+  onProgress?.({ phase: "docker", checks: [] });
   const docker = await checkDocker();
+  onProgress?.({ phase: "python", checks: [docker] });
 
   // Prefer an interpreter that has the API package; fall back to reporting the best usable
   // Python we found, so the user is told "Python is fine, kathara-api is missing" rather than
@@ -187,8 +203,8 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
       label: "Python 3.10+",
       ok: false,
       detail: `Tried: ${pythonCandidates().join(", ")}`,
-      remedy: "Install Python 3.10 or newer, or point the app at an interpreter with " +
-        "“Choose Python interpreter…”.",
+      remedy: "Install Python 3.10 or newer from python.org. If you already have one " +
+        "somewhere unusual, choose “Choose Python interpreter…” instead.",
       docsUrl: "https://www.python.org/downloads/",
     });
   } else {
@@ -210,7 +226,7 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
       remedy: result.kathara_api
         ? undefined
         : app.isPackaged
-          ? "Use the “Install automatically” button below."
+          ? "Choose “Install missing packages” below."
           : "Run this repo's scripts/install-<linux|macos>.sh (or install-windows.ps1) to set up a " +
             "venv with everything this app needs, then point the app at its python.",
     });
@@ -222,7 +238,7 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
       remedy: result.kathara
         ? undefined
         : app.isPackaged
-          ? "Use the “Install automatically” button below."
+          ? "Choose “Install missing packages” below."
           : "Install Kathara, then retry.",
       docsUrl: result.kathara || app.isPackaged ? undefined : KATHARA_URL,
     });
@@ -234,7 +250,7 @@ export async function runPreflight(frontendPresent: boolean): Promise<Preflight>
       remedy: result.uvicorn
         ? undefined
         : app.isPackaged
-          ? "Use the “Install automatically” button below."
+          ? "Choose “Install missing packages” below."
           : `Install it: "${interpreter} -m pip install 'uvicorn[standard]'".`,
     });
   }

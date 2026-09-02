@@ -443,6 +443,32 @@ class LabStore:
                 shutil.rmtree(tmp, ignore_errors=True)
         return final
 
+    def copy_lab_dir(self, name: str, source: Path) -> Path:
+        """Copy an already-populated lab directory (e.g. a bundled example) into ``<root>/<name>/``,
+        verbatim — file bytes and Unix mode bits preserved — atomically.
+
+        Structurally mirrors ``extract_zip``: the same ``.<name>.tmp`` + ``os.replace`` swap, so a
+        crash mid-copy never leaves a half-populated lab directory. Deliberately not ``write_lab``:
+        that writes from ``read_lab``'s newline-normalized, binary-stripped text map, which is not
+        "verbatim" — a bundled example's ``lab.layout``/startup scripts must travel exactly as
+        they are on disk, not round-tripped through the text model first.
+        """
+        name = sanitize_lab_name(name)
+        self.ensure_root()
+        final = self.lab_dir(name)
+        tmp = self.root / f".{name}.tmp"
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        try:
+            shutil.copytree(source, tmp)
+            if final.exists():
+                shutil.rmtree(final)
+            os.replace(tmp, final)
+        finally:
+            if tmp.exists():
+                shutil.rmtree(tmp, ignore_errors=True)
+        return final
+
     def zip_lab(self, name: str) -> io.BytesIO:
         """Zip the lab's on-disk directory into an in-memory buffer, or raise ``LabNotFoundError``.
 

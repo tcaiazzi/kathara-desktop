@@ -52,9 +52,10 @@ from ..errors import (
     SettingsLockedError,
 )
 from ..schemas.filesystem import FsEntry
+from ..schemas.examples import ExampleSummary
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.machine import MachineCreate, MachineUpdate
-from . import lab_builder, lab_conf_edit, lab_import, lab_store
+from . import examples, lab_builder, lab_conf_edit, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
 from .lab_store import LabStore
 from .registry import LabRegistry
@@ -622,6 +623,27 @@ class KatharaService:
             raise
         return lab, t.warnings
 
+    def _adopt_populated_dir(self, clean_name: str) -> tuple[Lab, list[str]]:
+        """Parse an already-populated, on-disk lab directory and register it.
+
+        Shared tail of ``upload_lab`` and ``install_example`` — they differ only in *how* the
+        directory got populated (zip extraction vs. a verbatim copy of a bundled example), never
+        in how the populated directory becomes a registered Lab. Rolls the directory back if
+        parsing or registration fails, same as both callers did before this was factored out.
+        """
+        lab_dir = self.store.lab_dir(clean_name)
+        try:
+            files, _dirs = self.store.read_lab(lab_dir)
+            t = lab_import.translate_lab_files(files, clean_name)
+            if t.errors:
+                raise ApiError("; ".join(t.errors))
+            lab = self._adopt_lab_dir(clean_name, t)
+        except Exception:
+            if self.registry.get(clean_name) is None:
+                self.store.delete_lab(clean_name)  # roll back the populated directory
+            raise
+        return lab, t.warnings
+
     def upload_lab(self, name: str, zip_data: BinaryIO, deploy: bool = False) -> tuple[Lab, list[str]]:
         """Create (and optionally deploy) a lab from an uploaded .zip archive, verbatim.
 
@@ -637,21 +659,33 @@ class KatharaService:
         if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
             raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
 
-        lab_dir = self.store.extract_zip(clean_name, zip_data)
-        try:
-            files, _dirs = self.store.read_lab(lab_dir)
-            t = lab_import.translate_lab_files(files, clean_name)
-            if t.errors:
-                raise ApiError("; ".join(t.errors))
-            lab = self._adopt_lab_dir(clean_name, t)
-        except Exception:
-            if self.registry.get(clean_name) is None:
-                self.store.delete_lab(clean_name)  # roll back the extracted directory
-            raise
-
+        self.store.extract_zip(clean_name, zip_data)
+        lab, warnings = self._adopt_populated_dir(clean_name)
         if deploy:
             lab = self.deploy_lab(clean_name)
-        return lab, t.warnings
+        return lab, warnings
+
+    def list_example_labs(self) -> list[ExampleSummary]:
+        """Bundled example network scenarios, each flagged with whether it's already installed —
+        see services/examples.py and the frontend's welcome screen."""
+        return examples.list_examples(set(self.store.lab_names()))
+
+    def install_example(self, example_id: str, name: Optional[str] = None) -> tuple[Lab, list[str]]:
+        """Create a lab from one of the bundled example network scenarios.
+
+        Structurally identical to ``upload_lab`` — the only difference is *how* the lab
+        directory gets populated (a verbatim copy of a bundled example, instead of a zip
+        extraction) — see ``_adopt_populated_dir``, which both share. Installing is a create, not
+        an upsert: an existing lab under the target name is a 409, exactly like upload_lab/
+        import_lab, so retrying an install never silently overwrites something the user changed.
+        """
+        clean_name = lab_store.sanitize_lab_name(name or example_id)
+        if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
+            raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+
+        source = examples.example_dir(example_id)  # raises ExampleNotFoundError (404) if unknown
+        self.store.copy_lab_dir(clean_name, source)
+        return self._adopt_populated_dir(clean_name)
 
     def update_lab_conf(self, name: str, content: str) -> Lab:
         """Rebuild a **non-deployed** lab from an edited ``lab.conf`` (topology + device metadata).

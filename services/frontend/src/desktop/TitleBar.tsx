@@ -17,11 +17,10 @@ import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useHealth } from "../hooks/useHealth";
 import { useTheme } from "../hooks/useTheme";
+import { DOCS_URL } from "../services/constants";
 import { desktop, type DesktopMenuAction } from "./bridge";
 import { useDesktopDispatch } from "./DesktopCommands";
 import "./TitleBar.css";
-
-const DOCS_URL = "https://www.kathara.org/";
 
 interface Item {
   label: string;

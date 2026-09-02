@@ -1,5 +1,6 @@
 import type {
   ErrorResponse,
+  ExampleLab,
   FsListResponse,
   FsReadTextResponse,
   FsUploadResponse,
@@ -135,6 +136,14 @@ export const api = {
     if (name && name.trim()) form.append("name", name.trim());
     return requestForm<LabImportResult>("/labs/upload", form);
   },
+  // Bundled example network scenarios (backend package data — src/kathara_api/examples/) shown
+  // on the welcome screen's "start from an example" list. An older backend without this route
+  // answers 404 — callers should treat a failed list as "no examples section" rather than an
+  // error to surface.
+  listExampleLabs: () => request<ExampleLab[]>("GET", "/labs/examples"),
+  createExampleLab: (id: string, name?: string) =>
+    request<LabImportResult>("POST", "/labs/examples", name ? { id, name } : { id }),
+
   // The lab's real on-disk lab.conf (verbatim: comments/quoting/unmapped options intact).
   // `exists: false` + empty content means the lab has no lab.conf on disk yet; PUT creates it.
   getLabConf: (name: string) => request<LabConfView>("GET", `/labs/${encodeURIComponent(name)}/lab-conf`),

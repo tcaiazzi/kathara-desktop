@@ -33,6 +33,15 @@ kathara-api = "kathara_api.main:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+# examples/ under kathara_api is data-only (no __init__.py): the default `namespaces = true`
+# would discover it as a PEP 420 namespace package and make its data-file ownership ambiguous.
+# Every real package here already has an __init__.py, so this is a no-op for the rest of the tree.
+namespaces = false
+
+[tool.setuptools.package-data]
+# Bundled example network scenarios (src/kathara_api/examples/) — see services/examples.py.
+# Ships in every build (wheel, sdist, editable install) with no extra packaging step.
+kathara_api = ["examples/**/*"]
 
 [tool.pytest.ini_options]
 markers = [

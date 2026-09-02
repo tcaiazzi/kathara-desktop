@@ -27,6 +27,7 @@ import { TopologyActionModal } from "../components/TopologyActionModal";
 import { TopologyContextMenu, type ContextMenuState } from "../components/TopologyContextMenu";
 import { TopologyGraph } from "../components/TopologyGraph";
 import { UploadLabModal } from "../components/UploadLabModal";
+import { WelcomeScreen } from "../components/WelcomeScreen";
 import { useDesktopCommand } from "../desktop/DesktopCommands";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
@@ -512,11 +513,32 @@ export function WorkspacePage() {
   useEffect(() => {
     if (didRedirect.current || name || labs == null) return;
     didRedirect.current = true;
+    // An explicit request to see the welcome screen (Help menu, or its own "show it again" link)
+    // wins over jumping back into the last-open lab — set *after* didRedirect so dismissing the
+    // welcome later doesn't then trigger a surprise redirect on its own re-render.
+    if (searchParams.get("welcome") === "1") return;
     const last = localStorage.getItem(LS_LAST_LAB);
     if (last && labs.some((l) => l.name === last)) {
       navigate(`/workspace/${encodeURIComponent(last)}`, { replace: true });
     }
-  }, [labs, name, navigate]);
+  }, [labs, name, navigate, searchParams]);
+
+  // Zero labs is the only trigger for the welcome screen — no persisted "seen" flag: it's
+  // self-healing (it comes back if the user empties their workspace, which is exactly when they
+  // want the on-ramp again) and works identically whether or not localStorage survives a relaunch
+  // (see backend.ts's stable-port fix for why that used to matter more than it should have).
+  // `?welcome=1` (Help menu, or the "show it again" link below) reopens it on demand even with
+  // labs present.
+  const welcomeRequested = searchParams.get("welcome") === "1";
+  const showWelcome = !detail && !notFound && labs != null && (labs.length === 0 || welcomeRequested);
+
+  const handleLabCreated = useCallback(
+    (n: string) => {
+      reloadLabs();
+      navigate(`/workspace/${encodeURIComponent(n)}`);
+    },
+    [reloadLabs, navigate],
+  );
 
   const openFilesPanel = useCallback(() => {
     dockApiRef.current?.getPanel("files")?.api.setActive();
@@ -864,16 +886,23 @@ export function WorkspacePage() {
                 Upload
               </Button>
             </div>
-            <Button
-              size="sm"
-              variant="outline-danger"
-              className="w-100 mb-2"
-              disabled={busy}
-              onClick={handleWipeAll}
-              title="Force-undeploys every lab running in kathara-ide, not just this one"
-            >
-              Wipe all labs
-            </Button>
+            {/* Hidden with no labs: on a first run this red, destructive button was the most
+                prominent control on an otherwise empty screen. Deliberately gated on "has labs"
+                rather than "has deployed labs" — this is also the recovery tool for when the
+                registry disagrees with reality (containers alive, list says undeployed), which
+                is exactly the case the tighter check would hide it in. */}
+            {labs != null && labs.length > 0 && (
+              <Button
+                size="sm"
+                variant="outline-danger"
+                className="w-100 mb-2"
+                disabled={busy}
+                onClick={handleWipeAll}
+                title="Force-undeploys every lab running in kathara-ide, not just this one"
+              >
+                Wipe all labs
+              </Button>
+            )}
             <Form.Control
               size="sm"
               type="search"
@@ -1076,20 +1105,37 @@ export function WorkspacePage() {
                 />
               </WorkspaceCoreProvider>
             </WorkspaceProvider>
+          ) : notFound ? (
+            <div className="kt-ws-empty">
+              <p className="kt-ws-muted">
+                Lab <code>{name}</code> was not found.
+              </p>
+              <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
+                Clear selection
+              </Button>
+            </div>
+          ) : showWelcome ? (
+            <WelcomeScreen
+              onNewLab={() => setShowNew(true)}
+              onImportLab={() => setShowUpload(true)}
+              onLabCreated={handleLabCreated}
+              // Nothing to fall back on for a genuine first run (labs.length === 0): dismissing
+              // would just show this exact same screen again on the next render.
+              onDismiss={labs != null && labs.length > 0 ? () => setSearchParams({}) : undefined}
+            />
+          ) : labs == null ? (
+            <div className="kt-ws-empty">
+              <p className="kt-ws-muted">Loading…</p>
+            </div>
           ) : (
             <div className="kt-ws-empty">
-              {notFound ? (
-                <>
-                  <p className="kt-ws-muted">
-                    Lab <code>{name}</code> was not found.
-                  </p>
-                  <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
-                    Clear selection
-                  </Button>
-                </>
-              ) : (
-                <p className="kt-ws-muted">Select a lab from the left, or create one to get started.</p>
-              )}
+              <p className="kt-ws-muted">
+                Select a lab from the left, or{" "}
+                <Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => setSearchParams({ welcome: "1" })}>
+                  show the welcome screen
+                </Button>
+                .
+              </p>
             </div>
           )}
         </div>
@@ -1117,22 +1163,8 @@ export function WorkspacePage() {
         />
       )}
 
-      <NewLabModal
-        show={showNew}
-        onClose={() => setShowNew(false)}
-        onCreated={(n) => {
-          reloadLabs();
-          navigate(`/workspace/${encodeURIComponent(n)}`);
-        }}
-      />
-      <UploadLabModal
-        show={showUpload}
-        onClose={() => setShowUpload(false)}
-        onCreated={(n) => {
-          reloadLabs();
-          navigate(`/workspace/${encodeURIComponent(n)}`);
-        }}
-      />
+      <NewLabModal show={showNew} onClose={() => setShowNew(false)} onCreated={handleLabCreated} />
+      <UploadLabModal show={showUpload} onClose={() => setShowUpload(false)} onCreated={handleLabCreated} />
     </div>
   );
 }

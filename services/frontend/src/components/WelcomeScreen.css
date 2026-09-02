@@ -1,0 +1,60 @@
+/* WelcomeScreen: only Bootstrap's --bs-* semantic tokens per styles/theme.css's own policy —
+   nothing here needs a --kt-* token. */
+
+.kt-welcome {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.kt-welcome-lead {
+  color: var(--bs-secondary-color);
+  max-width: 46ch;
+  margin: 0;
+}
+
+.kt-welcome-cta {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.kt-welcome-examples {
+  width: 100%;
+  max-width: 640px;
+  text-align: left;
+}
+
+.kt-welcome-example {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.kt-welcome-example + .kt-welcome-example {
+  border-top: 1px solid var(--bs-border-color);
+}
+
+.kt-welcome-example-name {
+  font-weight: 600;
+}
+
+.kt-welcome-example-desc,
+.kt-welcome-example-meta {
+  color: var(--bs-secondary-color);
+  font-size: 12.5px;
+}
+
+.kt-welcome-foot {
+  color: var(--bs-secondary-color);
+  font-size: 12.5px;
+}

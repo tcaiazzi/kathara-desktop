@@ -13,6 +13,7 @@ import fs from "node:fs";
 import sudoPrompt from "@vscode/sudo-prompt";
 import { backendSrcDir, labsDir, logFile } from "./paths";
 import { log, logRaw } from "./logger";
+import { readPrefs, writePrefs } from "./prefs";
 
 export interface BackendHandle {
   port: number;
@@ -158,6 +159,50 @@ function findFreePort(): Promise<number> {
   });
 }
 
+/** Chromium refuses to load a URL on a handful of ports (ERR_UNSAFE_PORT); ports we assign
+ * ourselves via findFreePort() never land there, but a hand-edited preferences.json could. */
+function isUsablePort(port: unknown): port is number {
+  return Number.isInteger(port) && (port as number) >= 1024 && (port as number) <= 65535;
+}
+
+/** Bind-test a specific port on the loopback interface. Racy by nature — something can take it
+ * between this check and the child's own bind — which is exactly the race findFreePort() already
+ * lives with; startBackend()'s retry below covers the rare loss. */
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.listen({ host: "127.0.0.1", port }, () => server.close(() => resolve(true)));
+  });
+}
+
+/** The port remembered from a previous successful launch, if it's still usable — otherwise null,
+ * meaning "pick a fresh one". */
+async function rememberedPort(): Promise<number | null> {
+  const saved = readPrefs().backendPort;
+  if (!isUsablePort(saved)) return null;
+  if (!(await isPortFree(saved))) {
+    log(`remembered port ${saved} is in use; taking a fresh one`);
+    return null;
+  }
+  return saved;
+}
+
+/** Written only after a health check has passed — never before — and only when it changed, so a
+ * normal launch that reuses the same port performs no preferences write at all. */
+function rememberPort(port: number): void {
+  const prefs = readPrefs();
+  if (prefs.backendPort === port && (prefs.launchCount ?? 0) > 0) return;
+  writePrefs({ backendPort: port, launchCount: (prefs.launchCount ?? 0) + 1 });
+}
+
+/** The remembered port turned out to be unusable after all (spawnBackend's retry path) — drop it
+ * so the next launch doesn't try it again first. */
+function forgetPort(): void {
+  if (readPrefs().backendPort !== undefined) writePrefs({ backendPort: undefined });
+}
+
 /**
  * `isAlive` defaults to checking the tracked `child` — the normal and Linux-elevated paths always
  * have one. The native (macOS/Windows) elevation path doesn't: `@vscode/sudo-prompt` returns no
@@ -209,10 +254,10 @@ interface BackendCommand {
  * spawn paths (startBackend, startBackendElevatedLinux, startBackendElevatedNative) share, so
  * it's where a previously orphaned backend gets one more chance to shut down before a fresh one
  * starts alongside it. */
-async function buildBackendCommand(staticDir: string): Promise<BackendCommand> {
+async function buildBackendCommand(staticDir: string, preferredPort?: number): Promise<BackendCommand> {
   if (orphanedBackend) await retryOrphanShutdown();
 
-  const port = await findFreePort();
+  const port = preferredPort ?? (await findFreePort());
   const baseUrl = `http://127.0.0.1:${port}`;
   const labs = labsDir();
   fs.mkdirSync(labs, { recursive: true });
@@ -261,7 +306,26 @@ function trackChild(proc: ChildProcess): void {
 export async function startBackend(python: string, staticDir: string): Promise<BackendHandle> {
   if (handle) return handle;
 
-  const { port, baseUrl, labs, env, args } = await buildBackendCommand(staticDir);
+  const remembered = await rememberedPort();
+  try {
+    return await spawnBackend(python, staticDir, remembered ?? (await findFreePort()));
+  } catch (err) {
+    // Only retry for a remembered port that turned out to be taken after all — uvicorn exits
+    // immediately on EADDRINUSE, so waitForHealth's isAlive() check fails fast with this exact
+    // message rather than burning the full health timeout, and this costs a fraction of a second
+    // rather than 45s. Any other failure (Docker down, a bad interpreter, …) would fail again on
+    // a fresh port too, so it's simply rethrown.
+    if (remembered === null || !(err instanceof Error && err.message.startsWith("backend exited during startup"))) {
+      throw err;
+    }
+    log(`backend could not use remembered port ${remembered}; retrying on a fresh port`);
+    forgetPort();
+    return await spawnBackend(python, staticDir, await findFreePort());
+  }
+}
+
+async function spawnBackend(python: string, staticDir: string, port: number): Promise<BackendHandle> {
+  const { baseUrl, labs, env, args } = await buildBackendCommand(staticDir, port);
   log(`starting backend: ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
@@ -277,6 +341,8 @@ export async function startBackend(python: string, staticDir: string): Promise<B
 
   log(`backend healthy at ${baseUrl}`);
   handle = { port, baseUrl };
+  // Only after a real health check, so a port that never actually worked is never remembered.
+  rememberPort(port);
   return handle;
 }
 

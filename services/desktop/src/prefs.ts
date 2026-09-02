@@ -18,6 +18,18 @@ export interface Prefs {
    * userData — see labsDir() there.
    */
   labsDir?: string;
+  /**
+   * Loopback port the backend was last started on successfully. Reused on the next launch when
+   * it is still bindable, so the renderer keeps the same origin across a relaunch — Chromium
+   * keys localStorage by origin *including the port*, so a fresh OS-assigned port every launch
+   * (see backend.ts's findFreePort) silently discarded the SPA's theme, dock layout,
+   * last-opened lab and any unsaved topology position drafts every single time. Falls back to a
+   * fresh free port when the remembered one is no longer free — see backend.ts's rememberedPort.
+   */
+  backendPort?: number;
+  /** Times a backend has come up healthy on this machine. 0/absent means this is the first
+   * launch — read by main.ts to shape the setup page's first-run copy. */
+  launchCount?: number;
 }
 
 function prefsFile(): string {

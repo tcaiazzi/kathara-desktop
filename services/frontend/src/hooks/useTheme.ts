@@ -15,16 +15,26 @@ function readDomTheme(): ThemeMode {
   return document.documentElement.getAttribute(THEME_ATTR) === "dark" ? "dark" : "light";
 }
 
+/** The OS-level preference, used only when the user has never made an explicit choice. */
+function systemTheme(): ThemeMode {
+  if (typeof window === "undefined" || !window.matchMedia) return "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 // The single place that actually mutates document/localStorage state, callable from any component
 // without that component needing to hold the "current" value itself — every useTheme() instance
 // observes the DOM (below) and reacts to whichever one of them called this, instead of each
 // holding its own independent copy that drifts until a full reload (same failure mode `useKtTheme`
 // avoids for the dock/editor by observing the DOM rather than owning local state).
-function applyTheme(theme: ThemeMode): void {
+//
+// `persist` exists so seeding from the OS preference doesn't silently freeze it as a deliberate
+// choice: a theme the user never picked must keep following the system on the next launch, while
+// toggle() — an actual decision — is remembered.
+function applyTheme(theme: ThemeMode, persist = true): void {
   const root = document.documentElement;
   root.setAttribute("data-bs-theme", theme);
   root.setAttribute(THEME_ATTR, theme);
-  window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  if (persist) window.localStorage.setItem(THEME_STORAGE_KEY, theme);
 }
 
 /**
@@ -38,10 +48,14 @@ function applyTheme(theme: ThemeMode): void {
 export function useTheme() {
   const [theme, setTheme] = useState<ThemeMode>(() => {
     if (typeof document === "undefined") return "light";
-    // Nothing has stamped the DOM attribute yet (very first mount of the whole app) — seed it from
-    // last session's choice so this instance's initial read is correct without waiting for an effect.
+    // Nothing has stamped the DOM attribute yet — seed it from last session's choice, falling back
+    // to the OS preference, so this instance's initial read is correct without waiting for an
+    // effect. Normally unreachable: index.html stamps both attributes before first paint (which is
+    // what stops the flash of the wrong theme); this is the fallback for when that script was
+    // blocked, and applies the same rule.
     if (!document.documentElement.hasAttribute(THEME_ATTR)) {
-      applyTheme(getStoredTheme() ?? "light");
+      const stored = getStoredTheme();
+      applyTheme(stored ?? systemTheme(), stored !== null);
     }
     return readDomTheme();
   });

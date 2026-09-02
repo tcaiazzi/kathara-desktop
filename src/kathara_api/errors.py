@@ -109,6 +109,13 @@ class BinaryFileError(ApiError):
     """
 
 
+class ExampleNotFoundError(ApiError):
+    """Raised when a requested bundled example id doesn't exist in the examples catalog
+    (services/examples.py) — a different thing from a *lab* not being found."""
+
+    status_code = status.HTTP_404_NOT_FOUND
+
+
 # Kathara exception -> HTTP status code.
 KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # 404 Not Found

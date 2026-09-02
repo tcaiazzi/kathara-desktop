@@ -31,6 +31,7 @@ from ..schemas.lab import (
     LabSummary,
     UndeployOptions,
 )
+from ..schemas.examples import ExampleCreate, ExampleSummary
 from ..schemas.lab_import import LabImportRequest, LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService
@@ -84,6 +85,26 @@ def upload_lab(
     """
     lab_name = (name or "").strip() or Path(file.filename or "lab").stem
     lab, warnings = service.upload_lab(lab_name, file.file, deploy=deploy)
+    return _import_result(lab, warnings)
+
+
+# Declared above the /{lab_name} routes below: FastAPI/Starlette resolves in registration
+# order, so a route added after GET /{lab_name} would be swallowed as get_lab("examples").
+@router.get("/examples", response_model=list[ExampleSummary])
+def list_example_labs(service: KatharaService = Depends(get_service)) -> list[ExampleSummary]:
+    """Bundled example network scenarios (see src/kathara_api/examples/)."""
+    return service.list_example_labs()
+
+
+@router.post("/examples", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)
+def create_example_lab(payload: ExampleCreate, service: KatharaService = Depends(get_service)) -> LabImportResult:
+    """Create a lab from one of the bundled example network scenarios.
+
+    A body rather than POST /examples/{id}: a path form would need care to not be shadowed by
+    POST /{lab_name}/deploy for an id of "deploy", and the body gives a free slot for the
+    optional target `name`.
+    """
+    lab, warnings = service.install_example(payload.id, payload.name)
     return _import_result(lab, warnings)
 
 

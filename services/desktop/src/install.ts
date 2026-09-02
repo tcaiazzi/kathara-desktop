@@ -14,13 +14,35 @@ import { log, logRaw } from "./logger";
 
 const STEP_TIMEOUT_MS = 5 * 60_000;
 
-function run(command: string, args: string[]): Promise<{ ok: boolean; code: number | null }> {
+export type InstallStep = "venv" | "pip" | "wheel";
+
+/** Reported as runAutoInstall proceeds, so the setup page can show more than one static line for
+ * an operation that can take several minutes. `line` carries a chunk of the running subprocess's
+ * stdout/stderr verbatim, so the setup page can render a live tail of it. */
+export interface InstallProgress {
+  step: InstallStep;
+  line?: string;
+}
+
+function run(
+  command: string,
+  args: string[],
+  onOutput?: (chunk: string) => void,
+): Promise<{ ok: boolean; code: number | null }> {
   return new Promise((resolve) => {
     log(`install: ${command} ${args.join(" ")}`);
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     const timer = setTimeout(() => child.kill(), STEP_TIMEOUT_MS);
-    child.stdout?.on("data", (c: Buffer) => logRaw(c.toString()));
-    child.stderr?.on("data", (c: Buffer) => logRaw(c.toString()));
+    child.stdout?.on("data", (c: Buffer) => {
+      const chunk = c.toString();
+      logRaw(chunk);
+      onOutput?.(chunk);
+    });
+    child.stderr?.on("data", (c: Buffer) => {
+      const chunk = c.toString();
+      logRaw(chunk);
+      onOutput?.(chunk);
+    });
     child.on("exit", (code) => {
       clearTimeout(timer);
       resolve({ ok: code === 0, code });
@@ -37,24 +59,30 @@ function run(command: string, args: string[]): Promise<{ ok: boolean; code: numb
  * wheel into it. Safe to re-run: `venv` is idempotent on an existing directory, and pip install
  * of the same wheel is a no-op.
  */
-export async function runAutoInstall(systemPython: string): Promise<{ ok: boolean; error?: string }> {
+export async function runAutoInstall(
+  systemPython: string,
+  onProgress?: (p: InstallProgress) => void,
+): Promise<{ ok: boolean; error?: string }> {
   const wheel = bundledWheelPath();
   if (!wheel || !fs.existsSync(wheel)) {
     return { ok: false, error: "no bundled kathara-api-rest wheel found in this build" };
   }
 
-  const venvStep = await run(systemPython, ["-m", "venv", packagedVenvDir()]);
+  onProgress?.({ step: "venv" });
+  const venvStep = await run(systemPython, ["-m", "venv", packagedVenvDir()], (line) => onProgress?.({ step: "venv", line }));
   if (!venvStep.ok) return { ok: false, error: "could not create a virtual environment" };
 
   const venvPython = packagedVenvPython();
   if (!venvPython) return { ok: false, error: "virtual environment was created but its python is missing" };
 
-  const upgradePip = await run(venvPython, ["-m", "pip", "install", "--upgrade", "pip"]);
+  onProgress?.({ step: "pip" });
+  const upgradePip = await run(venvPython, ["-m", "pip", "install", "--upgrade", "pip"], (line) => onProgress?.({ step: "pip", line }));
   if (!upgradePip.ok) return { ok: false, error: "could not upgrade pip in the virtual environment" };
 
   // Installs kathara/uvicorn[standard]/fastapi/etc. too — they're already this wheel's own
   // pyproject.toml dependencies, resolved from PyPI as normal.
-  const installWheel = await run(venvPython, ["-m", "pip", "install", wheel]);
+  onProgress?.({ step: "wheel" });
+  const installWheel = await run(venvPython, ["-m", "pip", "install", wheel], (line) => onProgress?.({ step: "wheel", line }));
   if (!installWheel.ok) return { ok: false, error: "pip install of kathara-api-rest failed" };
 
   log("install: kathara-api-rest installed successfully");

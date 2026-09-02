@@ -32,6 +32,12 @@ class ApiSettings(BaseSettings):
     # keeping the renderer same-origin with the API (see spa.mount_spa).
     static_dir: Optional[str] = None
 
+    # Directory holding the bundled example network scenarios (kathara_api/examples/ package
+    # data), offered as "start from an example" on the frontend's welcome screen. Unset means
+    # "use the bundled ones" — an override exists only so a deployment can ship its own catalog
+    # (e.g. a course's own lab set) without rebuilding this package.
+    examples_dir: Optional[str] = None
+
     # Kathara settings applied via Setting.load_from_dict() before the first backend use.
     manager_type: Optional[str] = None
     default_image: Optional[str] = Field(default=None)
@@ -55,6 +61,17 @@ class ApiSettings(BaseSettings):
             return None
         path = Path(configured).expanduser().resolve()
         return path if path.is_dir() else None
+
+    def examples_dir_path(self) -> Path:
+        """Absolute path to the examples catalog: a configured override, or the bundled one.
+
+        Unlike static_dir_path, never None: the bundled directory (kathara_api/examples/) always
+        exists as package data, so there is always a catalog to read, even if it turns out empty.
+        """
+        configured = (self.examples_dir or "").strip()
+        if configured:
+            return Path(configured).expanduser().resolve()
+        return Path(__file__).resolve().parent / "examples"
 
     def kathara_overrides(self) -> dict:
         """Return the subset of settings to forward to Kathara's Setting."""

@@ -1,0 +1,13 @@
+# Configure the link-local on the point-to-point use a simpler address
+# since we need it for configuring the routing table of r2
+ip address add fe80::1/64 dev eth1
+
+# Set the routing table
+ip route add 2001:0:0:1::/64 dev eth0
+ip route add 2001:0:0:3::/64 via fe80::2 dev eth1
+
+# set correct privileges for radvd.conf
+chmod o-rw /etc/radvd.conf
+
+# start the radvd service
+systemctl start radvd

@@ -1,10 +1,25 @@
 /** Window creation and the navigation policy that keeps the renderer pinned to the backend. */
-import { app, BrowserWindow, Menu, shell } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { log } from "./logger";
 import { iconPath, setupPage } from "./paths";
 
 const PRELOAD = path.join(__dirname, "preload.js");
+
+/**
+ * The colour Chromium paints before the page has any of its own, matched to the theme the page is
+ * about to choose: setup.html follows the OS scheme, and so does the SPA when the user has never
+ * picked a theme explicitly (services/frontend/index.html). Hardcoding the dark value made every
+ * light-theme launch start with a dark rectangle.
+ *
+ * Read at window-creation time, not tracked: someone who *has* explicitly chosen the theme
+ * opposite to their OS still gets one mismatched frame here, because only the renderer knows
+ * about that choice (it lives in its localStorage). Not worth a bridge call and a preferences
+ * round trip for a single frame of colour.
+ */
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? "#151b23" : "#ffffff";
+}
 
 /** The frontend's popup terminal route (services/frontend/src/services/terminalWindow.ts). */
 const TERMINAL_ROUTE = /^\/labs\/[^/]+\/terminal\/[^/]+$/;
@@ -65,7 +80,7 @@ function applyNavigationPolicy(contents: Electron.WebContents, origin: () => str
       width: isTerminal ? 900 : 1100,
       height: isTerminal ? 600 : 800,
       icon: iconPath(),
-      backgroundColor: "#1e1e1e",
+      backgroundColor: windowBackground(),
       autoHideMenuBar: true,
       webPreferences: {
         preload: PRELOAD,
@@ -114,7 +129,7 @@ export function createMainWindow(): BrowserWindow {
     height: 900,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: "#151b23",
+    backgroundColor: windowBackground(),
     show: false,
     title: "Kathara IDE",
     icon: iconPath(),

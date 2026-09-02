@@ -9,20 +9,41 @@
  * Homebrew's shellenv and similar tools usually live) and merge it in, once at startup. Windows
  * doesn't have this problem — PATH there is a system-wide registry value, inherited regardless of
  * how the app was launched — so this is a no-op there.
+ *
+ * Asynchronous on purpose. An interactive login shell can take seconds to start (a heavy .zshrc,
+ * a shell prompt framework, an NVM/pyenv init), and this used to run synchronously *before* the
+ * window existed — so the whole app was a blank screen for as long as the user's dotfiles took,
+ * up to the 10s timeout. It is now awaited from startup(), after the window is on screen showing
+ * "Reading your shell environment…".
  */
-import { execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { log } from "./logger";
+
+const execFileAsync = promisify(execFile);
 
 const MARKER = "___KATHARA_IDE_PATH___";
 
-export function fixPathEnv(): void {
+/**
+ * Resolved once per process: the login shell is expensive and its PATH won't change under us,
+ * so a Retry (which re-runs startup) must not pay for it a second time.
+ */
+let pathEnv: Promise<void> | null = null;
+
+/** Awaited by startup() before anything that shells out. Never rejects. */
+export function ensurePathEnv(): Promise<void> {
+  return (pathEnv ??= resolvePathEnv());
+}
+
+async function resolvePathEnv(): Promise<void> {
   if (process.platform === "win32") return;
   const shell = process.env.SHELL || "/bin/zsh";
   try {
-    const output = execFileSync(shell, ["-ilc", `echo "${MARKER}$PATH"`], {
+    const { stdout } = await execFileAsync(shell, ["-ilc", `echo "${MARKER}$PATH"`], {
       timeout: 10_000,
       windowsHide: true,
-    }).toString();
+    });
+    const output = stdout.toString();
     const line = output.split("\n").find((l) => l.startsWith(MARKER));
     const shellPath = line?.slice(MARKER.length).trim();
     if (!shellPath) return;
