@@ -16,6 +16,7 @@ import {
   backendLogPath,
   backendUrl,
   onBackendExit,
+  onOrphanedBackend,
   startBackend,
   startBackendElevatedLinux,
   startBackendElevatedNative,
@@ -55,6 +56,14 @@ import { createMainWindow, installEditContextMenu, installNavigationPolicy, show
 // not moved — same "leave old data behind, don't migrate silently" choice already made for
 // the labs-directory setting itself.
 app.setPath("userData", path.join(app.getPath("appData"), "kathara-ide"));
+
+// Bounds every ad-hoc query this file makes against an already-healthy backend (list labs, look
+// up a lab's directory) — deliberately more generous than backend.ts's SHUTDOWN_HTTP_TIMEOUT_MS,
+// since these can enumerate real state rather than hit one fixed endpoint, but still bounded: an
+// unresponsive-but-alive backend (a stuck Kathara/Docker call on its single worker) must not be
+// able to hang app quit, or leave a renderer click (Reveal in file manager, Open in terminal)
+// spinning forever with nothing to show for it.
+const BACKEND_QUERY_TIMEOUT_MS = 5_000;
 
 type Status =
   | { state: "starting"; message: string }
@@ -322,7 +331,9 @@ async function setLabsDir(path: string): Promise<boolean> {
 async function labDirectory(labName: string): Promise<string> {
   const base = backendUrl();
   if (!base) throw new Error("the backend is not running");
-  const res = await fetch(`${base}/api/labs/${encodeURIComponent(labName)}/location`);
+  const res = await fetch(`${base}/api/labs/${encodeURIComponent(labName)}/location`, {
+    signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`could not resolve lab directory (HTTP ${res.status})`);
   return ((await res.json()) as { path: string }).path;
 }
@@ -351,7 +362,10 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
 
   let deployed: string[] = [];
   try {
-    const res = await fetch(`${base}/api/labs`);
+    // Bounded: an unresponsive-but-alive backend must not be able to block quit (or a labs-dir
+    // change) forever — the `catch` below already fails toward "proceed", which is exactly the
+    // right outcome for a timeout too, not just a hard connection failure.
+    const res = await fetch(`${base}/api/labs`, { signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS) });
     if (!res.ok) return true;
     const labs = (await res.json()) as { name: string | null; deployed: boolean }[];
     deployed = labs.filter((l) => l.deployed).map((l) => l.name ?? "(unnamed)");
@@ -450,6 +464,23 @@ if (!app.requestSingleInstanceLock()) {
         logTail: tailLog(),
       });
       showSetupPage(win);
+    });
+
+    // A backend that couldn't be stopped — most likely one still running as root after a failed
+    // elevated shutdown — is otherwise a silent, permanent leak: the app just starts a fresh one
+    // on a different port and moves on. Not blocking (fire-and-forget): this is purely
+    // informational, so it must never hold up whatever startup/quit/restart triggered it.
+    onOrphanedBackend((info) => {
+      log(`backend at ${info.baseUrl || "an unknown address"} (pid ${info.pid ?? "unknown"}) could not be stopped and may still be running`);
+      void dialog.showMessageBox({
+        type: "warning",
+        title: "Kathara backend still running",
+        message: "The previous Kathara backend could not be stopped and may still be running with administrator privileges.",
+        detail:
+          `It was running${info.baseUrl ? ` at ${info.baseUrl}` : ""}${info.pid ? ` (pid ${info.pid})` : ""}. ` +
+          "A new backend has started normally, but you may need to stop the old one manually — " +
+          `for example${info.pid ? `, \`sudo kill ${info.pid}\`` : " via your system's process manager"}.`,
+      });
     });
 
     pendingDeepLink ??= deepLinkFromArgv(process.argv);

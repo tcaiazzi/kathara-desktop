@@ -36,6 +36,78 @@ let stopping = false;
 let exitListener: ((info: { code: number | null; signal: string | null }) => void) | null = null;
 
 /**
+ * A backend `stopBackend()` gave up on — still running (root-owned, from a failed elevated
+ * stop), but neither signalable (EPERM across the privilege boundary) nor, for the native-prompt
+ * path, ever having had a process handle to signal in the first place. Kept so the next backend
+ * start retries shutting it down first, instead of silently leaving it running forever while a
+ * second backend starts on a different port right alongside it.
+ */
+let orphanedBackend: { pid: number | null; baseUrl: string } | null = null;
+/** Notified once, at the moment a backend is first determined to be such an orphan — not again
+ * on every later retry failure, so the caller can surface it to the user without spamming. */
+let orphanListener: ((info: { pid: number | null; baseUrl: string }) => void) | null = null;
+
+export function onOrphanedBackend(cb: (info: { pid: number | null; baseUrl: string }) => void): void {
+  orphanListener = cb;
+}
+
+export function getOrphanedBackend(): { pid: number | null; baseUrl: string } | null {
+  return orphanedBackend;
+}
+
+/** Records a backend `stopBackend()` couldn't stop, if there's a URL to retry shutting it down
+ * against later (an unsignalable process we never even confirmed a URL for isn't worth tracking —
+ * there's nothing left to do with it). Always notifies, since even an unrecoverable orphan is
+ * worth telling the user about. */
+function markOrphaned(pid: number | null | undefined, baseUrl: string | undefined): void {
+  const normalizedPid = pid ?? null;
+  if (baseUrl) orphanedBackend = { pid: normalizedPid, baseUrl };
+  orphanListener?.({ pid: normalizedPid, baseUrl: baseUrl ?? "" });
+}
+
+/**
+ * Poll `/api/health` until it stops responding (the backend has actually exited) or `deadline`
+ * passes. Needed wherever a shutdown is confirmed with no process handle to check `exitCode`
+ * against: an HTTP 200 from `/api/system/shutdown` only proves the process *received* the
+ * request (it calls `os.kill(os.getpid(), SIGTERM)` and returns immediately) — SIGTERM handling
+ * and process teardown still happen asynchronously afterward, so a prompt response is not itself
+ * proof the process is actually gone.
+ */
+async function waitForDeath(baseUrl: string, deadline: number): Promise<boolean> {
+  while (Date.now() < deadline) {
+    try {
+      await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(500) });
+    } catch {
+      return true; // connection refused/reset, or timed out talking to it — it's down.
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return false;
+}
+
+/** Retries shutting down a previously orphaned backend before a new one starts on top of it —
+ * whatever kept it unsignalable/unresponsive (a stuck operation, elevation still settling) may
+ * have resolved since. Never blocks starting the new backend either way: this is best-effort, not
+ * a precondition, since the app must not be left without a working backend over an old one that
+ * may in fact never come back. */
+async function retryOrphanShutdown(): Promise<void> {
+  const orphan = orphanedBackend;
+  if (!orphan) return;
+  log(`retrying shutdown of previously orphaned backend at ${orphan.baseUrl}`);
+  try {
+    await fetch(`${orphan.baseUrl}/api/system/shutdown`, { method: "POST", signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS) });
+    if (await waitForDeath(orphan.baseUrl, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2)) {
+      log(`orphaned backend at ${orphan.baseUrl} is now stopped`);
+      orphanedBackend = null;
+      return;
+    }
+  } catch (err) {
+    log(`retrying shutdown of orphaned backend failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  log(`orphaned backend at ${orphan.baseUrl} is still running — a new backend will start on a different port`);
+}
+
+/**
  * Ask the OS for an unused port and hand it to the child. Listening on 0 and reading back the
  * assigned port leaves a tiny race before the child binds it, but it beats hardcoding 8000,
  * which collides with the very common case of a backend the user already has running.
@@ -104,8 +176,13 @@ interface BackendCommand {
 }
 
 /** Everything about *what* to run is shared between the normal and elevated start paths — only
- * *how* it's spawned (plain vs. wrapped in `sudo`) differs. */
+ * *how* it's spawned (plain vs. wrapped in `sudo`) differs. Also the one chokepoint all three
+ * spawn paths (startBackend, startBackendElevatedLinux, startBackendElevatedNative) share, so
+ * it's where a previously orphaned backend gets one more chance to shut down before a fresh one
+ * starts alongside it. */
 async function buildBackendCommand(staticDir: string): Promise<BackendCommand> {
+  if (orphanedBackend) await retryOrphanShutdown();
+
   const port = await findFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const labs = labsDir();
@@ -356,7 +433,16 @@ export async function stopBackend(): Promise<void> {
         }
       } else {
         // No local process to confirm exit against (native-elevated start, or already exited) —
-        // the HTTP request above was the only lever available; nothing more to try.
+        // the HTTP request above was the only lever available. A 200 here only proves the process
+        // *received* it (it calls os.kill(getpid(), SIGTERM) and returns immediately), not that
+        // it's actually gone yet, so poll health instead of assuming success.
+        if (await waitForDeath(current.baseUrl, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2)) {
+          child = null;
+          handle = null;
+          return;
+        }
+        log(`backend at ${current.baseUrl} did not go down after a shutdown request`);
+        markOrphaned(null, current.baseUrl);
         child = null;
         handle = null;
         return;
@@ -375,6 +461,7 @@ export async function stopBackend(): Promise<void> {
 
   const { pid } = proc;
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+  const knownBaseUrl = current?.baseUrl ?? handle?.baseUrl;
 
   if (process.platform === "win32" && pid) {
     // Windows has no SIGTERM to deliver: signals are emulated and are not delivered to the
@@ -382,8 +469,16 @@ export async function stopBackend(): Promise<void> {
     await new Promise<void>((resolve) => {
       execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }, () => resolve());
     });
-  } else {
-    proc.kill("SIGTERM");
+  } else if (!proc.kill("SIGTERM")) {
+    // A root-owned process can't be signaled by this unprivileged one at all — kill() returns
+    // false immediately (EPERM) rather than throwing, so check it instead of waiting out a full
+    // SIGTERM_GRACE_MS (and, below, another one after an equally doomed SIGKILL) on a signal that
+    // was never delivered in the first place.
+    log(`SIGTERM could not be delivered to backend (pid ${pid}) — likely running elevated`);
+    markOrphaned(pid, knownBaseUrl);
+    child = null;
+    handle = null;
+    return;
   }
 
   const timedOut = await Promise.race([
@@ -393,15 +488,17 @@ export async function stopBackend(): Promise<void> {
   if (timedOut) {
     log("backend did not exit on SIGTERM; sending SIGKILL");
     proc.kill("SIGKILL");
-    // Bounded, not `await exited` unconditionally: a root-owned backend (the HTTP shutdown above
-    // having failed for some reason) can't actually be signaled by this unprivileged process at
-    // all — kill() then silently no-ops rather than throwing, and waiting on an "exit" that will
-    // never come would hang app quit indefinitely.
+    // Bounded, not `await exited` unconditionally: a backend this SIGTERM somehow reached but
+    // that still won't die shouldn't hang app quit indefinitely waiting for an "exit" that may
+    // never come.
     const killed = await Promise.race([
       exited.then(() => true),
       new Promise<boolean>((r) => setTimeout(() => r(false), SIGTERM_GRACE_MS)),
     ]);
-    if (!killed) log(`backend (pid ${pid}) did not exit after SIGKILL — likely running elevated and unsignalable; giving up`);
+    if (!killed) {
+      log(`backend (pid ${pid}) did not exit after SIGKILL`);
+      markOrphaned(pid, knownBaseUrl);
+    }
   }
 
   child = null;
