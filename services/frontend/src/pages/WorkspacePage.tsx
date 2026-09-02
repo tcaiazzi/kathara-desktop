@@ -309,7 +309,7 @@ function resetLayout(api: DockviewApi) {
     api.getPanel(id)?.api.moveTo({ group: devices.api.group });
   }
   for (const p of terminalPanelsOf(api)) p.api.moveTo({ group: devices.api.group });
-  topo.api.group.api.moveTo({ group: devices.api.group, position: "right" as const });
+  topo.api.moveTo({ group: devices.api.group, position: "right" as const });
   // Undo any collapse pinning left by a "Focus …" preset, on every group (not just tools) — any of
   // them can end up shrunk depending on which preset ran last.
   for (const g of api.groups) {
