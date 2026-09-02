@@ -197,10 +197,9 @@ const RAIL_MIN_W = 180;
 const RAIL_MAX_W = 560;
 const RAIL_DEFAULT_W = 264;
 
-// A "Focus …" preset collapses the other groups to (about) their header height/width rather than
-// hiding them; clicking a collapsed group's header restores it to a usable height.
+// The manual per-group "Collapse panel" toggle shrinks a group to (about) its header height;
+// clicking it again (or its header strip) restores it to a usable height.
 const COLLAPSED_GROUP_HEIGHT = 35;
-const COLLAPSED_GROUP_WIDTH = 44;
 const RESTORE_GROUP_HEIGHT = 280;
 // A group at/under this height is considered collapsed (header strip only).
 const COLLAPSE_THRESHOLD = 60;
@@ -244,33 +243,22 @@ function showNodeInfo(api: DockviewApi) {
   });
 }
 
-// Collapse every group NOT in `keep` to a header strip, in place (no moving/swapping panels).
-// Groups stacked above/below the union of the kept groups collapse their height; groups
-// side-by-side collapse their width. Resize-only, so terminal sessions survive; each collapsed
-// group reopens via its own header chevron (or Layout → Default).
-function collapseOthers(api: DockviewApi, keep: Set<DockviewGroupPanel>) {
-  const rects = [...keep].map((g) => g.element.getBoundingClientRect());
-  const target = {
-    top: Math.min(...rects.map((r) => r.top)),
-    bottom: Math.max(...rects.map((r) => r.bottom)),
-  };
-  for (const g of api.groups) {
-    if (keep.has(g)) continue;
-    const r = g.element.getBoundingClientRect();
-    const sameRow = r.top < target.bottom - 4 && r.bottom > target.top + 4; // vertical overlap → side-by-side
-    if (sameRow) {
-      g.api.setConstraints({ minimumWidth: COLLAPSED_GROUP_WIDTH });
-      g.api.setSize({ width: COLLAPSED_GROUP_WIDTH });
-    } else {
-      g.api.setConstraints({ minimumHeight: COLLAPSED_GROUP_HEIGHT });
-      g.api.setSize({ height: COLLAPSED_GROUP_HEIGHT });
+// Move every panel that isn't already in a kept group into `target`, as a background tab —
+// rather than shrinking the other groups to strips, this removes them outright (an empty group
+// closes itself), so the kept group(s) actually get the full available space instead of sharing
+// it with squished-but-still-present neighbors. The moved panels aren't lost: they're just tabs
+// in `target` now, and "Layout → Default" (resetLayout) puts everything back in place.
+function mergeOthersInto(api: DockviewApi, target: DockviewGroupPanel, keep: Set<DockviewGroupPanel>) {
+  for (const g of api.groups.filter((g) => !keep.has(g))) {
+    for (const p of [...g.panels]) {
+      p.api.moveTo({ group: target, position: "center" });
     }
   }
 }
 
 // Maximize a single group in place — used by the per-panel header's "Maximize panel" button.
 function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
-  collapseOthers(api, new Set([group]));
+  mergeOthersInto(api, group, new Set([group]));
 }
 
 // --- Preset layouts (reposition existing panels via moveTo — no unmount, so terminal sessions
@@ -310,8 +298,8 @@ function resetLayout(api: DockviewApi) {
   }
   for (const p of terminalPanelsOf(api)) p.api.moveTo({ group: devices.api.group });
   topo.api.moveTo({ group: devices.api.group, position: "right" as const });
-  // Undo any collapse pinning left by a "Focus …" preset, on every group (not just tools) — any of
-  // them can end up shrunk depending on which preset ran last.
+  // Undo any collapse pinning left by the manual per-group "Collapse panel" toggle, on every
+  // group (not just tools) — any of them can end up shrunk depending on what ran last.
   for (const g of api.groups) {
     g.api.setConstraints({ minimumHeight: 100, minimumWidth: 100 });
   }
@@ -319,33 +307,33 @@ function resetLayout(api: DockviewApi) {
   devices.api.setActive();
 }
 
-// Topology takes almost the whole screen; the tool panels and the node-info inspector collapse to
-// a strip.
+// Topology takes the whole screen; every tool panel and the node-info inspector join it as
+// background tabs.
 function focusTopology(api: DockviewApi) {
   const topo = api.getPanel("topology");
   if (!topo) return;
-  collapseOthers(api, new Set([topo.api.group]));
+  mergeOthersInto(api, topo.api.group, new Set([topo.api.group]));
   topo.api.setActive();
 }
 
-// The Files panel takes most of the screen (writing lab.conf/startup scripts); topology, its
-// inspector, and any open terminals collapse out of the way.
+// The Files panel takes the whole screen (writing lab.conf/startup scripts); topology, its
+// inspector, and any open terminals join it as background tabs.
 function focusEditing(api: DockviewApi) {
   const files = api.getPanel("files");
   if (!files) return;
+  mergeOthersInto(api, files.api.group, new Set([files.api.group]));
   files.api.setActive();
-  collapseOthers(api, new Set([files.api.group]));
 }
 
-// All open terminals tiled into a grid taking most of the screen; everything else collapses.
-// No-op if none are open (open one via "+ Terminal" first).
+// All open terminals tiled into a grid taking the whole screen; everything else joins the first
+// terminal's group as background tabs. No-op if none are open (open one via "+ Terminal" first).
 function focusTerminals(api: DockviewApi) {
-  const terms = terminalPanelsOf(api);
-  if (!terms.length) return;
+  if (!terminalPanelsOf(api).length) return;
   tileTerminals(api); // arrange them among themselves first
   // Re-fetch: tiling just moved them into new groups.
-  const groups = new Set(terminalPanelsOf(api).map((p) => p.api.group));
-  collapseOthers(api, groups);
+  const terms = terminalPanelsOf(api);
+  const groups = new Set(terms.map((p) => p.api.group));
+  mergeOthersInto(api, terms[0].api.group, groups);
   terms[0].api.setActive();
 }
 
