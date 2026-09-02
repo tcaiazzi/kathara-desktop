@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..dependencies import get_service
 from ..downloads import attachment_headers
@@ -234,7 +235,10 @@ async def upload_lab_file(
 ) -> FsUploadResponse:
     """Upload a binary or text file to a path in the lab's own on-disk tree."""
     data = await file.read()
-    size = service.fs_upload_bytes_offline(lab_name, path, data)
+    # A blocking pyfilesystem write under `_mutate_lock`, off the event loop like every other
+    # backend call in an `async def` handler (see exec.py's own use of this) — otherwise it stalls
+    # every other request this single-worker server is handling for its duration.
+    size = await run_in_threadpool(service.fs_upload_bytes_offline, lab_name, path, data)
     return FsUploadResponse(path=service.normalize_guest_path(path), size=size)
 
 

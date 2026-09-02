@@ -47,6 +47,7 @@ from ..errors import (
     LabAlreadyRegisteredError,
     LabConfLockedError,
     LabRenameLockedError,
+    LabTransitioningError,
     PathNotFoundError,
     SettingsLockedError,
 )
@@ -82,6 +83,12 @@ class KatharaService:
         self._images_cache: Optional[list[str]] = None
         self._images_cache_at: float = 0.0
         self._images_cache_lock = threading.Lock()
+        # Names of labs currently inside deploy_lab/undeploy_lab — see _check_not_transitioning.
+        # A separate, always-uncontended lock, deliberately not `_mutate_lock`: deploy_lab holds
+        # that one for the whole (potentially slow) facade call, so checking membership through it
+        # would block the check itself for just as long, defeating the point of a fast-fail guard.
+        self._transitioning: set[str] = set()
+        self._transitioning_lock = threading.Lock()
         self.registry = LabRegistry()
         self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
         # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
@@ -90,6 +97,26 @@ class KatharaService:
         self._reload_from_disk()
 
     # -- lifecycle / settings -------------------------------------------------
+
+    def _begin_transition(self, name: str) -> None:
+        with self._transitioning_lock:
+            self._transitioning.add(name)
+
+    def _end_transition(self, name: str) -> None:
+        with self._transitioning_lock:
+            self._transitioning.discard(name)
+
+    def _check_not_transitioning(self, name: str) -> None:
+        """Fail fast — without ever touching `_mutate_lock` — if `name` is mid deploy/undeploy.
+
+        Must be the first thing a guarded method does, before it acquires `_mutate_lock` itself:
+        calling this *after* taking that lock would just wait out the very hang it exists to
+        avoid (deploy_lab/undeploy_lab hold `_mutate_lock` for their whole duration).
+        """
+        with self._transitioning_lock:
+            busy = name in self._transitioning
+        if busy:
+            raise LabTransitioningError(f"Lab `{name}` is being deployed or undeployed. Try again once it finishes.")
 
     def _facade(self) -> Kathara:
         if self._instance is None:
@@ -639,6 +666,7 @@ class KatharaService:
         dropped; they belong to the Runtime FS flow instead.
         """
         clean = lab_store.sanitize_lab_name(name)
+        self._check_not_transitioning(clean)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(clean)  # raises LabNotFoundError if unknown
             if any(m.api_object is not None for m in lab.machines.values()):
@@ -734,8 +762,10 @@ class KatharaService:
 
     def fs_write_text_offline(self, lab_name: str, path: str, content: str) -> int:
         if path.strip("/") == "lab.conf":
+            # update_lab_conf does its own _check_not_transitioning.
             self.update_lab_conf(lab_name, content)
             return len(content.encode("utf-8"))
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             owner, guest = self._offline_fs_owner(lab, path)
@@ -749,6 +779,7 @@ class KatharaService:
         return len(content.encode("utf-8"))
 
     def fs_upload_bytes_offline(self, lab_name: str, path: str, content: bytes) -> int:
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             owner, guest = self._offline_fs_owner(lab, path)
@@ -771,6 +802,7 @@ class KatharaService:
         return len(content)
 
     def fs_mkdir_offline(self, lab_name: str, path: str) -> None:
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             owner, guest = self._offline_fs_owner(lab, path)
@@ -785,6 +817,7 @@ class KatharaService:
     def fs_delete_offline(self, lab_name: str, path: str, recursive: bool = False) -> None:
         if path.strip("/") == "lab.conf":
             raise ApiError("lab.conf can't be deleted.")
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             owner, guest = self._offline_fs_owner(lab, path)
@@ -834,6 +867,7 @@ class KatharaService:
     def fs_move_offline(self, lab_name: str, source_path: str, destination_path: str) -> None:
         if source_path.strip("/") == "lab.conf" or destination_path.strip("/") == "lab.conf":
             raise ApiError("lab.conf can't be moved.")
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             source_owner, source_guest = self._offline_fs_owner(lab, source_path)
@@ -959,48 +993,55 @@ class KatharaService:
         selected_machines: Optional[set[str]] = None,
         excluded_machines: Optional[set[str]] = None,
     ) -> Lab:
-        if selected_machines and excluded_machines:
-            raise InvocationError("You can either select or exclude devices.")
+        # Marked as transitioning for the whole call, not just the facade section below — a
+        # lab.conf edit/offline-fs write/structural change arriving anywhere in this window should
+        # fail fast via _check_not_transitioning rather than queue up behind _mutate_lock.
+        self._begin_transition(name)
+        try:
+            if selected_machines and excluded_machines:
+                raise InvocationError("You can either select or exclude devices.")
 
-        lab = self.get_lab_or_reconstruct(name)
-        all_names = set(lab.machines.keys())
+            lab = self.get_lab_or_reconstruct(name)
+            all_names = set(lab.machines.keys())
 
-        # Mirror the facade's own validation (it would otherwise never run for this call, since
-        # below we always pass it a freshly-computed `selected_machines`, not the caller's raw
-        # selected/excluded_machines).
-        for label, requested in (("selected", selected_machines), ("excluded", excluded_machines)):
-            if requested is not None and not requested <= all_names:
-                missing = requested - all_names
-                raise MachineNotFoundError(f"The following devices are not in the network scenario: {missing}.")
+            # Mirror the facade's own validation (it would otherwise never run for this call, since
+            # below we always pass it a freshly-computed `selected_machines`, not the caller's raw
+            # selected/excluded_machines).
+            for label, requested in (("selected", selected_machines), ("excluded", excluded_machines)):
+                if requested is not None and not requested <= all_names:
+                    missing = requested - all_names
+                    raise MachineNotFoundError(f"The following devices are not in the network scenario: {missing}.")
 
-        target_names = self._resolve_targets(all_names, selected_machines, excluded_machines)
+            target_names = self._resolve_targets(all_names, selected_machines, excluded_machines)
 
-        # Already-running machines can't be recreated — Kathara's facade raises
-        # MachineAlreadyExistsError for them — so only machines about to be *freshly* created are
-        # passed to it. Their files are already on disk by now: an import/upload wrote them there
-        # verbatim (see _adopt_lab_dir) and any pre-deploy edit was written through immediately by
-        # fs_write_text_offline/etc. — so Kathara's own deploy machinery (Machine.pack_data) packs
-        # them straight from the real (osfs) fs, with nothing to materialize here. Already-running
-        # targets instead get any *changed* file pushed live via ``_live_push`` (the dirty set —
-        # see registry.mark_dirty — not everything, so an untouched machine isn't redundantly
-        # re-pushed and its startup script re-executed on every redeploy), the only way to reach a
-        # container that already exists.
-        pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
-        fresh_names = target_names - pre_running
-        already_running = target_names & pre_running
+            # Already-running machines can't be recreated — Kathara's facade raises
+            # MachineAlreadyExistsError for them — so only machines about to be *freshly* created are
+            # passed to it. Their files are already on disk by now: an import/upload wrote them there
+            # verbatim (see _adopt_lab_dir) and any pre-deploy edit was written through immediately by
+            # fs_write_text_offline/etc. — so Kathara's own deploy machinery (Machine.pack_data) packs
+            # them straight from the real (osfs) fs, with nothing to materialize here. Already-running
+            # targets instead get any *changed* file pushed live via ``_live_push`` (the dirty set —
+            # see registry.mark_dirty — not everything, so an untouched machine isn't redundantly
+            # re-pushed and its startup script re-executed on every redeploy), the only way to reach a
+            # container that already exists.
+            pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
+            fresh_names = target_names - pre_running
+            already_running = target_names & pre_running
 
-        if fresh_names:
-            with self._mutate_lock:
-                self._facade().deploy_lab(lab, selected_machines=fresh_names)
-            # Native pack_data just packed each fresh machine's *current* on-disk state, so any
-            # dirty flag an offline edit set before this deploy is already reflected — discard it
-            # rather than leaving it to trigger a spurious live-push on some future redeploy.
-            self.registry.pop_dirty_machines(name, fresh_names)
+            if fresh_names:
+                with self._mutate_lock:
+                    self._facade().deploy_lab(lab, selected_machines=fresh_names)
+                # Native pack_data just packed each fresh machine's *current* on-disk state, so any
+                # dirty flag an offline edit set before this deploy is already reflected — discard it
+                # rather than leaving it to trigger a spurious live-push on some future redeploy.
+                self.registry.pop_dirty_machines(name, fresh_names)
 
-        dirty = self.registry.pop_dirty_machines(name, already_running)
-        if dirty:
-            self._live_push(name, lab, dirty)
-        return lab
+            dirty = self.registry.pop_dirty_machines(name, already_running)
+            if dirty:
+                self._live_push(name, lab, dirty)
+            return lab
+        finally:
+            self._end_transition(name)
 
     @staticmethod
     def _boot_script(lab: Lab, machine: Machine) -> str:
@@ -1077,25 +1118,39 @@ class KatharaService:
         excluded_machines: Optional[set[str]] = None,
         selected_links: Optional[set[str]] = None,
     ) -> None:
-        lab = self.registry.get(name)
-        with self._mutate_lock:
-            self._facade().undeploy_lab(
-                lab_name=name,
-                selected_machines=selected_machines,
-                excluded_machines=excluded_machines,
-                selected_links=selected_links,
-            )
-        if lab is not None:
-            machine_names = self._resolve_targets(set(lab.machines.keys()), selected_machines, excluded_machines)
-            self._clear_undeployed_state(lab, machine_names, selected_links)
+        # Marked as transitioning for the whole call (see deploy_lab's own comment on why), plus
+        # everything here runs inside one lock section, not just the facade call — the model
+        # bookkeeping below (`_clear_undeployed_state`, and for a full undeploy, replacing the
+        # registry entry via `_reload_lab_from_disk`) is as much a state mutation as the facade
+        # call itself, and this module's own docstring promises every one of those is serialized.
+        # Left outside the lock, a concurrent deploy_lab/add_machine/connect_machine could read
+        # `machine.api_object`/the registry mid-transition — e.g. still non-None right after the
+        # facade call returns but before `_clear_undeployed_state` clears it, making a
+        # just-stopped machine look "already running" and get silently skipped by that concurrent
+        # deploy_lab's fresh/already-running split.
+        self._begin_transition(name)
+        try:
+            with self._mutate_lock:
+                lab = self.registry.get(name)
+                self._facade().undeploy_lab(
+                    lab_name=name,
+                    selected_machines=selected_machines,
+                    excluded_machines=excluded_machines,
+                    selected_links=selected_links,
+                )
+                if lab is not None:
+                    machine_names = self._resolve_targets(set(lab.machines.keys()), selected_machines, excluded_machines)
+                    self._clear_undeployed_state(lab, machine_names, selected_links)
 
-        # A full undeploy brings the whole lab down, so restore the topology to the saved
-        # configuration (lab.conf) — discarding any runtime-only model changes such as interfaces
-        # added/removed live. Skipped for a partial undeploy, which must not disturb the machines
-        # left running (and their live state).
-        full_undeploy = selected_machines is None and excluded_machines is None and selected_links is None
-        if full_undeploy:
-            self._reload_lab_from_disk(name)
+                # A full undeploy brings the whole lab down, so restore the topology to the saved
+                # configuration (lab.conf) — discarding any runtime-only model changes such as
+                # interfaces added/removed live. Skipped for a partial undeploy, which must not
+                # disturb the machines left running (and their live state).
+                full_undeploy = selected_machines is None and excluded_machines is None and selected_links is None
+                if full_undeploy:
+                    self._reload_lab_from_disk(name)
+        finally:
+            self._end_transition(name)
 
     def rename_lab(self, name: str, new_name: str) -> Lab:
         """Rename a **non-deployed** lab (its directory, and its key in the registry).
@@ -1112,6 +1167,7 @@ class KatharaService:
         """
         clean = lab_store.sanitize_lab_name(name)
         clean_new = lab_store.sanitize_lab_name(new_name)
+        self._check_not_transitioning(clean)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(clean)  # raises LabNotFoundError if unknown
             if clean_new == clean:
@@ -1134,6 +1190,7 @@ class KatharaService:
             return self.registry.get(clean_new)
 
     def delete_lab(self, name: str) -> None:
+        self._check_not_transitioning(name)
         with self._mutate_lock:
             self._facade().undeploy_lab(lab_name=name)
         self.registry.remove(name)
@@ -1183,6 +1240,7 @@ class KatharaService:
         # concurrent deploy_lab/undeploy_lab run first: a stale `lab_deployed=False` would skip
         # deploying a device on a lab that's actually now running, and a stale `lab` object could be
         # an orphan the registry no longer tracks (undeploy_lab replaces it via _reload_lab_from_disk).
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             lab_deployed = any(m.api_object is not None for m in lab.machines.values())
@@ -1217,6 +1275,7 @@ class KatharaService:
         allowed to also deploy live. There is no live-redeploy path here: editing options only
         ever takes effect from the lab's next deploy.
         """
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             if any(m.api_object is not None for m in lab.machines.values()):
@@ -1234,10 +1293,15 @@ class KatharaService:
             return machine
 
     def remove_machine(self, lab_name: str, machine_name: str, keep_links: bool = False) -> None:
-        lab = self.get_lab_or_reconstruct(lab_name)
-        machine = lab.get_machine(machine_name)
-        link_names = {iface.link.name for iface in machine.interfaces.values() if iface is not None}
+        # `lab`/`machine` are (re)read *inside* the lock — see add_machine's comment on why reading
+        # them beforehand would let a concurrent deploy_lab/undeploy_lab run first and act on
+        # stale state (e.g. a `machine` whose interfaces changed since, or a `lab` the registry
+        # already replaced).
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            machine = lab.get_machine(machine_name)
+            link_names = {iface.link.name for iface in machine.interfaces.values() if iface is not None}
             self._facade().undeploy_machine(machine, keep_links=keep_links)
             # link_names=None means "check every link in the lab" to _clear_undeployed_state, so a
             # kept link set must be the empty set (not None) to mean "check none of them".
@@ -1274,15 +1338,22 @@ class KatharaService:
         interface_number: Optional[int] = None,
         mac_address: Optional[str] = None,
     ) -> Machine:
-        lab = self.get_lab_or_reconstruct(lab_name)
-        machine = lab.get_machine(machine_name)
-        link = lab.get_or_new_link(link_name)
+        # `lab`/`machine`/`link`, and — critically — the running-vs-stopped branch below, are all
+        # decided *inside* the lock (see add_machine's comment on why). Deciding the branch from a
+        # `machine.api_object` read taken before the lock could see "stopped" and then have a
+        # concurrent deploy_lab start the device before this function's own critical section runs:
+        # the interface would be written to lab.conf instead of connected live, silently invisible
+        # to the now-running container.
+        self._check_not_transitioning(lab_name)
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            machine = lab.get_machine(machine_name)
+            link = lab.get_or_new_link(link_name)
 
-        # For stopped devices, update the topology model directly so interfaces can be
-        # prepared before deploy (supports explicit interface numbering). This is a "static" edit —
-        # persist it to lab.conf so it survives a reload / is applied on the next deploy.
-        if machine.api_object is None:
-            with self._mutate_lock:
+            # For stopped devices, update the topology model directly so interfaces can be
+            # prepared before deploy (supports explicit interface numbering). This is a "static"
+            # edit — persist it to lab.conf so it survives a reload / is applied on the next deploy.
+            if machine.api_object is None:
                 # Resolve the interface number against the *on-disk* configuration — the same
                 # source the text edit itself reads — and hand the resolved number to the live
                 # model too, so lab.conf and the model can never disagree about eth numbering.
@@ -1296,14 +1367,13 @@ class KatharaService:
                 machine.add_interface(link, number=number, mac_address=mac_address)
                 if new_conf is not None:
                     self.store.write_lab_conf_text(lab_name, new_conf)
-            return machine
+                return machine
 
-        if interface_number is not None:
-            raise NotSupportedError(
-                "Explicit interface_number is only supported when the device is not running."
-            )
+            if interface_number is not None:
+                raise NotSupportedError(
+                    "Explicit interface_number is only supported when the device is not running."
+                )
 
-        with self._mutate_lock:
             self._facade().connect_machine_to_link(
                 machine,
                 link,
@@ -1314,13 +1384,19 @@ class KatharaService:
     def disconnect_machine(
         self, lab_name: str, machine_name: str, link_name: str, keep_link: bool = False
     ) -> None:
-        lab = self.get_lab_or_reconstruct(lab_name)
-        machine = lab.get_machine(machine_name)
-        link = lab.get_link(link_name)
+        # `lab`/`machine`/`link` and the running-vs-stopped branch are all decided *inside* the
+        # lock — same reasoning as connect_machine above (and add_machine's comment): deciding it
+        # from a read taken before the lock risks acting on a device whose running state has
+        # since changed under a concurrent deploy_lab/undeploy_lab.
+        self._check_not_transitioning(lab_name)
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            machine = lab.get_machine(machine_name)
+            link = lab.get_link(link_name)
 
-        # For stopped devices, update the topology model only (a "static" lab.conf edit) and persist.
-        if machine.api_object is None:
-            with self._mutate_lock:
+            # For stopped devices, update the topology model only (a "static" lab.conf edit) and
+            # persist.
+            if machine.api_object is None:
                 # Remove the interface line and renumber the device's higher interfaces: a gap is
                 # an error for both this project's parser and Kathara's own Machine.check, so a
                 # bare line delete would leave a lab.conf that can no longer be loaded or deployed.
@@ -1329,18 +1405,21 @@ class KatharaService:
                 )
                 machine.remove_interface(link)
                 self._renumber_interfaces(machine)
-            return
+                return
 
-        # Running device: live disconnect. Compact the None slot Kathara leaves behind so subsequent
-        # reads don't crash (runtime change — not persisted to lab.conf).
-        with self._mutate_lock:
+            # Running device: live disconnect. Compact the None slot Kathara leaves behind so
+            # subsequent reads don't crash (runtime change — not persisted to lab.conf).
             self._facade().disconnect_machine_from_link(machine, link, keep_link=keep_link)
             self._compact_interfaces(machine)
 
     def copy_files(self, lab_name: str, machine_name: str, files: dict[str, str]) -> None:
-        machine = self._get_running_machine(lab_name, machine_name)
         guest_to_host = {path: io.BytesIO(content.encode("utf-8")) for path, content in files.items()}
+        # `_get_running_machine` (lab/machine lookup + the running check) moved inside the lock —
+        # checked outside it, a concurrent undeploy_lab/remove_machine could stop the device
+        # between the check and the copy, so `self._facade().copy_files` would run against a
+        # machine whose `api_object` this call never actually confirmed was still live.
         with self._mutate_lock:
+            machine = self._get_running_machine(lab_name, machine_name)
             self._facade().copy_files(machine, guest_to_host)
 
     def normalize_guest_path(self, path: str) -> str:
@@ -1538,19 +1617,24 @@ class KatharaService:
     # -- links ----------------------------------------------------------------
 
     def add_link(self, lab_name: str, link_name: str, external: Optional[list[str]] = None):
-        lab = self.get_lab_or_reconstruct(lab_name)
-        link = lab.get_or_new_link(link_name)
-        if external:
-            for iface in external:
-                link.external.append(lab_builder.build_external_link(iface))
+        # `lab`/`link` read *inside* the lock (see add_machine's comment on why), along with the
+        # `link.external` model mutation — building it outside the lock is the same class of
+        # issue as reading stale state: a concurrent operation on this lab could run in between.
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            link = lab.get_or_new_link(link_name)
+            if external:
+                for iface in external:
+                    link.external.append(lab_builder.build_external_link(iface))
             self._facade().deploy_link(link)
         return link
 
     def remove_link(self, lab_name: str, link_name: str) -> None:
-        lab = self.get_lab_or_reconstruct(lab_name)
-        link = lab.get_link(link_name)
+        self._check_not_transitioning(lab_name)
         with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            link = lab.get_link(link_name)
             self._facade().undeploy_link(link)
 
             # Keep the in-memory model consistent with the operation: drop all

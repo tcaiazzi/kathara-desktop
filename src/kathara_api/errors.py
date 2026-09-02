@@ -78,6 +78,22 @@ class LabRenameLockedError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class LabTransitioningError(ApiError):
+    """Raised when a lab.conf/offline-fs edit or a lab/device/link structural change is attempted
+    while `deploy_lab`/`undeploy_lab` is actively running for that same lab.
+
+    Distinct from `LabConfLockedError`/`LabRenameLockedError` (the *steady-state* "this lab is
+    already deployed" checks): those already correctly serialize against a concurrent deploy via
+    `_mutate_lock`, but with no fast-fail guard a request lands on that lock and just blocks —
+    silently, for however long the deploy/undeploy takes — before finally succeeding or failing on
+    whatever state exists by the time it wakes up. This is checked *before* touching the lock at
+    all, so the caller gets an immediate, explicit "try again shortly" instead of an unexplained
+    multi-second hang.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
 class PathNotFoundError(ApiError):
     """Raised when an offline lab filesystem path doesn't exist."""
 

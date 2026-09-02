@@ -4,6 +4,7 @@ import posixpath
 
 from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..dependencies import get_service
 from ..downloads import attachment_headers
@@ -228,7 +229,10 @@ async def upload_runtime_file(
 ) -> FsUploadResponse:
     """Upload a binary or text file to a path on a running device."""
     data = await file.read()
-    size = service.fs_upload_bytes(lab_name, machine_name, path, data)
+    # Docker network I/O (facade().copy_files), off the event loop like every other backend call
+    # in an `async def` handler — otherwise it stalls every other request this single-worker
+    # server is handling for its duration.
+    size = await run_in_threadpool(service.fs_upload_bytes, lab_name, machine_name, path, data)
     return FsUploadResponse(path=service.normalize_guest_path(path), size=size)
 
 

@@ -155,7 +155,10 @@ async def tty_live_ws(
     stop = False
 
     try:
-        machine_obj = service.get_machine_api_object(lab_name, machine_name)
+        # Docker API call (update_lab_from_api + a container lookup) — off the event loop like
+        # every other backend call in this function (session.start/read/write/resize below all
+        # already go through asyncio.to_thread; this was the one unwrapped exception).
+        machine_obj = await asyncio.to_thread(service.get_machine_api_object, lab_name, machine_name)
         client = getattr(getattr(machine_obj, "client", None), "api", None)
         container_id = getattr(machine_obj, "id", None)
         if client is None or not container_id:
