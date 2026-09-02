@@ -208,6 +208,10 @@ const COLLAPSE_THRESHOLD = 60;
 // tab group — matches the shipped default screenshot (topology noticeably wider than the tabs).
 const TOPOLOGY_WIDTH_FRACTION = 0.62;
 
+// Matches an `openTerminal`-minted panel id (`terminal:<machine>:<n>`) so a restored layout's
+// terminals can be told apart from every other panel.
+const TERMINAL_ID_RE = /^terminal:(.*):(\d+)$/;
+
 function buildDefaultLayout(api: DockviewApi) {
   // One shared tab group on the left: the inspector plus every tool panel. Node info goes in
   // first so it lands as the left-most tab.
@@ -264,6 +268,31 @@ function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
 // --- Preset layouts (reposition existing panels via moveTo — no unmount, so terminal sessions
 // survive). All are no-ops when there's nothing to arrange. ---
 const terminalPanelsOf = (api: DockviewApi) => api.panels.filter((p) => p.id.startsWith("terminal:"));
+
+// A layout restored from localStorage can bring back terminal ids (`terminal:<machine>:<n>`) from
+// a previous session — seed `termCounter` from them so a freshly opened terminal never reuses a
+// still-open id. Without this, `termCounter` (a fresh `useRef({})` on every mount) restarts every
+// per-machine counter at 1, and dockview throws "panel with id ... already exists" the moment that
+// collides with a live restored id.
+function seedTermCounterFromPanels(api: DockviewApi, termCounter: Record<string, number>) {
+  for (const p of api.panels) {
+    const match = TERMINAL_ID_RE.exec(p.id);
+    if (!match) continue;
+    const [, machine, numStr] = match;
+    const num = Number(numStr);
+    if (num > (termCounter[machine] ?? 0)) termCounter[machine] = num;
+  }
+}
+
+// Close any terminal panel whose device no longer exists in this lab (matches the old grid
+// behavior). Shared by the effect below (reacts to a later `detail` change) and `onDockReady`
+// (handles a lab already loaded by the time a restored layout's terminals first appear).
+function pruneOrphanTerminals(api: DockviewApi, machineNames: Set<string>) {
+  for (const p of terminalPanelsOf(api)) {
+    const machine = (p.params as { machine?: string } | undefined)?.machine;
+    if (machine && !machineNames.has(machine)) p.api.close();
+  }
+}
 
 // Equalize a terminal grid's row/column split ratios: same width for every column within a row,
 // same height for every row. An incomplete last row (fewer columns) legitimately ends up wider
@@ -394,6 +423,10 @@ export function WorkspacePage() {
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
   const [labFilter, setLabFilter] = useState("");
   const [detail, setDetail] = useState<LabDetail | null>(null);
+  // Mirrors `detail` for onDockReady (stable `useCallback([])`, so it can't read fresh state from
+  // its own closure) to prune restored terminals against, without changing onDockReady's identity.
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
   // Separate from `busy` (shared with delete/rename/wipe-all) so the Deploy/Undeploy button only
@@ -426,16 +459,25 @@ export function WorkspacePage() {
     }
   }, [toast]);
 
+  // Guards against out-of-order responses: switching lab A -> B quickly could otherwise let A's
+  // slower fetch land after B's and clobber the workspace with the wrong lab's data — `api.ts` has
+  // no request-cancellation support, so a generation counter is the fix (same pattern as
+  // useFsTree's selectGenRef). Every `return` below is really "this call is done, stale or not."
+  const loadGenRef = useRef(0);
   const load = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     if (!name) {
       setDetail(null);
       setNotFound(false);
       return;
     }
     try {
-      setDetail(await api.getLab(name));
+      const nextDetail = await api.getLab(name);
+      if (loadGenRef.current !== gen) return;
+      setDetail(nextDetail);
       setNotFound(false);
     } catch (e) {
+      if (loadGenRef.current !== gen) return;
       if (e instanceof ApiError && e.status === 404) {
         setDetail(null);
         setNotFound(true);
@@ -571,15 +613,12 @@ export function WorkspacePage() {
     deviceActions;
 
   // Close terminal panels whose device no longer exists in the lab (matches the old grid behavior).
+  // Handles every *later* `detail` change; onDockReady below handles the lab already loaded by the
+  // time the dock first mounts, which this effect alone would miss (see its own comment).
   useEffect(() => {
     const dockApi = dockApiRef.current;
     if (!dockApi || !detail) return;
-    const existing = new Set(detail.machines.map((m) => m.name));
-    for (const p of dockApi.panels) {
-      if (!p.id.startsWith("terminal:")) continue;
-      const machine = (p.params as { machine?: string } | undefined)?.machine;
-      if (machine && !existing.has(machine)) p.api.close();
-    }
+    pruneOrphanTerminals(dockApi, new Set(detail.machines.map((m) => m.name)));
   }, [detail]);
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
@@ -596,6 +635,11 @@ export function WorkspacePage() {
       }
     }
     if (!restored) buildDefaultLayout(event.api);
+
+    // Subscribed before the fixups below run their own `p.api.close()`, on purpose: that close is
+    // itself a layout change, and it must be persisted like any other — registering this first is
+    // what makes that happen instead of leaving a since-pruned panel stuck in localStorage until
+    // some *later*, unrelated layout change happens to resave over it.
     event.api.onDidLayoutChange(() => {
       try {
         localStorage.setItem(LS_LAYOUT, JSON.stringify(event.api.toJSON()));
@@ -603,6 +647,18 @@ export function WorkspacePage() {
         /* ignore quota/serialization errors */
       }
     });
+
+    // DockviewReact only mounts once a lab is already loaded (see the `ctxValue && coreCtxValue`
+    // check below), so `detailRef.current` is always populated by the time this runs — do the same
+    // two restored-terminal fixups the rest of the component does on a *later* `detail` change:
+    // seed termCounter so a new terminal can't collide with a restored one's id, and prune any
+    // restored terminal for a device that's since been removed from the lab. Reading `detailRef`
+    // (not `detail`) is what makes this correct despite onDockReady's own `[]` deps — dockview only
+    // calls onReady once, so that's a constraint on this callback, not something to work around.
+    seedTermCounterFromPanels(event.api, termCounter.current);
+    if (detailRef.current) {
+      pruneOrphanTerminals(event.api, new Set(detailRef.current.machines.map((m) => m.name)));
+    }
   }, []);
 
   const filteredLabs = useMemo(() => {
