@@ -50,8 +50,17 @@ export function useDeviceActions({
   // Best-effort fetch of each device's real `<name>.startup` content so callers (the node-info
   // panel) can show it (same source + precedence as the Lab Configuration tab). Inspection-only,
   // errors are ignored.
+  //
+  // Keyed on `labName` alone, not `detail` — startup *scripts* are lab-static content that only
+  // changes via an explicit file edit, unlike `detail` (device/link runtime state), which gets a
+  // new object identity on every refresh (deploy, undeploy, connect, a stats poll, ...). Refetching
+  // on every one of those was strictly wasted work, and worse, it made `model` below settle in two
+  // steps per refresh instead of one — `detail` changing recomputes it immediately with the *old*
+  // `startups`, then this fetch resolving recomputes it *again* moments later, and each recompute
+  // is a full topology-canvas rebuild in TopologyGraph/useForceLayout (a real, visible flicker;
+  // camera-reset was the other half of that, fixed separately in useForceLayout).
   useEffect(() => {
-    if (!detail) {
+    if (!labName) {
       setStartups({});
       return;
     }
@@ -65,7 +74,7 @@ export function useDeviceActions({
     return () => {
       live = false;
     };
-  }, [labName, detail]);
+  }, [labName]);
 
   const model = useMemo(() => (detail ? computeTopology(detail, startups) : EMPTY_MODEL), [detail, startups]);
 

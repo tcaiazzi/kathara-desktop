@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button, Form } from "react-bootstrap";
 import { AutocompleteInput } from "./AutocompleteInput";
@@ -40,17 +40,44 @@ export function RowListEditor<T extends object>({
   disabled = false,
   hint,
 }: RowListEditorProps<T>) {
+  // `T` (envs/sysctls/ports/volumes/...) carries no natural row id, and `updateCell` below
+  // creates a fresh object on every keystroke anyway (spread), so object identity can't be a key
+  // either — a synthetic key per row *position*, kept stable across add/remove by this component's
+  // own handlers below, is what actually stops AutocompleteInput's uncontrolled open/highlight
+  // state (a plain useState local to it) from following the wrong row when one above it is
+  // removed, the way `key={index}` used to.
+  const nextKeyRef = useRef(0);
+  const makeKey = () => `row-${nextKeyRef.current++}`;
+  const [rowKeys, setRowKeys] = useState<string[]>(() => rows.map(makeKey));
+  // `rows`'s length changing for a reason other than this component's own add/remove below (e.g.
+  // a different machine's saved options loaded into an already-mounted editor) is handled by
+  // resetting here — React's "adjust state during render" pattern, not an effect, so it applies
+  // before this render paints rather than one frame later.
+  if (rowKeys.length !== rows.length) {
+    setRowKeys(rows.map(makeKey));
+  }
+
   function updateCell(index: number, key: keyof T, value: unknown) {
     const next = rows.slice();
     next[index] = { ...next[index], [key]: value };
     onChange(next);
   }
 
+  function addRow() {
+    setRowKeys((keys) => [...keys, makeKey()]);
+    onChange([...rows, emptyRow()]);
+  }
+
+  function removeRow(index: number) {
+    setRowKeys((keys) => keys.filter((_, i) => i !== index));
+    onChange(rows.filter((_, i) => i !== index));
+  }
+
   return (
     <div className="mb-3">
       {hint && <div className="small text-muted mb-1">{hint}</div>}
       {rows.map((row, index) => (
-        <div className="d-flex gap-2 mb-1 align-items-center" key={index}>
+        <div className="d-flex gap-2 mb-1 align-items-center" key={rowKeys[index] ?? index}>
           {columns.map((col) => {
             const raw = row[col.key];
             const setValue = (value: unknown) => updateCell(index, col.key, value);
@@ -113,7 +140,7 @@ export function RowListEditor<T extends object>({
             disabled={disabled}
             title="Remove row"
             aria-label="Remove row"
-            onClick={() => onChange(rows.filter((_, i) => i !== index))}
+            onClick={() => removeRow(index)}
           >
             <Trash2 size={14} />
           </Button>
@@ -126,7 +153,7 @@ export function RowListEditor<T extends object>({
         disabled={disabled}
         title="Add row"
         aria-label="Add row"
-        onClick={() => onChange([...rows, emptyRow()])}
+        onClick={addRow}
       >
         <Plus size={14} />
       </Button>

@@ -157,6 +157,19 @@ export function useForceLayout(
 ): UseForceLayout {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<Engine | null>(null);
+  // Last `relayoutNonce` this effect actually rebuilt for, so it can tell "the caller asked for a
+  // fresh layout" (Re-layout / the fixed layout arriving / Remove layout — relayoutNonce bumped)
+  // apart from "only `model` changed" (any other data refresh — a deploy, a connect, a stats poll
+  // touching `detail`, the startups fetch resolving after it). Only the former should reset pan/
+  // zoom to "fit all"; the latter should leave the camera exactly where the user left it.
+  const lastNonceRef = useRef(relayoutNonce);
+  // The outgoing engine's camera, captured by *this effect's own cleanup* (below) rather than read
+  // from `engineRef.current` at the top of a later run — React always runs an effect's cleanup
+  // before its next invocation, so `engineRef.current` is already null by the time a later run
+  // would try to read it there. `engine.tx/ty/scale` are read at cleanup time, not closure-capture
+  // time, so this also picks up any live pan/zoom/drag that happened after the engine was built,
+  // not just its state at construction.
+  const lastCameraRef = useRef<{ tx: number; ty: number; scale: number } | null>(null);
 
   // Always-current callbacks/options for the DOM event listeners below, without forcing the whole
   // rebuild effect to re-run (and the simulation to restart) on every render.
@@ -168,6 +181,13 @@ export function useForceLayout(
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !model.nodes.length) return;
+
+    const isExplicitRelayout = lastNonceRef.current !== relayoutNonce;
+    lastNonceRef.current = relayoutNonce;
+    // Restored below (instead of resetting to the default 0,0,1 + auto-fit) when this rebuild is
+    // just a data refresh rather than an explicit relayout request.
+    const prevCamera = !isExplicitRelayout ? lastCameraRef.current : null;
+
     canvas.replaceChildren();
     callbacksRef.current.onDismissContextMenu();
 
@@ -242,9 +262,9 @@ export function useForceLayout(
       edges: model.edges,
       byId,
       adj,
-      tx: 0,
-      ty: 0,
-      scale: 1,
+      tx: prevCamera?.tx ?? 0,
+      ty: prevCamera?.ty ?? 0,
+      scale: prevCamera?.scale ?? 1,
       raf: null,
       dragging: null,
       selected: null,
@@ -255,9 +275,12 @@ export function useForceLayout(
       edgeIpEls: [],
       nodeEls: {},
       ro: null,
-      // Always fit once on settle: a layout restored from `lab.layout` may have been arranged on a
-      // differently-sized canvas, and fitEngine only pans/zooms (stored coordinates are untouched).
-      autoFit: true,
+      // Fit once on settle for a genuinely fresh/relaid-out graph: a layout restored from
+      // `lab.layout` may have been arranged on a differently-sized canvas, and fitEngine only
+      // pans/zooms (stored coordinates are untouched). Skipped when this rebuild only carried a
+      // data refresh forward (prevCamera set) — the user's own pan/zoom already applies and must
+      // not be overridden by a fit the caller never asked for.
+      autoFit: prevCamera === null,
       settledOnce: false,
     };
     engineRef.current = engine;
@@ -608,15 +631,17 @@ export function useForceLayout(
 
     render();
     if (allSaved) {
-      // Nothing to settle — reflect and fit the restored layout immediately.
+      // Nothing to settle — reflect (and, unless a data-refresh rebuild is preserving the user's
+      // own camera, fit) the restored layout immediately.
       engine.settledOnce = true;
-      fitEngine(engine);
+      if (engine.autoFit) fitEngine(engine);
     }
     ensureLoop();
 
     return () => {
       if (engine.raf) cancelAnimationFrame(engine.raf);
       if (engine.ro) engine.ro.disconnect();
+      lastCameraRef.current = { tx: engine.tx, ty: engine.ty, scale: engine.scale };
       engineRef.current = null;
       canvas.replaceChildren();
     };
