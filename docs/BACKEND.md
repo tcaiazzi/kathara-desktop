@@ -73,7 +73,6 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/system` | Manager name/version + available managers | — | `SystemInfo` |
 | GET | `/api/settings` | Current Kathara settings | — | `SettingsView` |
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |
-| POST | `/api/system/images/check` | Validate an image is available (503 if registry unreachable) | `{image}` | `Message` |
 | POST | `/api/system/wipe` | Undeploy every lab this backend deployed (scenarios started by other tools are left alone) | — | `Message` |
 | GET | `/api/system/browse` | List a directory on the *host's own* filesystem — backs the volume host-path picker | `?path=/` | `FsListResponse` |
 | GET | `/api/system/sysctls` | Every `net.*` sysctl key this host's kernel exposes (the only namespace Kathara accepts) | — | `string[]` |
@@ -84,7 +83,6 @@ Errors return `{"detail": str, "error_type": str}`.
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
 | POST | `/api/labs` | Create a lab from a JSON description (not deployed) | `LabCreate` | `LabDetail` (201) |
-| POST | `/api/labs/import/preview` | Dry-run parse of a lab.conf/folder (creates nothing) | `LabImportRequest` | `LabImportPreview` |
 | POST | `/api/labs/import` | Create (and optionally deploy) from lab.conf/.startup/folder files | `LabImportRequest` | `LabImportResult` (201) |
 | POST | `/api/labs/upload` | Create (and optionally deploy) from an uploaded `.zip` (binary-safe) | multipart: `file`, `name?`, `deploy?` | `LabImportResult` (201) |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
@@ -137,7 +135,6 @@ Errors return `{"detail": str, "error_type": str}`.
 |---|---|---|---|---|
 | POST | `…/{m}/exec` | Run a command, wait, return combined output | `ExecRequest {command, wait?}` | `ExecResult` |
 | POST | `…/{m}/exec/stream` | Stream stdout/stderr as SSE, then a final `exit` event | `ExecRequest` | `text/event-stream` |
-| WS | `…/{m}/exec/live/ws` | WebSocket command streaming (`run`/`close` → `output`/`exit`/`error`) | — | WebSocket |
 | WS | `…/{m}/tty/ws` | Interactive TTY bridge (Docker) | `?shell=bash` | WebSocket |
 
 ## Stats — `/api/labs/{lab}`
@@ -146,9 +143,7 @@ Errors return `{"detail": str, "error_type": str}`.
 |---|---|---|---|
 | GET | `…/{lab}/stats` | One-shot machine stats snapshot | `MachineStats[]` |
 | GET | `…/{lab}/machines/{m}/stats` | One-shot stats for a device (409 if not running) | `MachineStats` |
-| GET | `…/{lab}/links/stats` | One-shot collision-domain stats | `LinkStats[]` |
 | GET | `…/{lab}/stats/stream` | Live machine stats (SSE) | `text/event-stream` |
-| GET | `…/{lab}/links/stats/stream` | Live collision-domain stats (SSE) | `text/event-stream` |
 
 ## Collision domains — `/api/labs/{lab}/links`
 

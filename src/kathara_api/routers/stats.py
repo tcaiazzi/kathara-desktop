@@ -8,7 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from ..dependencies import get_service
-from ..schemas.stats import LinkStats, MachineStats
+from ..schemas.stats import MachineStats
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
@@ -46,13 +46,6 @@ def machine_stats(
     return serializers.machine_stats_to_schema(stats)
 
 
-@router.get("/links/stats", response_model=list[LinkStats])
-def links_stats(lab_name: str, service: KatharaService = Depends(get_service)) -> list[LinkStats]:
-    """Return a one-shot snapshot of all collision-domain statistics."""
-    stats = service.links_stats_snapshot(lab_name)
-    return [serializers.link_stats_to_schema(s) for s in stats if s is not None]
-
-
 @router.get("/stats/stream")
 async def machines_stats_stream(
     lab_name: str, request: Request, service: KatharaService = Depends(get_service)
@@ -61,15 +54,4 @@ async def machines_stats_stream(
     generator = service.machines_stats_stream(lab_name)
     return EventSourceResponse(
         _sse_stats_stream(request, generator, serializers.machine_stats_to_schema)
-    )
-
-
-@router.get("/links/stats/stream")
-async def links_stats_stream(
-    lab_name: str, request: Request, service: KatharaService = Depends(get_service)
-):
-    """Stream live collision-domain statistics as Server-Sent Events."""
-    generator = service.links_stats_stream(lab_name)
-    return EventSourceResponse(
-        _sse_stats_stream(request, generator, serializers.link_stats_to_schema)
     )

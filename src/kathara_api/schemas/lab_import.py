@@ -21,15 +21,6 @@ class LabImportRequest(BaseModel):
     deploy: bool = False
 
 
-class LabImportPreview(BaseModel):
-    """Dry-run parse result of a lab directory, without creating anything."""
-
-    machine_count: int
-    domains: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-    errors: list[str] = Field(default_factory=list)
-
-
 class LabImportResult(LabDetail):
     """Response for a successful import, including any non-fatal parse warnings."""
 

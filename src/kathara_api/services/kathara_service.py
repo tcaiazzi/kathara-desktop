@@ -51,7 +51,6 @@ from ..errors import (
 )
 from ..schemas.filesystem import FsEntry
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
-from ..schemas.lab_import import LabImportPreview
 from ..schemas.machine import MachineCreate, MachineUpdate
 from . import lab_builder, lab_conf_edit, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
@@ -136,9 +135,6 @@ class KatharaService:
             "available_managers": Kathara.get_available_managers_name(),
             "is_admin": is_admin(),
         }
-
-    def check_image(self, image: str) -> None:
-        self._facade().check_image(image)
 
     def list_available_images(self) -> list[str]:
         """Official Kathara device images published on Docker Hub (the ``kathara/`` org), via
@@ -559,18 +555,6 @@ class KatharaService:
         return True
 
     # -- lab.conf / folder import ----------------------------------------------
-
-    def preview_import(
-        self,
-        name: str,
-        files: dict[str, str],
-        skipped: Optional[list[str]] = None,
-    ) -> LabImportPreview:
-        """Dry-run parse of a lab directory, without creating anything."""
-        t = lab_import.translate_lab_files(files, name or "lab", skipped)
-        return LabImportPreview(
-            machine_count=t.machine_count, domains=t.domains, warnings=t.warnings, errors=t.errors
-        )
 
     def import_lab(
         self,
@@ -1612,11 +1596,3 @@ class KatharaService:
             # MachineNotRunningError formats its own "Device `<name>` is not running." message.
             raise MachineNotRunningError(machine_name)
         return sample
-
-    def links_stats_stream(self, lab_name: str) -> Generator[list, None, None]:
-        for stats_dict in self._facade().get_links_stats(lab_name=lab_name):
-            yield list(stats_dict.values())
-
-    def links_stats_snapshot(self, lab_name: str) -> list:
-        sample = self._first_sample(self._facade().get_links_stats(lab_name=lab_name))
-        return list(sample.values()) if sample is not None else []

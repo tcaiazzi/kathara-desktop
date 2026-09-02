@@ -13,7 +13,7 @@ from Kathara.model.Machine import Machine
 from ..schemas.lab import LabDetail, LabMetadata, LabSummary
 from ..schemas.link import LinkDetail
 from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping, Ulimit, VolumeMount
-from ..schemas.stats import LinkStats, MachineStats
+from ..schemas.stats import MachineStats
 from .lab_store import _KNOWN_META_KEYS
 
 
@@ -145,7 +145,3 @@ def lab_to_detail(lab: Lab) -> LabDetail:
 
 def machine_stats_to_schema(stats: Any) -> MachineStats:
     return MachineStats.model_validate(stats.to_dict())
-
-
-def link_stats_to_schema(stats: Any) -> LinkStats:
-    return LinkStats.model_validate(stats.to_dict())

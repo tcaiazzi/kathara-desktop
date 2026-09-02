@@ -37,9 +37,3 @@ class SettingsUpdate(BaseModel):
     image: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
-
-
-class ImageCheckRequest(BaseModel):
-    """Request body for checking image availability."""
-
-    image: str

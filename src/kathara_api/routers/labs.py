@@ -30,7 +30,7 @@ from ..schemas.lab import (
     LabSummary,
     UndeployOptions,
 )
-from ..schemas.lab_import import LabImportPreview, LabImportRequest, LabImportResult
+from ..schemas.lab_import import LabImportRequest, LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
@@ -51,14 +51,6 @@ def create_lab(payload: LabCreate, service: KatharaService = Depends(get_service
     """Create a network scenario from a JSON description (not yet deployed)."""
     lab = service.create_lab(payload)
     return serializers.lab_to_detail(lab)
-
-
-@router.post("/import/preview", response_model=LabImportPreview)
-def preview_import(
-    payload: LabImportRequest, service: KatharaService = Depends(get_service)
-) -> LabImportPreview:
-    """Dry-run parse of a standard Kathara lab directory, without creating anything."""
-    return service.preview_import(payload.name, payload.files, payload.skipped_files)
 
 
 @router.post("/import", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)

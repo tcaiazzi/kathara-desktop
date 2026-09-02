@@ -8,12 +8,7 @@ from fastapi import APIRouter, Depends
 from ..dependencies import get_service
 from ..schemas.common import Message
 from ..schemas.filesystem import FsListResponse
-from ..schemas.settings import (
-    ImageCheckRequest,
-    SettingsUpdate,
-    SettingsView,
-    SystemInfo,
-)
+from ..schemas.settings import SettingsUpdate, SettingsView, SystemInfo
 from ..services.kathara_service import KatharaService
 
 router = APIRouter(tags=["system"])
@@ -58,15 +53,6 @@ def update_settings(
     used (else 409); every other setting is updatable at runtime."""
     service.update_settings(payload.model_dump(exclude_none=True))
     return SettingsView.model_validate(service.get_settings_view())
-
-
-@router.post("/system/images/check", response_model=Message)
-def check_image(
-    payload: ImageCheckRequest, service: KatharaService = Depends(get_service)
-) -> Message:
-    """Validate that the specified image is available."""
-    service.check_image(payload.image)
-    return Message(detail=f"Image `{payload.image}` is available.")
 
 
 @router.post("/system/wipe", response_model=Message)

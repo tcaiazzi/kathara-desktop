@@ -24,14 +24,3 @@ class MachineStats(BaseModel):
     interfaces: Optional[str] = None
 
     model_config = ConfigDict(extra="allow")
-
-
-class LinkStats(BaseModel):
-    """Statistics for a single deployed collision domain."""
-
-    name: str
-    network_name: Optional[str] = None
-    containers: Optional[list] = None
-    external: Optional[list] = None
-
-    model_config = ConfigDict(extra="allow")
