@@ -127,20 +127,23 @@
 .kt-ws-dot.stopped {
   background: var(--kt-node-stopped);
 }
-.kt-ws-mini-btn,
 .kt-ws-mini-btn {
   flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--bs-secondary-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--bs-border-color);
+  background: var(--kt-panel-muted-bg);
+  color: var(--bs-primary);
   cursor: pointer;
   border-radius: 5px;
-  padding: 1px 6px;
-  line-height: 1.2;
+  padding: 3px 5px;
+  line-height: 1;
 }
 .kt-ws-mini-btn:hover {
   background: var(--kt-menu-hover-bg);
-  color: var(--bs-body-color);
+  border-color: var(--bs-primary);
+  color: var(--bs-primary);
 }
 
 /* Sidebar collapse button — a clearly-visible bordered control (pairs with .kt-ws-rail-reopen). */

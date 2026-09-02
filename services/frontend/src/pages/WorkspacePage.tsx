@@ -10,7 +10,7 @@ import {
   type IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { Loader2 } from "lucide-react";
+import { Loader2, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
 import { useNavigate, useParams } from "react-router-dom";
@@ -821,7 +821,7 @@ export function WorkspacePage() {
                             openTerminal(m.name);
                           }}
                         >
-                          ⌨
+                          <SquareTerminal size={14} />
                         </span>
                       )}
                     </button>
