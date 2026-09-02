@@ -41,6 +41,9 @@ export function buildMenu(): void {
     ...(isMac
       ? ([{ role: "appMenu" }] satisfies MenuItemConstructorOptions[])
       : []),
+    // Without this, macOS has no key-equivalents to route Cmd+C/V/X/Z/A to, so clipboard and
+    // undo shortcuts silently do nothing anywhere in the app (not just in editable fields).
+    { role: "editMenu" },
     {
       label: "File",
       submenu: [
