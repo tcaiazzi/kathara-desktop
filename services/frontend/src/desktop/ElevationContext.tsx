@@ -22,6 +22,16 @@ type ElevateApi = (resumeLab: string) => Promise<ElevationOutcome>;
 
 const ElevationCtx = createContext<ElevateApi | null>(null);
 
+/** Failure reasons the modal stays open for, and what it says about each. A reason absent here
+ * closes the modal instead — currently only "cancelled", i.e. the user dismissed the OS's own
+ * admin dialog on macOS/Windows, where closing is exactly what they asked for. */
+const RETRY_MESSAGES: Record<string, ((message: string) => string) | undefined> = {
+  "wrong-password": () => "Incorrect password. Try again.",
+  "not-permitted": () => "This account isn't allowed to use sudo.",
+  timeout: () => "The backend didn't start with administrator privileges in time. Try again.",
+  error: (message) => `Could not start with administrator privileges: ${message}`,
+};
+
 export function ElevationProvider({ children }: { children: ReactNode }) {
   const [show, setShow] = useState(false);
   const [password, setPassword] = useState("");
@@ -85,9 +95,14 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
         resolveRef.current = null;
         return;
       }
-      if (result.reason === "wrong-password" || result.reason === "not-permitted") {
+      // Everything except a dismissed OS dialog is worth showing *in* the modal and retrying
+      // from: the backend is still running (see bridge.ts's `restarted`), and reporting a
+      // failed elevation to the caller as if the user had clicked Cancel — which is what
+      // closing here does — hides the actual reason in the log where nobody looks.
+      const inlineError = RETRY_MESSAGES[result.reason]?.(result.message);
+      if (inlineError) {
         setPassword("");
-        setError(result.reason === "wrong-password" ? "Incorrect password. Try again." : "This account isn't allowed to use sudo.");
+        setError(inlineError);
         setBusy(false);
         return;
       }

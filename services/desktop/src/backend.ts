@@ -22,17 +22,34 @@ export interface BackendHandle {
 /** Why an elevated (re)start of the backend didn't produce a running, root-owned backend. */
 export type ElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error";
 
-export type ElevateResult = { ok: true; handle: BackendHandle } | { ok: false; reason: ElevateFailureReason; message: string };
+/** `restarted` says whether the attempt got far enough to stop the backend it was replacing.
+ * When false — a password rejected before anything was torn down, or a native attempt that
+ * failed alongside a still-running backend — the caller's page is still on a live origin and
+ * must be left alone, so its elevation prompt can show the error and offer a retry in place.
+ * When true, the backend was restarted on a *new* port and the caller has to be sent there. */
+export type ElevateResult =
+  | { ok: true; handle: BackendHandle }
+  | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
 
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_POLL_MS = 250;
 const SIGTERM_GRACE_MS = 5_000;
 const SHUTDOWN_HTTP_TIMEOUT_MS = 2_000;
+/** Bounds the credentials-only `sudo -v` probe below. Generous — it's a local PAM call that
+ * normally answers instantly — but finite, so a wedged PAM module can't hang the IPC call
+ * that's holding the elevation prompt open. */
+const SUDO_VERIFY_TIMEOUT_MS = 15_000;
 
 let child: ChildProcess | null = null;
 let handle: BackendHandle | null = null;
 /** Set during an intentional stop, so an exit then isn't reported as a crash. */
 let stopping = false;
+/** Set while an elevated (re)start is in flight. An exit during that window is the *attempt*
+ * failing — whose own catch block restarts a plain backend — not the crash of a backend that
+ * was up and running, so it must not reach `exitListener` and be reported to the user as one.
+ * Read at exit time, not captured, so a genuine crash of a successfully elevated backend
+ * later on still reports normally. */
+let elevating = false;
 let exitListener: ((info: { code: number | null; signal: string | null }) => void) | null = null;
 
 /**
@@ -85,6 +102,23 @@ async function waitForDeath(baseUrl: string, deadline: number): Promise<boolean>
   return false;
 }
 
+/**
+ * Ask whatever is listening at `baseUrl` to shut itself down, and confirm it actually did.
+ * Purely address-based — no process handle, no module state — which is what makes it usable
+ * both for a previously orphaned backend and for a *candidate* backend that failed its
+ * elevation checks while the real one is still running (where `stopBackend()` would stop
+ * precisely the wrong process). Returns whether it's confirmed gone.
+ */
+async function shutdownAt(baseUrl: string): Promise<boolean> {
+  try {
+    await fetch(`${baseUrl}/api/system/shutdown`, { method: "POST", signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS) });
+    return await waitForDeath(baseUrl, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2);
+  } catch (err) {
+    log(`shutdown request to ${baseUrl} failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
 /** Retries shutting down a previously orphaned backend before a new one starts on top of it —
  * whatever kept it unsignalable/unresponsive (a stuck operation, elevation still settling) may
  * have resolved since. Never blocks starting the new backend either way: this is best-effort, not
@@ -94,15 +128,10 @@ async function retryOrphanShutdown(): Promise<void> {
   const orphan = orphanedBackend;
   if (!orphan) return;
   log(`retrying shutdown of previously orphaned backend at ${orphan.baseUrl}`);
-  try {
-    await fetch(`${orphan.baseUrl}/api/system/shutdown`, { method: "POST", signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS) });
-    if (await waitForDeath(orphan.baseUrl, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2)) {
-      log(`orphaned backend at ${orphan.baseUrl} is now stopped`);
-      orphanedBackend = null;
-      return;
-    }
-  } catch (err) {
-    log(`retrying shutdown of orphaned backend failed: ${err instanceof Error ? err.message : String(err)}`);
+  if (await shutdownAt(orphan.baseUrl)) {
+    log(`orphaned backend at ${orphan.baseUrl} is now stopped`);
+    orphanedBackend = null;
+    return;
   }
   log(`orphaned backend at ${orphan.baseUrl} is still running — a new backend will start on a different port`);
 }
@@ -225,7 +254,7 @@ function trackChild(proc: ChildProcess): void {
     const wasStopping = stopping;
     child = null;
     handle = null;
-    if (!wasStopping) exitListener?.({ code, signal });
+    if (!wasStopping && !elevating) exitListener?.({ code, signal });
   });
 }
 
@@ -251,12 +280,87 @@ export async function startBackend(python: string, staticDir: string): Promise<B
   return handle;
 }
 
-// Substrings sudo itself prints to stderr on auth failure (GNU sudo, `-S`/stdin password). Sniffed
-// so a bad password can be reported distinctly from any other startup failure instead of just a
-// generic timeout — `-S` reads one line from stdin and, since we close stdin after writing it,
-// sudo cannot re-prompt and fails fast rather than hanging.
-const SUDO_WRONG_PASSWORD_MARKERS = ["Sorry, try again", "incorrect password attempt", "1 incorrect password attempt"];
-const SUDO_NOT_PERMITTED_MARKERS = ["is not in the sudoers file", "not allowed to execute"];
+// Substrings sudo itself prints to stderr when it refuses. Only used to tell "this account may
+// not use sudo at all" apart from "that password was wrong" — the *fact* of a failure is taken
+// from sudo's exit status, which needs no string matching. Both spawn sites force `LC_ALL=C`,
+// since sudo's diagnostics are translated and these are the English ones.
+const SUDO_NOT_PERMITTED_MARKERS = ["is not in the sudoers file", "not allowed to execute", "may not run sudo"];
+
+/** `sudo`'s own messages are localized; classification below reads them, so pin them to C.
+ * `SUDO_ASKPASS`/`DISPLAY` are cleared too so sudo can't decide to pop its own GUI askpass
+ * dialog instead of reading the password we're feeding it on stdin. */
+function sudoEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, LC_ALL: "C", LANGUAGE: "" };
+  delete env.SUDO_ASKPASS;
+  delete env.DISPLAY;
+  return env;
+}
+
+/**
+ * Check `password` against sudo *without* running anything: `-v` only validates credentials.
+ *
+ * This exists so a mistyped password can be settled while the current backend is still running
+ * and healthy. Elevating means stopping the backend and starting a new one on a new port — do
+ * that first and a wrong password costs the user their whole session (the page ends up on a
+ * dead origin, and the failed `sudo` child's exit looks exactly like a backend crash). Checking
+ * first makes the overwhelmingly common failure a no-op: nothing is stopped, nothing moves, and
+ * the prompt can just say the password was wrong.
+ *
+ * Deliberately not registered with `trackChild` — it is not a backend, and treating it as one is
+ * what made a typo present itself as "The Kathara API stopped unexpectedly".
+ */
+async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+  let proc: ChildProcess;
+  try {
+    proc = spawn("sudo", ["-S", "-k", "-v"], { env: sudoEnv(), stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+  } catch (err) {
+    return { ok: false, reason: "error", message: `could not run sudo: ${err instanceof Error ? err.message : String(err)}` };
+  }
+
+  let stderrBuf = "";
+  proc.stderr?.on("data", (c: Buffer) => {
+    stderrBuf += c.toString();
+  });
+  proc.stdin?.on("error", () => {
+    /* sudo can exit before the write lands (e.g. not in sudoers) — EPIPE here is not the error
+     * worth reporting, the exit status below is. */
+  });
+  proc.stdin?.write(`${password}\n`);
+  proc.stdin?.end();
+
+  // "close", not "exit": stderr must be drained before it's classified, otherwise a genuine
+  // refusal can be read while `stderrBuf` is still empty and get misfiled as a generic error.
+  const code = await new Promise<number | null>((resolve) => {
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      resolve(null);
+    }, SUDO_VERIFY_TIMEOUT_MS);
+    proc.once("close", (c) => {
+      clearTimeout(timer);
+      resolve(c);
+    });
+    proc.once("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+
+  if (code === 0) return { ok: true };
+
+  const detail = stderrBuf.trim();
+  if (SUDO_NOT_PERMITTED_MARKERS.some((m) => stderrBuf.includes(m))) {
+    log(`sudo password check refused: account may not use sudo${detail ? ` — ${detail}` : ""}`);
+    return { ok: false, reason: "not-permitted", message: detail || "this account is not allowed to use sudo" };
+  }
+  if (code === null) {
+    log("sudo password check did not finish in time");
+    return { ok: false, reason: "timeout", message: `sudo did not respond within ${SUDO_VERIFY_TIMEOUT_MS}ms` };
+  }
+  // Any other non-zero exit from `sudo -v` is an authentication failure: it runs no command, so
+  // there is nothing else that could have failed.
+  log(`sudo password check failed (exit ${code})${detail ? ` — ${detail}` : ""}`);
+  return { ok: false, reason: "wrong-password", message: detail || "incorrect password" };
+}
 
 /**
  * Linux only: kill the current backend and relaunch it under `sudo`, feeding `password` on
@@ -264,10 +368,28 @@ const SUDO_NOT_PERMITTED_MARKERS = ["is not in the sudoers file", "not allowed t
  * *real* UID, so this is the only way to satisfy it — there is no in-place elevation of an
  * already-running process.
  *
- * On any failure this falls back to restarting the normal unprivileged backend, so the app is
- * never left without one just because a password was mistyped.
+ * The password is checked with `verifySudoPassword` *before* anything is stopped, so the
+ * common failure — a mistyped password — costs nothing: no restart, no port change, and the
+ * caller's page stays live to offer a retry. Only a failure past that point restarts the
+ * plain unprivileged backend, so the app is never left without one.
  */
 export async function startBackendElevatedLinux(python: string, staticDir: string, password: string): Promise<ElevateResult> {
+  // Before stopBackend(), never after: a rejected password must leave the running backend
+  // exactly where it was, so the prompt can offer a retry against a still-live origin.
+  const check = await verifySudoPassword(password);
+  if (!check.ok) return { ...check, restarted: false };
+
+  elevating = true;
+  try {
+    return await runElevatedLinux(python, staticDir, password);
+  } finally {
+    // Only after the catch below has restarted a plain backend, so neither the failed attempt
+    // nor its recovery is reported to the user as a backend crash.
+    elevating = false;
+  }
+}
+
+async function runElevatedLinux(python: string, staticDir: string, password: string): Promise<ElevateResult> {
   await stopBackend();
 
   const { port, baseUrl, labs, env, appEnv, args } = await buildBackendCommand(staticDir);
@@ -282,7 +404,7 @@ export async function startBackendElevatedLinux(python: string, staticDir: strin
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
-  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, python, ...args], { env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, python, ...args], { env: sudoEnv(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   let stderrBuf = "";
   proc.stderr?.on("data", (c: Buffer) => {
     stderrBuf += c.toString();
@@ -306,15 +428,20 @@ export async function startBackendElevatedLinux(python: string, staticDir: strin
   } catch (err) {
     await stopBackend();
     const message = err instanceof Error ? err.message : String(err);
+    // The password already passed `verifySudoPassword`, so this is the backend itself failing to
+    // come up as root, not an auth problem — except for the sudoers case, which `-v` does not
+    // cover: `-v` only asks "may this user sudo *at all*", while running a command additionally
+    // consults the per-command rules, so a user allowed to sudo but not to run this one is only
+    // discovered here.
     let reason: ElevateFailureReason = "error";
-    if (SUDO_WRONG_PASSWORD_MARKERS.some((m) => stderrBuf.includes(m))) reason = "wrong-password";
-    else if (SUDO_NOT_PERMITTED_MARKERS.some((m) => stderrBuf.includes(m))) reason = "not-permitted";
+    if (SUDO_NOT_PERMITTED_MARKERS.some((m) => stderrBuf.includes(m))) reason = "not-permitted";
     else if (message.includes("did not become healthy")) reason = "timeout";
     log(`elevated backend start failed (${reason}): ${message}${stderrBuf ? ` — stderr: ${stderrBuf.trim()}` : ""}`);
 
-    // Never leave the app without a running backend just because elevation failed.
+    // Never leave the app without a running backend just because elevation failed. This binds a
+    // *new* port, so the caller has to send the renderer there — hence `restarted: true`.
     await startBackend(python, staticDir);
-    return { ok: false, reason, message };
+    return { ok: false, reason, message, restarted: true };
   }
 }
 
@@ -326,9 +453,11 @@ function shellQuote(arg: string): string {
 }
 
 /**
- * macOS/Windows: kill the current backend and relaunch it elevated via the OS's own native
- * admin-password dialog (`@vscode/sudo-prompt`) — unlike Linux, these platforms won't let a
- * custom-styled in-app dialog collect an admin password itself.
+ * macOS/Windows: relaunch the backend elevated via the OS's own native admin-password dialog
+ * (`@vscode/sudo-prompt`) — unlike Linux, these platforms won't let a custom-styled in-app
+ * dialog collect an admin password itself, which also means there is no password here to check
+ * up front. Instead the elevated backend is started *alongside* the current one and only
+ * replaces it once it's proven healthy and root; see `runElevatedNative` for why.
  *
  * `sudo-prompt.exec()` returns no process handle (a documented limitation of the library, not
  * something this app can work around) and its callback only fires when the command *completes*
@@ -338,15 +467,39 @@ function shellQuote(arg: string): string {
  * app can later stop a backend started this way.
  */
 export async function startBackendElevatedNative(python: string, staticDir: string): Promise<ElevateResult> {
-  await stopBackend();
+  elevating = true;
+  try {
+    return await runElevatedNative(python, staticDir);
+  } finally {
+    elevating = false;
+  }
+}
 
+async function runElevatedNative(python: string, staticDir: string): Promise<ElevateResult> {
+  // Note the order, opposite to the Linux path: the current backend keeps running until the
+  // elevated one has proved itself. The password never passes through this process — the OS
+  // owns that dialog — so there is nothing to pre-check the way `verifySudoPassword` does, and
+  // testing the credentials with a throwaway elevated command would cost the user a *second*
+  // OS prompt for the real one. Starting first gets the same guarantee for free: a dismissed
+  // dialog, a rejected password or a backend that won't boot all leave the original backend
+  // untouched and still serving the renderer, so there is nothing to recover and no new port.
+  //
+  // Two backends therefore overlap for the duration of the health wait. They're both idle: the
+  // lab whose privileged devices prompted this hasn't been deployed yet — deploying it is what
+  // the elevation is *for* — so neither is touching Docker or the labs directory.
+  //
+  // This is only viable here because this path never calls `trackChild` (sudo-prompt hands back
+  // no process handle), so it isn't competing for the single `child` slot that still refers to
+  // the live backend. The Linux path does, which is why it pre-checks instead.
   const { port, baseUrl, labs, appEnv, args } = await buildBackendCommand(staticDir);
   log(`starting elevated backend (native prompt): ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
   const cmd = [python, ...args].map(shellQuote).join(" ");
-  stopping = false;
+  // Not `handle`: that still points at the backend this one is trying to replace, so it can't
+  // stand in for "the elevated one is up" the way it could when this path stopped it first.
+  let started = false;
   let execFailure: string | null = null;
   // `appEnv`, not the full inherited environment: `options.env` here is validated against
   // POSIX-only variable-name rules and rejects the whole call on the first violation (a single
@@ -354,7 +507,7 @@ export async function startBackendElevatedNative(python: string, staticDir: stri
   // outright) — `appEnv` is already just this app's own known-safe overrides.
   sudoPrompt.exec(cmd, { name: "Kathara IDE", env: appEnv }, (error) => {
     if (!error) return;
-    if (!handle) {
+    if (!started) {
       // Still starting (or the prompt was dismissed/auth failed) — record it for the catch
       // block below to classify, rather than waiting out the full health timeout.
       execFailure = error.message;
@@ -374,19 +527,41 @@ export async function startBackendElevatedNative(python: string, staticDir: stri
     }
 
     log(`elevated backend healthy at ${baseUrl}`);
+    // Only now is the old backend expendable. `stopBackend()` clears `handle`/`stopping`, so
+    // the swap has to follow it, not precede it.
+    await stopBackend();
+    stopping = false;
+    started = true;
     handle = { port, baseUrl };
     return { ok: true, handle };
   } catch (err) {
-    await stopBackend();
+    // Both read *before* the cleanup below: shutting the candidate down makes its own exec
+    // callback fire and set `execFailure`, which would otherwise rewrite the diagnosis of why
+    // this attempt failed into "the elevated command failed to launch".
+    const failedToLaunch = execFailure !== null;
     const message = execFailure ?? (err instanceof Error ? err.message : String(err));
-    // sudo-prompt doesn't distinguish "user cancelled the OS dialog" from "auth failed" in its
-    // error text in a stable, cross-platform way — surfaced as a generic failure the renderer can
-    // still offer to retry from, rather than guessing at a more specific reason.
-    const reason: ElevateFailureReason = message.includes("did not become healthy") ? "timeout" : "cancelled";
+
+    // Emphatically not `stopBackend()`, which would stop the healthy backend that is still
+    // serving the renderer. Only the candidate needs cleaning up, and only if it got as far as
+    // listening at all — addressed by URL, since there's no handle for it.
+    if (!failedToLaunch && !(await shutdownAt(baseUrl))) {
+      log(`elevated backend at ${baseUrl} did not go down after a failed elevation`);
+      markOrphaned(null, baseUrl);
+    }
+
+    // Only a failure of the `sudoPrompt.exec` call itself is an auth outcome. sudo-prompt does
+    // not distinguish "user dismissed the dialog" from "password rejected" in its error text in
+    // any stable, cross-platform way, so both land on "cancelled" — but a backend that *did*
+    // start and then failed its checks is neither, and calling it "cancelled" would tell the
+    // user they clicked Cancel when they didn't.
+    let reason: ElevateFailureReason = "error";
+    if (failedToLaunch) reason = "cancelled";
+    else if (message.includes("did not become healthy")) reason = "timeout";
     log(`elevated backend start failed (${reason}): ${message}`);
 
-    await startBackend(python, staticDir);
-    return { ok: false, reason, message };
+    // No recovery start: the backend that was running before this attempt still is, on the same
+    // port, so the renderer's origin is untouched.
+    return { ok: false, reason, message, restarted: false };
   }
 }
 

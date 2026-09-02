@@ -40,7 +40,14 @@ export function useLabLifecycleActions() {
     ) => {
       await runBusy(setBusy, lab.deployed ? "Undeploy" : "Deploy", async () => {
         if (lab.deployed) {
-          await api.undeployLab(lab.name);
+          try {
+            await api.undeployLab(lab.name);
+          } catch (e) {
+            // A half-finished undeploy leaves devices up, so refresh before the error
+            // propagates — see the deploy path below for why.
+            await onDone().catch(() => {});
+            throw e;
+          }
           toast.show(`Lab "${lab.name}" undeployed.`, "success");
           // Least-privilege: don't leave the backend running as root once nothing it's doing
           // needs that. A no-op if it wasn't elevated (the common case) or outside the desktop app.
@@ -77,8 +84,15 @@ export function useLabLifecycleActions() {
             }
             // Already elevated yet still refused — elevation won't fix this one, surface it as-is.
           }
+          // Deploy isn't atomic: it can fail with some devices already up. Refresh before
+          // letting the error propagate, or the UI goes on showing the lab as undeployed —
+          // and offering a Deploy button — until something unrelated happens to refetch.
+          // Swallowed on its own failure: the deploy error is the one worth reporting.
+          await onDone().catch(() => {});
           throw e;
         }
+        // The elevation `return`s above deliberately skip this: nothing was deployed, and on
+        // the "elevating" path a full reload is already in flight.
         toast.show(`Lab "${lab.name}" deployed.`, "success");
         await onDone();
       });

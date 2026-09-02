@@ -36,11 +36,14 @@ export interface DesktopApi {
    * the post-reload URL so the SPA can continue that lab's deploy on its own once it's back up.
    * On success the window reloads against the newly-elevated backend, tearing this page down
    * before this call typically resolves — do not rely on a success response, only on a failure
-   * one. */
+   * one. A failure with `restarted: false` (a wrong password, a dismissed OS dialog — the
+   * common ones) left the backend running untouched, so this page is still on a live origin
+   * and can show the error and offer a retry in place. `restarted: true` means the backend
+   * came back on a new port and the shell is already reloading this page onto it. */
   elevateBackend(
     password?: string,
     resumeLab?: string,
-  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }>;
+  ): Promise<{ ok: false; reason: string; message: string; restarted: boolean } | { ok: true }>;
   /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
    * window) so it doesn't keep running with more privilege than whatever's deployed right now
    * actually needs. A no-op (no reload) if it wasn't elevated to begin with — call freely after

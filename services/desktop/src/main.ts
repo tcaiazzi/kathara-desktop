@@ -141,7 +141,7 @@ function registerIpc(): void {
     const python = lastPreflight?.python;
     const staticDir = resolveStaticDir();
     if (!python || !staticDir) {
-      return { ok: false, reason: "error", message: "backend is not ready to be restarted" };
+      return { ok: false, reason: "error", message: "backend is not ready to be restarted", restarted: false };
     }
     log("elevation requested");
     const result =
@@ -151,6 +151,20 @@ function registerIpc(): void {
 
     if (!result.ok) {
       log(`elevation failed: ${result.reason} — ${result.message}`);
+      // The common failures (a mistyped password, a dismissed OS dialog) never get as far as
+      // stopping anything, so the calling page is still on a live origin: leave it alone and
+      // let its elevation prompt show the error and offer a retry in place.
+      //
+      // A failure that *did* restart the backend is the exception. It came back on a fresh
+      // port, so that page is now talking to a dead one and has to be moved — without
+      // `resumeDeploy`, since the deploy must not silently retry after a failed elevation.
+      const recovered = backendUrl();
+      if (result.restarted && win && recovered) {
+        setStatus({ state: "ready" });
+        const url = new URL(recovered);
+        if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
+        await win.loadURL(url.toString());
+      }
       return result;
     }
 
