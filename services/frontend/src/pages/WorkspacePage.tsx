@@ -265,24 +265,63 @@ function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
 // survive). All are no-ops when there's nothing to arrange. ---
 const terminalPanelsOf = (api: DockviewApi) => api.panels.filter((p) => p.id.startsWith("terminal:"));
 
-// All open terminals tiled into a roughly-square grid (tmux-like).
-function tileTerminals(api: DockviewApi) {
+// Equalize a terminal grid's row/column split ratios: same width for every column within a row,
+// same height for every row. An incomplete last row (fewer columns) legitimately ends up wider
+// per column — tmux does the same, and it's an acceptable tradeoff.
+//
+// Sizes are derived from the grid's own current combined bounding box so this only touches space
+// the grid already owns. Setting an explicit size makes dockview snapshot the new ratio as that
+// split's proportion; a later resize of an ancestor (mergeOthersInto freeing space by removing a
+// sibling group) redistributes using that saved proportion, so equal ratios survive the later grow.
+function equalizeTerminalGrid(rows: DockviewGroupPanel[][]) {
+  const groups = rows.flat();
+  if (!groups.length) return;
+  const rects = groups.map((g) => g.element.getBoundingClientRect());
+  const gridWidth = Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left));
+  const gridHeight = Math.max(...rects.map((r) => r.bottom)) - Math.min(...rects.map((r) => r.top));
+  const rowHeight = Math.round(gridHeight / rows.length);
+  for (const row of rows) {
+    const colWidth = Math.round(gridWidth / row.length);
+    for (const g of row) g.api.setSize({ width: colWidth });
+    // Height is shared by the whole row (only width is per-group) — one call per row suffices.
+    row[0].api.setSize({ height: rowHeight });
+  }
+}
+
+// All open terminals tiled into a roughly-square grid (tmux-like), each cell the same size.
+// Returns the row groupings so callers can re-equalize later (e.g. after freeing more space).
+function tileTerminals(api: DockviewApi): DockviewGroupPanel[][] {
   const terms = terminalPanelsOf(api);
-  if (terms.length < 2) return;
+  if (!terms.length) return [];
   const cols = Math.ceil(Math.sqrt(terms.length));
-  let rowStart = terms[0].api.group;
-  let prev = rowStart;
-  for (let i = 1; i < terms.length; i++) {
-    const p = terms[i];
-    if (i % cols === 0) {
-      p.api.moveTo({ group: rowStart, position: "bottom" as const });
-      rowStart = p.api.group;
-      prev = rowStart;
-    } else {
-      p.api.moveTo({ group: prev, position: "right" as const });
-      prev = p.api.group;
+  const numRows = Math.ceil(terms.length / cols);
+
+  // Phase 1: stack one seed group per row, top-to-bottom, before any row is split into columns.
+  // Splitting rows first — rather than interleaving row and column splits — keeps every row a
+  // direct sibling of the others spanning the full grid width. Splitting a new row below a row
+  // that's already been divided into columns would nest it under just one of those columns
+  // instead, leaving another column spanning the full grid height alongside it.
+  const rowSeeds: DockviewGroupPanel[] = [terms[0].api.group];
+  for (let r = 1; r < numRows; r++) {
+    const seedTerm = terms[r * cols];
+    seedTerm.api.moveTo({ group: rowSeeds[r - 1], position: "bottom" as const });
+    rowSeeds.push(seedTerm.api.group);
+  }
+
+  // Phase 2: within each row's now-fixed full-width slot, split off its remaining columns.
+  const rows: DockviewGroupPanel[][] = rowSeeds.map((seed) => [seed]);
+  for (let r = 0; r < numRows; r++) {
+    const end = Math.min(r * cols + cols, terms.length);
+    let prev = rowSeeds[r];
+    for (let i = r * cols + 1; i < end; i++) {
+      terms[i].api.moveTo({ group: prev, position: "right" as const });
+      prev = terms[i].api.group;
+      rows[r].push(prev);
     }
   }
+
+  equalizeTerminalGrid(rows);
+  return rows;
 }
 
 // Default: one shared tab group on the left with the inspector, every tool panel, and every open
@@ -329,11 +368,16 @@ function focusEditing(api: DockviewApi) {
 // terminal's group as background tabs. No-op if none are open (open one via "+ Terminal" first).
 function focusTerminals(api: DockviewApi) {
   if (!terminalPanelsOf(api).length) return;
-  tileTerminals(api); // arrange them among themselves first
+  const rows = tileTerminals(api); // arrange + size them equally among themselves first
+  const groups = new Set(rows.flat());
   // Re-fetch: tiling just moved them into new groups.
   const terms = terminalPanelsOf(api);
-  const groups = new Set(terms.map((p) => p.api.group));
   mergeOthersInto(api, terms[0].api.group, groups);
+  // mergeOthersInto grows the grid's footprint by removing its siblings; dockview's proportional
+  // resize should already preserve the equal ratios set above, but re-measuring against the
+  // final, fully-grown footprint is cheap and removes any reliance on that assumption (e.g.
+  // rounding drift compounding across several nested splits).
+  equalizeTerminalGrid(rows);
   terms[0].api.setActive();
 }
 
