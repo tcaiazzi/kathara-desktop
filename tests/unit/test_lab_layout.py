@@ -78,6 +78,21 @@ def test_write_layout_unknown_lab_raises(tmp_path):
         store.write_layout("nope", LAYOUT)
 
 
+def test_read_layout_unknown_lab_raises(tmp_path):
+    """Distinct from `test_read_layout_absent_returns_none`: a lab with no layout file returns
+    None, but a lab that doesn't exist at all must 404 like every other per-lab operation — not
+    read-layout's own "no layout" case, which write_layout already gets right."""
+    store = LabStore(tmp_path / "labs")
+    with pytest.raises(LabNotFoundError):
+        store.read_layout("nope")
+
+
+def test_delete_layout_unknown_lab_raises(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    with pytest.raises(LabNotFoundError):
+        store.delete_layout("nope")
+
+
 def test_delete_layout_reports_whether_it_existed(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.ensure_lab_dir("mylab")
@@ -186,3 +201,8 @@ def test_layout_routes(client, tmp_path, monkeypatch):
     assert client.delete("/api/labs/routelab/layout").status_code == 200  # idempotent
 
     assert client.put("/api/labs/unknown_lab/layout", json=LAYOUT).status_code == 404
+    # All three verbs on the same resource must agree about whether the lab needs to exist —
+    # GET/DELETE used to treat "no layout" and "no lab" as the same thing (a silent 200), unlike
+    # PUT above and every other per-lab endpoint.
+    assert client.get("/api/labs/unknown_lab/layout").status_code == 404
+    assert client.delete("/api/labs/unknown_lab/layout").status_code == 404

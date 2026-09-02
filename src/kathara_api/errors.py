@@ -2,6 +2,7 @@
 
 import logging
 
+import fs.errors
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -118,6 +119,12 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     InvalidImageArchitectureError: status.HTTP_400_BAD_REQUEST,
     NotSupportedError: status.HTTP_400_BAD_REQUEST,
     SettingsError: status.HTTP_400_BAD_REQUEST,
+    # Raised by pyfilesystem2 for an offline-lab-filesystem path that tries to climb above its own
+    # root (e.g. `path=../../etc`, or one that normalizes to that) — a real but non-malicious input
+    # error (see `errors.py`'s own catch-all below for why this needs a mapping at all: `OSFS`
+    # already refuses to read/write outside its root regardless, so this is purely about giving the
+    # caller a clean 400 instead of a 500 logged as an unhandled server bug).
+    fs.errors.IllegalBackReference: status.HTTP_400_BAD_REQUEST,
     # 403 Forbidden
     # Raised by Kathara itself (e.g. DockerMachine.create) when a privileged device is started
     # without the whole process's real UID being 0 — distinct error_type so the frontend can

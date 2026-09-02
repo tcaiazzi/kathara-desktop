@@ -169,11 +169,18 @@ class KatharaService:
                 if any(m.api_object is not None for m in lab.machines.values()):
                     self.undeploy_lab(lab.name)
 
-    def browse_host_directory(self, path: str) -> list[FsEntry]:
+    def browse_host_directory(self, path: str) -> tuple[str, list[FsEntry]]:
         """List a directory on the host machine's own filesystem — not a lab's directory or a
         running device's (that's a container's filesystem, reached over exec), the real OS
         filesystem this backend process itself sees. Lets the user pick a real path for a
         device's ``[volume]`` bind mount from an in-app browser instead of typing one blind.
+
+        Returns the directory actually listed alongside its entries — not just the entries — since
+        `path` can be `~`-relative: the caller must report back the same expanded, absolute path
+        this method resolved and listed, not the raw input (`normalize_guest_path`, built for
+        runtime/lab guest paths with no notion of a home directory, would turn `~/Documents` into
+        the nonexistent `/~/Documents`, silently pointing any "up"/breadcrumb navigation built from
+        it at the wrong place).
         """
         target = Path(path or "/").expanduser()
         if not target.is_absolute():
@@ -205,7 +212,8 @@ class KatharaService:
                     mtime=st.st_mtime,
                 )
             )
-        return sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
+        entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
+        return str(target), entries
 
     def list_net_sysctls(self) -> list[str]:
         """Every ``net.*`` sysctl key available on this host's current kernel — walks
@@ -391,9 +399,10 @@ class KatharaService:
     def get_lab_layout(self, name: str) -> LabLayout:
         """The lab's fixed topology layout, or an empty one when it has none.
 
-        Deliberately not a 404: "this lab has no fixed layout" is the normal case, and an
-        unparseable/hand-broken ``lab.layout`` is ignored the same way (see ``LabStore.read_layout``)
-        rather than breaking the topology view.
+        A missing *layout* is deliberately not a 404: "this lab has no fixed layout" is the normal
+        case, and an unparseable/hand-broken ``lab.layout`` is ignored the same way (see
+        ``LabStore.read_layout``) rather than breaking the topology view. A missing *lab* is a 404
+        like every other per-lab endpoint (``LabStore.read_layout`` raises ``LabNotFoundError``).
         """
         data = self.store.read_layout(name)
         if data is None:
@@ -798,6 +807,11 @@ class KatharaService:
                 if machine is None:
                     raise PathNotFoundError(f"Path `{path}` not found.")
                 if machine.fs is not None and lab.fs.exists(owner):
+                    # Same non-empty guard as the generic branch below — `recursive` means the
+                    # same thing everywhere in this endpoint, not "always recursive for a device's
+                    # own root."
+                    if not recursive and next(iter(lab.fs.scandir(owner)), None) is not None:
+                        raise ApiError(f"`{path}` is not empty. Delete recursively to remove it.")
                     lab.fs.removetree(owner)
                 machine.fs = None
                 return

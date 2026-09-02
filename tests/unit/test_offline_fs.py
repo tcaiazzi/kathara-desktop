@@ -7,6 +7,7 @@ tests below (``test_undeploy_does_not_lose_*``/``test_rename_does_not_lose_*``) 
 because an earlier design *did* keep such a cache, and it did exactly that.
 """
 
+import fs.errors
 import pytest
 
 from kathara_api.errors import ApiError, PathNotFoundError
@@ -79,6 +80,24 @@ def test_delete_device_root_removes_the_folder_entirely(tmp_path):
     # Writing under it again recreates it from scratch.
     service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi again\n")
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi again\n"
+
+
+def test_delete_device_root_honours_recursive_false(tmp_path):
+    """`recursive` must mean the same thing everywhere in this endpoint — a non-empty device root
+    is refused without it, exactly like any other non-empty directory (see the `/pc1/etc` control
+    case below), not force-deleted regardless of the flag."""
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    with pytest.raises(ApiError):
+        service.fs_delete_offline("testlab", "/pc1", recursive=False)
+
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
+
+    # Control: the generic (non-device-root) branch already enforces this — confirms both
+    # branches agree, not just that the device-root one now raises for some other reason.
+    with pytest.raises(ApiError):
+        service.fs_delete_offline("testlab", "/pc1/etc", recursive=False)
 
 
 def test_delete_never_touched_device_root_is_a_noop_not_an_error(tmp_path):
@@ -233,6 +252,17 @@ def test_fs_list_offline_missing_path_raises_not_found(tmp_path):
 
     with pytest.raises(PathNotFoundError):
         service.fs_list_offline("testlab", "/pc1/nonexistent")
+
+
+def test_fs_list_offline_back_reference_path_raises_illegal_back_reference(tmp_path):
+    """A path that tries to climb above the lab root is refused by pyfilesystem2 itself (OSFS
+    never reads/writes outside its own root, regardless of this) — this only checks *which*
+    exception surfaces, since `errors.py` maps it to a clean 400 (see test_error_mapping.py's
+    `test_illegal_back_reference_maps_to_400_not_500`) instead of an unhandled 500."""
+    service, _store = _two_machine_lab(tmp_path)
+
+    with pytest.raises(fs.errors.IllegalBackReference):
+        service.fs_list_offline("testlab", "../../../etc")
 
 
 def test_fs_write_text_offline_routes_lab_conf_through_update_lab_conf(tmp_path):

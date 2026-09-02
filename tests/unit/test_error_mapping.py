@@ -1,5 +1,6 @@
 """Unit tests for the exception -> HTTP status mapping (no Docker required)."""
 
+import fs.errors
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
@@ -71,6 +72,16 @@ def test_builtin_connection_error_maps_to_503():
     resp = client.get("/boom")
     assert resp.status_code == 503
     assert resp.json()["error_type"] == "ConnectionError"
+
+
+def test_illegal_back_reference_maps_to_400_not_500():
+    """pyfilesystem2 raises this for an offline-fs path that climbs above its own root (e.g.
+    `../../etc`) — OSFS already refuses to touch anything outside its root regardless, so this is
+    purely about not logging a legitimate bad-input as an unhandled server error."""
+    client = _client_raising(fs.errors.IllegalBackReference("/../../etc"))
+    resp = client.get("/boom")
+    assert resp.status_code == 400
+    assert resp.json()["error_type"] == "IllegalBackReference"
 
 
 class _ValidatedBody(BaseModel):

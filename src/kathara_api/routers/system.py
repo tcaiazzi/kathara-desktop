@@ -66,8 +66,8 @@ def wipe(service: KatharaService = Depends(get_service)) -> Message:
 def browse_host(path: str = "/", service: KatharaService = Depends(get_service)) -> FsListResponse:
     """List a directory on the host machine's own filesystem (not a lab's or a device's) — used
     to pick a real host path for a device's volume mount instead of typing one blind."""
-    entries = service.browse_host_directory(path)
-    return FsListResponse(path=service.normalize_guest_path(path), entries=entries)
+    resolved_path, entries = service.browse_host_directory(path)
+    return FsListResponse(path=resolved_path, entries=entries)
 
 
 @router.get("/system/sysctls", response_model=list[str])

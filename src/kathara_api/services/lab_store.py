@@ -318,9 +318,13 @@ class LabStore:
     def read_layout(self, name: str) -> Optional[dict[str, Any]]:
         """Parsed ``lab.layout``, or ``None`` when absent/unreadable/not an object.
 
-        A hand-edited or truncated layout file must never break the topology view, so parse errors
-        are logged and treated the same as "no layout".
+        Raises ``LabNotFoundError`` if the lab itself doesn't exist — distinct from "no layout",
+        which is the normal case for a lab that simply never had one pinned and must not itself be
+        a 404. A hand-edited or truncated layout file must never break the topology view, so parse
+        errors are logged and treated the same as "no layout".
         """
+        if not self.lab_dir(name).is_dir():
+            raise LabNotFoundError(f"Lab `{name}` not found.")
         path = self.layout_path(name)
         if not path.is_file():
             return None
@@ -346,7 +350,14 @@ class LabStore:
         return final
 
     def delete_layout(self, name: str) -> bool:
-        """Remove ``lab.layout`` if present; returns whether a file was actually removed."""
+        """Remove ``lab.layout`` if present; returns whether a file was actually removed.
+
+        Raises ``LabNotFoundError`` if the lab itself doesn't exist, matching ``write_layout`` —
+        deleting a nonexistent lab's layout has no sensible "nothing to do" reading the way an
+        absent layout file does.
+        """
+        if not self.lab_dir(name).is_dir():
+            raise LabNotFoundError(f"Lab `{name}` not found.")
         path = self.layout_path(name)
         if not path.is_file():
             return False
