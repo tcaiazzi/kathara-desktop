@@ -10,6 +10,7 @@ import {
   type IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
+import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
 import { useNavigate, useParams } from "react-router-dom";
@@ -362,6 +363,12 @@ export function WorkspacePage() {
   const [detail, setDetail] = useState<LabDetail | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Separate from `busy` (shared with delete/rename/wipe-all) so the Deploy/Undeploy button only
+  // spins for its own action, not whichever lifecycle action currently has the buttons disabled.
+  // Fixed at the action's start rather than read live off `detail.deployed`: the toggle's onDone
+  // callback refreshes `detail` (so it already flips to the new state) before this clears, and
+  // recomputing the label from live state would flash "Undeploying…" right after a deploy finishes.
+  const [deployAction, setDeployAction] = useState<"deploy" | "undeploy" | null>(null);
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem(LS_RAIL) !== "false");
   const [railWidth, setRailWidth] = useState(() => {
     const saved = Number(localStorage.getItem(LS_RAIL_W));
@@ -573,10 +580,15 @@ export function WorkspacePage() {
 
   async function handleDeployToggle() {
     if (!detail) return;
-    await deployToggle({ name, deployed: detail.deployed }, setBusy, async () => {
-      await load();
-      await reloadLabs();
-    });
+    setDeployAction(detail.deployed ? "undeploy" : "deploy");
+    try {
+      await deployToggle({ name, deployed: detail.deployed }, setBusy, async () => {
+        await load();
+        await reloadLabs();
+      });
+    } finally {
+      setDeployAction(null);
+    }
   }
 
   // `labName` defaults to the open lab (the header button); the rail's context menu passes the
@@ -887,8 +899,21 @@ export function WorkspacePage() {
                   <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
                   <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
                 </DropdownButton>
-                <Button size="sm" variant={detail.deployed ? "outline-warning" : "primary"} disabled={busy} onClick={handleDeployToggle}>
-                  {detail.deployed ? "Undeploy" : "Deploy"}
+                <Button
+                  size="sm"
+                  variant={detail.deployed ? "outline-warning" : "primary"}
+                  disabled={busy}
+                  onClick={handleDeployToggle}
+                  className="d-flex align-items-center gap-1"
+                >
+                  {deployAction && <Loader2 size={14} className="kt-explorer-spin" />}
+                  {deployAction === "deploy"
+                    ? "Deploying…"
+                    : deployAction === "undeploy"
+                      ? "Undeploying…"
+                      : detail.deployed
+                        ? "Undeploy"
+                        : "Deploy"}
                 </Button>
                 <Button size="sm" variant="outline-secondary" onClick={() => void handleDownload()}>
                   Download
