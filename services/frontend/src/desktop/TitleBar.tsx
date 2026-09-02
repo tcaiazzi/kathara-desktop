@@ -15,6 +15,7 @@ import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
+import { NotificationsPanel } from "../components/NotificationsPanel";
 import { useHealth } from "../hooks/useHealth";
 import { useTheme } from "../hooks/useTheme";
 import { DOCS_URL } from "../services/constants";
@@ -213,6 +214,7 @@ export function TitleBar() {
         <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
           {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
         </Badge>
+        <NotificationsPanel />
         <Link
           to="/settings"
           className={`kt-titlebar-icon-btn${location.pathname.startsWith("/settings") ? " active" : ""}`}

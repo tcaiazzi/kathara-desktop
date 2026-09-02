@@ -4,6 +4,7 @@ import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useHealth } from "../hooks/useHealth";
 import { useTheme } from "../hooks/useTheme";
+import { NotificationsPanel } from "./NotificationsPanel";
 
 // The browser top bar. In the Electron shell it is replaced by desktop/TitleBar.tsx, which folds
 // the same content into the window's own title strip — see App.tsx.
@@ -30,6 +31,7 @@ export function AppNavbar() {
           <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
             {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
           </Badge>
+          <NotificationsPanel />
         </Navbar.Text>
       </Container>
     </Navbar>

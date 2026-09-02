@@ -1,0 +1,132 @@
+.kt-notif {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.kt-notif-trigger {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: var(--bs-body-color);
+  border-radius: 6px;
+}
+.kt-notif-trigger:hover,
+.kt-notif-trigger[aria-expanded="true"] {
+  background: var(--kt-menu-hover-bg);
+}
+
+.kt-notif-badge {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--bs-danger);
+  color: #fff;
+  font-size: 0.62rem;
+  line-height: 14px;
+  text-align: center;
+}
+
+/* Anchored right, since the bell sits at the far-right edge of both top bars. */
+.kt-notif-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 6px;
+  z-index: 1080;
+  width: 320px;
+  max-height: 380px;
+  display: flex;
+  flex-direction: column;
+  background: var(--kt-panel-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.kt-notif-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--bs-border-color);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.kt-notif-clear {
+  border: 0;
+  background: transparent;
+  color: var(--bs-primary);
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+.kt-notif-clear:disabled {
+  color: var(--bs-secondary-color);
+}
+
+.kt-notif-empty {
+  padding: 20px 10px;
+  text-align: center;
+  color: var(--bs-secondary-color);
+  font-size: 0.82rem;
+}
+
+.kt-notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  overflow-y: auto;
+}
+.kt-notif-item {
+  display: flex;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 6px;
+}
+.kt-notif-item:hover {
+  background: var(--kt-menu-hover-bg);
+}
+.kt-notif-dot {
+  flex: 0 0 8px;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+}
+.kt-notif-dot-success {
+  background: var(--bs-success);
+}
+.kt-notif-dot-danger {
+  background: var(--bs-danger);
+}
+.kt-notif-dot-info {
+  background: var(--bs-secondary);
+}
+
+.kt-notif-item-body {
+  min-width: 0;
+  flex: 1;
+}
+.kt-notif-item-message {
+  font-size: 0.83rem;
+  word-break: break-word;
+}
+.kt-notif-item-detail {
+  font-size: 0.76rem;
+  color: var(--bs-secondary-color);
+  word-break: break-word;
+}
+.kt-notif-item-time {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: var(--bs-secondary-color);
+}
