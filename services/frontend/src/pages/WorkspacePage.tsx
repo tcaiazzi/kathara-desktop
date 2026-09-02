@@ -16,6 +16,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { DevicesTable } from "../components/DevicesTable";
 import { LabExplorer } from "../components/LabExplorer";
 import { LinksTable } from "../components/LinksTable";
+import { AddDeviceModal } from "../components/AddDeviceModal";
 import { MachineOptionsEditor } from "../components/MachineOptionsEditor";
 import { NewLabModal } from "../components/NewLabModal";
 import { RuntimeFilesystemEditor } from "../components/RuntimeFilesystemEditor";
@@ -456,6 +457,19 @@ export function WorkspacePage() {
     setOptionsEditorMachine(null);
   }, []);
 
+  // Same reasoning as the options editor above: one modal instance shared by every "add device"
+  // entry point (topology canvas, device rail, domain context menu).
+  const [addDeviceLink, setAddDeviceLink] = useState<{ show: boolean; prefillLink: string | null }>({
+    show: false,
+    prefillLink: null,
+  });
+  const openAddDeviceModal = useCallback((prefillLink: string | null) => {
+    setAddDeviceLink({ show: true, prefillLink });
+  }, []);
+  const closeAddDeviceModal = useCallback(() => {
+    setAddDeviceLink((s) => ({ ...s, show: false }));
+  }, []);
+
   // Drag the rail's right edge to resize it (persisted). Listeners live on window so the drag keeps
   // tracking even when the pointer moves fast over the dock area.
   const startRailResize = useCallback((e: React.MouseEvent) => {
@@ -511,6 +525,7 @@ export function WorkspacePage() {
     onOpenTerminal: openTerminal,
     onOpenRuntimeFs: openRuntimeFsPanel,
     onOpenOptions: openOptionsEditor,
+    onOpenAddDevice: openAddDeviceModal,
   });
   const { deviceContextItems, findDeviceNode, actionConfig, setActionConfig } = deviceActions;
 
@@ -931,6 +946,15 @@ export function WorkspacePage() {
           deployed={detail.deployed}
           onClose={closeOptionsEditor}
           onSaved={load}
+        />
+      )}
+      {detail && (
+        <AddDeviceModal
+          show={addDeviceLink.show}
+          labName={name}
+          prefillLink={addDeviceLink.prefillLink}
+          onClose={closeAddDeviceModal}
+          onAdded={load}
         />
       )}
 

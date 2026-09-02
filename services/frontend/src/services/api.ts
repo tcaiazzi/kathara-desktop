@@ -11,6 +11,7 @@ import type {
   LabSummary,
   LinkDetail,
   MachineDetail,
+  MachineOptionsPayload,
   MachineUpdatePayload,
   Message,
   SettingsUpdate,
@@ -252,7 +253,7 @@ export const api = {
   // -- topology mutations (add/remove device or domain, connect/disconnect interfaces) --
   addMachine: (
     labName: string,
-    payload: { name: string; image?: string; bridged?: boolean; interfaces?: { link: string; number: number }[] },
+    payload: Partial<MachineOptionsPayload> & { name: string; interfaces?: { link: string; number: number }[] },
   ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labName)}/machines`, payload),
   removeMachine: (labName: string, machineName: string) =>
     request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`),

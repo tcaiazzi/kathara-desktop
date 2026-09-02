@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
-import { useAvailableImages } from "./useAvailableImages";
 import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
@@ -23,6 +22,8 @@ export interface UseDeviceActionsOptions {
   onOpenRuntimeFs: (machine: string) => void;
   // Opens the machine-options editor modal for `machine`.
   onOpenOptions: (machine: string) => void;
+  // Opens the add-device modal, prefilling "attach to domain" when opened from a domain's context menu.
+  onOpenAddDevice: (prefillLink: string | null) => void;
 }
 
 const EMPTY_MODEL: TopoModel = { nodes: [], edges: [] };
@@ -31,12 +32,20 @@ const EMPTY_MODEL: TopoModel = { nodes: [], edges: [] };
 // context-menu item lists that expose them, shared by the topology canvas and the workspace
 // sidebar's device list — so "right-click a device" means the exact same thing in both places
 // instead of two hand-synced copies that inevitably drift apart.
-export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOpenTerminal, onOpenRuntimeFs, onOpenOptions }: UseDeviceActionsOptions) {
+export function useDeviceActions({
+  labName,
+  detail,
+  onRefresh,
+  onEditFiles,
+  onOpenTerminal,
+  onOpenRuntimeFs,
+  onOpenOptions,
+  onOpenAddDevice,
+}: UseDeviceActionsOptions) {
   const toast = useToast();
   const confirm = useConfirm();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
   const [startups, setStartups] = useState<Record<string, string>>({});
-  const availableImages = useAvailableImages();
 
   // Best-effort fetch of each device's real `<name>.startup` content so callers (the node-info
   // panel) can show it (same source + precedence as the Lab Configuration tab). Inspection-only,
@@ -88,40 +97,7 @@ export function useDeviceActions({ labName, detail, onRefresh, onEditFiles, onOp
   }
 
   function openAddDevice(prefillLink: string | null = null) {
-    setActionConfig({
-      title: "Add device",
-      hint: "Adds the device to the lab (saved to lab.conf). If the lab is running, it's also deployed live.",
-      submitLabel: "Add device",
-      fields: [
-        { name: "name", label: "Device name", required: true, placeholder: "pc1" },
-        {
-          name: "image",
-          label: "Image",
-          value: "kathara/base",
-          placeholder: "kathara/base",
-          datalistOptions: availableImages,
-        },
-        { name: "link", label: "Attach to domain (optional)", value: prefillLink || "", placeholder: "A" },
-        {
-          name: "bridged",
-          label: "Bridged (attach to the host Docker bridge)",
-          options: [
-            { value: "", label: "no" },
-            { value: "true", label: "yes" },
-          ],
-          value: "",
-        },
-      ],
-      onSubmit: async ({ name, image, link, bridged }) => {
-        const cleanName = name.trim();
-        if (!cleanName) return false;
-        const payload: Parameters<typeof api.addMachine>[1] = { name: cleanName };
-        if (image.trim()) payload.image = image.trim();
-        if (link.trim()) payload.interfaces = [{ link: link.trim(), number: 0 }];
-        if (bridged === "true") payload.bridged = true;
-        return withRefresh(() => api.addMachine(labName, payload), `Device "${cleanName}" added.`);
-      },
-    });
+    onOpenAddDevice(prefillLink);
   }
 
   function openAddDomain() {
