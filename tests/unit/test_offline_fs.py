@@ -251,6 +251,40 @@ def test_fs_delete_offline_rejects_lab_conf(tmp_path):
         service.fs_delete_offline("testlab", "/lab.conf")
 
 
+@pytest.mark.parametrize("path", ["/", "", "//", "///", "/.", "/./"])
+@pytest.mark.parametrize("recursive", [False, True])
+def test_fs_delete_offline_rejects_the_lab_root(tmp_path, path, recursive):
+    """Every spelling that pyfilesystem resolves to the lab's own root directory must be
+    rejected, not just the literal "/" — "/.", "//" and friends all `removetree` the same
+    directory once they reach `target_fs`, so the guard has to compare normalized paths."""
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    with pytest.raises(ApiError):
+        service.fs_delete_offline("testlab", path, recursive=recursive)
+
+    # The lab must be completely untouched — this is the regression a permissive guard misses.
+    assert (store.lab_dir("testlab") / "lab.conf").exists()
+    assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
+
+
+def test_fs_delete_offline_still_allows_deleting_a_root_level_file_or_dir(tmp_path):
+    """The new lab-root guard must not overreach: root-level entries other than the root itself
+    stay deletable, same as before."""
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_mkdir_offline("testlab", "/scratch")
+
+    service.fs_delete_offline("testlab", "/notes.txt")
+    service.fs_delete_offline("testlab", "/scratch", recursive=True)
+
+    assert not (store.lab_dir("testlab") / "notes.txt").exists()
+    assert not (store.lab_dir("testlab") / "scratch").exists()
+    assert (store.lab_dir("testlab") / "lab.conf").exists()
+
+
 # -- regression: deploy/undeploy/rename must never lose queued content ------------------------
 
 

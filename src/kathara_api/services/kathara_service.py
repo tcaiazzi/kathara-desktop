@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 
 import fs.copy
+import fs.path
 from Kathara.exceptions import (
     InvocationError,
     LabNotFoundError,
@@ -778,6 +779,15 @@ class KatharaService:
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             owner, guest = self._offline_fs_owner(lab, path)
+
+            # The lab root itself is never a valid delete target — `DELETE /labs/{lab}` is what
+            # removes a lab. Checked via a normalized comparison, not `path`/`guest` directly: a
+            # naive string check is exactly how the `lab.conf` guard above gets bypassed by "/",
+            # since "/", "", "//", "/." and "pc1/.." all resolve to the same root directory once
+            # pyfilesystem gets hold of them (`fs.path.normpath` collapses all of them to "" or
+            # "/", matching what `target_fs.removetree` would actually delete).
+            if owner == ROOT_MACHINE and fs.path.normpath(guest) in ("", "/"):
+                raise ApiError("The lab root can't be deleted. Delete the lab instead.")
 
             if owner != ROOT_MACHINE and guest == "/":
                 # Deleting a device's own folder removes it entirely — machine.fs stops existing
