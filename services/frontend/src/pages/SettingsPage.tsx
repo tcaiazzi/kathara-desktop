@@ -5,8 +5,27 @@ import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
 import { desktop, isDesktop } from "../desktop/bridge";
 import { useAvailableImages } from "../hooks/useAvailableImages";
+import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
 import type { SettingsView, SystemInfo } from "../services/types";
+
+// Client-only UI preference (localStorage, see useTheme) — not a Kathara framework setting, so it
+// has no GET/PUT /settings field and lives in its own panel outside the <Form> below, applied
+// immediately rather than through the "Save settings" flow.
+function AppearanceSettings() {
+  const { dark, toggle } = useTheme();
+  return (
+    <Panel title="Appearance" className="mb-3">
+      <Form.Check
+        type="switch"
+        id="theme-switch"
+        label="Dark theme"
+        checked={dark}
+        onChange={toggle}
+      />
+    </Panel>
+  );
+}
 
 // This app's own storage location for lab data — a desktop-shell concept (services/desktop),
 // not a Kathara framework setting, so it has no GET/PUT /settings field and lives in its own
@@ -181,6 +200,8 @@ export function SettingsPage() {
     <div className="container">
       <h2>Settings</h2>
       <p className="text-muted">Kathara framework settings for this backend session.</p>
+
+      <AppearanceSettings />
 
       {system && (
         <Panel title="System info" className="mb-3">

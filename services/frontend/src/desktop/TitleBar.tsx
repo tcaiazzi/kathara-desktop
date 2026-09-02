@@ -11,7 +11,7 @@
 // in step when adding an item.
 import { Copy, Minus, Settings as SettingsIcon, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge, Button } from "react-bootstrap";
+import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
@@ -36,7 +36,7 @@ function isSeparator(entry: Entry): entry is "separator" {
 }
 
 export function TitleBar() {
-  const { theme, dark, toggle } = useTheme();
+  const { theme, dark } = useTheme();
   const health = useHealth();
   const dispatch = useDesktopDispatch();
   const location = useLocation();
@@ -222,14 +222,6 @@ export function TitleBar() {
         >
           <SettingsIcon size={16} />
         </Link>
-        <Button
-          variant={dark ? "outline-light" : "outline-dark"}
-          size="sm"
-          onClick={toggle}
-          title={dark ? "Switch to light theme" : "Switch to dark theme"}
-        >
-          {dark ? "Light" : "Dark"}
-        </Button>
       </div>
 
       {/* macOS keeps its native traffic lights (inset via CSS above); everywhere else, Chromium

@@ -1,4 +1,4 @@
-import { Badge, Button, Container, Nav, Navbar } from "react-bootstrap";
+import { Badge, Container, Nav, Navbar } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
@@ -9,7 +9,7 @@ import { useTheme } from "../hooks/useTheme";
 // the same content into the window's own title strip — see App.tsx.
 export function AppNavbar() {
   const health = useHealth();
-  const { theme, dark, toggle } = useTheme();
+  const { theme, dark } = useTheme();
 
   return (
     <Navbar bg={theme} variant={theme} expand="sm" className="mb-3">
@@ -27,9 +27,6 @@ export function AppNavbar() {
           </Nav.Link>
         </Nav>
         <Navbar.Text className="d-flex align-items-center gap-2">
-          <Button variant={dark ? "outline-light" : "outline-dark"} size="sm" onClick={toggle}>
-            {theme === "light" ? "Dark theme" : "Light theme"}
-          </Button>
           <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
             {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
           </Badge>
