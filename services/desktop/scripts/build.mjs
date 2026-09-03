@@ -27,5 +27,8 @@ await build({
 
 // Loaded with loadFile() at runtime, so it has to sit beside the bundles.
 await cp(path.join(root, "src", "setup.html"), path.join(outdir, "setup.html"));
+await cp(path.join(root, "src", "splash.html"), path.join(outdir, "splash.html"));
+// splash.html references this by its own relative path, so it must land right next to it.
+await cp(path.join(root, "resources", "splash.png"), path.join(outdir, "splash.png"));
 
 if (watch) console.log("built (watch mode is not enabled for the copy step)");

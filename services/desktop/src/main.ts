@@ -42,7 +42,13 @@ import { defaultLabsDir, labsDir, packagedVenvPython, resolveStaticDir } from ".
 import { readPrefs, writePrefs } from "./prefs";
 import { runPreflight, type Check, type Preflight, type PreflightProgress } from "./prereqs";
 import { checkForUpdate } from "./updateCheck";
-import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
+import {
+  createMainWindow,
+  installEditContextMenu,
+  installNavigationPolicy,
+  showSetupPage,
+  showSplashPage,
+} from "./windows";
 
 // Electron derives userData's folder name from app.name, which defaults to package.json's
 // productName ("Kathara IDE") — a folder with a space and mixed case. Override it to this
@@ -239,6 +245,9 @@ async function startup(resumePath?: string): Promise<void> {
   try {
     const handle = await startBackend(preflight.python, staticDir);
     setStatus({ state: "ready" });
+    // The app runs fullscreen, whatever it was showing before (the boot-time splash, or a normal
+    // window from a retry/elevation/labs-dir-change). A no-op once already fullscreen.
+    win.setFullScreen(true);
     await win.loadURL(resumePath ? `${handle.baseUrl}${resumePath}` : handle.baseUrl);
     if (pendingDeepLink) {
       handleDeepLink(win, pendingDeepLink);
@@ -653,7 +662,13 @@ if (!app.requestSingleInstanceLock()) {
     win.webContents.on("did-navigate", (_e, url) => {
       if (!url.startsWith("file://")) onSetupPage = false;
     });
-    showSetup(win);
+    // Shown once, this launch only, for exactly the app's actual boot duration — startup() below
+    // runs immediately, with the splash still on screen; it only switches to the setup page
+    // itself if something needs the user's attention (see its two showSetup(win) calls), or hands
+    // off straight to the running app on success. Every later trip through startup() (retry,
+    // elevation, labs-dir change, a successful install) is already on the setup page by then, not
+    // back through here — it's a first-impression thing, not something to show again.
+    showSplashPage(win);
 
     onBackendExit((info) => {
       // An unexpected exit leaves the renderer pointing at a dead origin; show the log instead.

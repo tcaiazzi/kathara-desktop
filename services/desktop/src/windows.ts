@@ -2,7 +2,7 @@
 import { app, BrowserWindow, Menu, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { log } from "./logger";
-import { iconPath, setupPage } from "./paths";
+import { iconPath, setupPage, splashPage } from "./paths";
 
 const PRELOAD = path.join(__dirname, "preload.js");
 
@@ -129,6 +129,7 @@ export function createMainWindow(): BrowserWindow {
     height: 900,
     minWidth: 900,
     minHeight: 600,
+    center: true,
     backgroundColor: windowBackground(),
     show: false,
     title: "Kathara IDE",
@@ -172,7 +173,17 @@ export function createMainWindow(): BrowserWindow {
   return win;
 }
 
-/** The status page: shown while the backend starts, and when startup fails. */
+/** The status page: shown when startup needs the user's attention (a failed check, a dead
+ * backend). Always windowed — exits fullscreen first in case this is reached after the app was
+ * already running full-screen (e.g. the backend dying mid-session). */
 export function showSetupPage(win: BrowserWindow): void {
+  win.setFullScreen(false);
   void win.loadFile(setupPage());
+}
+
+/** The cold-start splash (the Kathara logo on a plain white page): shown once, for exactly as
+ * long as startup() (main.ts) takes to either reach the running app or hit a problem — no fixed
+ * minimum, since there's no animation to let play out. */
+export function showSplashPage(win: BrowserWindow): void {
+  void win.loadFile(splashPage());
 }

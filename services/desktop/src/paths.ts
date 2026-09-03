@@ -123,6 +123,12 @@ export function setupPage(): string {
   return path.join(__dirname, "setup.html");
 }
 
+/** The cold-start splash animation, copied beside the bundles (with its splash.gif) by
+ * scripts/build.mjs. */
+export function splashPage(): string {
+  return path.join(__dirname, "splash.html");
+}
+
 /** The interpreter shipped with a dev checkout, tried before anything on PATH. */
 export function devVenvPython(): string | null {
   if (app.isPackaged) return null;
