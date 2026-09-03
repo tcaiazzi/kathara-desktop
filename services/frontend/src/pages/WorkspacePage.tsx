@@ -618,6 +618,12 @@ export function WorkspacePage() {
     });
   }, []);
 
+  const closeAllTerminals = useCallback(() => {
+    const dockApi = dockApiRef.current;
+    if (!dockApi) return;
+    for (const p of terminalPanelsOf(dockApi)) p.api.close();
+  }, []);
+
   // Single useDeviceActions instance for the whole workspace — shared by the topology canvas (via
   // WorkspaceContext) and the device rail below, so right-clicking a device in either place means
   // exactly the same thing and there's one `pending`-files fetch / one action modal, not two.
@@ -1056,6 +1062,9 @@ export function WorkspacePage() {
                     </Dropdown.Item>
                   ))}
                 </DropdownButton>
+                <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
+                  Close all terminals
+                </Button>
                 <DropdownButton size="sm" variant="outline-secondary" title="Layout">
                   <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
                   <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
