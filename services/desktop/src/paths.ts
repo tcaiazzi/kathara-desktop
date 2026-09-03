@@ -152,6 +152,24 @@ export function packagedVenvPython(): string | null {
 }
 
 /**
+ * The Python interpreter shipped inside the app (a python-build-standalone `install_only_stripped`
+ * build, fetched at CI build time by scripts/fetch-python.mjs and shipped as an arch-scoped
+ * extraResource — see electron-builder.yml). Has no packages installed; it only exists so
+ * prereqs.ts's pythonCandidates() always finds *some* usable ≥3.10 interpreter to seed
+ * `<userData>/venv` with (install.ts), without requiring the user to have Python at all. Packaged
+ * only: a dev checkout keeps using devVenvPython()/PATH, same as before.
+ */
+export function bundledPythonPath(): string | null {
+  if (!app.isPackaged) return null;
+  const candidate = path.join(
+    process.resourcesPath,
+    "python",
+    process.platform === "win32" ? "python.exe" : "bin/python3",
+  );
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+/**
  * kathara-api-rest's own wheel, built by CI and shipped as an extraResource (electron-builder.yml)
  * so install.ts can `pip install` it without a git checkout — pulls in kathara/uvicorn/etc.
  * transitively since they're already its own pyproject.toml dependencies. Packaged only: a dev

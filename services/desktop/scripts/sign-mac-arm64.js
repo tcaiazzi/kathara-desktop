@@ -19,16 +19,44 @@ function sign(targetPath) {
   execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", targetPath], { stdio: "inherit" });
 }
 
+function isMachO(filePath) {
+  try {
+    return execFileSync("/usr/bin/file", ["--brief", filePath]).toString().includes("Mach-O");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recursively signs every Mach-O file under `dir` (electron-builder's extraResources don't get
+ * the deep-signing pass Contents/Frameworks would from a real Developer ID build). Needed for the
+ * bundled Python interpreter (Contents/Resources/python/ — see electron-builder.yml, paths.ts's
+ * bundledPythonPath()): its interpreter binary, libpython*.dylib, and lib-dynload/*.so extension
+ * modules are all unsigned Mach-O on disk, and Apple Silicon refuses to exec any of them
+ * otherwise. Symlinks (python-build-standalone ships e.g. bin/python3 -> python3.12) are skipped:
+ * the real file they point to is signed anyway when readdir reaches it as its own entry.
+ */
+function signMachOTree(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) signMachOTree(full);
+    else if (entry.isFile() && isMachO(full)) sign(full);
+  }
+}
+
 exports.default = async function (context) {
   if (context.electronPlatformName !== "darwin" || context.arch !== Arch.arm64) return;
 
   const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const frameworksDir = path.join(appPath, "Contents", "Frameworks");
-  // Nested code first — frameworks and helper .app bundles under Contents/Frameworks — then the
-  // outer bundle last, so its signature is computed over already-signed contents (avoids --deep,
-  // which Apple's own docs discourage: it can silently miss or mis-sign nested code).
+  const pythonDir = path.join(appPath, "Contents", "Resources", "python");
+  // Nested code first — frameworks, the bundled Python interpreter, and helper .app bundles under
+  // Contents/Frameworks — then the outer bundle last, so its signature is computed over
+  // already-signed contents (avoids --deep, which Apple's own docs discourage: it can silently
+  // miss or mis-sign nested code).
   if (fs.existsSync(frameworksDir)) {
     for (const entry of fs.readdirSync(frameworksDir)) sign(path.join(frameworksDir, entry));
   }
+  if (fs.existsSync(pythonDir)) signMachOTree(pythonDir);
   sign(appPath);
 };

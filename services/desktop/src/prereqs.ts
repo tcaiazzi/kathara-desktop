@@ -1,16 +1,18 @@
 /**
  * Startup prerequisite checks.
  *
- * The desktop app deliberately does not bundle Python or Docker: it drives whatever is installed
- * on the machine. Kathara/uvicorn/kathara-api-rest are different — a packaged build ships
- * kathara-api-rest's own wheel and can install all three into a private venv itself (see
- * install.ts, driven from the setup page's "Install automatically" button); only Python and
- * Docker remain things the user installs. A missing dependency is still the most likely first-run
- * failure, so each check reports a remedy the user can act on instead of a blank window.
+ * The desktop app deliberately does not bundle Docker: it drives whatever is installed on the
+ * machine. Python is different: a packaged build ships its own interpreter (bundledPythonPath(),
+ * a python-build-standalone build with no packages installed) plus kathara-api-rest's own wheel,
+ * and can create a private venv and install kathara/uvicorn/etc. into it itself (see install.ts,
+ * driven from the setup page's "Install automatically" button) — so a packaged app never actually
+ * requires a system Python, only Docker. A missing dependency is still the most likely first-run
+ * failure on a dev checkout (which has no bundled interpreter), so each check reports a remedy the
+ * user can act on instead of a blank window.
  */
 import { execFile } from "node:child_process";
 import { app } from "electron";
-import { devVenvPython } from "./paths";
+import { bundledPythonPath, devVenvPython } from "./paths";
 import { readPrefs } from "./prefs";
 import { log } from "./logger";
 
@@ -159,11 +161,12 @@ function atLeast310(version: string): boolean {
 
 /**
  * Interpreters to try, best first: an explicit user choice always wins, then a dev checkout's
- * virtualenv, then PATH. `py -3` is omitted because it is a launcher, not an interpreter path,
- * and the backend has to be spawned by path later anyway.
+ * virtualenv, then the interpreter bundled with a packaged app (so a packaged app never falls
+ * through to PATH in practice), then PATH as a last resort. `py -3` is omitted because it is a
+ * launcher, not an interpreter path, and the backend has to be spawned by path later anyway.
  */
 function pythonCandidates(): string[] {
-  const candidates = [readPrefs().pythonPath, devVenvPython()].filter(
+  const candidates = [readPrefs().pythonPath, devVenvPython(), bundledPythonPath()].filter(
     (c): c is string => Boolean(c),
   );
   candidates.push(...(process.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"]));
@@ -203,9 +206,15 @@ export async function runPreflight(
       label: "Python 3.10+",
       ok: false,
       detail: `Tried: ${pythonCandidates().join(", ")}`,
-      remedy: "Install Python 3.10 or newer from python.org. If you already have one " +
-        "somewhere unusual, choose “Choose Python interpreter…” instead.",
-      docsUrl: "https://www.python.org/downloads/",
+      // In a packaged build this only happens if the bundled interpreter itself is missing or
+      // corrupted (bundledPythonPath() didn't resolve) — a from-source/PATH Python is the fix on a
+      // dev checkout, but a packaged user should reinstall rather than go hunting for python.org.
+      remedy: app.isPackaged
+        ? "The bundled Python interpreter is missing or damaged. Reinstall the app, or choose " +
+          "“Choose Python interpreter…” to point at one already on this machine."
+        : "Install Python 3.10 or newer from python.org. If you already have one " +
+          "somewhere unusual, choose “Choose Python interpreter…” instead.",
+      docsUrl: app.isPackaged ? undefined : "https://www.python.org/downloads/",
     });
   } else {
     const { interpreter, result } = found;

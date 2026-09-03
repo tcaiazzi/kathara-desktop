@@ -22,9 +22,14 @@ extraResources:
     to: icon.png
   # kathara-api-rest's own wheel (built by CI just before this — see build-desktop.yml — into
   # this gitignored directory), so a packaged app can `pip install` it into a private venv
-  # without needing a git checkout. Pure Python, one wheel works on every OS/arch.
+  # without needing a git checkout. Pure Python, one wheel works on every OS/arch. Excludes the
+  # python-<os>-<arch>/ subdirectories fetch-python.mjs also puts in this same gitignored vendor/
+  # directory: those are picked up separately, one arch at a time, by the platform-scoped
+  # extraResources below — copying them here too would ship every architecture's interpreter in
+  # every installer, exactly what that per-arch scoping exists to avoid.
   - from: vendor
     to: vendor
+    filter: ["**/*", "!python-*", "!python-*/**"]
 
 # kathara://lab/<name> — the runtime side is in src/deeplink.ts.
 protocols:
@@ -50,15 +55,23 @@ linux:
   category: Development
   synopsis: IDE for the Kathara network emulation framework
   icon: resources/icon.png
+  # The interpreter bundled for *this* build's arch only (fetched by scripts/fetch-python.mjs into
+  # vendor/python-linux-<arch>/ — see paths.ts's bundledPythonPath()). ${arch} is expanded by
+  # electron-builder per packaged target, so an x64 install never carries the arm64 interpreter
+  # (or vice versa) — shipping both would double the size this exists to bound.
+  extraResources:
+    - from: vendor/python-linux-${arch}
+      to: python
 
 deb:
   # Required by fpm; taken from package.json's author, stated here so it is obvious where to
   # change it when the project has a dedicated packaging address.
   maintainer: Kathara Framework <tommaso@kathara.org>
-  # Declared as recommendations rather than hard dependencies: Kathara and the API are installed
-  # with pip, which apt cannot see, so a hard dependency would make the package uninstallable on
-  # a perfectly working setup. The app checks for them at startup instead (src/prereqs.ts).
-  recommends: [docker.io, python3]
+  # Docker is still a soft recommendation (apt can't see whether Docker is actually running, and
+  # `docker.io` isn't the only way to get it — see src/prereqs.ts's checkDocker()). Python is no
+  # longer listed: the app bundles its own interpreter (paths.ts's bundledPythonPath()) and never
+  # requires a system one.
+  recommends: [docker.io]
 
 mac:
   target:
@@ -70,11 +83,16 @@ mac:
   # makes the app harder to launch. `identity: null` skips *all* signing here, including the
   # ad-hoc one Apple Silicon requires just to launch an app at all (Intel only needs Gatekeeper's
   # "unidentified developer" bypassed, e.g. right-click → Open) — scripts/sign-mac-arm64.js
-  # applies that ad-hoc signature separately for the arm64 build, afterPack. First run still needs
+  # applies that ad-hoc signature separately for the arm64 build, afterPack — including, now, the
+  # bundled Python interpreter below, which needs the same per-binary ad-hoc signature to exec at
+  # all on Apple Silicon. First run still needs
   # `xattr -dr com.apple.quarantine "/Applications/Kathara IDE.app"` (or right-click → Open) either
   # way, since none of this is a real Developer ID signature.
   hardenedRuntime: false
   identity: null
+  extraResources:
+    - from: vendor/python-mac-${arch}
+      to: python
 
 win:
   target:
@@ -83,6 +101,9 @@ win:
   icon: resources/icon.png
   # Deliberately unsigned — no code-signing certificate. SmartScreen will warn on first run
   # ("More info" → "Run anyway"). Docker Desktop with the WSL2 backend is a prerequisite.
+  extraResources:
+    - from: vendor/python-win-${arch}
+      to: python
 
 nsis:
   oneClick: false
