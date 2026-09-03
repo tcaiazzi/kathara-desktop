@@ -49,6 +49,14 @@ const api = {
   // "auth:get-token", src/kathara_api/dependencies.py's require_auth_token).
   getAuthToken: (): Promise<string | null> => ipcRenderer.invoke("auth:get-token"),
 
+  // -- notification history (ToastContext.tsx) --
+  // Carries the notification panel's history across a reload this shell itself triggers
+  // (elevation, retry, labs-dir change, a backend crash restart) — see main.ts's
+  // carriedNotifications. Opaque payload: the shell doesn't interpret it, just hands it back.
+  saveNotificationHistory: (history: unknown): Promise<void> =>
+    ipcRenderer.invoke("notifications:save", history),
+  loadNotificationHistory: (): Promise<unknown> => ipcRenderer.invoke("notifications:load"),
+
   // -- privileged-device elevation (see ElevationContext.tsx) --
   /** `password` is required on Linux, ignored on macOS/Windows (native OS prompt instead).
    * `resumeLab`, if given, is reflected into the post-reload URL so the SPA can continue that

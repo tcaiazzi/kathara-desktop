@@ -40,6 +40,13 @@ export interface DesktopApi {
    * null between backends (e.g. mid-elevation) — see services/api.ts, which attaches it to
    * every request so the backend's require_auth_token dependency accepts them. */
   getAuthToken(): Promise<string | null>;
+  /** Carries the notification panel's history (ToastContext.tsx) across a reload the shell
+   * itself triggers (elevation, retry, labs-dir change, a backend crash restart) — otherwise
+   * that in-memory React state is simply gone once the page reloads. `history` should be plain,
+   * IPC-serializable data (no functions — drop any `action` callback before calling this).
+   * `load` returns whatever was last saved, or `[]` on a fresh app launch. */
+  saveNotificationHistory(history: unknown): Promise<void>;
+  loadNotificationHistory(): Promise<unknown>;
   /** `password` is required on Linux (fed to `sudo -S`); ignored on macOS/Windows, where the OS
    * shows its own native admin-password dialog instead. `resumeLab`, if given, is reflected into
    * the post-reload URL so the SPA can continue that lab's deploy on its own once it's back up.

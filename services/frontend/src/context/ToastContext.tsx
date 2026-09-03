@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ToastContainer, Toast, Button } from "react-bootstrap";
+import { desktop } from "../desktop/bridge";
 import { ApiError } from "../services/api";
 
 type ToastVariant = "success" | "danger" | "info";
@@ -56,9 +57,47 @@ let nextId = 1;
 // Cap so a long-running session doesn't grow the history array unbounded.
 const HISTORY_LIMIT = 200;
 
+/** Loose runtime check on whatever the shell hands back from a prior saveNotificationHistory —
+ * cheap insurance against a future shape change, not full validation. */
+function isHistoryItem(v: unknown): v is NotificationHistoryItem {
+  return (
+    typeof v === "object" && v !== null &&
+    typeof (v as NotificationHistoryItem).id === "number" &&
+    typeof (v as NotificationHistoryItem).message === "string"
+  );
+}
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [history, setHistory] = useState<NotificationHistoryItem[]>([]);
+
+  // Seeded once from whatever the shell carried over from before the last reload it triggered
+  // (elevation, retry, labs-dir change, a backend crash restart) — see main.ts's
+  // carriedNotifications. A no-op in the browser build (desktop() is null there) or on a genuine
+  // fresh app launch (nothing carried yet).
+  useEffect(() => {
+    const shell = desktop();
+    if (!shell) return;
+    let cancelled = false;
+    void shell.loadNotificationHistory().then((loaded) => {
+      if (!cancelled && Array.isArray(loaded) && loaded.every(isHistoryItem)) {
+        setHistory(loaded);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Keeps the shell's copy current so it's ready whenever it next reloads this page — cheaper to
+  // report on every change than to try to predict the one moment a reload is about to happen.
+  // `action` is dropped: it carries a `run` callback, which isn't IPC-serializable, and wouldn't
+  // mean anything after a reload anyway (the closure that defined it is gone).
+  useEffect(() => {
+    const shell = desktop();
+    if (!shell) return;
+    void shell.saveNotificationHistory(history.map(({ action: _action, ...rest }) => rest));
+  }, [history]);
 
   const remove = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

@@ -134,6 +134,18 @@ function isFirstRun(): boolean {
 let bootStartedAt = Date.now();
 let bootChecks: Check[] = [];
 
+/**
+ * The renderer's notification history (ToastContext.tsx), carried across any reload this shell
+ * itself triggers (elevation:elevate/elevation:drop, status:retry, labs:set-dir, an unexpected
+ * backend exit) — every one of those calls win.loadURL/loadFile, which wipes the renderer's own
+ * in-memory React state. Held here in memory only, not on disk: it only has to survive *this*
+ * reload, not a real app relaunch (ToastContext's own history is scoped to "since app startup").
+ * Opaque to this process by design — it's just handed back verbatim to whichever page asks next;
+ * see notifications:save/notifications:load below and ToastContext.tsx's load-on-mount/save-on-
+ * change effects.
+ */
+let carriedNotifications: unknown[] = [];
+
 /** Sets a "starting" status, carrying forward the checks/output accumulated so far this attempt
  * unless the caller supplies fresh ones. The one place that assembles the "starting" payload, so
  * every call site only has to say what changed. */
@@ -263,6 +275,14 @@ async function startup(resumePath?: string): Promise<void> {
 
 function registerIpc(): void {
   ipcMain.handle("status:get", () => status);
+
+  // See carriedNotifications above. `save` is called on every history change (cheap — this is
+  // just a variable assignment), so whatever reload happens next always has the latest snapshot,
+  // without either side needing to predict exactly when a reload is about to happen.
+  ipcMain.handle("notifications:save", (_e, history: unknown) => {
+    carriedNotifications = Array.isArray(history) ? history : [];
+  });
+  ipcMain.handle("notifications:load", () => carriedNotifications);
 
   ipcMain.handle("status:retry", async () => {
     await stopBackend();

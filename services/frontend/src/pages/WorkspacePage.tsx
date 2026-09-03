@@ -41,6 +41,7 @@ import {
 } from "../context/OnboardingTourContext";
 import { useToast } from "../context/ToastContext";
 import { useDeviceActions } from "../hooks/useDeviceActions";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useKtTheme } from "../hooks/useKtTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError } from "../services/api";
@@ -475,6 +476,7 @@ export function WorkspacePage() {
   const registerTourFocusPanel = useOnboardingTourFocusPanel();
   const registerTourSelectFirstDevice = useOnboardingTourSelectFirstDevice();
   const autoTourRequested = useRef(false);
+  const isAdmin = useIsAdmin();
 
   const [showNew, setShowNew] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
@@ -548,12 +550,16 @@ export function WorkspacePage() {
   useEffect(() => {
     setTourReady(!!detail);
   }, [detail, setTourReady]);
+  // Skipped entirely when running privileged (isAdmin === true) — walking a new user through the
+  // UI while the backend already has root feels like the wrong first impression to lead with.
+  // `isAdmin === false` (not just falsy) so this waits for useIsAdmin's check to actually resolve
+  // rather than firing on its "still checking" default and racing the real answer.
   useEffect(() => {
-    if (detail && !autoTourRequested.current) {
+    if (detail && !autoTourRequested.current && isAdmin === false) {
       autoTourRequested.current = true;
       requestTour({ auto: true });
     }
-  }, [detail, requestTour]);
+  }, [detail, requestTour, isAdmin]);
   // "Devices" and "Lab Configuration" share one tab group (see buildDefaultLayout) — only one is
   // ever visually on top, so the tour brings the right one forward as it reaches each step.
   useEffect(() => {
