@@ -84,7 +84,6 @@ export function TitleBar() {
 
   const platform = shell?.platform ?? "linux";
   const mod = platform === "darwin" ? "⌘" : "Ctrl";
-  const shift = platform === "darwin" ? "⇧" : "Shift+";
 
   const command = useCallback(
     (action: DesktopMenuAction) => () => {

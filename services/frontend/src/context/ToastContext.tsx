@@ -1,14 +1,24 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { ToastContainer, Toast } from "react-bootstrap";
+import { ToastContainer, Toast, Button } from "react-bootstrap";
 import { ApiError } from "../services/api";
 
 type ToastVariant = "success" | "danger" | "info";
+
+/** An optional action button a toast/notification can offer — e.g. "Download" on an
+ *  update-available notice (see App.tsx's update check). Deliberately just a label + callback,
+ *  not a link href: opening it is the caller's job (usually shell.openExternal via the desktop
+ *  bridge), so this works the same in the browser build too. */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
 
 interface ToastItem {
   id: number;
   message: string;
   detail?: string;
   variant: ToastVariant;
+  action?: ToastAction;
 }
 
 export interface NotificationHistoryItem {
@@ -18,10 +28,11 @@ export interface NotificationHistoryItem {
   variant: ToastVariant;
   timestamp: number;
   read: boolean;
+  action?: ToastAction;
 }
 
 interface ToastApi {
-  show: (message: string, variant?: ToastVariant, detail?: string) => void;
+  show: (message: string, variant?: ToastVariant, detail?: string, action?: ToastAction) => void;
   /** Show a message on success, or surface an ApiError's detail/error_type on failure. */
   reportError: (prefix: string, error: unknown) => void;
 }
@@ -53,12 +64,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const show = useCallback<ToastApi["show"]>((message, variant = "info", detail) => {
+  const show = useCallback<ToastApi["show"]>((message, variant = "info", detail, action) => {
     const id = nextId++;
-    setToasts((prev) => [...prev, { id, message, detail, variant }]);
+    setToasts((prev) => [...prev, { id, message, detail, variant, action }]);
     setTimeout(() => remove(id), variant === "danger" ? 7000 : 3500);
     setHistory((prev) =>
-      [{ id, message, detail, variant, timestamp: Date.now(), read: false }, ...prev].slice(0, HISTORY_LIMIT),
+      [{ id, message, detail, variant, action, timestamp: Date.now(), read: false }, ...prev].slice(0, HISTORY_LIMIT),
     );
   }, [remove]);
 
@@ -97,6 +108,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               </Toast.Header>
               <Toast.Body className={t.variant === "danger" || t.variant === "success" ? "text-white" : undefined}>
                 {t.message}
+                {t.action && (
+                  <div className="mt-2">
+                    <Button size="sm" variant="light" onClick={t.action.run}>
+                      {t.action.label}
+                    </Button>
+                  </div>
+                )}
               </Toast.Body>
             </Toast>
           ))}

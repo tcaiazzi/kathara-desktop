@@ -32,6 +32,9 @@ export interface DesktopApi {
   isWindowMaximized(): Promise<boolean>;
   showBackendLog(): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** The newer release GitHub has, or null if this build is already current. Cheap to call more
+   * than once (see updateCheck.ts) — safe to call again after opening an editor unrelated to it. */
+  checkForUpdate(): Promise<{ version: string; url: string } | null>;
   /** The per-launch pairing token backend.ts generated for the currently running backend, or
    * null between backends (e.g. mid-elevation) — see services/api.ts, which attaches it to
    * every request so the backend's require_auth_token dependency accepts them. */

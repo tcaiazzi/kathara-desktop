@@ -35,6 +35,13 @@ const api = {
   showBackendLog: () => ipcRenderer.invoke("shell:show-log"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 
+  // Resolves to the newer release GitHub has, or null if the app is already current (or the
+  // check failed/hasn't got an answer — see updateCheck.ts). Pull rather than push: the main
+  // process starts the fetch at launch and caches it, so this either returns instantly or waits
+  // out whatever's left of it — see main.ts's "update:check" handler for why not a push.
+  checkForUpdate: (): Promise<{ version: string; url: string } | null> =>
+    ipcRenderer.invoke("update:check"),
+
   // The pairing token backend.ts generated for the currently running backend (or null between
   // backends), so the renderer's api.ts can attach it to every request instead of an arbitrary
   // other localhost process/tab being able to talk to the same backend (see main.ts's

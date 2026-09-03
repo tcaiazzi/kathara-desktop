@@ -41,6 +41,7 @@ import { buildMenu } from "./menu";
 import { defaultLabsDir, labsDir, packagedVenvPython, resolveStaticDir } from "./paths";
 import { readPrefs, writePrefs } from "./prefs";
 import { runPreflight, type Check, type Preflight, type PreflightProgress } from "./prereqs";
+import { checkForUpdate } from "./updateCheck";
 import { createMainWindow, installEditContextMenu, installNavigationPolicy, showSetupPage } from "./windows";
 
 // Electron derives userData's folder name from app.name, which defaults to package.json's
@@ -407,6 +408,14 @@ function registerIpc(): void {
     platform: process.platform,
   }));
 
+  // Pull, not push: checkForUpdate() is memoized and was already kicked off in
+  // app.whenReady() below, in parallel with startup() — by the time the renderer has mounted
+  // past setup.html and asks, the fetch has often already resolved. A push instead (the shell
+  // sending the result unprompted) would race the SPA's own load: this fetch can easily finish
+  // before win.loadURL(handle.baseUrl) ever happens, and a message sent to a page that hasn't
+  // registered a listener yet is simply lost, not queued.
+  ipcMain.handle("update:check", () => checkForUpdate());
+
   ipcMain.handle("window:zoom", (_e, direction: "in" | "out" | "reset") => {
     const contents = win?.webContents;
     if (!contents) return;
@@ -623,6 +632,11 @@ if (!app.requestSingleInstanceLock()) {
     //
     // registerIpc() first of all: setup.html calls status:get as soon as it loads.
     registerIpc();
+    // Started here, not inside startup(): this is a one-shot external network call, unrelated
+    // to getting the local backend healthy (startup() re-runs on every retry/elevation/labs-dir
+    // change, which would otherwise re-fetch pointlessly). Fire-and-forget in parallel with
+    // startup() below — network trouble here must never delay first paint or the backend.
+    void checkForUpdate();
     // Before any window exists, so no WebContents is ever created unguarded.
     installNavigationPolicy(backendUrl);
     installEditContextMenu();

@@ -5,6 +5,7 @@ import { isDesktop } from "./desktop/bridge";
 import { DesktopCommandsProvider } from "./desktop/DesktopCommands";
 import { ElevationProvider } from "./desktop/ElevationContext";
 import { TitleBar } from "./desktop/TitleBar";
+import { UpdateChecker } from "./desktop/UpdateChecker";
 import { PromptProvider } from "./context/PromptContext";
 import { ToastProvider } from "./context/ToastContext";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -55,6 +56,7 @@ export function App() {
             {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
                 commands. Inert in the browser build. */}
             <DesktopCommandsProvider>
+              <UpdateChecker />
               <Routes>
                 {/* The Workspace is the app; "/" redirects into it. */}
                 <Route path="/" element={<Navigate to="/workspace" replace />} />

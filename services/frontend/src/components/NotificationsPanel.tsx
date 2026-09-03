@@ -82,6 +82,11 @@ export function NotificationsPanel() {
                     <div className="kt-notif-item-time" title={new Date(h.timestamp).toLocaleString()}>
                       {formatRelativeTime(h.timestamp)}
                     </div>
+                    {h.action && (
+                      <button type="button" className="kt-notif-action" onClick={h.action.run}>
+                        {h.action.label}
+                      </button>
+                    )}
                   </div>
                 </li>
               ))}

@@ -130,3 +130,15 @@
   font-size: 0.72rem;
   color: var(--bs-secondary-color);
 }
+.kt-notif-action {
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bs-primary);
+  font-size: 0.76rem;
+}
+.kt-notif-action:hover {
+  background: var(--kt-menu-hover-bg);
+}
