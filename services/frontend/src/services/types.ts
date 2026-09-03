@@ -44,12 +44,6 @@ export interface SettingsView {
   remote_url?: string | null;
   cert_path?: string | null;
   network_plugin?: string;
-  // Kubernetes addon
-  api_server_url?: string | null;
-  api_token?: string | null;
-  host_shared?: boolean;
-  image_pull_policy?: string;
-  docker_config_json?: string | null;
 }
 
 export type SettingsUpdate = Partial<Omit<SettingsView, "last_checked">>;

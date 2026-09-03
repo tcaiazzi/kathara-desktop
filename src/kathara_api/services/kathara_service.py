@@ -162,7 +162,11 @@ class KatharaService:
         return {
             "manager": facade.get_formatted_manager_name(),
             "version": facade.get_release_version(),
-            "available_managers": Kathara.get_available_managers_name(),
+            # Hardcoded rather than `Kathara.get_available_managers_name()`: that call eagerly
+            # imports Kathara's Kubernetes manager (and the 80MB+ `kubernetes` package) even
+            # though this app only ever drives Docker. Keep the label identical to what Kathara
+            # itself reports for "docker" so the UI is unaffected for the one manager we support.
+            "available_managers": {"docker": "Docker (Kathara)"},
             "is_admin": is_admin(),
         }
 

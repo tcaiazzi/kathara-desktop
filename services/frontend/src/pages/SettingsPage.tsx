@@ -388,48 +388,6 @@ export function SettingsPage() {
           </Panel>
         )}
 
-        {form.manager_type === "kubernetes" && (
-          <Panel title="Kubernetes settings" className="mb-3">
-            <Form.Group className="mb-2">
-              <Form.Label>API server URL</Form.Label>
-              <Form.Control
-                value={form.api_server_url ?? ""}
-                onChange={(e) => set("api_server_url", e.target.value || null)}
-              />
-            </Form.Group>
-            <Form.Group className="mb-2">
-              <Form.Label>API token</Form.Label>
-              <Form.Control
-                type="password"
-                autoComplete="off"
-                value={form.api_token ?? ""}
-                onChange={(e) => set("api_token", e.target.value || null)}
-              />
-            </Form.Group>
-            <Form.Check
-              className="mb-2"
-              type="checkbox"
-              label="Host shared"
-              checked={form.host_shared ?? true}
-              onChange={(e) => set("host_shared", e.target.checked)}
-            />
-            <Form.Group className="mb-2">
-              <Form.Label>Image pull policy</Form.Label>
-              <Form.Control
-                value={form.image_pull_policy ?? ""}
-                onChange={(e) => set("image_pull_policy", e.target.value)}
-              />
-            </Form.Group>
-            <Form.Group>
-              <Form.Label>Docker config JSON path</Form.Label>
-              <Form.Control
-                value={form.docker_config_json ?? ""}
-                onChange={(e) => set("docker_config_json", e.target.value || null)}
-              />
-            </Form.Group>
-          </Panel>
-        )}
-
         <Button type="submit" disabled={busy}>
           {busy ? "Saving..." : "Save settings"}
         </Button>
