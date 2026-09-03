@@ -29,6 +29,7 @@ import { TopologyGraph } from "../components/TopologyGraph";
 import { UploadLabModal } from "../components/UploadLabModal";
 import { WelcomeScreen } from "../components/WelcomeScreen";
 import { useDesktopCommand } from "../desktop/DesktopCommands";
+import { desktop, isDesktop } from "../desktop/bridge";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import { useToast } from "../context/ToastContext";
@@ -801,6 +802,9 @@ export function WorkspacePage() {
           action: () => void handleRename(labName),
         },
         { label: "Download .zip", disabled: busy, action: () => void handleDownload(labName) },
+        ...(isDesktop()
+          ? [{ label: "Open lab folder", action: () => void desktop()?.revealLab(labName) }]
+          : []),
         { label: "Remove", danger: true, disabled: busy, action: () => void handleDelete(labName) },
       ],
     });
