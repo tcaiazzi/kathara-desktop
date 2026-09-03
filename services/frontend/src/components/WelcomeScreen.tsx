@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "react-bootstrap";
-import { Loader2, Plus, Upload } from "lucide-react";
+import { Compass, Loader2, Plus, Upload } from "lucide-react";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useToast } from "../context/ToastContext";
@@ -15,6 +15,8 @@ interface WelcomeScreenProps {
   onNewLab: () => void;
   /** Opens the existing UploadLabModal (WorkspacePage's `showUpload`). */
   onImportLab: () => void;
+  /** Opens the GalleryModal (WorkspacePage's `showGallery`). */
+  onBrowseGallery: () => void;
   /** Same contract as NewLabModal/UploadLabModal's `onCreated`: refresh the lab list and open it. */
   onLabCreated: (labName: string) => void;
   /** Rendered only when the user already has labs (arrived via ?welcome=1) — a genuine first run,
@@ -26,7 +28,7 @@ interface WelcomeScreenProps {
 // see it again via ?welcome=1 — see WorkspacePage). Only Bootstrap + react-bootstrap + lucide,
 // same as the rest of the app; no wizard/stepper primitive, since this is one static screen that
 // only launches the two flows (NewLabModal/UploadLabModal) that already exist.
-export function WelcomeScreen({ onNewLab, onImportLab, onLabCreated, onDismiss }: WelcomeScreenProps) {
+export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCreated, onDismiss }: WelcomeScreenProps) {
   const { dark } = useTheme();
   const toast = useToast();
 
@@ -93,6 +95,10 @@ export function WelcomeScreen({ onNewLab, onImportLab, onLabCreated, onDismiss }
         <Button variant="outline-secondary" onClick={onImportLab}>
           <Upload size={16} className="me-1" />
           Import a .zip…
+        </Button>
+        <Button variant="outline-secondary" onClick={onBrowseGallery}>
+          <Compass size={16} className="me-1" />
+          Browse Kathara Labs…
         </Button>
       </div>
 

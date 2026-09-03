@@ -19,6 +19,7 @@ import { LabExplorer } from "../components/LabExplorer";
 import { LinksTable } from "../components/LinksTable";
 import { AddDeviceModal } from "../components/AddDeviceModal";
 import { MachineOptionsEditor } from "../components/MachineOptionsEditor";
+import { GalleryModal } from "../components/GalleryModal";
 import { NewLabModal } from "../components/NewLabModal";
 import { RuntimeFilesystemEditor } from "../components/RuntimeFilesystemEditor";
 import { StatsPanel } from "../components/StatsPanel";
@@ -449,6 +450,7 @@ export function WorkspacePage() {
 
   const [showNew, setShowNew] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
   const dockApiRef = useRef<DockviewApi | null>(null);
@@ -766,6 +768,7 @@ export function WorkspacePage() {
   // so each checks the current state — otherwise "Deploy" on a running lab would tear it down.
   useDesktopCommand("lab:new", () => setShowNew(true));
   useDesktopCommand("lab:import", () => setShowUpload(true));
+  useDesktopCommand("lab:browse", () => setShowGallery(true));
   useDesktopCommand("lab:deploy", () => {
     if (detail && !detail.deployed) void handleDeployToggle();
   });
@@ -894,6 +897,9 @@ export function WorkspacePage() {
               </Button>
               <Button size="sm" variant="outline-secondary" className="flex-fill" onClick={() => setShowUpload(true)}>
                 Upload
+              </Button>
+              <Button size="sm" variant="outline-secondary" className="flex-fill" onClick={() => setShowGallery(true)}>
+                Browse
               </Button>
             </div>
             {/* Hidden with no labs: on a first run this red, destructive button was the most
@@ -1131,6 +1137,7 @@ export function WorkspacePage() {
             <WelcomeScreen
               onNewLab={() => setShowNew(true)}
               onImportLab={() => setShowUpload(true)}
+              onBrowseGallery={() => setShowGallery(true)}
               onLabCreated={handleLabCreated}
               // Nothing to fall back on for a genuine first run (labs.length === 0): dismissing
               // would just show this exact same screen again on the next render.
@@ -1178,6 +1185,7 @@ export function WorkspacePage() {
 
       <NewLabModal show={showNew} onClose={() => setShowNew(false)} onCreated={handleLabCreated} />
       <UploadLabModal show={showUpload} onClose={() => setShowUpload(false)} onCreated={handleLabCreated} />
+      <GalleryModal show={showGallery} onClose={() => setShowGallery(false)} onCreated={handleLabCreated} />
     </div>
   );
 }

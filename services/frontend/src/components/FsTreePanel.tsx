@@ -4,6 +4,7 @@ import { Button } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps } from "react-arborist";
 import { useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import { useElementSize } from "../hooks/useElementSize";
+import { useFsClipboardShortcuts } from "../hooks/useFsClipboardShortcuts";
 import type { FsRowActions, UseFsTree } from "../hooks/useFsTree";
 import { useSaveShortcut } from "../hooks/useSaveShortcut";
 import { languageForPath } from "../services/editorLanguage";
@@ -55,15 +56,26 @@ export function FsTreePanel({
   onReload,
 }: FsTreePanelProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const treeContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { ref: treeSizeRef, width: treeWidth, height: treeHeight } = useElementSize<HTMLDivElement>();
   const { setContextMenu } = useWorkspaceCore();
 
-  const { selected, selectedIsDir, isBinary, busy } = tree;
-  const disabled = !selected || selectedIsDir || isBinary || editorReadOnly;
+  const { selected, selectedPaths, selectedIsDir, isBinary, busy } = tree;
+  const disabled = !selected || selectedIsDir || isBinary || editorReadOnly || selectedPaths.length > 1;
 
   useSaveShortcut(rootRef, () => {
     if (!busy && !disabled) void tree.handleSave();
+  });
+
+  // Scoped to the tree's own container (not `rootRef`, which also wraps the CodeMirror editor and
+  // the inline-rename <input> — reusing it here would hijack normal text editing/renaming into a
+  // file operation on every Backspace/Ctrl+C/X/V keystroke).
+  useFsClipboardShortcuts(treeContainerRef, {
+    onCopy: () => tree.handleCopy(),
+    onCut: () => tree.handleCut(),
+    onPaste: () => void tree.handlePaste(),
+    onDelete: () => void tree.handleDelete(),
   });
 
   return (
@@ -127,7 +139,7 @@ export function FsTreePanel({
                 title="Delete"
                 aria-label="Delete"
                 disabled={!tree.canDelete || busy}
-                onClick={() => selected && void tree.handleDelete(selected)}
+                onClick={() => void tree.handleDelete()}
               >
                 <Trash2 size={16} />
               </Button>
@@ -153,7 +165,10 @@ export function FsTreePanel({
               />
             </div>
             <div
-              ref={treeSizeRef}
+              ref={(el) => {
+                treeSizeRef(el);
+                treeContainerRef.current = el;
+              }}
               className="kt-explorer-tree border rounded"
               style={{ flex: 1, minHeight: 0 }}
               // Right-clicking the background below/around the rows targets the tree root. A row's
@@ -180,7 +195,6 @@ export function FsTreePanel({
                     height={treeHeight}
                     rowHeight={26}
                     indent={14}
-                    disableMultiSelection
                     disableEdit={(d) => !tree.canModify(d.path)}
                     disableDrag={(d) => !tree.canModify(d.path)}
                     disableDrop={({ parentNode, dragNodes }) =>
@@ -192,6 +206,18 @@ export function FsTreePanel({
                     onSelect={tree.onTreeSelect}
                     onRename={tree.onTreeRename}
                     onMove={tree.onTreeMove}
+                    // react-arborist's default row wrapper already calls `node.handleClick` on
+                    // click (ctrl/cmd-click toggles, shift-click range-selects, a plain click
+                    // selects + activates) — onActivate is where a plain click's "open this
+                    // folder" behavior belongs. It must NOT be duplicated by a second onClick on
+                    // the row content below: both fire (the wrapper's click handler and ours,
+                    // via bubbling), and since each independently reacts to the same modifier
+                    // keys, they used to fight over the selection (e.g. our handler adds a
+                    // ctrl-clicked row, then the wrapper's own handler sees it as already
+                    // selected and immediately deselects it again).
+                    onActivate={(node) => {
+                      if (node.isInternal) node.toggle();
+                    }}
                   >
                     {Node}
                   </Tree>
@@ -217,7 +243,9 @@ export function FsTreePanel({
           onChange={tree.setEditorText}
           disabled={disabled}
           placeholder={
-            selectedIsDir
+            selectedPaths.length > 1
+              ? `${selectedPaths.length} items selected.`
+              : selectedIsDir
               ? "This is a folder — select a file to edit it."
               : isBinary
                 ? tree.hasDownload
@@ -239,10 +267,12 @@ export function FsTreePanel({
 
 // The create actions offered wherever there is no file to act on — the tree's own background.
 function createItems(tree: UseFsTree, dir: string): ContextMenuItem[] {
-  return [
+  const items: ContextMenuItem[] = [
     { label: "New File", action: () => void tree.handleNewFile(dir) },
     { label: "New Folder", action: () => void tree.handleNewDirectory(dir) },
   ];
+  if (tree.clipboard) items.push({ label: "Paste", action: () => void tree.handlePaste(dir) });
+  return items;
 }
 
 // Row renderer: VS-Code-ish icon + name, with inline rename input when the node is being edited.
@@ -257,23 +287,39 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
   function openContextMenu(e: React.MouseEvent) {
     e.preventDefault();
     if (!rowActions) return;
-    node.select();
     const path = node.data.path;
-    const modifiable = rowActions.canModify(path);
-    const lockedTitle = modifiable ? undefined : "lab.conf can't be renamed or deleted here.";
-    const renameDelete: ContextMenuItem[] = [
-      { label: "Rename", disabled: !modifiable, title: lockedTitle, action: () => rowActions.onRename(path) },
-      { label: "Delete", danger: true, disabled: !modifiable, title: lockedTitle, action: () => rowActions.onDelete(path) },
-    ];
-    const items: ContextMenuItem[] = node.data.dir
-      ? [
-          { label: "New File", action: () => rowActions.onNewFile(path) },
-          { label: "New Folder", action: () => rowActions.onNewDirectory(path) },
-          ...renameDelete,
-        ]
-      : rowActions.onDownload
-        ? [{ label: "Download", action: () => rowActions.onDownload!(path) }, ...renameDelete]
-        : renameDelete;
+    // Right-clicking a row already part of a multi-selection acts on the whole selection; any
+    // other row first collapses the selection down to just itself (VS Code semantics).
+    if (!node.isSelected) node.select();
+    const targets = node.isSelected ? Array.from(node.tree.selectedIds) : [path];
+    const modifiable = targets.every(rowActions.canModify);
+    const lockedTitle = modifiable ? undefined : "lab.conf can't be modified here.";
+
+    const items: ContextMenuItem[] = [];
+    if (node.data.dir) {
+      items.push(
+        { label: "New File", action: () => rowActions.onNewFile(path) },
+        { label: "New Folder", action: () => rowActions.onNewDirectory(path) },
+      );
+    }
+    items.push({ label: "Copy", action: () => rowActions.onCopy(targets) });
+    items.push({ label: "Cut", disabled: !modifiable, title: lockedTitle, action: () => rowActions.onCut(targets) });
+    if (node.data.dir && rowActions.canPaste) {
+      items.push({ label: "Paste", action: () => rowActions.onPaste(path) });
+    }
+    if (targets.length === 1) {
+      items.push({ label: "Rename", disabled: !modifiable, title: lockedTitle, action: () => rowActions.onRename(path) });
+      if (rowActions.onDownload) {
+        items.push({ label: "Download", action: () => rowActions.onDownload!(path) });
+      }
+    }
+    items.push({
+      label: targets.length > 1 ? `Delete ${targets.length} items` : "Delete",
+      danger: true,
+      disabled: !modifiable,
+      title: lockedTitle,
+      action: () => rowActions.onDelete(targets),
+    });
     setContextMenu({ x: e.clientX, y: e.clientY, items });
   }
 
@@ -285,11 +331,11 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
       style={style}
       className={`kt-explorer-row d-flex align-items-center gap-1 ${node.isSelected ? "kt-explorer-row--selected" : ""} ${
         node.willReceiveDrop ? "kt-explorer-row--drop" : ""
-      }`}
-      onClick={() => {
-        node.select();
-        if (node.isInternal) node.toggle();
-      }}
+      } ${rowActions?.isCutPending(node.data.path) ? "kt-explorer-row--cut" : ""}`}
+      // No onClick here: react-arborist's row wrapper already calls `node.handleClick` on click
+      // (ctrl/cmd toggle, shift range-select, plain select+activate — see the `onActivate` prop
+      // on <Tree> above for what a plain click's activation does). Adding a second onClick here
+      // would fire alongside it via bubbling and fight over the selection.
       onDoubleClick={() => node.isEditable && node.edit()}
       onKeyDown={(e) => {
         if (e.key === "F2" && node.isEditable) node.edit();

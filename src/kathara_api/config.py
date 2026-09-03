@@ -1,10 +1,14 @@
 """Application configuration, sourced from environment variables (prefix ``KATHARA_API_``)."""
 
+import re
 from pathlib import Path
 from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# owner/repo, GitHub's own charset for both halves — see ApiSettings.gallery_slug.
+_GALLERY_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$")
 
 
 class ApiSettings(BaseSettings):
@@ -37,6 +41,22 @@ class ApiSettings(BaseSettings):
     # "use the bundled ones" — an override exists only so a deployment can ship its own catalog
     # (e.g. a course's own lab set) without rebuilding this package.
     examples_dir: Optional[str] = None
+
+    # Upstream lab gallery (services/lab_gallery.py): the GitHub repo browsed by the frontend's
+    # "Browse Kathara Labs" modal. Overridable for the same reason as examples_dir above — a course
+    # can point the IDE at its own fork without rebuilding this package.
+    gallery_repo: str = "KatharaFramework/Kathara-Labs"
+    gallery_ref: str = "main"
+    # Subtree of the repo to offer. Everything outside it is ignored, so a repo that also holds
+    # exams or solutions doesn't leak them into the catalog.
+    gallery_section: str = "main-labs"
+    # Seconds a fetched catalog is reused. The catalog costs one GitHub API call and changes
+    # rarely; unauthenticated GitHub allows 60 calls/hour per IP, which a shared university NAT
+    # can exhaust, so the default is deliberately generous.
+    gallery_cache_ttl: int = 900
+    # Optional GitHub token, sent as a bearer token on API calls to lift that 60/hour limit. Only
+    # public repos are ever read, so a token needs no scopes.
+    gallery_token: Optional[str] = None
 
     # Kathara settings applied via Setting.load_from_dict() before the first backend use.
     manager_type: Optional[str] = None
@@ -72,6 +92,25 @@ class ApiSettings(BaseSettings):
         if configured:
             return Path(configured).expanduser().resolve()
         return Path(__file__).resolve().parent / "examples"
+
+    def gallery_slug(self) -> str:
+        """``owner/repo`` for the configured gallery, validated.
+
+        The slug is interpolated straight into the GitHub API and raw.githubusercontent URLs, so a
+        value containing ``/``-separated extra segments, ``..`` or a query string would let a
+        mis-set env var point the fetcher somewhere else entirely. Rejecting it here keeps every
+        URL builder in lab_gallery.py free of that concern.
+        """
+        slug = (self.gallery_repo or "").strip().strip("/")
+        if not _GALLERY_SLUG_RE.match(slug):
+            raise ValueError(
+                f"KATHARA_API_GALLERY_REPO must be `owner/repo`, got {self.gallery_repo!r}"
+            )
+        return slug
+
+    def gallery_section_path(self) -> str:
+        """The gallery subtree, normalized to a bare relative posix path ("" means the whole repo)."""
+        return (self.gallery_section or "").strip().strip("/")
 
     def kathara_overrides(self) -> dict:
         """Return the subset of settings to forward to Kathara's Setting."""

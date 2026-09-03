@@ -85,8 +85,13 @@ Errors return `{"detail": str, "error_type": str}`.
 | POST | `/api/labs` | Create a lab from a JSON description (not deployed) | `LabCreate` | `LabDetail` (201) |
 | POST | `/api/labs/import` | Create (and optionally deploy) from lab.conf/.startup/folder files | `LabImportRequest` | `LabImportResult` (201) |
 | POST | `/api/labs/upload` | Create (and optionally deploy) from an uploaded `.zip` (binary-safe) | multipart: `file`, `name?`, `deploy?` | `LabImportResult` (201) |
+| GET | `/api/labs/examples` | Bundled example network scenarios (package data), each flagged `installed` | — | `ExampleSummary[]` |
+| POST | `/api/labs/examples` | Install a bundled example as a real lab (409 if the name exists) | `ExampleCreate {id, name?}` | `LabImportResult` (201) |
+| GET | `/api/labs/gallery` | Upstream Kathara-Labs catalog (cached; `refresh=true` bypasses the cache), each entry flagged `installed` | `?refresh=false` | `GalleryCatalog` |
+| POST | `/api/labs/gallery` | Install a lab from the upstream gallery (409 if the name exists) | `GalleryInstall {id, name?}` | `LabImportResult` (201) |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
+| GET | `/api/labs/{lab}/location` | Host path of the lab directory (desktop shell only) | — | `LabLocation {path}` |
 | GET | `/api/labs/{lab}/download` | Download the lab directory as `.zip` | — | `application/zip` |
 | GET | `/api/labs/{lab}/lab-conf` | The lab's on-disk `lab.conf`, verbatim (`exists: false` if none yet) | — | `LabConfView {content, exists}` |
 | PUT | `/api/labs/{lab}/lab-conf` | Apply an edited `lab.conf`, stored verbatim (rebuilds topology; 409 if deployed) | `{content}` | `LabDetail` |

@@ -11,6 +11,7 @@ from ..downloads import attachment_headers
 from ..schemas.common import Message
 from ..schemas.exec import CopyFilesRequest
 from ..schemas.filesystem import (
+    FsCopyRequest,
     FsDeleteRequest,
     FsListResponse,
     FsMkdirRequest,
@@ -202,6 +203,23 @@ def move_runtime_path(
     return Message(
         detail=(
             f"Moved `{payload.source_path}` to `{payload.destination_path}` "
+            f"on `{machine_name}`."
+        )
+    )
+
+
+@router.post("/{machine_name}/fs/copy", response_model=Message)
+def copy_runtime_path(
+    lab_name: str,
+    machine_name: str,
+    payload: FsCopyRequest,
+    service: KatharaService = Depends(get_service),
+) -> Message:
+    """Copy a path on a running device."""
+    service.fs_copy(lab_name, machine_name, payload.source_path, payload.destination_path)
+    return Message(
+        detail=(
+            f"Copied `{payload.source_path}` to `{payload.destination_path}` "
             f"on `{machine_name}`."
         )
     )

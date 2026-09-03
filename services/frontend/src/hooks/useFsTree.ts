@@ -30,6 +30,8 @@ export interface FsTreeSource {
   writeText(path: string, content: string): Promise<void>;
   mkdir(path: string): Promise<void>;
   move(sourcePath: string, destinationPath: string): Promise<void>;
+  /** Never removes the source — Cut+Paste reuses `move` above instead. */
+  copy(sourcePath: string, destinationPath: string): Promise<void>;
   remove(path: string): Promise<void>;
   upload(path: string, file: File): Promise<void>;
   /** Omit on a surface with no download endpoint — the toolbar button hides itself. */
@@ -49,6 +51,8 @@ export interface FsTreeLabels {
   download: string;
   delete: string;
   move: string;
+  /** Busy/error label for a Paste batch. */
+  paste: string;
   /** Success line after a save — a function so a caller can vary it per path. */
   saved(path: string): string;
   /** Copy for the create/upload prompts. */
@@ -56,6 +60,10 @@ export interface FsTreeLabels {
   newDirectoryPrompt: { title: string; message: string; placeholder(dir: string): string };
   uploadPrompt: { title(fileName: string): string; message: string };
   deleteConfirm(path: string, isDir: boolean): { title: string; message: string };
+  /** Wording for deleting N>1 selected items at once. */
+  deleteConfirmMultiple(count: number): { title: string; message: string };
+  /** Confirm-before-overwrite when a Paste target name already exists. */
+  pasteConfirmOverwrite(path: string, isDir: boolean): { title: string; message: string };
   /**
    * Directory an *upload* falls back to when nothing useful is selected — the lab tree points at
    * the first device's folder, since a file dropped at the lab root reaches no container. Create
@@ -78,12 +86,21 @@ export interface UseFsTreeOptions {
   refreshKey?: unknown;
 }
 
+/** A pending Copy or Cut, holding the paths it was taken from. */
+export interface FsClipboard {
+  paths: string[];
+  mode: "copy" | "cut";
+}
+
 export interface UseFsTree {
   treeRef: React.MutableRefObject<TreeApi<FsNode> | undefined>;
   data: FsNode[];
   loaded: boolean;
   busy: boolean;
+  /** The *primary* selected path — what the editor shows, what rename/new-file "default dir" use. */
   selected: string | null;
+  /** The full current multi-selection; always contains `selected` when non-empty. */
+  selectedPaths: string[];
   selectedIsDir: boolean;
   canDelete: boolean;
   isBinary: boolean;
@@ -110,8 +127,18 @@ export interface UseFsTree {
   handleNewFile: (defaultDir?: string) => Promise<void>;
   handleNewDirectory: (defaultDir?: string) => Promise<void>;
   handleUpload: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
-  handleDelete: (path: string) => Promise<void>;
+  /** Defaults to the current selection. */
+  handleDelete: (paths?: string[]) => Promise<void>;
   handleDownload: (path: string) => Promise<void>;
+  /** Current Copy/Cut clipboard, or null when empty. */
+  clipboard: FsClipboard | null;
+  isCutPending: (path: string) => boolean;
+  /** Defaults to the current selection. */
+  handleCopy: (paths?: string[]) => void;
+  /** Defaults to the current selection, filtered to modifiable paths. */
+  handleCut: (paths?: string[]) => void;
+  /** Pastes into the given directory, or the default dir (selected folder/selected file's parent). */
+  handlePaste: (destDirOverride?: string) => Promise<void>;
   /** Re-fetch every already-loaded directory, preserving expand state. */
   reload: () => Promise<void>;
   /** Re-list one directory (its not-yet-seen ancestors first). */
@@ -125,9 +152,15 @@ export interface FsRowActions {
   onNewDirectory: (dir: string) => void;
   onDownload: ((path: string) => void) | null;
   onRename: (path: string) => void;
-  onDelete: (path: string) => void;
+  onDelete: (paths: string[]) => void;
+  onCopy: (paths: string[]) => void;
+  onCut: (paths: string[]) => void;
+  onPaste: (destDir: string) => void;
   canModify: (path: string) => boolean;
+  /** Whether the clipboard currently holds anything to paste. */
+  canPaste: boolean;
   isLoading: (path: string) => boolean;
+  isCutPending: (path: string) => boolean;
 }
 
 const ALWAYS_MODIFIABLE = () => true;
@@ -148,6 +181,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   }, [tree]);
 
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [clipboard, setClipboard] = useState<FsClipboard | null>(null);
   const [editorText, setEditorText] = useState("");
   const [loadedText, setLoadedText] = useState("");
   const [isBinary, setIsBinary] = useState(false);
@@ -170,6 +205,16 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+  const selectedPathsRef = useRef(selectedPaths);
+  useEffect(() => {
+    selectedPathsRef.current = selectedPaths;
+  }, [selectedPaths]);
+  // Read through a ref: rowActions/the row renderer read clipboard state outside React's render
+  // cycle (isCutPending is called per-row from a memoized context value).
+  const clipboardRef = useRef(clipboard);
+  useEffect(() => {
+    clipboardRef.current = clipboard;
+  }, [clipboard]);
   // react-arborist's onSelect fires more than once for a single click (its own focus + selection
   // updates each trigger a callback) — without this, each firing independently runs the discard-
   // confirmation + fetch flow for the same target before `selected` has committed from the first
@@ -186,11 +231,15 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     treeRefValue.current = [];
     pendingSelectPathRef.current = null;
     selectedRef.current = null;
+    selectedPathsRef.current = [];
+    clipboardRef.current = null;
   }
   useEffect(() => {
     setTree([]);
     setLoaded(false);
     setSelected(null);
+    setSelectedPaths([]);
+    setClipboard(null);
     setEditorText("");
     setLoadedText("");
     setIsBinary(false);
@@ -225,11 +274,19 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   // to match — react-arborist owns selection/open state internally, so whenever *our* `selected`
   // changes for a reason other than the user clicking a row directly, it has to be told. Reruns as
   // `tree` fills in while ancestor levels are still loading below.
+  //
+  // `t.select(path)` always *replaces* the tree's whole selection with just this one id — correct
+  // for a programmatic jump (upload, create, rename, discard-confirm), but calling it whenever
+  // `path` is already selected would undo a ctrl/shift multi-selection the instant it's made: a
+  // multi-select click already lands in `selected` (see onTreeSelect's multi-selection branch),
+  // re-triggering this effect, and `t.select` would immediately collapse the tree back down to
+  // that one node. Skipping the call when the tree already agrees avoids that without weakening
+  // the programmatic-jump case, where the target is never already selected.
   const revealAndSelect = useCallback((path: string | null) => {
     const t = treeRef.current;
     if (!t || !path) return;
     t.openParents(path);
-    t.select(path);
+    if (!t.isSelected(path)) t.select(path);
   }, []);
   useEffect(() => {
     revealAndSelect(selected);
@@ -487,26 +544,58 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     [defaultDir, prompt, refreshDir, runBusy, selectFile, toast],
   );
 
+  // Drops a path from the clipboard (or rewrites it to its new location) so a since-deleted or
+  // since-renamed cut item silently falls out instead of erroring at paste time.
+  const pruneClipboard = useCallback((removedOrRenamedPath: string, renamedTo?: string) => {
+    setClipboard((cb) => {
+      if (!cb) return cb;
+      const next = cb.paths
+        .map((p) => (p === removedOrRenamedPath ? renamedTo : p))
+        .filter((p): p is string => p !== undefined);
+      if (next.length === 0) return null;
+      if (next.length === cb.paths.length && next.every((p, i) => p === cb.paths[i])) return cb;
+      return { ...cb, paths: next };
+    });
+  }, []);
+
   const handleDelete = useCallback(
-    async (path: string) => {
-      if (!canModify(path)) return;
-      const isDir = findNode(treeRefValue.current, path)?.dir ?? false;
-      const { title, message } = sourceRef.current.labels.deleteConfirm(path, isDir);
+    async (paths?: string[]) => {
+      const targets = (paths ?? selectedPathsRef.current).filter(canModify);
+      if (targets.length === 0) return;
+      const multiple = targets.length > 1;
+      const { title, message } = multiple
+        ? sourceRef.current.labels.deleteConfirmMultiple(targets.length)
+        : sourceRef.current.labels.deleteConfirm(
+            targets[0],
+            findNode(treeRefValue.current, targets[0])?.dir ?? false,
+          );
       if (!(await confirm({ title, message, okLabel: "Delete" }))) return;
 
       await runBusy(setBusy, sourceRef.current.labels.delete, async () => {
-        await sourceRef.current.remove(path);
-        if (selectedRef.current === path || (isDir && selectedRef.current?.startsWith(`${path}/`))) {
-          setSelected(null);
-          setEditorText("");
-          setLoadedText("");
-          setIsBinary(false);
+        const parents = new Set<string>();
+        let clearedEditor = false;
+        for (const path of targets) {
+          const isDir = findNode(treeRefValue.current, path)?.dir ?? false;
+          await sourceRef.current.remove(path);
+          parents.add(parentOf(path));
+          pruneClipboard(path);
+          if (
+            !clearedEditor &&
+            (selectedRef.current === path || (isDir && selectedRef.current?.startsWith(`${path}/`)))
+          ) {
+            setSelected(null);
+            setEditorText("");
+            setLoadedText("");
+            setIsBinary(false);
+            clearedEditor = true;
+          }
         }
-        toast.show(`Deleted ${path}.`, "success");
-        await refreshDir(parentOf(path));
+        setSelectedPaths((prev) => prev.filter((p) => !targets.includes(p)));
+        toast.show(multiple ? `Deleted ${targets.length} items.` : `Deleted ${targets[0]}.`, "success");
+        await Promise.all(Array.from(parents).map(refreshDir));
       });
     },
-    [canModify, confirm, refreshDir, runBusy, toast],
+    [canModify, confirm, pruneClipboard, refreshDir, runBusy, toast],
   );
 
   const handleDownload = useCallback(
@@ -535,9 +624,10 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         toast.show(`Moved ${sourcePath} → ${destPath}.`, "success");
         await Promise.all([refreshDir(parentOf(sourcePath)), refreshDir(destDir)]);
         if (selectedRef.current === sourcePath) setSelected(destPath);
+        pruneClipboard(sourcePath, destPath);
       });
     },
-    [canModify, refreshDir, runBusy, toast],
+    [canModify, pruneClipboard, refreshDir, runBusy, toast],
   );
 
   const handleTreeMove = useCallback(
@@ -565,6 +655,78 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     [movePath, toast],
   );
 
+  const handleCopy = useCallback((paths?: string[]) => {
+    const targets = paths ?? selectedPathsRef.current;
+    if (targets.length === 0) return;
+    setClipboard({ paths: targets, mode: "copy" });
+  }, []);
+
+  const handleCut = useCallback(
+    (paths?: string[]) => {
+      const targets = (paths ?? selectedPathsRef.current).filter(canModify);
+      if (targets.length === 0) return;
+      setClipboard({ paths: targets, mode: "cut" });
+    },
+    [canModify],
+  );
+
+  const isCutPending = useCallback(
+    (path: string) => clipboardRef.current?.mode === "cut" && clipboardRef.current.paths.includes(path),
+    [],
+  );
+
+  const handlePaste = useCallback(
+    async (destDirOverride?: string) => {
+      const cb = clipboardRef.current;
+      if (!cb || cb.paths.length === 0) return;
+      const destDir = destDirOverride ?? defaultDir();
+      if (!canModify(destDir)) return;
+      for (const p of cb.paths) {
+        if (destDir === p || isSubPath(destDir, p)) {
+          toast.show(`Can't paste ${baseName(p) || p} into itself.`, "danger");
+          return;
+        }
+      }
+
+      await runBusy(setBusy, sourceRef.current.labels.paste, async () => {
+        const existing = new Map((await sourceRef.current.list(destDir)).map((e) => [e.name, e]));
+        const cutParents = new Set<string>();
+        let pasted = 0;
+        for (const srcPath of cb.paths) {
+          const name = baseName(srcPath);
+          if (!name) continue;
+          const destPath = destDir === "/" ? `/${name}` : `${destDir}/${name}`;
+          if (destPath === srcPath) continue; // already here — skip, never self-copy/move
+          if (!canModify(destPath)) {
+            toast.show(`Can't paste over ${destPath}.`, "danger");
+            continue;
+          }
+          const collision = existing.get(name);
+          if (collision) {
+            const { title, message } = sourceRef.current.labels.pasteConfirmOverwrite(destPath, collision.is_dir);
+            if (!(await confirm({ title, message, okLabel: "Replace" }))) continue;
+            // cp/copy_dir and mv/movedir merge into an existing directory instead of replacing
+            // it — remove the old one first so "Replace" actually replaces.
+            if (collision.is_dir) await sourceRef.current.remove(destPath);
+          }
+          if (cb.mode === "copy") {
+            await sourceRef.current.copy(srcPath, destPath);
+          } else {
+            await sourceRef.current.move(srcPath, destPath);
+            cutParents.add(parentOf(srcPath));
+            pruneClipboard(srcPath);
+          }
+          pasted++;
+        }
+        if (pasted > 0) {
+          await Promise.all([refreshDir(destDir), ...Array.from(cutParents).map(refreshDir)]);
+          toast.show(`Pasted ${pasted} item(s) into ${destDir}.`, "success");
+        }
+      });
+    },
+    [canModify, confirm, defaultDir, pruneClipboard, refreshDir, runBusy, toast],
+  );
+
   const hasDownload = !!source.download;
   const rowActions = useMemo<FsRowActions>(
     () => ({
@@ -572,11 +734,29 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       onNewDirectory: (dir) => void handleNewDirectory(dir),
       onDownload: hasDownload ? (path) => void handleDownload(path) : null,
       onRename: (path) => void treeRef.current?.edit(path),
-      onDelete: (path) => void handleDelete(path),
+      onDelete: (paths) => void handleDelete(paths),
+      onCopy: (paths) => handleCopy(paths),
+      onCut: (paths) => handleCut(paths),
+      onPaste: (destDir) => void handlePaste(destDir),
       canModify,
+      canPaste: clipboard !== null,
       isLoading: (path) => path === loadingPath,
+      isCutPending,
     }),
-    [canModify, handleDelete, handleDownload, handleNewDirectory, handleNewFile, hasDownload, loadingPath],
+    [
+      canModify,
+      clipboard,
+      handleCopy,
+      handleCut,
+      handleDelete,
+      handleDownload,
+      handleNewDirectory,
+      handleNewFile,
+      handlePaste,
+      hasDownload,
+      isCutPending,
+      loadingPath,
+    ],
   );
 
   const onTreeToggle = useCallback(
@@ -588,14 +768,44 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   const onTreeSelect = useCallback(
     (nodes: NodeApi<FsNode>[]) => {
-      const node = nodes[0];
-      if (!node) return;
-      if (node.data.path === selectedRef.current) return;
-      if (node.data.path === pendingSelectPathRef.current) return;
-      pendingSelectPathRef.current = node.data.path;
-      const run = node.data.dir ? selectDir(node.data.path) : selectFile(node.data.path);
+      // Invalidates any selectFile/selectDir call still in flight from a *previous* selection
+      // event (e.g. a slow readText for a just-clicked file) — without this, that call's eventual
+      // `setSelected(path)` fires unconditionally once its fetch resolves, silently clobbering
+      // whatever the user has selected by then (a ctrl/shift multi-selection included: nothing
+      // else invalidates it, since only selectFile/selectDir themselves used to touch this ref).
+      selectGenRef.current++;
+      const paths = nodes.map((n) => n.data.path);
+      setSelectedPaths(paths);
+      if (paths.length === 0) {
+        pendingSelectPathRef.current = null;
+        setSelected(null);
+        setEditorText("");
+        setLoadedText("");
+        setIsBinary(false);
+        return;
+      }
+      // The tree's own notion of "most recently interacted with" row — so ctrl/shift-click
+      // extending a selection doesn't yank the editor toward whichever node happens to be
+      // nodes[0], and so the delete/rename target tracks what the user actually clicked last.
+      const primaryNode = treeRef.current?.focusedNode ?? nodes[nodes.length - 1];
+      const primary = primaryNode.data.path;
+      if (paths.length > 1) {
+        // Multi-selection: move the "selected" pointer for delete/rename-target purposes, but
+        // skip the file-read/discard-confirm dance — there's no single file's content to show.
+        if (primary === selectedRef.current) return;
+        setSelected(primary);
+        setEditorText("");
+        setLoadedText("");
+        setIsBinary(false);
+        return;
+      }
+      // Single selection: existing behavior, unchanged.
+      if (primary === selectedRef.current) return;
+      if (primary === pendingSelectPathRef.current) return;
+      pendingSelectPathRef.current = primary;
+      const run = primaryNode.data.dir ? selectDir(primary) : selectFile(primary);
       void run.finally(() => {
-        if (pendingSelectPathRef.current === node.data.path) pendingSelectPathRef.current = null;
+        if (pendingSelectPathRef.current === primary) pendingSelectPathRef.current = null;
       });
     },
     [selectDir, selectFile],
@@ -617,8 +827,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     loaded,
     busy,
     selected,
+    selectedPaths,
     selectedIsDir,
-    canDelete: !!selected && canModify(selected),
+    canDelete: selectedPaths.length > 0 && selectedPaths.every(canModify),
     isBinary,
     loadingFile,
     editorText,
@@ -638,6 +849,11 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     handleUpload,
     handleDelete,
     handleDownload,
+    clipboard,
+    isCutPending,
+    handleCopy,
+    handleCut,
+    handlePaste,
     reload,
     refreshDir,
   };

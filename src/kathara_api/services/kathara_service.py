@@ -53,9 +53,10 @@ from ..errors import (
 )
 from ..schemas.filesystem import FsEntry
 from ..schemas.examples import ExampleSummary
+from ..schemas.gallery import GalleryCatalog, GalleryLabSummary
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.machine import MachineCreate, MachineUpdate
-from . import examples, lab_builder, lab_conf_edit, lab_import, lab_store
+from . import examples, lab_builder, lab_conf_edit, lab_gallery, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
 from .lab_store import LabStore
 from .registry import LabRegistry
@@ -670,6 +671,52 @@ class KatharaService:
         see services/examples.py and the frontend's welcome screen."""
         return examples.list_examples(set(self.store.lab_names()))
 
+    def list_gallery_labs(self, refresh: bool = False) -> GalleryCatalog:
+        """The upstream Kathara-Labs catalog, each entry flagged with whether it's already
+        installed — the remote twin of ``list_example_labs``. See services/lab_gallery.py."""
+        catalog = lab_gallery.fetch_catalog(refresh=refresh)
+        installed = set(self.store.lab_names())
+        return GalleryCatalog(
+            repo=catalog.repo,
+            ref=catalog.ref,
+            section=catalog.section,
+            fetched_at=catalog.fetched_at,
+            labs=[
+                GalleryLabSummary(
+                    id=entry.id,
+                    name=entry.name,
+                    category=entry.category,
+                    title=entry.title,
+                    description=entry.description,
+                    n_files=entry.n_files,
+                    size_bytes=entry.size_bytes,
+                    slides_url=entry.slides_url,
+                    repo_url=entry.repo_url,
+                    installed=entry.name in installed,
+                )
+                for entry in catalog.entries.values()
+            ],
+        )
+
+    def install_gallery_lab(self, lab_id: str, name: Optional[str] = None) -> tuple[Lab, list[str]]:
+        """Create a lab from an entry in the upstream Kathara-Labs gallery.
+
+        Structurally identical to ``install_example`` — the only difference is *how* the lab
+        directory gets populated (files downloaded over HTTP, instead of a local copy) — see
+        ``_adopt_populated_dir``, which both share. The download happens before anything touches
+        the labs directory and outside ``_mutate_lock``, so a slow or failing fetch never blocks
+        other lab operations; only the 409 pre-check and the final on-disk write are serialized by
+        going through ``store``/``registry`` the same way every other import does.
+        """
+        entry = lab_gallery.get_entry(lab_id)  # raises GalleryLabNotFoundError (404) if unknown
+        clean_name = lab_store.sanitize_lab_name(name or entry.name)
+        if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
+            raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+
+        files = lab_gallery.download_lab_files(entry)
+        self.store.write_lab(clean_name, files)
+        return self._adopt_populated_dir(clean_name)
+
     def install_example(self, example_id: str, name: Optional[str] = None) -> tuple[Lab, list[str]]:
         """Create a lab from one of the bundled example network scenarios.
 
@@ -944,6 +991,44 @@ class KatharaService:
                 dirty = self._dirty_target_for(lab, p)
                 if dirty:
                     self.registry.mark_dirty(lab_name, dirty)
+
+    def fs_copy_offline(self, lab_name: str, source_path: str, destination_path: str) -> None:
+        if destination_path.strip("/") == "lab.conf":
+            raise ApiError("lab.conf can't be replaced by copy — edit it directly.")
+        self._check_not_transitioning(lab_name)
+        with self._mutate_lock:
+            lab = self.get_lab_or_reconstruct(lab_name)
+            source_owner, source_guest = self._offline_fs_owner(lab, source_path)
+            dest_owner, dest_guest = self._offline_fs_owner(lab, destination_path)
+            src_fs = self._fs_for(lab, source_owner)
+            if src_fs is None or not src_fs.exists(source_guest):
+                raise PathNotFoundError(f"Path `{source_path}` not found.")
+
+            if dest_owner == ROOT_MACHINE:
+                dst_fs = lab.fs
+            else:
+                dst_machine = lab.machines.get(dest_owner)
+                if dst_machine is None:
+                    raise ApiError(f"Unknown device `{dest_owner}`.")
+                if dst_machine.fs is None:
+                    dst_machine.fs = lab.fs.makedir(dest_owner, recreate=True)
+                dst_fs = dst_machine.fs
+
+            parent = posixpath.dirname(dest_guest)
+            if parent and parent != "/":
+                dst_fs.makedirs(parent, recreate=True)
+
+            # No same-fs/cross-fs split like fs_move_offline needs: fs.copy.copy_dir/copy_file
+            # work identically either way, and unlike move there is no source to remove.
+            if src_fs.isdir(source_guest):
+                dst_fs.makedirs(dest_guest, recreate=True)
+                fs.copy.copy_dir(src_fs, source_guest, dst_fs, dest_guest)
+            else:
+                fs.copy.copy_file(src_fs, source_guest, dst_fs, dest_guest)
+
+            dirty = self._dirty_target_for(lab, destination_path)
+            if dirty:
+                self.registry.mark_dirty(lab_name, dirty)
 
     def get_lab_or_reconstruct(self, name: str) -> Lab:
         """Return the registered Lab (refreshed from the backend) or reconstruct it.
@@ -1624,6 +1709,20 @@ class KatharaService:
             ["mv", "--", source, destination],
             wait=False,
             action_label=f"Move `{source}`",
+        )
+
+    def fs_copy(self, lab_name: str, machine_name: str, source_path: str, destination_path: str) -> None:
+        # Like `mv` above, `cp -a` copies *into* an existing destination directory rather than
+        # replacing it — a pre-existing quirk shared with move, sidestepped by the frontend
+        # deleting a confirmed directory collision before calling this.
+        _, source = self._running_guest_path(lab_name, machine_name, source_path)
+        destination = self.normalize_guest_path(destination_path)
+        self._exec_checked(
+            lab_name,
+            machine_name,
+            ["cp", "-a", "--", source, destination],
+            wait=False,
+            action_label=f"Copy `{source}`",
         )
 
     def fs_delete(self, lab_name: str, machine_name: str, path: str, recursive: bool = False) -> None:

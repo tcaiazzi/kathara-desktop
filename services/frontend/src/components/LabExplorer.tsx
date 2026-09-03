@@ -83,6 +83,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       },
       mkdir: async (path) => void (await api.fsMkdirOffline(labName, path)),
       move: async (source, destination) => void (await api.fsMoveOffline(labName, source, destination)),
+      copy: async (source, destination) => void (await api.fsCopyOffline(labName, source, destination)),
       remove: async (path) => void (await api.fsDeleteOffline(labName, path, true)),
       upload: async (path, file) => void (await api.fsUploadOffline(labName, path, file)),
       download: (path) => api.fsDownloadOffline(labName, path),
@@ -96,6 +97,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
         download: "Download file",
         delete: "Delete",
         move: "Move",
+        paste: "Paste",
         saved: (path) => (path === LAB_CONF_PATH ? "Applied lab.conf — topology updated." : `Saved ${path}.`),
         newFilePrompt: {
           title: "Create file",
@@ -114,6 +116,14 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
         deleteConfirm: (path, isDir) => ({
           title: isDir ? "Delete folder?" : "Delete file?",
           message: `Delete ${path}? This cannot be undone.`,
+        }),
+        deleteConfirmMultiple: (count) => ({
+          title: "Delete items?",
+          message: `Delete ${count} items? This cannot be undone.`,
+        }),
+        pasteConfirmOverwrite: (path, isDir) => ({
+          title: isDir ? "Replace folder?" : "Replace file?",
+          message: `${path} already exists. Replace it?`,
         }),
         uploadFallbackDir: () => (detail.machines[0] ? `/${detail.machines[0].name}` : "/"),
       },

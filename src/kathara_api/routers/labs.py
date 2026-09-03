@@ -11,6 +11,7 @@ from ..dependencies import get_service
 from ..downloads import attachment_headers
 from ..schemas.common import Message
 from ..schemas.filesystem import (
+    FsCopyRequest,
     FsDeleteRequest,
     FsListResponse,
     FsMkdirRequest,
@@ -32,6 +33,7 @@ from ..schemas.lab import (
     UndeployOptions,
 )
 from ..schemas.examples import ExampleCreate, ExampleSummary
+from ..schemas.gallery import GalleryCatalog, GalleryInstall
 from ..schemas.lab_import import LabImportRequest, LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService
@@ -105,6 +107,30 @@ def create_example_lab(payload: ExampleCreate, service: KatharaService = Depends
     optional target `name`.
     """
     lab, warnings = service.install_example(payload.id, payload.name)
+    return _import_result(lab, warnings)
+
+
+# Also declared above GET /{lab_name} for the same registration-order reason as /examples above.
+@router.get("/gallery", response_model=GalleryCatalog)
+def list_gallery_labs(
+    refresh: bool = False, service: KatharaService = Depends(get_service)
+) -> GalleryCatalog:
+    """The upstream Kathara-Labs catalog browsed by the frontend's "Browse Kathara Labs" modal.
+
+    Cached server-side (see services/lab_gallery.py); ``refresh=true`` bypasses that cache, which
+    is what the modal's Refresh button sends.
+    """
+    return service.list_gallery_labs(refresh=refresh)
+
+
+@router.post("/gallery", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)
+def create_gallery_lab(payload: GalleryInstall, service: KatharaService = Depends(get_service)) -> LabImportResult:
+    """Create a lab from an entry in the upstream Kathara-Labs gallery.
+
+    A body rather than POST /gallery/{id}: the id is a repo-relative path and contains slashes, so
+    a path form isn't possible — same reasoning as POST /examples above.
+    """
+    lab, warnings = service.install_gallery_lab(payload.id, payload.name)
     return _import_result(lab, warnings)
 
 
@@ -234,6 +260,15 @@ def move_lab_path(
     """Rename or move a path in the lab's own on-disk tree — across devices too."""
     service.fs_move_offline(lab_name, payload.source_path, payload.destination_path)
     return Message(detail=f"Moved `{payload.source_path}` to `{payload.destination_path}`.")
+
+
+@router.post("/{lab_name}/fs/copy", response_model=Message)
+def copy_lab_path(
+    lab_name: str, payload: FsCopyRequest, service: KatharaService = Depends(get_service)
+) -> Message:
+    """Copy a path in the lab's own on-disk tree — across devices too."""
+    service.fs_copy_offline(lab_name, payload.source_path, payload.destination_path)
+    return Message(detail=f"Copied `{payload.source_path}` to `{payload.destination_path}`.")
 
 
 @router.delete("/{lab_name}/fs", response_model=Message)

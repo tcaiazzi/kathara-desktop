@@ -1,6 +1,7 @@
 import type {
   ErrorResponse,
   ExampleLab,
+  GalleryCatalog,
   FsListResponse,
   FsReadTextResponse,
   FsUploadResponse,
@@ -144,6 +145,14 @@ export const api = {
   createExampleLab: (id: string, name?: string) =>
     request<LabImportResult>("POST", "/labs/examples", name ? { id, name } : { id }),
 
+  // The upstream Kathara-Labs gallery (backend services/lab_gallery.py) shown in the "Browse
+  // Kathara Labs" modal. Cached server-side; `refresh` bypasses that cache (the modal's Refresh
+  // button).
+  listGalleryLabs: (refresh?: boolean) =>
+    request<GalleryCatalog>("GET", refresh ? "/labs/gallery?refresh=true" : "/labs/gallery"),
+  createGalleryLab: (id: string, name?: string) =>
+    request<LabImportResult>("POST", "/labs/gallery", name ? { id, name } : { id }),
+
   // The lab's real on-disk lab.conf (verbatim: comments/quoting/unmapped options intact).
   // `exists: false` + empty content means the lab has no lab.conf on disk yet; PUT creates it.
   getLabConf: (name: string) => request<LabConfView>("GET", `/labs/${encodeURIComponent(name)}/lab-conf`),
@@ -192,6 +201,11 @@ export const api = {
       source_path: sourcePath,
       destination_path: destinationPath,
     }),
+  fsCopyOffline: (labName: string, sourcePath: string, destinationPath: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/copy`, {
+      source_path: sourcePath,
+      destination_path: destinationPath,
+    }),
   fsDeleteOffline: (labName: string, path: string, recursive = false) =>
     request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/fs`, { path, recursive }),
   fsUploadOffline: async (labName: string, path: string, file: File) => {
@@ -229,6 +243,12 @@ export const api = {
     request<Message>(
       "POST",
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/move`,
+      { source_path: sourcePath, destination_path: destinationPath },
+    ),
+  fsCopy: (labName: string, machineName: string, sourcePath: string, destinationPath: string) =>
+    request<Message>(
+      "POST",
+      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/copy`,
       { source_path: sourcePath, destination_path: destinationPath },
     ),
   fsDelete: (labName: string, machineName: string, path: string, recursive = false) =>

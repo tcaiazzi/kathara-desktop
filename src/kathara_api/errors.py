@@ -116,6 +116,28 @@ class ExampleNotFoundError(ApiError):
     status_code = status.HTTP_404_NOT_FOUND
 
 
+class GalleryLabNotFoundError(ApiError):
+    """Raised when a requested gallery lab id isn't in the upstream catalog
+    (services/lab_gallery.py) — the remote twin of ExampleNotFoundError.
+
+    Distinct from GalleryUnavailableError: the catalog was fetched fine, the id just isn't in it
+    (a stale frontend list, or a hand-written id).
+    """
+
+    status_code = status.HTTP_404_NOT_FOUND
+
+
+class GalleryUnavailableError(ApiError):
+    """Raised when the upstream lab gallery can't be reached or answered unusably.
+
+    502 rather than the ApiError default of 400: nothing is wrong with the client's request — the
+    failure is upstream (no network, GitHub down, a rate limit, a truncated tree), so the frontend
+    shows it as a retryable "gallery unavailable" state instead of a validation error.
+    """
+
+    status_code = status.HTTP_502_BAD_GATEWAY
+
+
 # Kathara exception -> HTTP status code.
 KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # 404 Not Found

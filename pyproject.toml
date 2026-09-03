@@ -23,10 +23,13 @@ dependencies = [
     # declaration — otherwise an upstream that drops either one breaks this package silently.
     "chardet>=5.0",
     "fs>=2.4",
+    # Fetches the upstream lab gallery (services/lab_gallery.py) at runtime, not just in tests —
+    # promoted out of the dev extra below for that reason.
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "httpx>=0.27"]
+dev = ["pytest>=7.0"]
 
 [project.scripts]
 kathara-api = "kathara_api.main:run"
@@ -46,5 +49,6 @@ kathara_api = ["examples/**/*"]
 [tool.pytest.ini_options]
 markers = [
     "docker: integration tests that require a running Docker daemon",
+    "network: integration tests that require internet access (live gallery fetch)",
 ]
 testpaths = ["tests"]

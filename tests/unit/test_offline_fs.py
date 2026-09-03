@@ -151,6 +151,100 @@ def test_moving_a_file_out_of_a_folder_leaves_the_folder_in_place(tmp_path):
     assert (store.lab_dir("testlab") / "pc1" / "ciao.txt").read_text() == "hi\n"
 
 
+# -- copy: like move, but the source always survives ----------------------------------------
+
+
+def test_copy_file_same_device(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/pc1/etc/motd2")
+
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd2").read_text() == "hi\n"
+
+
+def test_copy_file_cross_device(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/pc2/etc/motd")
+
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
+    assert (store.lab_dir("testlab") / "pc2" / "etc" / "motd").read_text() == "hi\n"
+
+
+def test_copy_dir_cross_device_recursive(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/frr/frr.conf", "hostname pc1\n")
+
+    service.fs_copy_offline("testlab", "/pc1/etc/frr", "/pc2/etc/frr2")
+
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "frr" / "frr.conf").read_text() == "hostname pc1\n"
+    assert (store.lab_dir("testlab") / "pc2" / "etc" / "frr2" / "frr.conf").read_text() == "hostname pc1\n"
+
+
+def test_copy_does_not_remove_source(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/pc1/etc/motd2")
+
+    assert service.fs_read_text_offline("testlab", "/pc1/etc/motd") == "hi\n"
+
+
+def test_fs_copy_offline_rejects_copying_over_lab_conf(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+
+    with pytest.raises(ApiError):
+        service.fs_copy_offline("testlab", "/notes.txt", "/lab.conf")
+
+    assert (store.lab_dir("testlab") / "lab.conf").read_text() != "hi\n"
+
+
+def test_fs_copy_offline_allows_copying_lab_conf_as_source(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    original = service.fs_read_text_offline("testlab", "/lab.conf")
+
+    service.fs_copy_offline("testlab", "/lab.conf", "/lab.conf.bak")
+
+    assert (store.lab_dir("testlab") / "lab.conf.bak").read_text() == original
+    assert service.fs_read_text_offline("testlab", "/lab.conf") == original
+
+
+def test_copy_root_file_into_root_dir_keeps_the_dir(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/ciao.txt", "hi\n")
+    service.fs_mkdir_offline("testlab", "/ciao")
+
+    service.fs_copy_offline("testlab", "/ciao.txt", "/ciao/ciao.txt")
+
+    assert (store.lab_dir("testlab") / "ciao").is_dir()
+    assert (store.lab_dir("testlab") / "ciao" / "ciao.txt").read_text() == "hi\n"
+    assert (store.lab_dir("testlab") / "ciao.txt").read_text() == "hi\n"
+
+
+def test_copy_file_from_device_to_root(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/motd")
+
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
+    assert (store.lab_dir("testlab") / "motd").read_text() == "hi\n"
+
+
+def test_copy_file_from_root_to_device(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/motd", "hi\n")
+
+    service.fs_copy_offline("testlab", "/motd", "/pc1/etc/motd")
+
+    assert (store.lab_dir("testlab") / "motd").read_text() == "hi\n"
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
+
+
 # -- root-level (device-less) files/dirs -----------------------------------------------------
 
 

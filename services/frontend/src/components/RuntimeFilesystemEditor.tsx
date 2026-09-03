@@ -53,6 +53,7 @@ export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = nu
       writeText: async (path, content) => void (await api.fsWriteText(labName, machine, path, content)),
       mkdir: async (path) => void (await api.fsMkdir(labName, machine, path)),
       move: async (source, destination) => void (await api.fsMove(labName, machine, source, destination)),
+      copy: async (source, destination) => void (await api.fsCopy(labName, machine, source, destination)),
       remove: async (path) => void (await api.fsDelete(labName, machine, path, true)),
       upload: async (path, file) => void (await api.fsUpload(labName, machine, path, file)),
       download: (path) => api.fsDownload(labName, machine, path),
@@ -65,6 +66,7 @@ export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = nu
         download: "Download runtime file",
         delete: "Delete runtime path",
         move: "Move runtime path",
+        paste: "Paste runtime path",
         saved: (path) => `Saved ${path} on ${machine}.`,
         newFilePrompt: {
           title: "Create runtime file",
@@ -83,6 +85,14 @@ export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = nu
         deleteConfirm: (path, isDir) => ({
           title: isDir ? "Delete runtime folder?" : "Delete runtime file?",
           message: `Delete ${path} from ${machine}? This cannot be undone.`,
+        }),
+        deleteConfirmMultiple: (count) => ({
+          title: "Delete runtime items?",
+          message: `Delete ${count} items from ${machine}? This cannot be undone.`,
+        }),
+        pasteConfirmOverwrite: (path, isDir) => ({
+          title: isDir ? "Replace runtime folder?" : "Replace runtime file?",
+          message: `${path} already exists on ${machine}. Replace it?`,
         }),
       },
     }),

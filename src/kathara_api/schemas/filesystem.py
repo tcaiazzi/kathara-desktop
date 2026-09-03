@@ -48,6 +48,13 @@ class FsMoveRequest(BaseModel):
     destination_path: str
 
 
+class FsCopyRequest(BaseModel):
+    """Copy a filesystem path to a new location."""
+
+    source_path: str
+    destination_path: str
+
+
 class FsDeleteRequest(BaseModel):
     """Delete a file or directory from a running machine."""
 

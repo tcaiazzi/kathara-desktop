@@ -166,6 +166,38 @@ export interface ExampleLab {
   installed: boolean;
 }
 
+// One installable lab in the upstream Kathara-Labs gallery (backend schemas/gallery.py's
+// GalleryLabSummary) — the "Browse Kathara Labs" modal's catalog. The remote twin of ExampleLab.
+export interface GalleryLab {
+  // Repo-relative path of the lab directory upstream — unique, and what POST /labs/gallery takes.
+  id: string;
+  // Lab name this installs as (disambiguated server-side when two upstream labs share a basename).
+  name: string;
+  category: string;
+  title: string | null;
+  description: string | null;
+  n_files: number;
+  size_bytes: number;
+  // github.com link to the lab's slides PDF, when it has one — slides live outside the lab
+  // directory upstream, so they're linked rather than imported.
+  slides_url: string | null;
+  repo_url: string;
+  // Whether a lab named `name` already exists locally — same "Open" vs "Import" convention as
+  // ExampleLab.installed.
+  installed: boolean;
+}
+
+// GET /api/labs/gallery's response (backend schemas/gallery.py's GalleryCatalog).
+export interface GalleryCatalog {
+  repo: string;
+  ref: string;
+  section: string;
+  // Unix timestamp (seconds) of the fetch this catalog came from — the backend caches it, so this
+  // can legitimately be minutes old.
+  fetched_at: number;
+  labs: GalleryLab[];
+}
+
 // A lab's fixed topology layout — the content of its `lab.layout` file (backend schemas/lab.py's
 // LabLayout). Keys are topology node ids (`dev:<machine>` / `cd:<collision domain>`); an empty
 // `nodes` map means the lab has no fixed layout.

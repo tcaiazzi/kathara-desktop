@@ -13,6 +13,7 @@ import { openLabsDir } from "./integrations";
 export type MenuAction =
   | "lab:new"
   | "lab:import"
+  | "lab:browse"
   | "lab:save"
   | "lab:deploy"
   | "lab:undeploy"
@@ -41,14 +42,34 @@ export function buildMenu(): void {
     ...(isMac
       ? ([{ role: "appMenu" }] satisfies MenuItemConstructorOptions[])
       : []),
-    // Without this, macOS has no key-equivalents to route Cmd+C/V/X/Z/A to, so clipboard and
-    // undo shortcuts silently do nothing anywhere in the app (not just in editable fields).
-    { role: "editMenu" },
+    // A bare `role: "editMenu"` would register Cmd/Ctrl+C/X/V/A as *native* accelerators,
+    // intercepted by Electron before the keydown ever reaches the renderer — the same problem
+    // Save already had to route around below. registerAccelerator: false on Copy/Cut/Paste/
+    // SelectAll lets the fs explorer's own scoped keydown listener
+    // (useFsClipboardShortcuts) and react-arborist's built-in Ctrl/Cmd+A handle them instead;
+    // normal text-field editing still works, since the browser handles those keys natively
+    // whenever nothing has intercepted them. Undo/Redo/Delete keep native handling — no
+    // renderer feature competes for those keys.
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut", registerAccelerator: false },
+        { role: "copy", registerAccelerator: false },
+        { role: "paste", registerAccelerator: false },
+        { role: "delete" },
+        { type: "separator" },
+        { role: "selectAll", registerAccelerator: false },
+      ],
+    },
     {
       label: "File",
       submenu: [
         item("New Lab…", "lab:new", "CmdOrCtrl+N"),
         item("Import Lab…", "lab:import", "CmdOrCtrl+O"),
+        item("Browse Kathara Labs…", "lab:browse"),
         { type: "separator" },
         // registerAccelerator: false — the renderer owns Ctrl/Cmd+S (useSaveShortcut saves
         // whichever editor panel has focus). Registering it natively would swallow the

@@ -29,6 +29,11 @@
   box-shadow: inset 0 0 0 1px var(--bs-primary);
 }
 
+/* A cut, not-yet-pasted item — dimmed until Paste or a new Copy/Cut replaces the clipboard. */
+.kt-explorer-row--cut {
+  opacity: 0.5;
+}
+
 .kt-explorer-chevron {
   display: inline-block;
   width: 12px;
