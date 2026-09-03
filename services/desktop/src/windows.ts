@@ -90,6 +90,7 @@ function applyNavigationPolicy(contents: Electron.WebContents, origin: () => str
       },
     });
     // The navigation policy reaches it through the app-wide web-contents-created hook.
+    blockMouseNavigationCommands(popup);
     void popup.loadURL(url);
     return { action: "deny" };
   });
@@ -123,6 +124,20 @@ export function installEditContextMenu(): void {
   });
 }
 
+/**
+ * The mouse's side "back/forward" buttons surface as WM_APPCOMMAND on Windows, which Electron
+ * turns into this event on the BrowserWindow — a path that can bypass the renderer entirely, so
+ * blocking it in the DOM (services/frontend/src/main.tsx) alone isn't enough there. Not emitted
+ * on macOS/Linux; the renderer-side block covers those.
+ */
+function blockMouseNavigationCommands(win: BrowserWindow): void {
+  win.on("app-command", (event, command) => {
+    if (command === "browser-backward" || command === "browser-forward") {
+      event.preventDefault();
+    }
+  });
+}
+
 export function createMainWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1400,
@@ -153,6 +168,8 @@ export function createMainWindow(): BrowserWindow {
       webSecurity: true,
     },
   });
+
+  blockMouseNavigationCommands(win);
 
   if (process.platform !== "darwin") {
     // Hide the native menu bar: the strip renders the same menu in HTML. The Menu itself stays

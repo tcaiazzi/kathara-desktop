@@ -50,6 +50,12 @@ import {
   showSplashPage,
 } from "./windows";
 
+// Chromium's trackpad swipe-to-navigate (macOS two-finger swipe) drives the same
+// history.back()/forward() as the mouse side buttons blocked in windows.ts and
+// services/frontend/src/main.tsx, but through a separate code path those don't reach. Must be
+// set before the app is ready, so it goes right after the imports, before any other app.* call.
+app.commandLine.appendSwitch("disable-features", "OverscrollHistoryNavigation");
+
 // Electron derives userData's folder name from app.name, which defaults to package.json's
 // productName ("Kathara IDE") — a folder with a space and mixed case. Override it to this
 // repo's own lowercase-hyphenated convention instead, using a fresh path built from the
