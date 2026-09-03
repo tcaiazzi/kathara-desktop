@@ -26,8 +26,30 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       // Vite's fast refresh only handles files that export components; a component file that also
       // exports a constant silently loses HMR. A warning, not an error — several files here
-      // legitimately co-locate a type/context with their component.
-      "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
+      // legitimately co-locate a type/context with their component. allowExportNames lists the
+      // hooks that intentionally live next to their own context's Provider (so callers only need
+      // one import path per context) and the form-state helpers colocated with the component that
+      // owns their shape.
+      "react-refresh/only-export-components": [
+        "warn",
+        {
+          allowConstantExport: true,
+          allowExportNames: [
+            "useWorkspaceCore",
+            "useWorkspace",
+            "useToast",
+            "useNotifications",
+            "usePrompt",
+            "useConfirm",
+            "useDesktopCommand",
+            "useDesktopDispatch",
+            "useElevate",
+            "defaultOptionsFormState",
+            "optionsFormStateFromMachine",
+            "optionsFormStateToPayload",
+          ],
+        },
+      ],
       // `_`-prefixed bindings are the codebase's convention for a deliberately-ignored value
       // (a destructured field dropped from a payload, an unused handler argument).
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],

@@ -135,6 +135,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   // lifecycle action (`detail` gets a new identity on every refresh, and several of them rewrite
   // lab.conf) and on the toolbar's ↻. Not `detail` itself, so the ↻ counts too, and not an inline
   // object, which would re-list on every render.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const refreshKey = useMemo(() => ({}), [detail, confReloadKey]);
   const tree = useFsTree({ source, scopeKey: labName, refreshKey });
 
