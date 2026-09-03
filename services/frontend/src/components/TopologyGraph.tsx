@@ -157,6 +157,7 @@ export function TopologyGraph({
   // Fetch the lab's fixed layout. It can land after the engine's first build, so bump a nonce to
   // make the graph rebuild against it (the engine effect reads seeds through a ref).
   useEffect(() => {
+    if (!labName) return;
     let live = true;
     setSavedLayout(null);
     api
@@ -166,7 +167,10 @@ export function TopologyGraph({
         setSavedLayout(l.nodes);
         if (Object.keys(l.nodes).length) setLayoutNonce((v) => v + 1);
       })
-      .catch((e) => toast.reportError("Load layout", e));
+      .catch((e) => {
+        if (!live) return;
+        toast.reportError("Load layout", e);
+      });
     return () => {
       live = false;
     };
