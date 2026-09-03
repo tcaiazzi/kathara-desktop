@@ -14,6 +14,7 @@ import path from "node:path";
 
 import {
   backendLogPath,
+  backendToken,
   backendUrl,
   onBackendExit,
   onOrphanedBackend,
@@ -64,6 +65,15 @@ app.setPath("userData", path.join(app.getPath("appData"), "kathara-ide"));
 // able to hang app quit, or leave a renderer click (Reveal in file manager, Open in terminal)
 // spinning forever with nothing to show for it.
 const BACKEND_QUERY_TIMEOUT_MS = 5_000;
+
+/** Every ad-hoc fetch this file makes to its own backend must carry the pairing token
+ * (backend.ts generates one per launch — see require_auth_token in src/kathara_api/
+ * dependencies.py) or get a 401. `{}` when there's no running backend to have gotten one from
+ * (backendToken() is then null anyway), same as an unpaired request would. */
+function authHeaders(): HeadersInit {
+  const token = backendToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 /** Ordered boot phases. KEEP IN SYNC with the PHASE_COPY table in setup.html. */
 export type BootPhase =
@@ -314,7 +324,7 @@ function registerIpc(): void {
     const baseUrl = backendUrl();
     if (!baseUrl) return { dropped: false };
     try {
-      const info = await fetch(`${baseUrl}/api/system`).then((r) => r.json());
+      const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders() }).then((r) => r.json());
       if (!info.is_admin) return { dropped: false };
     } catch {
       return { dropped: false };
@@ -376,6 +386,13 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("shell:show-log", () => shell.openPath(backendLogPath()));
+
+  // The renderer's only way to learn the pairing token backend.ts generated for this launch (see
+  // buildBackendCommand) — it can't read it any other way, since it's never written to the page
+  // the backend itself serves. Kept off the response even when null (the renderer is between
+  // backends, e.g. mid-elevation) rather than a stale one, since sending the wrong token would
+  // just present as a confusing 401 instead of "not ready yet".
+  ipcMain.handle("auth:get-token", () => backendToken());
 
   ipcMain.handle("shell:open-external", (_e, url: string) => {
     // Never hand an arbitrary scheme to the OS: file://, and worse, would be a real hole here.
@@ -486,6 +503,7 @@ async function labDirectory(labName: string): Promise<string> {
   const base = backendUrl();
   if (!base) throw new Error("the backend is not running");
   const res = await fetch(`${base}/api/labs/${encodeURIComponent(labName)}/location`, {
+    headers: authHeaders(),
     signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
   });
   if (!res.ok) throw new Error(`could not resolve lab directory (HTTP ${res.status})`);
@@ -519,7 +537,10 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
     // Bounded: an unresponsive-but-alive backend must not be able to block quit (or a labs-dir
     // change) forever — the `catch` below already fails toward "proceed", which is exactly the
     // right outcome for a timeout too, not just a hard connection failure.
-    const res = await fetch(`${base}/api/labs`, { signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS) });
+    const res = await fetch(`${base}/api/labs`, {
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
+    });
     if (!res.ok) return true;
     const labs = (await res.json()) as { name: string | null; deployed: boolean }[];
     deployed = labs.filter((l) => l.deployed).map((l) => l.name ?? "(unnamed)");
@@ -549,7 +570,10 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
     for (const name of deployed) {
       try {
         log(`undeploying ${name}`);
-        await fetch(`${base}/api/labs/${encodeURIComponent(name)}/undeploy`, { method: "POST" });
+        await fetch(`${base}/api/labs/${encodeURIComponent(name)}/undeploy`, {
+          method: "POST",
+          headers: authHeaders(),
+        });
       } catch (err) {
         log(`undeploy of ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
       }

@@ -32,6 +32,10 @@ export interface DesktopApi {
   isWindowMaximized(): Promise<boolean>;
   showBackendLog(): Promise<void>;
   openExternal(url: string): Promise<void>;
+  /** The per-launch pairing token backend.ts generated for the currently running backend, or
+   * null between backends (e.g. mid-elevation) — see services/api.ts, which attaches it to
+   * every request so the backend's require_auth_token dependency accepts them. */
+  getAuthToken(): Promise<string | null>;
   /** `password` is required on Linux (fed to `sudo -S`); ignored on macOS/Windows, where the OS
    * shows its own native admin-password dialog instead. `resumeLab`, if given, is reflected into
    * the post-reload URL so the SPA can continue that lab's deploy on its own once it's back up.

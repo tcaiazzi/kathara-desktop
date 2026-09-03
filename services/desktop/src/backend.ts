@@ -8,6 +8,7 @@
  * src/kathara_api/spa.py) keeps all of that working untouched.
  */
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
 import net from "node:net";
 import fs from "node:fs";
 import sudoPrompt from "@vscode/sudo-prompt";
@@ -18,6 +19,15 @@ import { readPrefs, writePrefs } from "./prefs";
 export interface BackendHandle {
   port: number;
   baseUrl: string;
+  /** Pairing token for this one backend instance — see buildBackendCommand. Sent as
+   * `Authorization: Bearer <token>` on every request this module makes to its own backend
+   * (waitForHealth, shutdownAt, the /api/system admin check), and handed to the renderer over
+   * IPC (main.ts's "auth:get-token") so it can do the same. */
+  token: string;
+}
+
+function authHeaders(token: string): HeadersInit {
+  return { Authorization: `Bearer ${token}` };
 }
 
 /** Why an elevated (re)start of the backend didn't produce a running, root-owned backend. */
@@ -60,7 +70,7 @@ let exitListener: ((info: { code: number | null; signal: string | null }) => voi
  * start retries shutting it down first, instead of silently leaving it running forever while a
  * second backend starts on a different port right alongside it.
  */
-let orphanedBackend: { pid: number | null; baseUrl: string } | null = null;
+let orphanedBackend: { pid: number | null; baseUrl: string; token: string } | null = null;
 /** Notified once, at the moment a backend is first determined to be such an orphan — not again
  * on every later retry failure, so the caller can surface it to the user without spamming. */
 let orphanListener: ((info: { pid: number | null; baseUrl: string }) => void) | null = null;
@@ -77,9 +87,9 @@ export function getOrphanedBackend(): { pid: number | null; baseUrl: string } | 
  * against later (an unsignalable process we never even confirmed a URL for isn't worth tracking —
  * there's nothing left to do with it). Always notifies, since even an unrecoverable orphan is
  * worth telling the user about. */
-function markOrphaned(pid: number | null | undefined, baseUrl: string | undefined): void {
+function markOrphaned(pid: number | null | undefined, baseUrl: string | undefined, token: string | undefined): void {
   const normalizedPid = pid ?? null;
-  if (baseUrl) orphanedBackend = { pid: normalizedPid, baseUrl };
+  if (baseUrl && token) orphanedBackend = { pid: normalizedPid, baseUrl, token };
   orphanListener?.({ pid: normalizedPid, baseUrl: baseUrl ?? "" });
 }
 
@@ -91,10 +101,10 @@ function markOrphaned(pid: number | null | undefined, baseUrl: string | undefine
  * and process teardown still happen asynchronously afterward, so a prompt response is not itself
  * proof the process is actually gone.
  */
-async function waitForDeath(baseUrl: string, deadline: number): Promise<boolean> {
+async function waitForDeath(baseUrl: string, token: string, deadline: number): Promise<boolean> {
   while (Date.now() < deadline) {
     try {
-      await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(500) });
+      await fetch(`${baseUrl}/api/health`, { headers: authHeaders(token), signal: AbortSignal.timeout(500) });
     } catch {
       return true; // connection refused/reset, or timed out talking to it — it's down.
     }
@@ -110,10 +120,14 @@ async function waitForDeath(baseUrl: string, deadline: number): Promise<boolean>
  * elevation checks while the real one is still running (where `stopBackend()` would stop
  * precisely the wrong process). Returns whether it's confirmed gone.
  */
-async function shutdownAt(baseUrl: string): Promise<boolean> {
+async function shutdownAt(baseUrl: string, token: string): Promise<boolean> {
   try {
-    await fetch(`${baseUrl}/api/system/shutdown`, { method: "POST", signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS) });
-    return await waitForDeath(baseUrl, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2);
+    await fetch(`${baseUrl}/api/system/shutdown`, {
+      method: "POST",
+      headers: authHeaders(token),
+      signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS),
+    });
+    return await waitForDeath(baseUrl, token, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2);
   } catch (err) {
     log(`shutdown request to ${baseUrl} failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
@@ -129,7 +143,7 @@ async function retryOrphanShutdown(): Promise<void> {
   const orphan = orphanedBackend;
   if (!orphan) return;
   log(`retrying shutdown of previously orphaned backend at ${orphan.baseUrl}`);
-  if (await shutdownAt(orphan.baseUrl)) {
+  if (await shutdownAt(orphan.baseUrl, orphan.token)) {
     log(`orphaned backend at ${orphan.baseUrl} is now stopped`);
     orphanedBackend = null;
     return;
@@ -210,6 +224,7 @@ function forgetPort(): void {
  */
 export async function waitForHealth(
   baseUrl: string,
+  token: string,
   deadline: number,
   isAlive: () => boolean = () => !!child && child.exitCode === null,
 ): Promise<void> {
@@ -221,7 +236,7 @@ export async function waitForHealth(
       throw new Error(`backend exited during startup (code ${child?.exitCode ?? "unknown"})`);
     }
     try {
-      const res = await fetch(`${baseUrl}/api/health`);
+      const res = await fetch(`${baseUrl}/api/health`, { headers: authHeaders(token) });
       if (res.ok) return;
       lastError = `HTTP ${res.status}`;
     } catch (err) {
@@ -235,6 +250,10 @@ export async function waitForHealth(
 interface BackendCommand {
   port: number;
   baseUrl: string;
+  /** Per-launch pairing secret, generated below and forwarded to the child as
+   * KATHARA_API_AUTH_TOKEN (see src/kathara_api/dependencies.py's require_auth_token). Every
+   * later call this module makes to this exact backend instance must carry it. */
+  token: string;
   labs: string;
   /** Full environment (inherited `process.env` plus `appEnv`) — what a plain, non-elevated
    * `spawn()` gets via its own `options.env`, which Node passes straight to the child. */
@@ -259,6 +278,11 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
 
   const port = preferredPort ?? (await findFreePort());
   const baseUrl = `http://127.0.0.1:${port}`;
+  // Random per launch, never persisted (unlike the port in prefs.ts): pairs this one backend
+  // instance with this one Electron process, so any other local process/browser tab that finds
+  // the port still can't call it without also having read this token from the renderer's own
+  // context-isolated preload bridge (see main.ts's "auth:get-token", preload.ts's getAuthToken).
+  const token = crypto.randomBytes(32).toString("hex");
   const labs = labsDir();
   fs.mkdirSync(labs, { recursive: true });
 
@@ -270,6 +294,7 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
     KATHARA_API_PORT: String(port),
     KATHARA_API_STATIC_DIR: staticDir,
     KATHARA_API_LABS_DIR: labs,
+    KATHARA_API_AUTH_TOKEN: token,
     PYTHONUNBUFFERED: "1",
     ...(srcDir ? { PYTHONPATH: [srcDir, process.env.PYTHONPATH].filter(Boolean).join(":") } : {}),
   };
@@ -284,7 +309,7 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
     "--port", String(port),
   ];
 
-  return { port, baseUrl, labs, env, appEnv, args };
+  return { port, baseUrl, token, labs, env, appEnv, args };
 }
 
 /** Wires the same stdout/stderr logging and exit bookkeeping onto any freshly spawned backend
@@ -325,7 +350,7 @@ export async function startBackend(python: string, staticDir: string): Promise<B
 }
 
 async function spawnBackend(python: string, staticDir: string, port: number): Promise<BackendHandle> {
-  const { baseUrl, labs, env, args } = await buildBackendCommand(staticDir, port);
+  const { baseUrl, token, labs, env, args } = await buildBackendCommand(staticDir, port);
   log(`starting backend: ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
@@ -333,14 +358,14 @@ async function spawnBackend(python: string, staticDir: string, port: number): Pr
   trackChild(spawn(python, args, { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }));
 
   try {
-    await waitForHealth(baseUrl, Date.now() + HEALTH_TIMEOUT_MS);
+    await waitForHealth(baseUrl, token, Date.now() + HEALTH_TIMEOUT_MS);
   } catch (err) {
     await stopBackend();
     throw err;
   }
 
   log(`backend healthy at ${baseUrl}`);
-  handle = { port, baseUrl };
+  handle = { port, baseUrl, token };
   // Only after a real health check, so a port that never actually worked is never remembered.
   rememberPort(port);
   return handle;
@@ -458,7 +483,7 @@ export async function startBackendElevatedLinux(python: string, staticDir: strin
 async function runElevatedLinux(python: string, staticDir: string, password: string): Promise<ElevateResult> {
   await stopBackend();
 
-  const { port, baseUrl, labs, env, appEnv, args } = await buildBackendCommand(staticDir);
+  const { port, baseUrl, token, labs, env, appEnv, args } = await buildBackendCommand(staticDir);
 
   // `sudo` resets the environment for the command it elevates by default (env_reset) — setting
   // KATHARA_API_STATIC_DIR/LABS_DIR etc. via `options.env` above only reaches the `sudo` process
@@ -480,16 +505,16 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
   proc.stdin?.end();
 
   try {
-    await waitForHealth(baseUrl, Date.now() + HEALTH_TIMEOUT_MS);
+    await waitForHealth(baseUrl, token, Date.now() + HEALTH_TIMEOUT_MS);
 
     // Health-ok only proves *some* process is listening — confirm it's actually the elevated one.
-    const info = await fetch(`${baseUrl}/api/system`).then((r) => r.json());
+    const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders(token) }).then((r) => r.json());
     if (!info.is_admin) {
       throw new Error("backend started but is not running as root");
     }
 
     log(`elevated backend healthy at ${baseUrl}`);
-    handle = { port, baseUrl };
+    handle = { port, baseUrl, token };
     return { ok: true, handle };
   } catch (err) {
     await stopBackend();
@@ -557,7 +582,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   // This is only viable here because this path never calls `trackChild` (sudo-prompt hands back
   // no process handle), so it isn't competing for the single `child` slot that still refers to
   // the live backend. The Linux path does, which is why it pre-checks instead.
-  const { port, baseUrl, labs, appEnv, args } = await buildBackendCommand(staticDir);
+  const { port, baseUrl, token, labs, appEnv, args } = await buildBackendCommand(staticDir);
   log(`starting elevated backend (native prompt): ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
@@ -585,9 +610,9 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   });
 
   try {
-    await waitForHealth(baseUrl, Date.now() + HEALTH_TIMEOUT_MS, () => execFailure === null);
+    await waitForHealth(baseUrl, token, Date.now() + HEALTH_TIMEOUT_MS, () => execFailure === null);
 
-    const info = await fetch(`${baseUrl}/api/system`).then((r) => r.json());
+    const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders(token) }).then((r) => r.json());
     if (!info.is_admin) {
       throw new Error("backend started but is not running as root");
     }
@@ -598,7 +623,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     await stopBackend();
     stopping = false;
     started = true;
-    handle = { port, baseUrl };
+    handle = { port, baseUrl, token };
     return { ok: true, handle };
   } catch (err) {
     // Both read *before* the cleanup below: shutting the candidate down makes its own exec
@@ -610,9 +635,9 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     // Emphatically not `stopBackend()`, which would stop the healthy backend that is still
     // serving the renderer. Only the candidate needs cleaning up, and only if it got as far as
     // listening at all — addressed by URL, since there's no handle for it.
-    if (!failedToLaunch && !(await shutdownAt(baseUrl))) {
+    if (!failedToLaunch && !(await shutdownAt(baseUrl, token))) {
       log(`elevated backend at ${baseUrl} did not go down after a failed elevation`);
-      markOrphaned(null, baseUrl);
+      markOrphaned(null, baseUrl, token);
     }
 
     // Only a failure of the `sudoPrompt.exec` call itself is an auth outcome. sudo-prompt does
@@ -640,6 +665,12 @@ export function backendUrl(): string | null {
   return handle?.baseUrl ?? null;
 }
 
+/** The pairing token of the currently running backend, for main.ts's "auth:get-token" IPC
+ * handler to hand to the renderer (see preload.ts's getAuthToken). */
+export function backendToken(): string | null {
+  return handle?.token ?? null;
+}
+
 export async function stopBackend(): Promise<void> {
   const proc = child;
   const current = handle;
@@ -660,7 +691,11 @@ export async function stopBackend(): Promise<void> {
   // it's effectively a no-op fallback-to-signal for the ordinary unprivileged backend.
   if (current) {
     try {
-      await fetch(`${current.baseUrl}/api/system/shutdown`, { method: "POST", signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS) });
+      await fetch(`${current.baseUrl}/api/system/shutdown`, {
+        method: "POST",
+        headers: authHeaders(current.token),
+        signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS),
+      });
       if (proc && proc.exitCode === null) {
         const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
         const exitedInTime = await Promise.race([
@@ -677,13 +712,13 @@ export async function stopBackend(): Promise<void> {
         // the HTTP request above was the only lever available. A 200 here only proves the process
         // *received* it (it calls os.kill(getpid(), SIGTERM) and returns immediately), not that
         // it's actually gone yet, so poll health instead of assuming success.
-        if (await waitForDeath(current.baseUrl, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2)) {
+        if (await waitForDeath(current.baseUrl, current.token, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2)) {
           child = null;
           handle = null;
           return;
         }
         log(`backend at ${current.baseUrl} did not go down after a shutdown request`);
-        markOrphaned(null, current.baseUrl);
+        markOrphaned(null, current.baseUrl, current.token);
         child = null;
         handle = null;
         return;
@@ -703,6 +738,7 @@ export async function stopBackend(): Promise<void> {
   const { pid } = proc;
   const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
   const knownBaseUrl = current?.baseUrl ?? handle?.baseUrl;
+  const knownToken = current?.token ?? handle?.token;
 
   if (process.platform === "win32" && pid) {
     // Windows has no SIGTERM to deliver: signals are emulated and are not delivered to the
@@ -716,7 +752,7 @@ export async function stopBackend(): Promise<void> {
     // SIGTERM_GRACE_MS (and, below, another one after an equally doomed SIGKILL) on a signal that
     // was never delivered in the first place.
     log(`SIGTERM could not be delivered to backend (pid ${pid}) — likely running elevated`);
-    markOrphaned(pid, knownBaseUrl);
+    markOrphaned(pid, knownBaseUrl, knownToken);
     child = null;
     handle = null;
     return;
@@ -738,7 +774,7 @@ export async function stopBackend(): Promise<void> {
     ]);
     if (!killed) {
       log(`backend (pid ${pid}) did not exit after SIGKILL`);
-      markOrphaned(pid, knownBaseUrl);
+      markOrphaned(pid, knownBaseUrl, knownToken);
     }
   }
 

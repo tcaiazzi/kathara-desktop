@@ -62,6 +62,12 @@ class ApiSettings(BaseSettings):
     manager_type: Optional[str] = None
     default_image: Optional[str] = Field(default=None)
 
+    # Shared secret pairing a single launched backend with its own frontend (the desktop app
+    # generates one per launch — see services/desktop/src/backend.ts). Unset by default: every
+    # other deployment (Docker Compose, dev) keeps today's no-auth behavior untouched (see
+    # dependencies.require_auth_token).
+    auth_token: Optional[str] = None
+
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 

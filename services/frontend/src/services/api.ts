@@ -21,6 +21,24 @@ import type {
   StartupStatus,
   SystemInfo,
 } from "./types";
+import { desktop } from "../desktop/bridge";
+
+// The desktop app's backend requires every request to carry the pairing token backend.ts
+// generated for this launch (src/kathara_api/dependencies.py's require_auth_token) — resolved
+// once per page load (null outside Electron, or if desktop() is null) and cached here rather
+// than round-tripping the IPC bridge on every call. A plain module-scope variable, not just the
+// promise, so the synchronous ttyWsUrl/statsStreamUrl below (native WebSocket/EventSource can't
+// await) can still read it once it settles — well before either is ever called in practice,
+// since both need a lab already loaded first.
+let cachedAuthToken: string | null = null;
+const authTokenReady: Promise<void> = (async () => {
+  const shell = desktop();
+  cachedAuthToken = shell ? await shell.getAuthToken() : null;
+})();
+
+function authHeaders(): Record<string, string> {
+  return cachedAuthToken ? { Authorization: `Bearer ${cachedAuthToken}` } : {};
+}
 
 // All backend routes live under /api. In dev this is proxied to the backend by Vite
 // (vite.config.ts); in production the reverse proxy plays the same role — so this is always a
@@ -86,7 +104,8 @@ async function parseJsonResponse<T>(res: Response): Promise<T> {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = { method, headers: {} };
+  await authTokenReady;
+  const init: RequestInit = { method, headers: { ...authHeaders() } };
   if (body !== undefined) {
     (init.headers as Record<string, string>)["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -97,13 +116,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 // Multipart POST (file upload). Unlike request<T>, this must NOT set Content-Type: the browser
 // sets multipart/form-data plus the boundary itself from the FormData body.
 async function requestForm<T>(path: string, form: FormData): Promise<T> {
-  return parseJsonResponse<T>(await fetch(`${API_BASE}${path}`, { method: "POST", body: form }));
+  await authTokenReady;
+  return parseJsonResponse<T>(
+    await fetch(`${API_BASE}${path}`, { method: "POST", headers: authHeaders(), body: form }),
+  );
 }
 
 // GET a binary body (a .zip export, a file download), surfacing a non-2xx as an ApiError the same
 // way the JSON paths do.
 async function requestBlob(path: string): Promise<Blob> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "GET" });
+  await authTokenReady;
+  const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers: authHeaders() });
   if (!res.ok) await throwApiError(res);
   return res.blob();
 }
@@ -285,14 +308,21 @@ export const api = {
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/shells`,
     ),
 
+  // A native WebSocket/EventSource can't set an Authorization header, so the pairing token (when
+  // one is configured — see authHeaders above) travels as `?token=` instead, matching what
+  // require_auth_token and the /tty/ws handler both accept.
   ttyWsUrl: (labName: string, machineName: string, shell = "bash") => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}`;
+    const tokenParam = cachedAuthToken ? `&token=${encodeURIComponent(cachedAuthToken)}` : "";
+    return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}${tokenParam}`;
   },
 
   // stats/stream is a GET endpoint, so (unlike exec/stream) the browser's native EventSource
   // can be used directly against this URL.
-  statsStreamUrl: (labName: string) => `${API_BASE}/labs/${encodeURIComponent(labName)}/stats/stream`,
+  statsStreamUrl: (labName: string) => {
+    const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
+    return `${API_BASE}/labs/${encodeURIComponent(labName)}/stats/stream${tokenParam}`;
+  },
 
   // -- topology mutations (add/remove device or domain, connect/disconnect interfaces) --
   addMachine: (

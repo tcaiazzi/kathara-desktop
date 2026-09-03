@@ -50,6 +50,13 @@ class ApiError(Exception):
         self.detail = detail
 
 
+class UnauthorizedError(ApiError):
+    """Raised by require_auth_token (dependencies.py) when a pairing token is configured and the
+    request's own token (Authorization header or query param) is missing or doesn't match."""
+
+    status_code = status.HTTP_401_UNAUTHORIZED
+
+
 class SettingsLockedError(ApiError):
     """Raised when settings are updated after the manager has been initialized."""
 

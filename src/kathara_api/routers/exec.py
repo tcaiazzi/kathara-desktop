@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hmac
 import json
 
 import chardet
@@ -9,7 +10,8 @@ from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisc
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
-from ..dependencies import get_service
+from ..config import get_settings
+from ..dependencies import get_service, require_auth_token
 from ..schemas.exec import ExecRequest, ExecResult
 from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
@@ -68,7 +70,7 @@ async def _recv_json(websocket: WebSocket):
         return None
 
 
-@router.post("/exec", response_model=ExecResult)
+@router.post("/exec", response_model=ExecResult, dependencies=[Depends(require_auth_token)])
 def exec_command(
     lab_name: str,
     machine_name: str,
@@ -87,7 +89,7 @@ def exec_command(
     )
 
 
-@router.post("/exec/stream")
+@router.post("/exec/stream", dependencies=[Depends(require_auth_token)])
 async def exec_command_stream(
     lab_name: str,
     machine_name: str,
@@ -148,6 +150,23 @@ async def tty_live_ws(
     Query params:
       - shell: one of bash|sh|ash|zsh (default: bash)
     """
+    # A WebSocket handshake carries no Authorization header a browser can set, so the pairing
+    # token (see dependencies.require_auth_token, applied to exec_command/exec_command_stream
+    # above) travels as a query param instead — checked by hand rather than via the same
+    # Depends(): FastAPI's dependency solver can't supply a `Request`-typed dependency in a
+    # websocket scope (there is no Request there, only WebSocket), and errors on every connection
+    # if one is attached router- or route-wide, e.g. through the router-level `dependencies=`
+    # main.py otherwise uses for every other router. Closing before ever calling accept() makes
+    # uvicorn reject the handshake itself (an HTTP 403, verified manually), rather than opening a
+    # live socket only to immediately close it — an unpaired caller gets no socket at all. A
+    # no-op when auth_token is unset, same as require_auth_token.
+    expected_token = get_settings().auth_token
+    if expected_token:
+        supplied_token = websocket.query_params.get("token")
+        if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
+            await websocket.close(code=4401)
+            return
+
     await websocket.accept()
 
     session: DockerTtySession | None = None

@@ -35,6 +35,12 @@ const api = {
   showBackendLog: () => ipcRenderer.invoke("shell:show-log"),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 
+  // The pairing token backend.ts generated for the currently running backend (or null between
+  // backends), so the renderer's api.ts can attach it to every request instead of an arbitrary
+  // other localhost process/tab being able to talk to the same backend (see main.ts's
+  // "auth:get-token", src/kathara_api/dependencies.py's require_auth_token).
+  getAuthToken: (): Promise<string | null> => ipcRenderer.invoke("auth:get-token"),
+
   // -- privileged-device elevation (see ElevationContext.tsx) --
   /** `password` is required on Linux, ignored on macOS/Windows (native OS prompt instead).
    * `resumeLab`, if given, is reflected into the post-reload URL so the SPA can continue that
