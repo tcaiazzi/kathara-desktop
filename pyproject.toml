@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kathara-api-rest"
-version = "0.1.0"
+dynamic = ["version"]
 description = "REST API for the Kathara network emulation framework"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,6 +33,12 @@ dev = ["pytest>=7.0"]
 
 [project.scripts]
 kathara-api = "kathara_api.main:run"
+
+# Single source of truth for the version: src/kathara_api/__init__.py's __version__, which is
+# also what `GET /api/system` and the OpenAPI docs report (main.py imports it). Restated here as
+# a literal, it silently drifted from the shipped app's version instead.
+[tool.setuptools.dynamic]
+version = { attr = "kathara_api.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
