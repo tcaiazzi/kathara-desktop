@@ -25,6 +25,9 @@ export function TerminalPanel(props: IDockviewPanelProps<{ machine: string }>) {
     shellRef.current = value;
     setShell(value);
   };
+  // Scopes auto-focus-on-connect to this panel, so a background reconnect can't steal focus (and
+  // with it, Ctrl+/Ctrl- zoom) from the editor, the topology graph, or another terminal panel.
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   const { containerRef, terminalRef, connected, connecting, connect, disconnect, fit } = useLiveTty(true, {
     wsUrl: () => api.ttyWsUrl(ws.labName, machine, shellRef.current),
@@ -42,6 +45,7 @@ export function TerminalPanel(props: IDockviewPanelProps<{ machine: string }>) {
       },
     },
     sendCloseHandshake: true,
+    focusScopeRef: panelRef,
     onMessage: (event, term) => {
       if (!term) return;
       switch (event.event) {
@@ -111,7 +115,7 @@ export function TerminalPanel(props: IDockviewPanelProps<{ machine: string }>) {
   }, []);
 
   return (
-    <div className="kt-term-panel">
+    <div className="kt-term-panel" ref={panelRef}>
       <div className="kt-term-bar">
         <Form.Select
           size="sm"

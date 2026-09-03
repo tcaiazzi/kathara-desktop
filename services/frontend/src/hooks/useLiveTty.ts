@@ -18,6 +18,11 @@ export interface UseLiveTtyOptions {
   onMessage: (event: LiveTtyEvent, term: Terminal | null) => void;
   onError: (term: Terminal | null) => void;
   onClose: (ev: CloseEvent, term: Terminal | null) => void;
+  /** Auto-focus on (re)connect is skipped if some other element outside this scope already has
+   * focus, so a background reconnect can't steal keyboard focus (and with it, Ctrl+/Ctrl- zoom)
+   * from whatever the user is actually doing. Omit to always auto-focus (e.g. a standalone
+   * terminal window with nothing else to compete with). */
+  focusScopeRef?: MutableRefObject<HTMLElement | null>;
 }
 
 export interface UseLiveTty {
@@ -153,7 +158,11 @@ export function useLiveTty(enabled: boolean, options: UseLiveTtyOptions): UseLiv
       setConnected(true);
       setConnecting(false);
       fitAddonRef.current?.fit();
-      terminalRef.current?.focus();
+      const scope = optionsRef.current.focusScopeRef?.current;
+      const active = document.activeElement;
+      if (!scope || !active || active === document.body || scope.contains(active)) {
+        terminalRef.current?.focus();
+      }
       const term = terminalRef.current;
       if (term && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));

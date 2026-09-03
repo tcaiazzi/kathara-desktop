@@ -64,7 +64,11 @@ export function buildMenu(): void {
       label: "View",
       submenu: [
         { role: "resetZoom" },
-        { role: "zoomIn" },
+        // Electron's default zoomIn accelerator is "CmdOrCtrl+Plus", but "+" is a shifted
+        // character on standard keyboard layouts, so it only fires as Ctrl+Shift+=. Overriding
+        // to the bare "=" key (which is what physically sits under Ctrl++ /-) makes Ctrl++ work
+        // on its own, matching Ctrl+- right below it.
+        { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
         { role: "zoomOut" },
         { type: "separator" },
         { role: "togglefullscreen" },
