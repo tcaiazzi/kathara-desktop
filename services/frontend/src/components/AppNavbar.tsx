@@ -5,6 +5,7 @@ import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useOnboardingTour } from "../context/OnboardingTourContext";
 import { useHealth } from "../hooks/useHealth";
+import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { NotificationsPanel } from "./NotificationsPanel";
 
@@ -12,6 +13,7 @@ import { NotificationsPanel } from "./NotificationsPanel";
 // the same content into the window's own title strip — see App.tsx.
 export function AppNavbar() {
   const health = useHealth();
+  const isAdmin = useIsAdmin();
   const { theme, dark } = useTheme();
   const { requestTour } = useOnboardingTour();
 
@@ -31,6 +33,11 @@ export function AppNavbar() {
           </Nav.Link>
         </Nav>
         <Navbar.Text className="d-flex align-items-center gap-2">
+          {isAdmin && (
+            <Badge bg="warning" title="The local Kathara API is running with administrator privileges">
+              privileged
+            </Badge>
+          )}
           <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
             {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
           </Badge>
