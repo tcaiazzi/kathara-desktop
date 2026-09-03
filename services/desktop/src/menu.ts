@@ -61,16 +61,6 @@ export function buildMenu(): void {
       ],
     },
     {
-      label: "Lab",
-      submenu: [
-        item("Deploy", "lab:deploy", "CmdOrCtrl+Shift+D"),
-        item("Undeploy", "lab:undeploy", "CmdOrCtrl+Shift+U"),
-        { type: "separator" },
-        item("Reload from Disk", "lab:reload", "CmdOrCtrl+R"),
-        item("Settings", "view:settings", "CmdOrCtrl+,"),
-      ],
-    },
-    {
       label: "View",
       submenu: [
         { role: "resetZoom" },
