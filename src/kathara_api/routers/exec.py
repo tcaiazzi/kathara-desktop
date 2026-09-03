@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from ..config import get_settings
-from ..dependencies import get_service, require_auth_token
+from ..dependencies import get_service, is_origin_allowed, require_auth_token
 from ..schemas.exec import ExecRequest, ExecResult
 from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
@@ -166,6 +166,15 @@ async def tty_live_ws(
         if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
             await websocket.close(code=4401)
             return
+
+    # Unlike every HTTP route, this one gets no help from CORSMiddleware: Starlette's
+    # CORSMiddleware returns immediately for a non-HTTP scope, so a page on any origin can open
+    # this socket. A browser always sends Origin on a WebSocket handshake — same-origin included
+    # — so checking it here is what closes that. Same close-before-accept() shape as the token
+    # check above, with a distinct code so the two failures are told apart client-side.
+    if not is_origin_allowed(websocket.headers.get("origin"), websocket.headers.get("host")):
+        await websocket.close(code=4403)
+        return
 
     await websocket.accept()
 

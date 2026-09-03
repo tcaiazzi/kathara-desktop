@@ -24,7 +24,13 @@ class ApiSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="KATHARA_API_", env_file=".env", extra="ignore")
 
-    host: str = "0.0.0.0"
+    # Loopback by default. This process can execute commands inside containers and, through a
+    # device's [volume], reach the host filesystem, so it must not land on the LAN just because
+    # nobody set an env var. The two deployments that legitimately need a different bind already
+    # pass --host explicitly on uvicorn's CLI, which wins over this: services/backend/Dockerfile.dev
+    # (0.0.0.0, so Compose's port mapping works) and services/desktop/src/backend.ts (127.0.0.1).
+    # So this default only governs the `kathara-api` console script — see main.run().
+    host: str = "127.0.0.1"
     port: int = 8000
 
     # Comma-separated allowed origins for CORS (e.g. "http://localhost:5173,http://localhost:3000").

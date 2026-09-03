@@ -138,7 +138,10 @@ production-deployment story.
 ```bash
 # Backend
 pip install -e .
-kathara-api                 # serves on http://localhost:8000
+# The Vite dev server is a different origin from the backend, and Vite forwards the browser's
+# Origin verbatim on the terminal's WebSocket upgrade — so tell the backend to accept it.
+export KATHARA_API_CORS_ORIGINS=http://localhost:5173
+kathara-api                 # serves on http://127.0.0.1:8000
 
 # Frontend (in another shell)
 cd services/frontend
@@ -152,7 +155,7 @@ Backend settings come from environment variables prefixed `KATHARA_API_` (or a `
 
 | Variable | Default | Description |
 |---|---|---|
-| `KATHARA_API_HOST` | `0.0.0.0` | Bind address |
+| `KATHARA_API_HOST` | `127.0.0.1` | Bind address. Loopback by default — this process can exec inside containers and reach the host filesystem. The Compose stack and the desktop app both pass `--host` explicitly on uvicorn's CLI, which overrides this |
 | `KATHARA_API_PORT` | `8000` | Bind port |
 | `KATHARA_API_LABS_DIR` | `./data/labs` | Where labs are persisted on disk |
 | `KATHARA_API_STATIC_DIR` | *(unset)* | Serve a built frontend (`services/frontend/dist`) from this process at `/`. Set by the desktop app; unset when running the backend standalone for development |

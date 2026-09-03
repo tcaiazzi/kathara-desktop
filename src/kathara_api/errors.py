@@ -57,6 +57,14 @@ class UnauthorizedError(ApiError):
     status_code = status.HTTP_401_UNAUTHORIZED
 
 
+class ForbiddenOriginError(ApiError):
+    """Raised for a state-changing request whose ``Origin`` this backend doesn't serve or allow
+    (dependencies.is_origin_allowed). Distinct from UnauthorizedError: the caller may well hold a
+    valid token — the problem is that the request was initiated by a page on another origin."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+
+
 class SettingsLockedError(ApiError):
     """Raised when settings are updated after the manager has been initialized."""
 

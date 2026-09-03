@@ -33,6 +33,12 @@ services:
       - ${PWD}/data/labs:${PWD}/data/labs
     environment:
       - KATHARA_API_LABS_DIR=${PWD}/data/labs
+      # The browser page is served by Vite on :5173, and Vite's proxy forwards the browser's own
+      # Origin verbatim on a WebSocket upgrade (changeOrigin rewrites Host only), so the backend
+      # sees Origin: http://localhost:5173 against Host: backend:8000. Without this the device
+      # terminal's handshake — and every state-changing request — would be refused as
+      # cross-origin. See dependencies.is_origin_allowed.
+      - KATHARA_API_CORS_ORIGINS=http://localhost:5173
     ports:
       - "8000:8000"
 

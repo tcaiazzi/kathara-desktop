@@ -2,15 +2,17 @@
 
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from . import __version__
 from .config import get_settings
-from .dependencies import get_service, require_auth_token
-from .errors import register_exception_handlers
+from .dependencies import get_service, is_origin_allowed, require_auth_token
+from .errors import ForbiddenOriginError, register_exception_handlers
 from .routers import exec as exec_router
 from .routers import labs, links, machines, stats, system
+from .schemas.common import ErrorResponse
 from .spa import mount_spa
 
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +60,30 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # CORS can't cover the state-changing endpoints that qualify as "simple requests" and so are
+    # sent with no preflight for the browser to block: POST /system/wipe and /system/shutdown (no
+    # body), POST /labs/{n}/deploy and /undeploy (optional body), POST /labs/upload (multipart).
+    # A page on another origin can't read the response, but the wipe/shutdown/deploy has already
+    # happened by then. Same helper the websocket handshake uses (routers/exec.py), so there is
+    # one definition of "who may drive this backend".
+    @app.middleware("http")
+    async def _enforce_origin(request: Request, call_next):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not is_origin_allowed(
+            request.headers.get("origin"), request.headers.get("host")
+        ):
+            # Built by hand rather than raised: an exception from inside a middleware never
+            # reaches the handlers register_exception_handlers installed, so raising here would
+            # produce a bare 500 instead of the API's {detail, error_type} envelope.
+            exc = ForbiddenOriginError(
+                f"Origin {request.headers.get('origin')!r} is not allowed to make state-changing "
+                "requests to this backend."
+            )
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=ErrorResponse(detail=str(exc), error_type=type(exc).__name__).model_dump(),
+            )
+        return await call_next(request)
 
     register_exception_handlers(app)
 
