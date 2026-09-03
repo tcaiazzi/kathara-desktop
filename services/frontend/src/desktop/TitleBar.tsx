@@ -110,15 +110,6 @@ export function TitleBar() {
       ],
     },
     {
-      title: "Lab",
-      items: [
-        { label: "Deploy", accel: `${mod}+${shift}D`, run: command("lab:deploy") },
-        { label: "Undeploy", accel: `${mod}+${shift}U`, run: command("lab:undeploy") },
-        "separator",
-        { label: "Reload from Disk", accel: `${mod}+R`, run: command("lab:reload") },
-      ],
-    },
-    {
       title: "View",
       items: [
         { label: "Actual Size", accel: `${mod}+0`, run: () => void shell?.zoom("reset") },
