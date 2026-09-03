@@ -1,0 +1,163 @@
+name: Release desktop app
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build-linux:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir services/desktop/vendor .
+      - run: npm ci
+        working-directory: services/frontend
+      - run: npm ci
+        working-directory: services/desktop
+      - run: npm run dist:linux
+        working-directory: services/desktop
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-appimage-x64
+          path: |
+            services/desktop/release/*.AppImage
+            !services/desktop/release/*-arm64.AppImage
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-appimage-arm64
+          path: services/desktop/release/*-arm64.AppImage
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-deb-amd64
+          path: services/desktop/release/*_amd64.deb
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-deb-arm64
+          path: services/desktop/release/*_arm64.deb
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-rpm-x86_64
+          path: services/desktop/release/*.x86_64.rpm
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-rpm-aarch64
+          path: services/desktop/release/*.aarch64.rpm
+          archive: false
+
+  build-mac:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir services/desktop/vendor .
+      - run: npm ci
+        working-directory: services/frontend
+      - run: npm ci
+        working-directory: services/desktop
+      - run: npm run dist:mac
+        working-directory: services/desktop
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-dmg-x64
+          path: |
+            services/desktop/release/*.dmg
+            !services/desktop/release/*-arm64.dmg
+          archive: false
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mac-dmg-arm64
+          path: services/desktop/release/*-arm64.dmg
+          archive: false
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel --outdir services/desktop/vendor .
+      - run: npm ci
+        working-directory: services/frontend
+      - run: npm ci
+        working-directory: services/desktop
+      - run: npm run dist:win
+        working-directory: services/desktop
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-exe
+          path: services/desktop/release/*.exe
+          archive: false
+
+  check-version:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: check
+        run: |
+          VERSION=$(node -p "require('./services/desktop/package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git tag -l "v$VERSION" | grep -q .; then
+            echo "Tag v$VERSION already exists, skipping release." >&2
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  release:
+    needs: [build-linux, build-mac, build-windows, check-version]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          merge-multiple: true
+      - run: |
+          git tag "v${{ needs.check-version.outputs.version }}"
+          git push origin "v${{ needs.check-version.outputs.version }}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          generate_release_notes: true
+          files: artifacts/**
