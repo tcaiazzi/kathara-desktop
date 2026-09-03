@@ -1,9 +1,10 @@
 """Optional static hosting of the built React SPA from the API process itself.
 
 Normally the SPA is served by something else: Vite's dev server proxies ``/api`` to this
-backend in development (services/frontend/vite.config.ts), and an nginx reverse proxy does
-the same in Docker Compose (services/reverse-proxy/nginx.conf). Either way the browser sees
-a single origin, which is what the frontend's transport layer assumes throughout: relative
+backend, both in a plain host dev run and in the Docker Compose dev stack, which has no
+reverse proxy of its own (services/frontend/vite.config.ts, docker-compose-dev.yml). Either
+way the browser sees a single origin, which is what the frontend's transport layer assumes
+throughout: relative
 ``/api`` fetches, a WebSocket URL built from ``window.location.host``, a relative
 ``EventSource`` URL, and ``BrowserRouter`` deep links.
 
@@ -52,8 +53,7 @@ def mount_spa(app: FastAPI, static_dir: Path, api_prefix: str) -> None:
     def serve_spa(full_path: str) -> Response:
         """Serve a real file when one exists, else index.html (client-side routing).
 
-        Equivalent to nginx's ``try_files $uri $uri/ /index.html``
-        (services/frontend/nginx.conf).
+        Equivalent to nginx's ``try_files $uri $uri/ /index.html``.
         """
         # An unmatched API path must stay an API 404 with the usual JSON error body. Without
         # this it would fall through to the SPA fallback below and answer HTML with 200,

@@ -43,9 +43,14 @@ starts it and tells you when a manual step is needed. Safe to re-run after finis
 An Electron shell in `services/desktop`. It supervises a local backend and loads its UI, so
 there is no Compose stack to start and no browser tab to keep track of.
 
-It does **not** bundle Python, Kathara or Docker — it drives what is installed on the machine.
-On startup it checks for all four prerequisites and, if any is missing, shows what to install
-instead of a blank window. The lab storage is per user (`~/.config/kathara-ide/labs` on Linux).
+A packaged build **bundles its own Python interpreter** (fetched at build time by
+`services/desktop/scripts/fetch-python.mjs`), so the user needs no system Python; it seeds a
+private virtualenv under the app's user-data directory and installs the bundled
+`kathara-api-rest` wheel into it. Docker and Kathara are **not** bundled — those it drives from
+what is installed on the machine. On startup it runs a preflight (Docker, Python 3.10+,
+`kathara-api-rest`, Kathara, uvicorn, the bundled UI) and, if something is missing, shows what
+to install instead of a blank window. The lab storage is per user
+(`~/.config/kathara-ide/labs` on Linux).
 
 ### Running from a checkout
 
@@ -65,7 +70,12 @@ startup sequence in detail, including the pairing token mentioned under
 ### Building installers
 
 ```bash
-npm --prefix services/desktop run dist:linux   # AppImage + deb
+# Once per OS, before the first build: downloads and checksum-verifies the Python interpreter
+# the app bundles, into the gitignored services/desktop/vendor/. `npm run dist` does NOT do
+# this for you — skip it and the installer builds fine but ships without an interpreter.
+node scripts/fetch-python.mjs linux            # (run from services/desktop; or `mac` / `win`)
+
+npm --prefix services/desktop run dist:linux   # AppImage + deb + rpm (x64 + arm64)
 npm --prefix services/desktop run dist:mac     # dmg (x64 + arm64)
 npm --prefix services/desktop run dist:win     # NSIS installer
 ```
@@ -73,8 +83,9 @@ npm --prefix services/desktop run dist:win     # NSIS installer
 Artifacts land in `services/desktop/release/`. Each target must be built on its own platform
 (`.dmg` requires macOS, `.deb` an x86_64 host) — see [docs/DESKTOP.md](docs/DESKTOP.md) for why.
 
-`services/desktop/resources/icon.png` is a **placeholder** — replace it with the real
-application icon before publishing.
+`services/desktop/resources/icon.png` is generated from the frontend's Kathara logo by
+`services/desktop/scripts/make-icon.py` (standard library only — no Pillow or ImageMagick
+needed); re-run it from `services/desktop` if the logo changes.
 
 Installers are **unsigned**, so first launch needs a manual override:
 
@@ -154,8 +165,10 @@ Backend settings come from environment variables prefixed `KATHARA_API_` (or a `
 
 ```bash
 pip install -e '.[dev]'
-pytest                      # unit tests
-pytest -m docker            # integration tests (require a running Docker daemon)
+pytest -m 'not docker and not network'   # unit tests only (what CI runs)
+pytest -m docker                         # integration tests (need a running Docker daemon)
+pytest -m network                        # integration tests (need internet: live gallery fetch)
+pytest                                   # everything, including both of the above
 ```
 
 ## Not supported yet

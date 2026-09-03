@@ -36,7 +36,7 @@ def create_app() -> FastAPI:
 
     # Empty allow_origins by default: no cross-origin access until a separately deployed
     # frontend origin is configured via KATHARA_API_CORS_ORIGINS (same-origin setups, e.g. the
-    # Docker Compose reverse-proxy, need none).
+    # desktop app, or Vite's own /api proxy in dev, need none).
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list(),

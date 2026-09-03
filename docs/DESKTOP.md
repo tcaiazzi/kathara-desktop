@@ -18,7 +18,16 @@ for how to run and build it; this document covers the "why" behind its behaviour
 - Sets `KATHARA_API_STATIC_DIR` to the built frontend and `KATHARA_API_LABS_DIR` to the
   per-user lab directory.
 
-`main.ts` spawns `uvicorn` with that command, waits for `/api/health`, then loads
+Which interpreter runs it is decided by `prereqs.ts`'s `pythonCandidates()`, best first: an
+interpreter the user picked explicitly (`preferences.json`), a dev checkout's `.venv`, the one
+**bundled inside a packaged app** (`paths.ts`'s `bundledPythonPath()` → `resources/python/`,
+put there at build time by `scripts/fetch-python.mjs` — so a packaged app needs no system
+Python), then `PATH` as a last resort. On a packaged build the backend itself lives in a
+private virtualenv under the app's user-data directory, which `install.ts` creates on first run
+by `pip install`ing the bundled `kathara-api-rest` wheel (`paths.ts`'s `bundledWheelPath()` →
+`resources/vendor/*.whl`) into it.
+
+`main.ts` then spawns `uvicorn` with that command, waits for `/api/health`, and loads
 `http://127.0.0.1:<port>/`. Because the UI is served over HTTP from the same origin as the
 API, relative `/api` calls, the terminal WebSocket, the stats `EventSource` and
 `BrowserRouter` deep links all work exactly as they do in a browser. The one Electron-specific

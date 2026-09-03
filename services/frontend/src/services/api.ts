@@ -41,8 +41,8 @@ function authHeaders(): Record<string, string> {
 }
 
 // All backend routes live under /api. In dev this is proxied to the backend by Vite
-// (vite.config.ts); in production the reverse proxy plays the same role — so this is always a
-// same-origin, relative call, no base URL to configure.
+// (vite.config.ts); in the desktop app the backend serves this SPA itself (spa.py) — so either
+// way this is a same-origin, relative call, with no base URL to configure.
 const API_BASE = "/api";
 
 export class ApiError extends Error {

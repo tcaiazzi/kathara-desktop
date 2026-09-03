@@ -31,7 +31,8 @@ class ApiSettings(BaseSettings):
     labs_dir: str = "./data/labs"
 
     # Directory holding the built frontend (services/frontend/dist). Unset by default: the SPA
-    # is normally served by Vite in dev and by the nginx reverse proxy in Docker Compose. The
+    # is normally served by Vite's dev server, both on the host and in the Docker Compose dev
+    # stack (which has no reverse proxy of its own — see docker-compose-dev.yml). The
     # desktop app has neither, so it sets this and lets this process serve the SPA itself,
     # keeping the renderer same-origin with the API (see spa.mount_spa).
     static_dir: Optional[str] = None

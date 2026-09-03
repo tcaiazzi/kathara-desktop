@@ -1,6 +1,6 @@
 // Typed access to the Electron shell (services/desktop), which injects `window.katharaDesktop`
 // via its preload script. Everything here is optional by design: the same build runs in a plain
-// browser through Vite's dev server or the nginx reverse proxy, where `desktop()` returns null
+// browser through Vite's dev server, where `desktop()` returns null
 // and every desktop-only affordance is simply not rendered.
 
 /** Menu commands the shell can send. Mirrors MenuAction in services/desktop/src/menu.ts. */
