@@ -37,10 +37,24 @@ def create_app() -> FastAPI:
     # Empty allow_origins by default: no cross-origin access until a separately deployed
     # frontend origin is configured via KATHARA_API_CORS_ORIGINS (same-origin setups, e.g. the
     # desktop app, or Vite's own /api proxy in dev, need none).
+    origins = settings.cors_origins_list()
+    # A wildcard and credentials can't be combined: the CORS spec forbids returning
+    # `Access-Control-Allow-Origin: *` alongside `Access-Control-Allow-Credentials: true`, so
+    # Starlette silently falls back to echoing *the caller's own* Origin — turning "*" into
+    # "every website on the internet may make credentialed calls to this API", against a backend
+    # that holds the Docker socket. Callers here authenticate with an `Authorization: Bearer`
+    # header, not cookies, and a header is unaffected by credentials mode, so the wildcard keeps
+    # working with credentials off.
+    allow_credentials = "*" not in origins
+    if not allow_credentials:
+        logging.warning(
+            "KATHARA_API_CORS_ORIGINS is '*': allowing any origin, with credentials disabled. "
+            "List the frontend's exact origin instead if you need credentialed requests."
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins_list(),
-        allow_credentials=True,
+        allow_origins=origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -87,4 +101,9 @@ def run() -> None:
     )
 
 
-app = create_app()
+# Deliberately no module-level `app = create_app()`. Every entry point uses the factory instead
+# (`run()` above, Dockerfile.dev's CMD, services/desktop/src/backend.ts — all pass
+# `kathara_api.main:create_app --factory`). With one here, importing this module built an app as
+# a side effect and uvicorn then built a second one from the factory, so `apply_startup_settings`
+# ran twice against the process-wide KatharaService singleton (dependencies.py) — and any startup
+# error, e.g. mount_spa's RuntimeError, surfaced at import time rather than from uvicorn.

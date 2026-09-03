@@ -9,6 +9,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # owner/repo, GitHub's own charset for both halves — see ApiSettings.gallery_slug.
 _GALLERY_SLUG_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$")
+# A branch/tag/SHA. Deliberately narrower than git's own ref grammar: this value is interpolated
+# into URLs, and `urllib.parse.quote` leaves "/" and "." alone by default, so a "../.." would
+# survive encoding and walk the URL out of the configured repo — see ApiSettings.gallery_ref_value.
+_GALLERY_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+# One path segment of the gallery subtree, same reasoning as the ref above. "." is inside the
+# class (real directory names use it), so "." and ".." match too — they are rejected separately
+# below rather than by contorting the pattern.
+_GALLERY_SEGMENT_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
 
 
 class ApiSettings(BaseSettings):
@@ -115,9 +123,38 @@ class ApiSettings(BaseSettings):
             )
         return slug
 
+    def gallery_ref_value(self) -> str:
+        """The configured branch/tag/SHA, validated.
+
+        Same concern as gallery_slug: lab_gallery.py interpolates this into the GitHub API and
+        raw.githubusercontent URLs. It does pass it through ``quote()``, but ``quote`` treats "/"
+        as safe by default and never touches ".", so ``../..`` reaches the URL intact. Rejecting
+        it here keeps every URL builder in lab_gallery.py free of that concern.
+        """
+        ref = (self.gallery_ref or "").strip()
+        if not _GALLERY_REF_RE.match(ref) or ".." in ref:
+            raise ValueError(
+                f"KATHARA_API_GALLERY_REF must be a plain branch/tag/commit, got {self.gallery_ref!r}"
+            )
+        return ref
+
     def gallery_section_path(self) -> str:
-        """The gallery subtree, normalized to a bare relative posix path ("" means the whole repo)."""
-        return (self.gallery_section or "").strip().strip("/")
+        """The gallery subtree, normalized to a bare relative posix path ("" means the whole repo).
+
+        Validated per segment for the same reason as gallery_ref_value above — an unchecked ".."
+        here would point the catalog fetch outside the configured subtree, which is exactly what
+        gallery_section exists to bound (a repo that also holds exams or solutions).
+        """
+        section = (self.gallery_section or "").strip().strip("/")
+        if not section:
+            return ""
+        for segment in section.split("/"):
+            if segment in (".", "..") or not _GALLERY_SEGMENT_RE.match(segment):
+                raise ValueError(
+                    "KATHARA_API_GALLERY_SECTION must be a plain relative path, got "
+                    f"{self.gallery_section!r}"
+                )
+        return section
 
     def kathara_overrides(self) -> dict:
         """Return the subset of settings to forward to Kathara's Setting."""

@@ -37,6 +37,9 @@ class _FakeSettings:
     def gallery_slug(self):
         return self.gallery_repo
 
+    def gallery_ref_value(self):
+        return self.gallery_ref
+
     def gallery_section_path(self):
         return self.gallery_section.strip("/")
 

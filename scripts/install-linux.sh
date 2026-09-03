@@ -22,17 +22,30 @@ say() { printf '\n== %s ==\n' "$1"; }
 warn() { printf '  ! %s\n' "$1"; }
 pass() { printf '  \xe2\x9c\x93 %s\n' "$1"; }
 
-pkg_install() {
-  if command -v apt-get >/dev/null 2>&1; then
-    $SUDO apt-get update -qq && $SUDO apt-get install -y "$@"
-  elif command -v dnf >/dev/null 2>&1; then
-    $SUDO dnf install -y "$@"
-  elif command -v pacman >/dev/null 2>&1; then
-    $SUDO pacman -Sy --noconfirm "$@"
-  else
-    warn "No supported package manager (apt/dnf/pacman) found — install manually: $*"
-    return 1
-  fi
+# Package names differ per distro, so callers pass a *role* rather than a package list:
+# `python3-venv`/`python3-pip` are Debian-only spellings (Fedora ships venv inside `python3`,
+# Arch calls the interpreter `python`), and passing them to dnf/pacman just fails.
+pkg_install_role() {
+  case "$1" in
+    python)
+      if command -v apt-get >/dev/null 2>&1; then
+        $SUDO apt-get update -qq && $SUDO apt-get install -y python3 python3-venv python3-pip
+      elif command -v dnf >/dev/null 2>&1; then
+        # No python3-venv on Fedora/RHEL: the venv module ships with python3 itself.
+        $SUDO dnf install -y python3 python3-pip
+      elif command -v pacman >/dev/null 2>&1; then
+        # Arch's python IS Python 3, and venv is in the standard library package.
+        $SUDO pacman -Sy --noconfirm python python-pip
+      else
+        warn "No supported package manager (apt/dnf/pacman) found — install Python 3.10+ manually."
+        return 1
+      fi
+      ;;
+    *)
+      warn "internal error: unknown package role '$1'"
+      return 1
+      ;;
+  esac
 }
 
 # ---- Docker ----
@@ -69,7 +82,7 @@ if py_ok; then
   pass "Python $(python3 --version | cut -d' ' -f2) found"
 else
   warn "Python 3.10+ not found — installing."
-  pkg_install python3 python3-venv python3-pip || ok=0
+  pkg_install_role python || ok=0
   py_ok && pass "Python $(python3 --version | cut -d' ' -f2) installed" || { warn "Still no usable Python 3.10+."; ok=0; }
 fi
 

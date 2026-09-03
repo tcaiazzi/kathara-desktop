@@ -103,17 +103,17 @@ def _api_base() -> str:
 
 def _raw_url(path: str) -> str:
     s = get_settings()
-    return f"https://raw.githubusercontent.com/{s.gallery_slug()}/{quote(s.gallery_ref)}/{quote(path)}"
+    return f"https://raw.githubusercontent.com/{s.gallery_slug()}/{quote(s.gallery_ref_value())}/{quote(path)}"
 
 
 def _blob_url(path: str) -> str:
     s = get_settings()
-    return f"https://github.com/{s.gallery_slug()}/blob/{quote(s.gallery_ref)}/{quote(path)}"
+    return f"https://github.com/{s.gallery_slug()}/blob/{quote(s.gallery_ref_value())}/{quote(path)}"
 
 
 def _tree_url(path: str) -> str:
     s = get_settings()
-    return f"https://github.com/{s.gallery_slug()}/tree/{quote(s.gallery_ref)}/{quote(path)}"
+    return f"https://github.com/{s.gallery_slug()}/tree/{quote(s.gallery_ref_value())}/{quote(path)}"
 
 
 def _headers() -> dict[str, str]:
@@ -132,7 +132,7 @@ def _fetch_tree() -> list[dict]:
     tree would present a partial catalog as if it were complete.
     """
     settings = get_settings()
-    url = f"{_api_base()}/git/trees/{quote(settings.gallery_ref)}"
+    url = f"{_api_base()}/git/trees/{quote(settings.gallery_ref_value())}"
     try:
         response = httpx.get(
             url, params={"recursive": "1"}, headers=_headers(), timeout=TREE_TIMEOUT,
@@ -409,7 +409,7 @@ def _build_catalog() -> Catalog:
     )
     return Catalog(
         repo=settings.gallery_slug(),
-        ref=settings.gallery_ref,
+        ref=settings.gallery_ref_value(),
         section=section,
         fetched_at=time.time(),
         entries=ordered,
