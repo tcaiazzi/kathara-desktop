@@ -35,6 +35,15 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   metadata only: unknown to Kathara and ignored by `lab_import`, so it rides along with the lab
   directory (zip download/upload, restarts) without affecting the topology itself. An absent or
   unparseable file simply means "no fixed layout".
+- **Authentication (`dependencies.require_auth_token`)** — opt-in, off by default
+  (`ApiSettings.auth_token`, env `KATHARA_API_AUTH_TOKEN`). When set, every router except
+  `exec.py`'s WebSocket route requires it via `Depends(require_auth_token)`, either as
+  `Authorization: Bearer <token>` or `?token=` (the only option a `WebSocket`/`EventSource`
+  handshake can send); `tty_live_ws` checks the query-param token by hand instead, since a
+  websocket scope has no `Request` for FastAPI's dependency solver to inject. The desktop app
+  is the only caller that sets this today — a random value generated per launch
+  (`services/desktop/src/backend.ts`) pairs one backend process with its own Electron instance;
+  Docker Compose and plain dev runs leave it unset, unauthenticated as before.
 - **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config,
   via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
   interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
