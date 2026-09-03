@@ -17,3 +17,8 @@ data/
 
 # Historical design-decision log, kept locally for reference only
 docs/refactor-plan.md
+
+# Local-only editor/agent config, kept on disk but not shared via git
+.claude/
+.vscode/
+.mcp.json
