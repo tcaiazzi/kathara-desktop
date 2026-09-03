@@ -14,3 +14,6 @@ data/
 
 # Playwright MCP verification artifacts
 .playwright-mcp/
+
+# Historical design-decision log, kept locally for reference only
+docs/refactor-plan.md

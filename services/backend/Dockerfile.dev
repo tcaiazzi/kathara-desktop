@@ -1,5 +1,5 @@
 # Dev-only image: editable install so a bind-mounted ./src (see docker-compose-dev.yml) is
-# picked up live, plus --reload. Not used in production (see Dockerfile).
+# picked up live, plus --reload.
 FROM python:3.12-slim
 
 WORKDIR /app

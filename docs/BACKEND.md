@@ -1,4 +1,4 @@
-# Kathara REST API — Backend reference
+# Kathara IDE — Backend API reference
 
 FastAPI backend (`src/kathara_api`) that wraps the [Kathara](https://www.kathara.org) network-emulation
 framework and exposes it over HTTP. This document lists every endpoint so they can be reviewed at a

@@ -1,20 +1,22 @@
 # Kathara IDE
 
-A web-based IDE for the [Kathara](https://www.kathara.org) network-emulation framework.
-Design lab topologies, edit device configs and files, deploy them as containers, and
-attach to interactive shells — all from the browser.
+A desktop IDE for the [Kathara](https://www.kathara.org) network-emulation framework. Design
+lab topologies, edit device configs and files, deploy them as containers, and attach to
+interactive shells — from a native app, with no browser tab or server to manage.
 
-It has three parts:
+It's built from three parts:
 
+- **Desktop app** — an Electron shell (`services/desktop`) that is the shipped product: it
+  starts a local backend itself and renders the UI in a native window, adding native menus,
+  file dialogs, a system terminal and `kathara://` links. See [Desktop app](#desktop-app).
 - **Backend** — a FastAPI service (`src/kathara_api`) that wraps the Kathara Python API and
-  exposes it over HTTP. Labs are persisted on disk as real Kathara lab directories, so they
+  exposes it over HTTP. The desktop app drives it directly; it can also be run standalone
+  for development. Labs are persisted on disk as real Kathara lab directories, so they
   survive restarts. See [docs/BACKEND.md](docs/BACKEND.md) for the full endpoint reference.
 - **Frontend** — a React + Vite single-page app (`services/frontend`) with a desktop-style
   workspace: a topology view, a file/config editor, and xterm.js terminals wired to live
-  devices.
-- **Desktop app** — an optional Electron shell (`services/desktop`) that starts the backend
-  itself and renders the same UI in a native window, adding native menus, file dialogs, a
-  system terminal and `kathara://` links. See [Desktop app](#desktop-app).
+  devices. Built once and served by the desktop app; also runnable with a dev server against
+  the standalone backend.
 
 ## Requirements
 
@@ -35,58 +37,6 @@ scripts\install-windows.ps1  # needs winget (built into Windows 10 1809+/11)
 
 Docker Desktop's own first-run setup (license, WSL2 on Windows) isn't scriptable — the script
 starts it and tells you when a manual step is needed. Safe to re-run after finishing one.
-
-## Running
-
-### With Docker Compose (recommended)
-
-```bash
-# Development: hot-reload backend + Vite dev server
-docker compose -f docker-compose-dev.yml up --build
-# -> http://localhost:5173
-```
-
-Labs are persisted to `./data/labs` on the host (bind-mounted into the backend container at the
-*same absolute path* — required so Kathara's native `/shared` folder mount, which the host's own
-Docker daemon resolves, points at a path that actually exists there; see the compose file's
-comment for why). For `docker-compose-prod.yml`, set `KATHARA_IDE_LABS_DIR` to an absolute host
-path (defaults to `/var/lib/kathara-ide/labs`) — it's used for both the bind mount and
-`KATHARA_API_LABS_DIR` inside the container.
-
-### On the host
-
-```bash
-# Backend
-pip install -e .
-kathara-api                 # serves on http://localhost:8000
-
-# Frontend (in another shell)
-cd services/frontend
-npm install
-npm run dev                 # http://localhost:5173, proxies /api to the backend
-```
-
-## Configuration
-
-Backend settings come from environment variables prefixed `KATHARA_API_` (or a `.env` file):
-
-| Variable | Default | Description |
-|---|---|---|
-| `KATHARA_API_HOST` | `0.0.0.0` | Bind address |
-| `KATHARA_API_PORT` | `8000` | Bind port |
-| `KATHARA_API_LABS_DIR` | `./data/labs` | Where labs are persisted on disk |
-| `KATHARA_API_STATIC_DIR` | *(unset)* | Serve a built frontend (`services/frontend/dist`) from this process at `/`. Unset in the Compose deployments, where nginx does it; set by the desktop app |
-| `KATHARA_API_CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins (only needed when the frontend is served from a different origin) |
-| `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override (e.g. `docker`) |
-| `KATHARA_API_DEFAULT_IMAGE` | *(Kathara default)* | Default device image |
-
-## Tests
-
-```bash
-pip install -e '.[dev]'
-pytest                      # unit tests
-pytest -m docker            # integration tests (require a running Docker daemon)
-```
 
 ## Desktop app
 
@@ -176,8 +126,67 @@ builds, so releases are installed manually.
 - The backend is bound to `127.0.0.1` only, and the renderer runs sandboxed and
   context-isolated with no Node access, reaching the shell only through an explicit bridge.
 
+## Development
+
+The backend and frontend can also run standalone, outside the desktop app — for contributors
+working on either of them, or for driving the API directly.
+
+### With Docker Compose
+
+```bash
+# Hot-reload backend + Vite dev server
+docker compose -f docker-compose-dev.yml up --build
+# -> http://localhost:5173
+```
+
+Labs are persisted to `./data/labs` on the host (bind-mounted into the backend container at the
+*same absolute path* — required so Kathara's native `/shared` folder mount, which the host's own
+Docker daemon resolves, points at a path that actually exists there; see the compose file's
+comment for why).
+
+This Compose stack is dev-only — see [Not supported yet](#not-supported-yet) for the
+production-deployment story (or lack of one).
+
+### On the host
+
+```bash
+# Backend
+pip install -e .
+kathara-api                 # serves on http://localhost:8000
+
+# Frontend (in another shell)
+cd services/frontend
+npm install
+npm run dev                 # http://localhost:5173, proxies /api to the backend
+```
+
+## Configuration
+
+Backend settings come from environment variables prefixed `KATHARA_API_` (or a `.env` file):
+
+| Variable | Default | Description |
+|---|---|---|
+| `KATHARA_API_HOST` | `0.0.0.0` | Bind address |
+| `KATHARA_API_PORT` | `8000` | Bind port |
+| `KATHARA_API_LABS_DIR` | `./data/labs` | Where labs are persisted on disk |
+| `KATHARA_API_STATIC_DIR` | *(unset)* | Serve a built frontend (`services/frontend/dist`) from this process at `/`. Set by the desktop app; unset when running the backend standalone for development |
+| `KATHARA_API_CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins (only needed when the frontend is served from a different origin) |
+| `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override (e.g. `docker`) |
+| `KATHARA_API_DEFAULT_IMAGE` | *(Kathara default)* | Default device image |
+
+## Tests
+
+```bash
+pip install -e '.[dev]'
+pytest                      # unit tests
+pytest -m docker            # integration tests (require a running Docker daemon)
+```
+
 ## Not supported yet
 
+- **No hosted/production deployment.** The only supported ways to run this today are the
+  desktop app (single user, local machine) and the dev-only Docker Compose stack for
+  contributors. A real production/multi-user deployment story is future work.
 - **No authentication or multi-user support.** The server holds lab state in-process and must
   run with a **single worker**, so it can't be scaled horizontally.
 - **Live terminals require the Docker manager.** Attaching to a running device (`connect` /
