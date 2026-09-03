@@ -12,7 +12,8 @@ export type DesktopMenuAction =
   | "lab:deploy"
   | "lab:undeploy"
   | "lab:reload"
-  | "view:settings";
+  | "view:settings"
+  | "help:tour";
 
 export interface DesktopApi {
   isDesktop: true;

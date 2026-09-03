@@ -124,6 +124,7 @@ export function TitleBar() {
       items: [
         { label: "Kathara Documentation", run: () => void shell?.openExternal(DOCS_URL) },
         { label: "Show Backend Log", run: () => void shell?.showBackendLog() },
+        { label: "Show Onboarding Tour", run: command("help:tour") },
         "separator",
         { label: version ? `Version ${version}` : "Version…", disabled: true },
       ],

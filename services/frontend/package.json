@@ -24,6 +24,7 @@
     "bootstrap": "^5.3.3",
     "codemirror": "^6.0.2",
     "dockview-react": "^7.0.2",
+    "driver.js": "^1.8.0",
     "lucide-react": "^0.544.0",
     "react": "^18.3.1",
     "react-arborist": "^3.16.0",

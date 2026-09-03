@@ -14,7 +14,8 @@ export type MenuAction =
   | "lab:deploy"
   | "lab:undeploy"
   | "lab:reload"
-  | "view:settings";
+  | "view:settings"
+  | "help:tour";
 
 /** Subscribe and return an unsubscribe, so React effects can clean up properly. */
 function subscribe<T>(channel: string, cb: (value: T) => void): () => void {

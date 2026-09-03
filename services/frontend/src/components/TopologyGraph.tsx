@@ -504,7 +504,7 @@ export function TopologyGraph({
                     Open terminal
                   </Button>
                 )}
-                <DropdownButton size="sm" variant="outline-secondary" title="Actions">
+                <DropdownButton size="sm" variant="outline-secondary" title="Actions" data-tour="node-actions-btn">
                   {selectedNode.running && (
                     <Dropdown.Item onClick={() => openTerminalPopup(selectedNode)}>
                       <AppWindow size={14} className="me-2" />

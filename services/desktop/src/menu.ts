@@ -18,7 +18,8 @@ export type MenuAction =
   | "lab:deploy"
   | "lab:undeploy"
   | "lab:reload"
-  | "view:settings";
+  | "view:settings"
+  | "help:tour";
 
 const DOCS_URL = "https://www.kathara.org/";
 
@@ -104,6 +105,7 @@ export function buildMenu(): void {
       submenu: [
         { label: "Kathara Documentation", click: () => void shell.openExternal(DOCS_URL) },
         { label: "Show Backend Log", click: () => void shell.openPath(backendLogPath()) },
+        item("Show Onboarding Tour", "help:tour"),
         { label: `Version ${app.getVersion()}`, enabled: false },
       ],
     },

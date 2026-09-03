@@ -1,0 +1,64 @@
+/* driver.js ships unstyled-for-us classes; overridden here with the app's own Bootstrap tokens
+   (same policy as WelcomeScreen.css) so the popover matches the app in both themes for free —
+   these variables flip with `data-bs-theme`, no separate dark-mode block needed. */
+
+.kt-tour-popover.driver-popover {
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.375rem;
+  box-shadow: var(--bs-box-shadow);
+}
+
+.kt-tour-popover .driver-popover-title {
+  color: var(--bs-body-color);
+  font-size: 0.95rem;
+}
+
+.kt-tour-popover .driver-popover-description {
+  color: var(--bs-secondary-color);
+}
+
+.kt-tour-popover .driver-popover-progress-text {
+  color: var(--bs-secondary-color);
+}
+
+.kt-tour-popover .driver-popover-footer button {
+  background: var(--bs-secondary-bg);
+  color: var(--bs-body-color);
+  border: 1px solid var(--bs-border-color);
+  text-shadow: none;
+}
+
+.kt-tour-popover .driver-popover-footer button:hover {
+  background: var(--bs-tertiary-bg);
+}
+
+.kt-tour-popover .driver-popover-next-btn {
+  background: var(--bs-primary);
+  color: #fff;
+  border-color: var(--bs-primary);
+}
+
+.kt-tour-popover .driver-popover-close-btn {
+  color: var(--bs-secondary-color);
+}
+
+.kt-tour-popover .driver-popover-arrow-side-left.driver-popover-arrow,
+.kt-tour-popover .driver-popover-arrow-side-right.driver-popover-arrow,
+.kt-tour-popover .driver-popover-arrow-side-top.driver-popover-arrow,
+.kt-tour-popover .driver-popover-arrow-side-bottom.driver-popover-arrow {
+  border-color: transparent;
+}
+.kt-tour-popover.driver-popover .driver-popover-arrow-side-left {
+  border-left-color: var(--bs-body-bg);
+}
+.kt-tour-popover.driver-popover .driver-popover-arrow-side-right {
+  border-right-color: var(--bs-body-bg);
+}
+.kt-tour-popover.driver-popover .driver-popover-arrow-side-top {
+  border-top-color: var(--bs-body-bg);
+}
+.kt-tour-popover.driver-popover .driver-popover-arrow-side-bottom {
+  border-bottom-color: var(--bs-body-bg);
+}

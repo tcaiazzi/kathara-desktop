@@ -1,7 +1,9 @@
+import { HelpCircle } from "lucide-react";
 import { Badge, Container, Nav, Navbar } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
+import { useOnboardingTour } from "../context/OnboardingTourContext";
 import { useHealth } from "../hooks/useHealth";
 import { useTheme } from "../hooks/useTheme";
 import { NotificationsPanel } from "./NotificationsPanel";
@@ -11,6 +13,7 @@ import { NotificationsPanel } from "./NotificationsPanel";
 export function AppNavbar() {
   const health = useHealth();
   const { theme, dark } = useTheme();
+  const { requestTour } = useOnboardingTour();
 
   return (
     <Navbar bg={theme} variant={theme} expand="sm" className="mb-3">
@@ -31,6 +34,15 @@ export function AppNavbar() {
           <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
             {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
           </Badge>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary d-flex align-items-center"
+            title="Show onboarding tour"
+            aria-label="Show onboarding tour"
+            onClick={() => requestTour({ auto: false })}
+          >
+            <HelpCircle size={16} />
+          </button>
           <NotificationsPanel />
         </Navbar.Text>
       </Container>

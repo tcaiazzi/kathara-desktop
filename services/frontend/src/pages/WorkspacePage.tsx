@@ -33,6 +33,12 @@ import { useDesktopCommand } from "../desktop/DesktopCommands";
 import { desktop, isDesktop } from "../desktop/bridge";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
+import {
+  useOnboardingTour,
+  useOnboardingTourFocusPanel,
+  useOnboardingTourReady,
+  useOnboardingTourSelectFirstDevice,
+} from "../context/OnboardingTourContext";
 import { useToast } from "../context/ToastContext";
 import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useKtTheme } from "../hooks/useKtTheme";
@@ -47,7 +53,7 @@ import "./WorkspacePage.css";
 function TopologyPanel() {
   const ws = useWorkspace();
   return (
-    <div className="kt-ws-panel-fill">
+    <div className="kt-ws-panel-fill" data-tour="topology-panel">
       <TopologyGraph
         labName={ws.labName}
         detail={ws.detail}
@@ -126,13 +132,30 @@ function isFixedPanel(id: string): boolean {
   return !id.startsWith("terminal:");
 }
 
+// Onboarding tour targets for the shared tab strip (node-info/devices/files/runtime-fs/stats) —
+// the tab itself, not its (usually hidden, since only one tab in the group is active) content, so
+// the spotlight always lands on something clickable and visible. See DockTab below.
+const TOUR_TAB_ID: Record<string, string> = {
+  "node-info": "node-info-tab",
+  devices: "devices-tab",
+  files: "files-tab",
+  "runtime-fs": "runtime-fs-tab",
+  stats: "stats-tab",
+};
+
 // Tab renderer for every panel: the close button appears only on the panels that are actually
 // closable. Wired as dockview's `defaultTabComponent` rather than per-panel, so it also governs a
 // layout restored from localStorage — a saved layout replays each panel's own `tabComponent`, so
 // a per-panel opt-in could never reach a panel that was already persisted without one (which is
 // how "Node info" ended up with a close button while its siblings had none).
 function DockTab(props: IDockviewPanelHeaderProps) {
-  return <DockviewDefaultTab {...props} hideClose={isFixedPanel(props.api.id)} />;
+  return (
+    <DockviewDefaultTab
+      {...props}
+      hideClose={isFixedPanel(props.api.id)}
+      data-tour={TOUR_TAB_ID[props.api.id]}
+    />
+  );
 }
 // Still registered under the name older saved layouts persisted for the core panels, so restoring
 // one resolves to a real component instead of failing.
@@ -447,6 +470,11 @@ export function WorkspacePage() {
   const [nodeInfoHost, setNodeInfoHost] = useState<HTMLElement | null>(null);
   const railRef = useRef<HTMLElement>(null);
   const didRedirect = useRef(false);
+  const setTourReady = useOnboardingTourReady();
+  const { requestTour } = useOnboardingTour();
+  const registerTourFocusPanel = useOnboardingTourFocusPanel();
+  const registerTourSelectFirstDevice = useOnboardingTourSelectFirstDevice();
+  const autoTourRequested = useRef(false);
 
   const [showNew, setShowNew] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
@@ -513,6 +541,32 @@ export function WorkspacePage() {
   useEffect(() => {
     if (name) localStorage.setItem(LS_LAST_LAB, name);
   }, [name]);
+  // Every `data-tour` target below lives inside the dock area, which only mounts once `detail`
+  // is truthy (see `ctxValue && coreCtxValue` further down) — so "a lab is open" is exactly the
+  // readiness signal the onboarding tour needs, both for its one-time auto-trigger and to no-op
+  // a manual replay (Help menu / navbar) gracefully when there's nothing to highlight yet.
+  useEffect(() => {
+    setTourReady(!!detail);
+  }, [detail, setTourReady]);
+  useEffect(() => {
+    if (detail && !autoTourRequested.current) {
+      autoTourRequested.current = true;
+      requestTour({ auto: true });
+    }
+  }, [detail, requestTour]);
+  // "Devices" and "Lab Configuration" share one tab group (see buildDefaultLayout) — only one is
+  // ever visually on top, so the tour brings the right one forward as it reaches each step.
+  useEffect(() => {
+    registerTourFocusPanel((panelId) => dockApiRef.current?.getPanel(panelId)?.api.setActive());
+  }, [registerTourFocusPanel]);
+  // "Node info" shows nothing until a device is selected — the tour picks the first one so that
+  // step has real content to point at.
+  useEffect(() => {
+    registerTourSelectFirstDevice(() => {
+      const first = detailRef.current?.machines[0];
+      if (first) setSelectedId(`dev:${first.name}`);
+    });
+  }, [registerTourSelectFirstDevice]);
   useEffect(() => {
     if (didRedirect.current || name || labs == null) return;
     didRedirect.current = true;
@@ -879,7 +933,7 @@ export function WorkspacePage() {
     <div className="kt-ws">
       {railOpen ? (
         <>
-        <aside className="kt-ws-rail" ref={railRef} style={{ flexBasis: railWidth }}>
+        <aside className="kt-ws-rail" ref={railRef} data-tour="rail" style={{ flexBasis: railWidth }}>
           <div className="kt-ws-rail-sec">
             <div className="kt-ws-rail-head">
               <span>Labs</span>
@@ -891,7 +945,7 @@ export function WorkspacePage() {
                 </svg>
               </button>
             </div>
-            <div className="d-flex gap-1 mb-2">
+            <div className="d-flex gap-1 mb-2" data-tour="import-row">
               <Button size="sm" variant="primary" className="flex-fill" onClick={() => setShowNew(true)}>
                 + New
               </Button>
@@ -1060,49 +1114,59 @@ export function WorkspacePage() {
                 </Badge>
               )}
               <div className="ms-auto d-flex gap-2">
-                <DropdownButton
-                  size="sm"
-                  variant="outline-secondary"
-                  title="+ Terminal"
-                  disabled={!runningMachines.length}
-                >
-                  {runningMachines.map((m) => (
-                    <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
-                      {m.name}
-                    </Dropdown.Item>
-                  ))}
-                </DropdownButton>
+                <span data-tour="terminal-btn" className="d-inline-flex">
+                  <DropdownButton
+                    size="sm"
+                    variant="outline-secondary"
+                    title="+ Terminal"
+                    disabled={!runningMachines.length}
+                  >
+                    {runningMachines.map((m) => (
+                      <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
+                        {m.name}
+                      </Dropdown.Item>
+                    ))}
+                  </DropdownButton>
+                </span>
                 <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
                   Close all terminals
                 </Button>
-                <DropdownButton size="sm" variant="outline-secondary" title="Layout">
-                  <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
-                  <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
-                </DropdownButton>
-                <Button
-                  size="sm"
-                  variant={detail.deployed ? "outline-warning" : "primary"}
-                  disabled={busy}
-                  onClick={handleDeployToggle}
-                  className="d-flex align-items-center gap-1"
-                >
-                  {deployAction && <Loader2 size={14} className="kt-explorer-spin" />}
-                  {deployAction === "deploy"
-                    ? "Deploying…"
-                    : deployAction === "undeploy"
-                      ? "Undeploying…"
-                      : detail.deployed
-                        ? "Undeploy"
-                        : "Deploy"}
-                </Button>
-                <Button size="sm" variant="outline-secondary" onClick={() => void handleDownload()}>
-                  Download
-                </Button>
-                <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
-                  Delete
-                </Button>
+                <span data-tour="layout-btn" className="d-inline-flex">
+                  <DropdownButton size="sm" variant="outline-secondary" title="Layout">
+                    <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
+                    <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
+                    <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
+                    <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
+                  </DropdownButton>
+                </span>
+                <span data-tour="deploy-btn" className="d-inline-flex">
+                  <Button
+                    size="sm"
+                    variant={detail.deployed ? "outline-warning" : "primary"}
+                    disabled={busy}
+                    onClick={handleDeployToggle}
+                    className="d-flex align-items-center gap-1"
+                  >
+                    {deployAction && <Loader2 size={14} className="kt-explorer-spin" />}
+                    {deployAction === "deploy"
+                      ? "Deploying…"
+                      : deployAction === "undeploy"
+                        ? "Undeploying…"
+                        : detail.deployed
+                          ? "Undeploy"
+                          : "Deploy"}
+                  </Button>
+                </span>
+                <span data-tour="download-btn" className="d-inline-flex">
+                  <Button size="sm" variant="outline-secondary" onClick={() => void handleDownload()}>
+                    Download
+                  </Button>
+                </span>
+                <span data-tour="delete-btn" className="d-inline-flex">
+                  <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
+                    Delete
+                  </Button>
+                </span>
               </div>
             </>
           ) : (
