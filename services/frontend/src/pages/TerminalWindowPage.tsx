@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Badge, Button, Form } from "react-bootstrap";
 import { useParams } from "react-router-dom";
 import { useLiveTty } from "../hooks/useLiveTty";
+import { useShellDetection } from "../hooks/useShellDetection";
 import { api } from "../services/api";
 import "./TerminalWindowPage.css";
 
@@ -10,10 +11,10 @@ import "./TerminalWindowPage.css";
 // so the OS's own window manager handles drag/resize/arranging multiple terminals.
 export function TerminalWindowPage() {
   const { name = "", machine = "" } = useParams();
-  const [shell, setShell] = useState("bash");
+  const { shells, shell, shellRef, chooseShell, detectShell } = useShellDetection();
 
   const { containerRef, terminalRef, connected, connecting, connect, disconnect } = useLiveTty(true, {
-    wsUrl: () => api.ttyWsUrl(name, machine, shell),
+    wsUrl: () => api.ttyWsUrl(name, machine, shellRef.current),
     terminalOptions: {
       cursorBlink: true,
       convertEol: false,
@@ -56,13 +57,22 @@ export function TerminalWindowPage() {
     document.title = `Terminal: ${machine}`;
   }, [machine]);
 
-  // Auto-connect on mount. Deliberately a mount-only effect with a matching disconnect cleanup
+  // Auto-connect on mount, after detecting which shells the device actually has — a plain "bash"
+  // default fails outright on images without it (e.g. Alpine), which the in-page TerminalPanel
+  // already accounts for. Deliberately a mount-only effect with a matching disconnect cleanup
   // (not a "connect once" ref) — React 18 StrictMode double-invokes effects in dev, and only this
   // shape reconnects correctly on the settled second pass. Same pattern as TerminalPanel.
   useEffect(() => {
+    let cancelled = false;
     terminalRef.current?.write(`Opening live terminal for ${machine}...\r\n`);
-    connect();
-    return () => disconnect();
+    (async () => {
+      await detectShell(name, machine);
+      if (!cancelled) connect();
+    })();
+    return () => {
+      cancelled = true;
+      disconnect();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -72,14 +82,15 @@ export function TerminalWindowPage() {
         <Form.Select
           style={{ width: 120 }}
           value={shell}
-          onChange={(e) => setShell(e.target.value)}
+          onChange={(e) => chooseShell(e.target.value)}
           disabled={connected || connecting}
           aria-label="Shell"
         >
-          <option value="bash">bash</option>
-          <option value="sh">sh</option>
-          <option value="ash">ash</option>
-          <option value="zsh">zsh</option>
+          {(shells.length ? shells : ["bash", "sh", "ash", "zsh"]).map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
         </Form.Select>
         <Button
           variant={connected ? "outline-danger" : "outline-success"}

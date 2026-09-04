@@ -1,8 +1,9 @@
 import type { IDockviewPanelProps } from "dockview-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Badge, Button, Form } from "react-bootstrap";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useLiveTty } from "../hooks/useLiveTty";
+import { useShellDetection } from "../hooks/useShellDetection";
 import { api } from "../services/api";
 import "./TerminalPanel.css";
 
@@ -15,16 +16,7 @@ export function TerminalPanel(props: IDockviewPanelProps<{ machine: string }>) {
   const machine = props.params.machine;
   const ws = useWorkspace();
   const running = ws.detail.machines.some((m) => m.name === machine && m.running);
-  // `shell` drives the picker UI; `shellRef` drives the actual connection URL — connect() reads the
-  // URL when it fires, which can be right after we pick a shell (before a state re-render lands), so a
-  // ref avoids using a stale value.
-  const [shells, setShells] = useState<string[]>([]);
-  const [shell, setShell] = useState("bash");
-  const shellRef = useRef("bash");
-  const chooseShell = (value: string) => {
-    shellRef.current = value;
-    setShell(value);
-  };
+  const { shells, shell, shellRef, chooseShell, detectShell } = useShellDetection();
   // Scopes auto-focus-on-connect to this panel, so a background reconnect can't steal focus (and
   // with it, Ctrl+/Ctrl- zoom) from the editor, the topology graph, or another terminal panel.
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -77,17 +69,8 @@ export function TerminalPanel(props: IDockviewPanelProps<{ machine: string }>) {
     if (!running) return;
     let cancelled = false;
     terminalRef.current?.write(`Opening live terminal for ${machine}...\r\n`);
-    // Detect the shells actually present in the device, pick one (prefer bash), then connect.
     (async () => {
-      try {
-        const list = await api.listShells(ws.labName, machine);
-        if (!cancelled && list.length) {
-          setShells(list);
-          chooseShell(list.includes("bash") ? "bash" : list[0]);
-        }
-      } catch {
-        /* detection failed — keep the default shell + full picker list */
-      }
+      await detectShell(ws.labName, machine);
       if (!cancelled) connect();
     })();
     return () => {
