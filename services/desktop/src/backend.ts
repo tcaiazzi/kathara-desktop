@@ -16,6 +16,7 @@ import sudoPrompt from "@vscode/sudo-prompt";
 import { backendSrcDir, labsDir, logFile } from "./paths";
 import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
+import { isPlainAbsolutePath, quoteForShellString } from "./safety";
 
 export interface BackendHandle {
   port: number;
@@ -102,6 +103,12 @@ export function getOrphanedBackend(): { pid: number | null; baseUrl: string } | 
 export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string }> {
   const orphan = orphanedBackend;
   if (!orphan?.pid) return { ok: false, message: "no known process id for the orphaned backend" };
+  // The pid is interpolated into a shell string below. It is already numeric by construction
+  // (a real ChildProcess.pid, or resolvePidForPort's Number.isFinite filter), but this keeps that
+  // guarantee readable on the line that depends on it rather than three call sites upstream.
+  if (!Number.isInteger(orphan.pid) || orphan.pid <= 0) {
+    return { ok: false, message: `refusing to kill a suspicious process id: ${String(orphan.pid)}` };
+  }
   return new Promise((resolve) => {
     sudoPrompt.exec(`kill -9 ${orphan.pid}`, { name: "Kathara IDE" }, (error) => {
       if (error) {
@@ -619,13 +626,6 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
   }
 }
 
-/** Best-effort double-quoting for the single shell-command-string API `@vscode/sudo-prompt`
- * expects — not a full POSIX/cmd.exe-correct shell parser, but sufficient for the plain
- * filesystem paths and flags this app's own command line is built from. */
-function shellQuote(arg: string): string {
-  return `"${arg.replace(/"/g, '\\"')}"`;
-}
-
 /**
  * macOS/Windows: relaunch the backend elevated via the OS's own native admin-password dialog
  * (`@vscode/sudo-prompt`) — unlike Linux, these platforms won't let a custom-styled in-app
@@ -665,12 +665,26 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   // This is only viable here because this path never calls `trackChild` (sudo-prompt hands back
   // no process handle), so it isn't competing for the single `child` slot that still refers to
   // the live backend. The Linux path does, which is why it pre-checks instead.
+
+  // Checked here, not only where the interpreter was chosen: this is the last point before a
+  // string is handed to sudo-prompt, which has no argv API and writes the command verbatim into a
+  // root-run `/bin/sh` script on macOS (and a `.bat` line on Windows). Every caller reaching here
+  // has validated already — this makes the elevated path safe regardless of who calls it next.
+  if (!isPlainAbsolutePath(python)) {
+    const message = `refusing to elevate with an unsafe interpreter path: ${JSON.stringify(python)}`;
+    log(message);
+    return { ok: false, reason: "error", message, restarted: false };
+  }
+
   const { port, baseUrl, token, labs, appEnv, args } = await buildBackendCommand(staticDir);
   log(`starting elevated backend (native prompt): ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
-  const cmd = [python, ...args].map(shellQuote).join(" ");
+  // `args` is entirely hardcoded plus a numeric port (see buildBackendCommand), and `python` is
+  // validated above, so quoting here only has to survive spaces — it is the second line of
+  // defence, not the only one.
+  const cmd = [python, ...args].map((arg) => quoteForShellString(arg)).join(" ");
   // Not `handle`: that still points at the backend this one is trying to replace, so it can't
   // stand in for "the elevated one is up" the way it could when this path stopped it first.
   let started = false;

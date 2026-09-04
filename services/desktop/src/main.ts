@@ -42,6 +42,7 @@ import {
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
 import { defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
+import { isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
 import { runPreflight, type Check, type Preflight, type PreflightProgress } from "./prereqs";
 import { checkForUpdate } from "./updateCheck";
@@ -128,6 +129,15 @@ let status: Status = { state: "starting", phase: "environment", message: "Starti
 let pendingDeepLink: string | null = null;
 /** The most recent preflight result, so status:install knows which system Python to use. */
 let lastPreflight: Preflight | null = null;
+/**
+ * Directories the *user* actually chose in the native folder dialog during this run, realpath'd.
+ * `labs:set-dir` will only apply one of these (or the app's own default), because the renderer is
+ * not a trusted source for that path: the backend restarts with its entire filesystem API rooted
+ * wherever it points, so an unvalidated value there is an arbitrary-filesystem-root primitive for
+ * anything running in the page. Session-scoped on purpose — it is a record of what was offered,
+ * not a persisted allowlist.
+ */
+const pickedLabsDirs = new Set<string>();
 
 function setStatus(next: Status): void {
   status = next;
@@ -477,10 +487,17 @@ function registerIpc(): void {
 
   ipcMain.handle("status:pick-python", async () => {
     const chosen = await pickPythonInterpreter(win);
-    if (chosen) {
-      writePrefs({ pythonPath: chosen });
-      log(`python interpreter set to ${chosen}`);
+    if (!chosen) return null;
+    // Validated before it is recorded: this preference outranks every other interpreter candidate
+    // (prereqs.ts's pythonCandidates) and whatever wins is interpolated into the elevated command
+    // string on macOS/Windows (backend.ts's runElevatedNative). The dialog only ever returns a
+    // real absolute path, so this refuses the pathological rather than the ordinary.
+    if (!isPlainAbsolutePath(chosen)) {
+      log(`refused an unsafe interpreter path: ${chosen}`);
+      throw new Error(`"${chosen}" is not a usable interpreter path.`);
     }
+    writePrefs({ pythonPath: chosen });
+    log(`python interpreter set to ${chosen}`);
     return chosen;
   });
 
@@ -580,8 +597,22 @@ function registerIpc(): void {
 
   ipcMain.handle("labs:get-dir", () => labsDir());
   ipcMain.handle("labs:default-dir", () => defaultLabsDir());
-  ipcMain.handle("labs:pick-dir", () => pickLabsDirectory(win));
-  ipcMain.handle("labs:set-dir", (_e, path: string) => setLabsDir(path));
+  // Records what the dialog actually offered, so `labs:set-dir` below can tell a directory the
+  // user chose apart from one the renderer made up. realpath'd on the way in so a symlink can't
+  // be used to smuggle a different target past the same check.
+  ipcMain.handle("labs:pick-dir", async () => {
+    const picked = await pickLabsDirectory(win);
+    if (picked) {
+      try {
+        pickedLabsDirs.add(fs.realpathSync(picked));
+      } catch {
+        // A directory the dialog just returned should always resolve; if it somehow doesn't,
+        // leave it unregistered — setLabsDir will refuse it rather than apply something unproven.
+      }
+    }
+    return picked;
+  });
+  ipcMain.handle("labs:set-dir", (_e, dir: unknown) => setLabsDir(dir));
   ipcMain.handle("labs:reset-dir", () => setLabsDir(defaultLabsDir()));
 }
 
@@ -594,20 +625,41 @@ function registerIpc(): void {
  *
  * Resolves `true` if the change was applied (a restart is now in flight — startup()'s own
  * win.loadURL/showSetupPage calls take it from here), `false` if the user cancelled at the
- * deployed-labs prompt (no changes made, nothing to undo). Throws for a directory that isn't
- * writable, so the caller sees the problem immediately instead of after a restart that would
- * then fail.
+ * deployed-labs prompt (no changes made, nothing to undo). Throws for anything it refuses — a
+ * path that isn't a plain absolute one, one the folder dialog never offered, or a directory that
+ * isn't writable — so the caller sees the problem immediately instead of after a restart that
+ * would then fail.
  */
-async function setLabsDir(path: string): Promise<boolean> {
-  try {
-    // mkdir, not just an access check: the directory may not exist yet — the default one is
-    // only ever created lazily by backend.ts right before spawning uvicorn, and the same is true
-    // of a fresh custom directory the first time it's chosen. This also validates writability as
-    // a side effect (throws EACCES/EROFS/ENOTDIR for a path that can't actually be used).
-    fs.mkdirSync(path, { recursive: true });
-    fs.accessSync(path, fs.constants.W_OK);
-  } catch (err) {
-    throw new Error(`"${path}" is not usable: ${err instanceof Error ? err.message : String(err)}`);
+async function setLabsDir(dir: unknown): Promise<boolean> {
+  // `unknown`, not `string`: the annotation on an ipcMain handler's argument is erased at runtime,
+  // so this is the first place the value's shape is actually established.
+  if (!isPlainAbsolutePath(dir)) {
+    throw new Error(`${JSON.stringify(dir)} is not a usable directory path.`);
+  }
+
+  const isDefault = dir === defaultLabsDir();
+  if (!isDefault) {
+    // The renderer may only apply a directory the user chose in the native dialog this session
+    // (see `labs:pick-dir` above) or the app's own default. Without this the handler is an
+    // arbitrary-filesystem-root primitive: the backend comes back with its whole filesystem API
+    // rooted here, so `setLabsDir("/home/<user>")` would hand the page read/write over the home
+    // directory, `~/.ssh` included. The UI only ever passes a dialog result — but that is a
+    // renderer-side convention, and this is the side that has to enforce it.
+    let resolved: string;
+    try {
+      resolved = fs.realpathSync(dir);
+    } catch (err) {
+      throw new Error(`"${dir}" is not usable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!pickedLabsDirs.has(resolved)) {
+      log(`refused labs directory not chosen through the folder dialog: ${dir}`);
+      throw new Error(`"${dir}" was not chosen through the folder picker.`);
+    }
+    try {
+      fs.accessSync(resolved, fs.constants.W_OK);
+    } catch (err) {
+      throw new Error(`"${dir}" is not writable: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   const proceed = await confirmProceedWithDeployedLabs({
@@ -619,8 +671,13 @@ async function setLabsDir(path: string): Promise<boolean> {
   });
   if (!proceed) return false;
 
-  writePrefs({ labsDir: path === defaultLabsDir() ? undefined : path });
-  log(`labs directory set to ${path}`);
+  // Nothing is created here on purpose. This used to `mkdir -p` the target *before* the prompt
+  // above, so a call that the user never confirmed — the common case, since that prompt is
+  // skipped entirely when no labs are deployed — still left directories behind on disk. It isn't
+  // needed either: the dialog creates the folder it returns (`createDirectory`), and backend.ts
+  // mkdirs the effective labs dir right before spawning uvicorn regardless.
+  writePrefs({ labsDir: isDefault ? undefined : dir });
+  log(`labs directory set to ${dir}`);
   await stopBackend();
   await startup();
   return true;

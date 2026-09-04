@@ -45,6 +45,30 @@ Elevated (root) backend starts and orphan-backend recovery go through the same
 `buildBackendCommand` and carry the same token; see the `runElevatedLinux`/
 `runElevatedNative`/`markOrphaned` functions in `backend.ts` for the retry/cleanup paths.
 
+### What is validated on the way into a privileged context
+
+`@vscode/sudo-prompt` takes a single command **string** — it exposes no argv API — and writes it
+verbatim into a `/bin/sh` script on macOS and a `.bat` line on Windows, so on those platforms the
+elevated command line is shell-interpreted. (Linux never uses it for the backend: `runElevatedLinux`
+passes argv to `spawn("sudo", …)`, with no shell.) Two values could otherwise reach that string, or
+the env sudo-prompt writes alongside it as `export KEY="value"`, from outside this process:
+
+- **the labs directory**, which the renderer proposes over `labs:set-dir` and which becomes
+  `KATHARA_API_LABS_DIR`. `main.ts`'s `setLabsDir` applies it only if it is a plain absolute path
+  *and* the user actually chose it in the native folder dialog during this run (`labs:pick-dir`
+  records what it offered) or it is the app's own default. `paths.ts`'s `labsDir()` re-checks the
+  value it reads back, since `preferences.json` is parsed without schema validation and is the one
+  route that bypasses the handler.
+- **the interpreter path**, `preferences.json`'s `pythonPath`, which outranks every other candidate
+  in `prereqs.ts`'s `pythonCandidates()`. Validated where it is recorded
+  (`status:pick-python`), where it is read (`pythonCandidates`), and once more in
+  `runElevatedNative` before the string is built.
+
+Both go through `safety.ts`'s `isPlainAbsolutePath`, which rejects shell metacharacters outright
+rather than trying to escape them — quoting a `.bat` line correctly is hard enough that "safe by
+construction" is the better guarantee. `quoteForShellString` (single quotes on POSIX, doubled `""`
+on Windows) is the second line, not the only one.
+
 > Running `npm start` from a terminal **inside VS Code** works, but note that VS Code exports
 > `ELECTRON_RUN_AS_NODE=1`; `services/desktop/scripts/start.mjs` strips it before launching,
 > because with it set Electron runs as plain Node and never opens a window.

@@ -14,6 +14,7 @@ import { execFile } from "node:child_process";
 import { app } from "electron";
 import { bundledPythonPath, bundledWheelVersion, devVenvPython, packagedVenvPython } from "./paths";
 import { readPrefs } from "./prefs";
+import { isPlainAbsolutePath } from "./safety";
 import { log } from "./logger";
 
 export interface Check {
@@ -200,8 +201,17 @@ function atLeast310(version: string): boolean {
  * runPreflight falls through to these.
  */
 function pythonCandidates(): string[] {
+  // The recorded preference is validated, unlike the app-owned paths after it: it is the only
+  // entry a hand-edited `preferences.json` controls, it outranks every other candidate, and
+  // whatever wins ends up interpolated into the elevated command string on macOS/Windows (see
+  // backend.ts's runElevatedNative). main.ts's `status:pick-python` validates on the way in;
+  // this covers the file being written some other way.
+  const preferred = readPrefs().pythonPath;
+  if (preferred !== undefined && !isPlainAbsolutePath(preferred)) {
+    log(`ignoring unusable pythonPath in preferences.json: ${JSON.stringify(preferred)}`);
+  }
   const candidates = [
-    readPrefs().pythonPath,
+    isPlainAbsolutePath(preferred) ? preferred : undefined,
     devVenvPython(),
     packagedVenvPython(),
     bundledPythonPath(),

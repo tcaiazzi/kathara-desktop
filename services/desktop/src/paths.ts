@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { readPrefs } from "./prefs";
+import { isPlainAbsolutePath } from "./safety";
 
 /**
  * Repo root in dev: app.getAppPath() is services/desktop, so the root is two levels up.
@@ -92,10 +93,24 @@ export function defaultLabsDir(): string {
  * services/frontend's SettingsPage) over the default, but only if it still exists — a configured
  * directory that vanished (an unplugged drive, a deleted folder) falls back silently instead of
  * failing backend startup, the same guard idiom as frontendDir()/iconPath() above.
+ *
+ * Validated as well as existence-checked, because this value is what becomes
+ * KATHARA_API_LABS_DIR: on the elevated macOS path sudo-prompt writes every env value into
+ * `export KEY="value"` in a script that runs as root, escaping only `"`. `preferences.json` is
+ * parsed by readPrefs with no schema validation at all, so a hand-edited (or otherwise
+ * attacker-written) file is the one way a value can reach here without passing main.ts's
+ * `labs:set-dir` checks. Same shape as backend.ts's isUsablePort, which guards prefs.backendPort
+ * for the same reason.
+ *
+ * console.warn rather than logger's log(): logger.ts imports this module for logFile(), so
+ * importing it back would be a cycle. The main process's stdout is captured in the app log anyway.
  */
 export function labsDir(): string {
   const configured = readPrefs().labsDir;
-  if (configured && fs.existsSync(configured)) return configured;
+  if (isPlainAbsolutePath(configured) && fs.existsSync(configured)) return configured;
+  if (configured !== undefined) {
+    console.warn(`ignoring unusable labsDir in preferences.json: ${JSON.stringify(configured)}`);
+  }
   return defaultLabsDir();
 }
 
