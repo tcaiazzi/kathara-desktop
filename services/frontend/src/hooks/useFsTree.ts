@@ -434,7 +434,11 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           }
         });
       } finally {
-        if (scoped.current.selectGen === gen) setLoadingPath((prev) => (prev === path ? null : prev));
+        // No generation guard here, unlike the writes above: an aborted later selection (e.g. a
+        // cancelled discard-changes prompt) bumps selectGen without ever calling setLoadingPath,
+        // which used to make this check fail forever and leave loadingPath stuck on `path`. The
+        // functional update is guard enough, same as ensureLoaded's.
+        setLoadingPath((prev) => (prev === path ? null : prev));
       }
     },
     [requestFileSwitch, revealAndSelect, runBusy],
