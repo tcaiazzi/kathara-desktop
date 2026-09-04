@@ -56,6 +56,8 @@ class _BlockingFacade(FakeFacadeBase):
     def __init__(self):
         self.entered = threading.Event()
         self.release = threading.Event()
+        self.undeploy_entered = threading.Event()
+        self.undeploy_release = threading.Event()
         self.calls: list[str] = []
 
     def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
@@ -65,6 +67,10 @@ class _BlockingFacade(FakeFacadeBase):
             machine = lab.machines.get(name)
             if machine is not None:
                 machine.api_object = object()
+
+    def undeploy_lab(self, **kwargs):
+        self.undeploy_entered.set()
+        self.undeploy_release.wait(timeout=5)
 
     def connect_machine_to_link(self, machine, link, mac_address=None):
         self.calls.append("connect_live")
@@ -162,6 +168,100 @@ def test_transitioning_flag_is_cleared_even_if_deploy_lab_raises(tmp_path):
 
     service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
+
+
+# -- deploy_lab/undeploy_lab self-exclusion (E7-E15 audit, E10) -----------------------------
+#
+# Everything above guards *other* mutators against an in-flight deploy/undeploy. deploy_lab and
+# undeploy_lab themselves used to have no such guard against *each other*: both called
+# `_begin_transition` (a plain `set.add`, not a lock) and neither called `_check_not_transitioning`
+# on itself first, so two concurrent deploy_lab calls on the same lab both proceeded — each
+# computing its own fresh/already-running split from a `Lab` the other was mutating at the same
+# time, colliding inside the facade call. deploy_lab's body is now entirely inside `_mutate_lock`
+# (previously only the facade call was), matching what undeploy_lab already did for its own body.
+
+
+def _run_undeploy_in_background(service: KatharaService, facade: "_BlockingFacade") -> threading.Thread:
+    thread = threading.Thread(target=lambda: service.undeploy_lab("testlab"))
+    thread.start()
+    assert facade.undeploy_entered.wait(timeout=2), "undeploy_lab did not reach the facade call in time"
+    return thread
+
+
+def test_deploy_lab_fails_fast_against_a_concurrent_deploy_of_the_same_lab(tmp_path):
+    service, facade, store = _service_with_blocking_facade(tmp_path)
+    deploy_thread = _run_deploy_in_background(service, facade)
+
+    with pytest.raises(LabTransitioningError):
+        service.deploy_lab("testlab")
+
+    # The rejected call never blocked waiting on _mutate_lock either — it failed before trying.
+    assert not facade.release.is_set()
+
+    facade.release.set()
+    deploy_thread.join(timeout=2)
+
+
+def test_undeploy_lab_fails_fast_against_a_concurrent_undeploy_of_the_same_lab(tmp_path):
+    service, facade, store = _service_with_blocking_facade(tmp_path)
+    undeploy_thread = _run_undeploy_in_background(service, facade)
+
+    with pytest.raises(LabTransitioningError):
+        service.undeploy_lab("testlab")
+
+    assert not facade.undeploy_release.is_set()
+
+    facade.undeploy_release.set()
+    undeploy_thread.join(timeout=2)
+
+
+def test_deploy_lab_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_check(tmp_path, monkeypatch):
+    """The self-check above is fast-fail only; deploy_lab's whole body now living inside
+    `_mutate_lock` (not just the facade call) is what keeps a slipped-through second call
+    *correct* rather than merely rejected — the actual bug this audit finding described: reading
+    `lab.machines`/`api_object` outside the lock let two concurrent calls both see pc1 as "fresh"
+    and both hand it to the facade."""
+    service, facade, store = _service_with_blocking_facade(tmp_path)
+    deploy_thread = _run_deploy_in_background(service, facade)
+    monkeypatch.setattr(service, "_check_not_transitioning", lambda name: None)
+
+    # Tracks calls made *after* the monkeypatch above, i.e. only by the second deploy_lab — the
+    # first call is already running inside the class's own (unpatched) deploy_lab by this point.
+    second_calls: list[set] = []
+    original_deploy_lab = facade.deploy_lab
+
+    def counting_deploy_lab(lab, selected_machines=None, excluded_machines=None):
+        second_calls.append(set(selected_machines or []))
+        return original_deploy_lab(lab, selected_machines=selected_machines, excluded_machines=excluded_machines)
+
+    facade.deploy_lab = counting_deploy_lab
+
+    second_done = threading.Event()
+    result: dict = {}
+
+    def run_second_deploy():
+        result["lab"] = service.deploy_lab("testlab")
+        second_done.set()
+
+    second_thread = threading.Thread(target=run_second_deploy)
+    second_thread.start()
+
+    # If deploy_lab's body still ran outside _mutate_lock, this would return immediately, having
+    # read pc1 as not-yet-running and handed it to the facade a second time.
+    assert not second_done.wait(timeout=0.3), (
+        "a second deploy_lab returned before the in-flight one finished — "
+        "it read lab.machines/api_object before acquiring the lock instead of after"
+    )
+
+    facade.release.set()
+    deploy_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+    assert second_done.is_set()
+
+    # pc1 was already running by the time the second call's fresh/already-running split actually
+    # ran, so the facade's deploy_lab must not have been asked to (re-)create it.
+    assert second_calls == []
+    assert result["lab"].machines["pc1"].api_object is not None
 
 
 # -- fallback protection: correct even if a mutator slips past the fast-fail check ----------

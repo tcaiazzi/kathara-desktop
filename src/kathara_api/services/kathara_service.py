@@ -1247,53 +1247,69 @@ class KatharaService:
         selected_machines: Optional[set[str]] = None,
         excluded_machines: Optional[set[str]] = None,
     ) -> Lab:
+        # Self-checked exactly like every other guarded mutator (E10) — without this, two
+        # concurrent deploy_lab calls on the same lab both pass _begin_transition (a set add, not
+        # a lock) and run concurrently, each computing its own fresh/already-running split from a
+        # Lab object the other is mutating at the same time, colliding inside the facade call on
+        # MachineAlreadyExistsError. Must run before _begin_transition, same reasoning as every
+        # other call site: checking after taking _mutate_lock below would just wait out the hang
+        # this exists to avoid.
+        self._check_not_transitioning(name)
         # Marked as transitioning for the whole call, not just the facade section below — a
         # lab.conf edit/offline-fs write/structural change arriving anywhere in this window should
         # fail fast via _check_not_transitioning rather than queue up behind _mutate_lock.
         self._begin_transition(name)
         try:
-            if selected_machines and excluded_machines:
-                raise InvocationError("You can either select or exclude devices.")
+            # The entire body, not just the facade call: reading `lab`/computing the fresh vs
+            # already-running split is itself a read of shared model state (`lab.machines`,
+            # `machine.api_object`) that another mutator could otherwise change mid-computation —
+            # mirrors undeploy_lab, which already locks its whole body for the same reason.
+            with self._mutate_lock:
+                if selected_machines and excluded_machines:
+                    raise InvocationError("You can either select or exclude devices.")
 
-            lab = self.get_lab_or_reconstruct(name)
-            all_names = set(lab.machines.keys())
+                lab = self.get_lab_or_reconstruct(name)
+                all_names = set(lab.machines.keys())
 
-            # Mirror the facade's own validation (it would otherwise never run for this call, since
-            # below we always pass it a freshly-computed `selected_machines`, not the caller's raw
-            # selected/excluded_machines).
-            for label, requested in (("selected", selected_machines), ("excluded", excluded_machines)):
-                if requested is not None and not requested <= all_names:
-                    missing = requested - all_names
-                    raise MachineNotFoundError(f"The following devices are not in the network scenario: {missing}.")
+                # Mirror the facade's own validation (it would otherwise never run for this call,
+                # since below we always pass it a freshly-computed `selected_machines`, not the
+                # caller's raw selected/excluded_machines).
+                for label, requested in (("selected", selected_machines), ("excluded", excluded_machines)):
+                    if requested is not None and not requested <= all_names:
+                        missing = requested - all_names
+                        raise MachineNotFoundError(
+                            f"The following devices are not in the network scenario: {missing}."
+                        )
 
-            target_names = self._resolve_targets(all_names, selected_machines, excluded_machines)
+                target_names = self._resolve_targets(all_names, selected_machines, excluded_machines)
 
-            # Already-running machines can't be recreated — Kathara's facade raises
-            # MachineAlreadyExistsError for them — so only machines about to be *freshly* created are
-            # passed to it. Their files are already on disk by now: an import/upload wrote them there
-            # verbatim (see _adopt_lab_dir) and any pre-deploy edit was written through immediately by
-            # fs_write_text_offline/etc. — so Kathara's own deploy machinery (Machine.pack_data) packs
-            # them straight from the real (osfs) fs, with nothing to materialize here. Already-running
-            # targets instead get any *changed* file pushed live via ``_live_push`` (the dirty set —
-            # see registry.mark_dirty — not everything, so an untouched machine isn't redundantly
-            # re-pushed and its startup script re-executed on every redeploy), the only way to reach a
-            # container that already exists.
-            pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
-            fresh_names = target_names - pre_running
-            already_running = target_names & pre_running
+                # Already-running machines can't be recreated — Kathara's facade raises
+                # MachineAlreadyExistsError for them — so only machines about to be *freshly*
+                # created are passed to it. Their files are already on disk by now: an
+                # import/upload wrote them there verbatim (see _adopt_lab_dir) and any pre-deploy
+                # edit was written through immediately by fs_write_text_offline/etc. — so
+                # Kathara's own deploy machinery (Machine.pack_data) packs them straight from the
+                # real (osfs) fs, with nothing to materialize here. Already-running targets
+                # instead get any *changed* file pushed live via ``_live_push`` (the dirty set —
+                # see registry.mark_dirty — not everything, so an untouched machine isn't
+                # redundantly re-pushed and its startup script re-executed on every redeploy), the
+                # only way to reach a container that already exists.
+                pre_running = {m.name for m in lab.machines.values() if m.api_object is not None}
+                fresh_names = target_names - pre_running
+                already_running = target_names & pre_running
 
-            if fresh_names:
-                with self._mutate_lock:
+                if fresh_names:
                     self._facade().deploy_lab(lab, selected_machines=fresh_names)
-                # Native pack_data just packed each fresh machine's *current* on-disk state, so any
-                # dirty flag an offline edit set before this deploy is already reflected — discard it
-                # rather than leaving it to trigger a spurious live-push on some future redeploy.
-                self.registry.pop_dirty_machines(name, fresh_names)
+                    # Native pack_data just packed each fresh machine's *current* on-disk state,
+                    # so any dirty flag an offline edit set before this deploy is already
+                    # reflected — discard it rather than leaving it to trigger a spurious
+                    # live-push on some future redeploy.
+                    self.registry.pop_dirty_machines(name, fresh_names)
 
-            dirty = self.registry.pop_dirty_machines(name, already_running)
-            if dirty:
-                self._live_push(name, lab, dirty)
-            return lab
+                dirty = self.registry.pop_dirty_machines(name, already_running)
+                if dirty:
+                    self._live_push(name, lab, dirty)
+                return lab
         finally:
             self._end_transition(name)
 
@@ -1382,6 +1398,12 @@ class KatharaService:
         # facade call returns but before `_clear_undeployed_state` clears it, making a
         # just-stopped machine look "already running" and get silently skipped by that concurrent
         # deploy_lab's fresh/already-running split.
+        #
+        # Self-checked for the same reason deploy_lab now is (E10): without this, a second
+        # concurrent undeploy_lab on the same name doesn't fail fast, it just queues up behind
+        # _mutate_lock and then runs the facade call a second time against a lab already brought
+        # down by the first — a confusing lower-level error instead of a clean "try again".
+        self._check_not_transitioning(name)
         self._begin_transition(name)
         try:
             with self._mutate_lock:

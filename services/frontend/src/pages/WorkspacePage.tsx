@@ -40,6 +40,7 @@ import {
   useOnboardingTourSelectFirstDevice,
 } from "../context/OnboardingTourContext";
 import { useToast } from "../context/ToastContext";
+import { useBusyAction } from "../hooks/useBusyAction";
 import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useKtTheme } from "../hooks/useKtTheme";
@@ -453,6 +454,7 @@ export function WorkspacePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
   const ktTheme = useKtTheme();
+  const runBusy = useBusyAction();
   const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
@@ -864,11 +866,9 @@ export function WorkspacePage() {
   });
 
   async function handleDownload(labName: string = name) {
-    try {
+    await runBusy(setBusy, "Download lab", async () => {
       saveBlob(await api.downloadLab(labName), `${labName}.zip`);
-    } catch (e) {
-      toast.reportError("Download lab", e);
-    }
+    });
   }
 
   // Right-click actions for a lab row in the rail. Acts on the clicked lab, which need not be the
@@ -1191,7 +1191,12 @@ export function WorkspacePage() {
                   </Button>
                 </span>
                 <span data-tour="download-btn" className="d-inline-flex">
-                  <Button size="sm" variant="outline-secondary" onClick={() => void handleDownload()}>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    disabled={busy}
+                    onClick={() => void handleDownload()}
+                  >
                     Download
                   </Button>
                 </span>
