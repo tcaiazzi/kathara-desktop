@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { Button, Form } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
+import { desktop } from "../desktop/bridge";
 import { useAvailableImages } from "../hooks/useAvailableImages";
 import { api } from "../services/api";
 import type { MachineDetail, MachineOptionsPayload, PortMapping, Ulimit, VolumeMount } from "../services/types";
 import { AutocompleteInput } from "./AutocompleteInput";
-import { HostPathPicker } from "./HostPathPicker";
 import { RowListEditor } from "./RowListEditor";
 
 interface KeyValueRow {
@@ -137,9 +137,6 @@ interface MachineOptionsFieldsProps {
 // can't drift apart.
 export function MachineOptionsFields({ form, disabled, onChange }: MachineOptionsFieldsProps) {
   const [netSysctls, setNetSysctls] = useState<string[]>([]);
-  // The volume host_path column opens a shared picker; this holds "where to write the chosen
-  // path back to" for whichever row's Browse button was last clicked.
-  const [hostPathTarget, setHostPathTarget] = useState<{ path: string; setValue: (v: string) => void } | null>(null);
   const toast = useToast();
   const availableImages = useAvailableImages();
 
@@ -317,33 +314,52 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           {
             key: "host_path",
             label: "Host path",
-            render: (value, setValue, rowDisabled) => (
-              <div className="d-flex gap-1">
-                <Form.Control
-                  size="sm"
-                  placeholder="Host path"
-                  disabled={rowDisabled}
-                  value={value == null ? "" : String(value)}
-                  onChange={(e) => setValue(e.target.value)}
-                />
-                <Button
-                  size="sm"
-                  variant="outline-secondary"
-                  className="kt-icon-btn"
-                  disabled={rowDisabled}
-                  title="Browse the host filesystem"
-                  aria-label="Browse the host filesystem"
-                  onClick={() =>
-                    setHostPathTarget({
-                      path: value == null || value === "" ? "/" : String(value),
-                      setValue: (v) => setValue(v),
-                    })
-                  }
-                >
-                  <FolderOpen size={14} />
-                </Button>
-              </div>
-            ),
+            render: (value, setValue, rowDisabled) => {
+              const current = value == null ? "" : String(value);
+              // The picker is the OS's own folder dialog (integrations.ts's pickHostDirectory):
+              // this is a path on the machine the backend runs on, and only the desktop shell —
+              // which spawns that backend itself — can be sure the two are the same machine. So
+              // the button exists only there; the browser build keeps the plain text input, the
+              // same way every other desktop-only affordance is simply not rendered (see
+              // desktop/bridge.ts). Either way the value goes through VolumeMount, which requires
+              // an absolute host path.
+              const shell = desktop();
+              return (
+                <div className="d-flex gap-1">
+                  <Form.Control
+                    size="sm"
+                    placeholder="Host path"
+                    disabled={rowDisabled}
+                    value={current}
+                    onChange={(e) => setValue(e.target.value)}
+                  />
+                  {shell && (
+                    <Button
+                      size="sm"
+                      variant="outline-secondary"
+                      className="kt-icon-btn"
+                      disabled={rowDisabled}
+                      title="Browse the host filesystem"
+                      aria-label="Browse the host filesystem"
+                      onClick={() =>
+                        void (async () => {
+                          try {
+                            // undefined, not "": let the dialog reopen wherever the user last was
+                            // rather than at a directory nobody chose.
+                            const picked = await shell.pickHostDirectory(current || undefined);
+                            if (picked) setValue(picked);
+                          } catch (e) {
+                            toast.reportError("Choose a host directory", e);
+                          }
+                        })()
+                      }
+                    >
+                      <FolderOpen size={14} />
+                    </Button>
+                  )}
+                </div>
+              );
+            },
           },
           { key: "guest_path", label: "Guest path" },
           { key: "mode", label: "Mode", type: "select", options: ["ro", "rw", "rx"] },
@@ -362,16 +378,6 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         hint="Any other lab.conf option this editor doesn't have a dedicated field for."
         onChange={(rows) => set("metas", rows)}
         emptyRow={() => ({ key: "", value: "" })}
-      />
-
-      <HostPathPicker
-        show={!!hostPathTarget}
-        initialPath={hostPathTarget?.path}
-        onClose={() => setHostPathTarget(null)}
-        onSelect={(path) => {
-          hostPathTarget?.setValue(path);
-          setHostPathTarget(null);
-        }}
       />
     </>
   );

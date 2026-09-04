@@ -20,8 +20,9 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   build Kathara model objects, and serialize models back to response schemas. Options this API
   doesn't interpret (an unknown `machine[key]=value`, an unrecognized top-level `KEY=value` line)
   are warnings, not errors: they stay in the file untouched but don't block the import. `[volume]`
-  is applied like every other option, whether it arrives as JSON (the device options form and its
-  host-path browser) or parsed from an imported `lab.conf` — both go through `schemas/machine.py`'s
+  is applied like every other option, whether it arrives as JSON (the device options form, whose
+  host path comes from the desktop shell's native folder dialog) or parsed from an imported
+  `lab.conf` — both go through `schemas/machine.py`'s
   `VolumeMount`, which validates both halves precisely because they get written back into
   `lab.conf`. Host bind-mounts are gated in the frontend instead, at deploy time: the desktop
   shell requires the user's own password before a deploy that would mount one goes ahead (see
@@ -89,7 +90,6 @@ Errors return `{"detail": str, "error_type": str}`.
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |
 | POST | `/api/system/wipe` | Undeploy every lab this backend deployed (scenarios started by other tools are left alone) | — | `Message` |
 | POST | `/api/system/shutdown` | Gracefully stop this process (SIGTERM). The desktop shell's only way to stop a `sudo`-elevated backend, which it can no longer signal across the privilege boundary | — | `Message` |
-| GET | `/api/system/browse` | List a directory on the *host's own* filesystem — backs the volume host-path picker | `?path=/` | `FsListResponse` |
 | GET | `/api/system/sysctls` | Every `net.*` sysctl key this host's kernel exposes (the only namespace Kathara accepts) | — | `string[]` |
 | GET | `/api/system/images` | Official Kathara images on Docker Hub, as suggestions (502 if Docker Hub is unreachable — callers should treat that as non-fatal) | — | `string[]` |
 

@@ -139,9 +139,6 @@ export const api = {
   // Force-undeploys every lab kathara-ide has deployed, not just the currently open one — scopes
   // to labs this backend manages, unlike the Kathara CLI's own `kathara wipe`.
   wipeAll: () => request<Message>("POST", "/system/wipe", {}),
-  // Browses the host machine's own filesystem (not a lab's or a device's) — backs the volume
-  // host-path picker in the machine options editor.
-  browseHost: (path: string) => request<FsListResponse>("GET", `/system/browse?path=${encodeURIComponent(path)}`),
   // Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara accepts.
   listNetSysctls: () => request<string[]>("GET", "/system/sysctls"),
   // Official Kathara device images published on Docker Hub — suggestions for an "image" field,

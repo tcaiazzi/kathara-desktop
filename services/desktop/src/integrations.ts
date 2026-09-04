@@ -87,6 +87,32 @@ export async function pickLabsDirectory(win: BrowserWindow | null): Promise<stri
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+/**
+ * Native picker for the host side of a device's `[volume]` bind mount (the Volumes rows in
+ * MachineOptionsFields.tsx).
+ *
+ * The OS dialog rather than an in-app browser over the API, on every platform: the desktop shell
+ * spawns the backend itself, so a directory picked here is by definition a directory on the
+ * filesystem that backend will resolve and hand to Docker — and the dialog then gets for free
+ * everything an in-app browser has to reinvent per OS, which on Windows means drive letters
+ * (there is no single filesystem root to start from), backslash separators, UNC shares and
+ * network locations, plus hidden folders and "New folder" everywhere.
+ */
+export async function pickHostDirectory(
+  win: BrowserWindow | null,
+  current?: string,
+): Promise<string | null> {
+  const result = await withParent(dialog.showOpenDialog, win, {
+    title: "Choose a host directory to mount",
+    properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
+    // Re-picking starts where the field already points, when that still exists. Undefined — not
+    // "/", which names nothing on Windows (same reasoning as pickPythonInterpreter above) — lets
+    // the OS reopen wherever the user last was.
+    defaultPath: current && fs.existsSync(current) ? current : undefined,
+  });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
 export function revealPath(target: string): void {
   if (!fs.existsSync(target)) {
     log(`cannot reveal missing path: ${target}`);

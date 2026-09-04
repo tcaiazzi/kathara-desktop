@@ -31,6 +31,7 @@ import { runAutoInstall, type InstallProgress, type InstallStep } from "./instal
 import {
   openLabsDir,
   openSystemTerminal,
+  pickHostDirectory,
   pickLabArchive,
   pickLabsDirectory,
   pickPythonInterpreter,
@@ -563,6 +564,8 @@ function registerIpc(): void {
   ipcMain.handle("window:is-maximized", () => win?.isMaximized() ?? false);
 
   ipcMain.handle("fs:pick-lab-archive", () => pickLabArchive(win));
+  // The host side of a device's [volume] bind mount — see MachineOptionsFields.tsx's Volumes rows.
+  ipcMain.handle("fs:pick-host-dir", (_e, current?: string) => pickHostDirectory(win, current));
   ipcMain.handle("fs:save", (_e, name: string, data: Uint8Array) => saveFile(win, name, data));
   ipcMain.handle("fs:open-labs-folder", () => openLabsDir());
 

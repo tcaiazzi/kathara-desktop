@@ -104,6 +104,12 @@ const api = {
     ipcRenderer.invoke("fs:pick-lab-archive"),
   saveFile: (name: string, data: Uint8Array): Promise<string | null> =>
     ipcRenderer.invoke("fs:save", name, data),
+  /** Folder picker for a device volume's host path. Grants the renderer no filesystem *read*
+   * capability of its own: `current` only seeds the dialog's starting directory (its existence
+   * check is never reported back), and the path returned is whatever the user themselves picked
+   * in an OS-modal dialog. */
+  pickHostDirectory: (current?: string): Promise<string | null> =>
+    ipcRenderer.invoke("fs:pick-host-dir", current),
   revealLab: (labName: string) => ipcRenderer.invoke("fs:reveal-lab", labName),
   openLabsFolder: () => ipcRenderer.invoke("fs:open-labs-folder"),
 

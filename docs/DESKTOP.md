@@ -106,8 +106,13 @@ hand.
   does not take focus away from the page, so clicking *Save* saves the panel the user was in.
 - Terminal pop-outs keep an ordinary framed window (titled `Terminal: <device>`): they render only
   the terminal, with no strip of their own to drag or close by.
-- **Native dialogs** for importing a lab and saving a download, plus *Open Labs Folder* and
-  reveal-in-file-manager.
+- **Native dialogs** for importing a lab, saving a download and choosing the host directory of a
+  device's `[volume]` bind mount, plus *Open Labs Folder* and reveal-in-file-manager. The volume
+  one is desktop-only on purpose (`integrations.ts`'s `pickHostDirectory`): the path names a
+  directory on the machine the *backend* runs on, and only this shell — which spawned that backend
+  — can know the two are the same machine. It also spares the app from reimplementing per-OS path
+  browsing, which on Windows means drive letters (there is no single root), backslash separators
+  and UNC shares. The browser build renders that field as a plain text input.
 - **Open in system terminal** attaches to a device with `kathara connect` in the OS terminal
   emulator. On Linux the first supported emulator on `PATH` wins; override it with
   `terminalCommand` in `preferences.json` (use `{cmd}` where the command goes).

@@ -51,8 +51,8 @@ class VolumeMount(BaseModel):
         # somewhere the user didn't mean.
         #
         # `os.path.isabs`, not PurePosixPath: this is a path on whatever host this backend runs
-        # on, so on a Windows desktop install `C:\labs\data` is exactly what the host-path
-        # browser returns and has to be accepted.
+        # on, so on a Windows desktop install `C:\labs\data` — exactly what the shell's native
+        # folder dialog returns there (services/desktop/src/integrations.ts) — has to be accepted.
         if not os.path.isabs(value):
             raise ValueError(f"must be an absolute path on the host, got {value!r}")
         return value

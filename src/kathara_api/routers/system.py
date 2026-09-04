@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends
 
 from ..dependencies import get_service
 from ..schemas.common import Message
-from ..schemas.filesystem import FsListResponse
 from ..schemas.settings import SettingsUpdate, SettingsView, SystemInfo
 from ..services.kathara_service import KatharaService
 
@@ -60,14 +59,6 @@ def wipe(service: KatharaService = Depends(get_service)) -> Message:
     """Undeploy every lab kathara-ide has deployed (scenarios started by other tools are left alone)."""
     service.wipe()
     return Message(detail="All network scenarios wiped.")
-
-
-@router.get("/system/browse", response_model=FsListResponse)
-def browse_host(path: str = "/", service: KatharaService = Depends(get_service)) -> FsListResponse:
-    """List a directory on the host machine's own filesystem (not a lab's or a device's) — used
-    to pick a real host path for a device's volume mount instead of typing one blind."""
-    resolved_path, entries = service.browse_host_directory(path)
-    return FsListResponse(path=resolved_path, entries=entries)
 
 
 @router.get("/system/sysctls", response_model=list[str])

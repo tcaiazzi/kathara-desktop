@@ -202,52 +202,6 @@ class KatharaService:
                 if any(m.api_object is not None for m in lab.machines.values()):
                     self.undeploy_lab(lab.name)
 
-    def browse_host_directory(self, path: str) -> tuple[str, list[FsEntry]]:
-        """List a directory on the host machine's own filesystem — not a lab's directory or a
-        running device's (that's a container's filesystem, reached over exec), the real OS
-        filesystem this backend process itself sees. Lets the user pick a real path for a
-        device's ``[volume]`` bind mount from an in-app browser instead of typing one blind.
-
-        Returns the directory actually listed alongside its entries — not just the entries — since
-        `path` can be `~`-relative: the caller must report back the same expanded, absolute path
-        this method resolved and listed, not the raw input (`normalize_guest_path`, built for
-        runtime/lab guest paths with no notion of a home directory, would turn `~/Documents` into
-        the nonexistent `/~/Documents`, silently pointing any "up"/breadcrumb navigation built from
-        it at the wrong place).
-        """
-        target = Path(path or "/").expanduser()
-        if not target.is_absolute():
-            raise ApiError(f"Path `{path}` must be absolute.")
-        # `exists()`/`is_dir()` only swallow ENOENT-class failures themselves — a permission error on
-        # the path itself (or an unreadable ancestor directory) propagates as a raw PermissionError,
-        # so the existence/directory checks need the same guard `iterdir()` already has below.
-        try:
-            if not target.exists():
-                raise PathNotFoundError(f"Path `{path}` not found.")
-            if not target.is_dir():
-                raise ApiError(f"`{path}` is a file, not a directory.")
-            children = list(target.iterdir())
-        except PermissionError as exc:
-            raise ApiError(f"Permission denied listing `{path}`.") from exc
-        entries: list[FsEntry] = []
-        for child in children:
-            try:
-                st = child.stat()
-                is_dir = child.is_dir()
-            except OSError:
-                continue  # broken symlink or a permission error on this one entry: skip it
-            entries.append(
-                FsEntry(
-                    name=child.name,
-                    path=str(child),
-                    is_dir=is_dir,
-                    size=None if is_dir else st.st_size,
-                    mtime=st.st_mtime,
-                )
-            )
-        entries.sort(key=lambda e: (not e.is_dir, e.name.lower()))
-        return str(target), entries
-
     def list_net_sysctls(self) -> list[str]:
         """Every ``net.*`` sysctl key available on this host's current kernel — walks
         ``/proc/sys/net``, where each file corresponds 1:1 to a ``net.a.b.c`` sysctl name (path
