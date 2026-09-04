@@ -588,27 +588,35 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       await runBusy(setBusy, sourceRef.current.labels.delete, async () => {
         const parents = new Set<string>();
         let clearedEditor = false;
-        for (const path of targets) {
-          const isDir = findNode(scoped.current.tree, path)?.dir ?? false;
-          await sourceRef.current.remove(path);
-          parents.add(parentOf(path));
-          pruneClipboard(path);
-          const affectsSelection = isDir
-            ? isOrUnder(scoped.current.selected, path)
-            : scoped.current.selected === path;
-          const affectsBuffer = isDir ? isOrUnder(scoped.current.bufferPath, path) : scoped.current.bufferPath === path;
-          if (!clearedEditor && (affectsSelection || affectsBuffer)) {
-            setSelected(null);
-            setBufferPath(null);
-            setEditorText("");
-            setLoadedText("");
-            setIsBinary(false);
-            clearedEditor = true;
+        try {
+          for (const path of targets) {
+            const isDir = findNode(scoped.current.tree, path)?.dir ?? false;
+            await sourceRef.current.remove(path);
+            parents.add(parentOf(path));
+            pruneClipboard(path);
+            const affectsSelection = isDir
+              ? isOrUnder(scoped.current.selected, path)
+              : scoped.current.selected === path;
+            const affectsBuffer = isDir
+              ? isOrUnder(scoped.current.bufferPath, path)
+              : scoped.current.bufferPath === path;
+            if (!clearedEditor && (affectsSelection || affectsBuffer)) {
+              setSelected(null);
+              setBufferPath(null);
+              setEditorText("");
+              setLoadedText("");
+              setIsBinary(false);
+              clearedEditor = true;
+            }
           }
+        } finally {
+          // Refresh whatever parents were actually touched even if a later item in the loop threw
+          // — otherwise a failure partway through leaves the already-deleted items stale in the
+          // tree until a manual reload.
+          if (parents.size > 0) await Promise.all(Array.from(parents).map(refreshDir));
         }
         setSelectedPaths((prev) => prev.filter((p) => !targets.includes(p)));
         toast.show(multiple ? `Deleted ${targets.length} items.` : `Deleted ${targets[0]}.`, "success");
-        await Promise.all(Array.from(parents).map(refreshDir));
       });
     },
     [canModify, confirm, pruneClipboard, refreshDir, runBusy, toast],
@@ -718,34 +726,39 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         const existing = new Map((await sourceRef.current.list(destDir)).map((e) => [e.name, e]));
         const cutParents = new Set<string>();
         let pasted = 0;
-        for (const srcPath of cb.paths) {
-          const name = baseName(srcPath);
-          if (!name) continue;
-          const destPath = destDir === "/" ? `/${name}` : `${destDir}/${name}`;
-          if (destPath === srcPath) continue; // already here — skip, never self-copy/move
-          if (!canModify(destPath)) {
-            toast.show(`Can't paste over ${destPath}.`, "danger");
-            continue;
+        try {
+          for (const srcPath of cb.paths) {
+            const name = baseName(srcPath);
+            if (!name) continue;
+            const destPath = destDir === "/" ? `/${name}` : `${destDir}/${name}`;
+            if (destPath === srcPath) continue; // already here — skip, never self-copy/move
+            if (!canModify(destPath)) {
+              toast.show(`Can't paste over ${destPath}.`, "danger");
+              continue;
+            }
+            const collision = existing.get(name);
+            if (collision) {
+              const { title, message } = sourceRef.current.labels.pasteConfirmOverwrite(destPath, collision.is_dir);
+              if (!(await confirm({ title, message, okLabel: "Replace" }))) continue;
+              // cp/copy_dir and mv/movedir merge into an existing directory instead of replacing
+              // it — remove the old one first so "Replace" actually replaces.
+              if (collision.is_dir) await sourceRef.current.remove(destPath);
+            }
+            if (cb.mode === "copy") {
+              await sourceRef.current.copy(srcPath, destPath);
+            } else {
+              await sourceRef.current.move(srcPath, destPath);
+              cutParents.add(parentOf(srcPath));
+              pruneClipboard(srcPath);
+            }
+            pasted++;
           }
-          const collision = existing.get(name);
-          if (collision) {
-            const { title, message } = sourceRef.current.labels.pasteConfirmOverwrite(destPath, collision.is_dir);
-            if (!(await confirm({ title, message, okLabel: "Replace" }))) continue;
-            // cp/copy_dir and mv/movedir merge into an existing directory instead of replacing
-            // it — remove the old one first so "Replace" actually replaces.
-            if (collision.is_dir) await sourceRef.current.remove(destPath);
-          }
-          if (cb.mode === "copy") {
-            await sourceRef.current.copy(srcPath, destPath);
-          } else {
-            await sourceRef.current.move(srcPath, destPath);
-            cutParents.add(parentOf(srcPath));
-            pruneClipboard(srcPath);
-          }
-          pasted++;
+        } finally {
+          // Same reasoning as handleDelete: refresh whatever was actually pasted/moved even if a
+          // later item in the loop threw, instead of leaving it stale until a manual reload.
+          if (pasted > 0) await Promise.all([refreshDir(destDir), ...Array.from(cutParents).map(refreshDir)]);
         }
         if (pasted > 0) {
-          await Promise.all([refreshDir(destDir), ...Array.from(cutParents).map(refreshDir)]);
           toast.show(`Pasted ${pasted} item(s) into ${destDir}.`, "success");
         }
       });
