@@ -102,7 +102,12 @@ function RuntimeFsPanel() {
   const ws = useWorkspaceCore();
   return (
     <div className="kt-ws-panel-fill">
-      <RuntimeFilesystemEditor labName={ws.labName} detail={ws.detail} preferredMachine={ws.runtimeFsPreferredMachine} />
+      <RuntimeFilesystemEditor
+        labName={ws.labName}
+        detail={ws.detail}
+        preferredMachine={ws.runtimeFsPreferredMachine}
+        onSelectMachine={(m) => ws.setSelectedId(`dev:${m}`)}
+      />
     </div>
   );
 }
@@ -485,6 +490,13 @@ export function WorkspacePage() {
 
   const dockApiRef = useRef<DockviewApi | null>(null);
 
+  // Selecting a node (topology graph or sidebar rail) should bring its details forward — Node
+  // info might be a background tab behind Devices/Lab Configuration/… or closed entirely.
+  const selectNode = useCallback((id: string | null) => {
+    setSelectedId(id);
+    if (id !== null && dockApiRef.current) showNodeInfo(dockApiRef.current);
+  }, []);
+
   const reloadLabs = useCallback(async () => {
     try {
       setLabs(await api.listLabs());
@@ -612,6 +624,14 @@ export function WorkspacePage() {
     setRuntimeFsPreferredMachine(machine);
     dockApiRef.current?.getPanel("runtime-fs")?.api.setActive();
   }, []);
+
+  // Keep the Runtime FS device selector coherent with whatever node is selected elsewhere
+  // (topology graph or sidebar) — without stealing focus onto the runtime-fs panel itself (unlike
+  // openRuntimeFsPanel above, this never calls .setActive()). Collision domains and deselection
+  // have no Runtime FS equivalent, so they're left alone.
+  useEffect(() => {
+    if (selectedId?.startsWith("dev:")) setRuntimeFsPreferredMachine(selectedId.slice(4));
+  }, [selectedId]);
 
   // The machine-options editor is a modal, not a dock panel — rendered once here (not inside
   // TopologyGraph) so both the topology canvas and the sidebar device list's right-click menu
@@ -898,7 +918,7 @@ export function WorkspacePage() {
         detail,
         onRefresh: load,
         selectedId,
-        setSelectedId,
+        setSelectedId: selectNode,
         openFilesPanel,
         openTerminal,
         openRuntimeFsPanel,
@@ -915,7 +935,10 @@ export function WorkspacePage() {
   // `useMemo` actually keeps this object's identity stable for the tree-heavy Files/Runtime FS
   // panels, instead of them re-rendering on every unrelated workspace interaction.
   const coreCtxValue = useMemo(
-    () => (detail ? { labName: name, detail, onRefresh: load, runtimeFsPreferredMachine, setContextMenu: setCtxMenu } : null),
+    () =>
+      detail
+        ? { labName: name, detail, onRefresh: load, runtimeFsPreferredMachine, setSelectedId, setContextMenu: setCtxMenu }
+        : null,
     [name, detail, load, runtimeFsPreferredMachine],
   );
 
@@ -1024,7 +1047,7 @@ export function WorkspacePage() {
                     <button
                       key={m.name}
                       className={`kt-ws-row ${selectedId === `dev:${m.name}` ? "active" : ""}`}
-                      onClick={() => setSelectedId(`dev:${m.name}`)}
+                      onClick={() => selectNode(`dev:${m.name}`)}
                       onContextMenu={(e) => openDeviceMenu(e, m.name)}
                       title="Click to select · right-click for actions"
                     >
@@ -1057,7 +1080,7 @@ export function WorkspacePage() {
                       <button
                         key={lk.name}
                         className={`kt-ws-row ${selectedId === `cd:${lk.name}` ? "active" : ""}`}
-                        onClick={() => setSelectedId(`cd:${lk.name}`)}
+                        onClick={() => selectNode(`cd:${lk.name}`)}
                         onContextMenu={(e) => openDomainMenu(e, lk.name)}
                         title="Click to select · right-click for actions"
                       >

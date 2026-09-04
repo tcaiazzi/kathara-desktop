@@ -16,6 +16,9 @@ export interface WorkspaceCoreCtx {
   onRefresh: () => Promise<void>;
   /** The machine the Runtime Filesystem panel should preselect (set by openRuntimeFsPanel). */
   runtimeFsPreferredMachine: string | null;
+  /** Raw selection setter (no side effects) — lets a panel drive the shared selection without
+   *  forcing "Node info" into focus the way WorkspaceCtx's wrapped setter does. */
+  setSelectedId: (id: string | null) => void;
   /** Shows/dismisses the shared context menu (rendered once, at the workspace-page level). */
   setContextMenu: (menu: ContextMenuState | null) => void;
 }

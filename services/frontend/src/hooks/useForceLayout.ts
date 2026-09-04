@@ -37,6 +37,7 @@ interface Engine {
   dragging: TopoNode | null;
   selected: string | null;
   selectNode: (id: string | null) => void;
+  applySelectionVisuals: (id: string | null) => void;
   moved: boolean;
   edgeEls: SVGLineElement[];
   edgeLabelEls: SVGTextElement[];
@@ -269,6 +270,7 @@ export function useForceLayout(
       dragging: null,
       selected: null,
       selectNode: () => {},
+      applySelectionVisuals: () => {},
       moved: false,
       edgeEls: [],
       edgeLabelEls: [],
@@ -330,7 +332,11 @@ export function useForceLayout(
       });
     }
 
-    function selectNode(id: string | null) {
+    // Visual side of selecting a node — no callback. Used both by genuine clicks (via selectNode
+    // below) and by paths that must NOT notify the caller: restoring the previous selection after a
+    // model rebuild (nothing actually changed), and the externally-driven sync in `select()` below
+    // (the caller is the one who set this selection — telling it back would be an echo).
+    function applySelectionVisuals(id: string | null) {
       engine.selected = id;
       const keep = new Set<string>();
       if (id != null) {
@@ -352,6 +358,12 @@ export function useForceLayout(
         engine.edgeIpEls[i].classList.toggle("hi", on);
         engine.edgeIpEls[i].classList.toggle("dim", dim);
       });
+    }
+    engine.applySelectionVisuals = applySelectionVisuals;
+
+    // Genuine selection event — a click/right-click on a node or the pane, inside this graph.
+    function selectNode(id: string | null) {
+      applySelectionVisuals(id);
       callbacksRef.current.onSelect(id);
     }
     engine.selectNode = selectNode;
@@ -587,9 +599,10 @@ export function useForceLayout(
     }
 
     // Restore the caller's selection if the previously-selected node survived the rebuild, instead
-    // of leaving it cleared (see the dropped onSelect(null) above).
+    // of leaving it cleared (see the dropped onSelect(null) above). Visuals only — nothing actually
+    // changed from the caller's point of view, so this must not re-notify onSelect.
     const keepSelected = optionsRef.current.selectedId;
-    selectNode(keepSelected != null && byId[keepSelected] ? keepSelected : null);
+    applySelectionVisuals(keepSelected != null && byId[keepSelected] ? keepSelected : null);
 
     svgNode.addEventListener("pointerdown", onBgPointerDown as EventListener);
     svgNode.addEventListener("contextmenu", (ev) => {
@@ -652,12 +665,14 @@ export function useForceLayout(
     if (engine) fitEngine(engine);
   }, []);
 
-  // Stable so callers can use it as an effect dependency without re-running every render. Guards on
-  // the engine's current selection to avoid feedback loops when selection is driven externally.
+  // Stable so callers can use it as an effect dependency without re-running every render. Visuals
+  // only (not `selectNode`) — the caller is who set this selection, so echoing it back via
+  // `onSelect` would be a feedback loop (and, since callers may react to a selection by e.g.
+  // bringing a panel into focus, a very visible one).
   const select = useCallback((id: string | null) => {
     const engine = engineRef.current;
     if (!engine || id === engine.selected) return;
-    engine.selectNode(id);
+    engine.applySelectionVisuals(id);
   }, []);
 
   const zoom = useCallback((factor: number) => {

@@ -9,6 +9,10 @@ interface RuntimeFilesystemEditorProps {
   labName: string;
   detail: LabDetail;
   preferredMachine?: string | null;
+  // Called only when the user directly picks a machine from the dropdown below (not when this
+  // component's own effects change `machine` in response to `preferredMachine` or the running-set),
+  // so the caller can mirror that pick into the workspace's shared node selection.
+  onSelectMachine?: (machine: string) => void;
 }
 
 // Browse/edit a running device's own filesystem, over exec — same tree/editor machinery as the Lab
@@ -16,7 +20,12 @@ interface RuntimeFilesystemEditorProps {
 // doesn't is the device picker: every read/write is scoped to whichever running machine is
 // selected, and switching devices fully resets the tree (the hook keys its state on `scopeKey`)
 // since two machines can legitimately share path namespaces — both may have an `/etc`.
-export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = null }: RuntimeFilesystemEditorProps) {
+export function RuntimeFilesystemEditor({
+  labName,
+  detail,
+  preferredMachine = null,
+  onSelectMachine,
+}: RuntimeFilesystemEditorProps) {
   const runningMachines = useMemo(
     () => detail.machines.filter((m) => m.running).map((m) => m.name),
     [detail.machines],
@@ -113,7 +122,10 @@ export function RuntimeFilesystemEditor({ labName, detail, preferredMachine = nu
           className="mb-2"
           value={machine}
           disabled={!runningMachines.length}
-          onChange={(e) => setMachine(e.target.value)}
+          onChange={(e) => {
+            setMachine(e.target.value);
+            onSelectMachine?.(e.target.value);
+          }}
         >
           {runningMachines.length ? (
             runningMachines.map((m) => (
