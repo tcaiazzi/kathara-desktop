@@ -215,11 +215,14 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
   );
 }
 
+// v6: renamed several tab titles (Node info -> Device Information, Devices -> Lab Details,
+// Runtime FS -> Runtime Filesystem, Stats -> Statistics). dockview persists each panel's title in
+// the saved layout, so without a version bump a restored layout would keep showing the old names.
 // v5: default arrangement flipped — topology is now its own full-height column on the right, with
 // the inspector, tool panels and every terminal sharing one tab group on the left. Ignore older
 // saved layouts (v4 node info out of the topology, v3 core tabs, v2 closable core tabs, v1 removed
 // "terminals" panel) so the new default applies.
-const LS_LAYOUT = "kt-ws-layout-v5";
+const LS_LAYOUT = "kt-ws-layout-v6";
 const LS_RAIL = "kt-ws-rail-open";
 const LS_RAIL_W = "kt-ws-rail-width";
 const LS_LAST_LAB = "kt-ws-last-lab";
