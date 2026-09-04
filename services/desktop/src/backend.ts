@@ -47,6 +47,16 @@ const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_POLL_MS = 250;
 const SIGTERM_GRACE_MS = 5_000;
 const SHUTDOWN_HTTP_TIMEOUT_MS = 2_000;
+/** Passed to uvicorn as `--timeout-graceful-shutdown` (see `buildBackendCommand`): bounds how
+ * long a SIGTERM'd backend will wait for in-flight requests/tasks (e.g. another lab's open
+ * stats SSE stream or exec WebSocket) before it force-exits. Without this, uvicorn's default is
+ * to wait indefinitely, which is what let a backend outlive `stopBackend()`'s poll entirely. */
+const GRACEFUL_SHUTDOWN_TIMEOUT_S = 5;
+/** How long `waitForDeath` polls `/api/health` after a shutdown request before giving up on a
+ * backend with no process handle to confirm exit against. Kept comfortably above
+ * `GRACEFUL_SHUTDOWN_TIMEOUT_S` (plus HTTP/poll-interval slack) so this doesn't time out just
+ * before uvicorn's own bounded shutdown would have finished. */
+const SHUTDOWN_DEATH_POLL_MS = 8_000;
 /** Bounds the credentials-only `sudo -v` probe below. Generous — it's a local PAM call that
  * normally answers instantly — but finite, so a wedged PAM module can't hang the IPC call
  * that's holding the elevation prompt open. */
@@ -84,6 +94,26 @@ export function getOrphanedBackend(): { pid: number | null; baseUrl: string } | 
   return orphanedBackend;
 }
 
+/** Last resort for an orphan whose PID is known (either tracked all along on Linux, or
+ * recovered after the fact by `resolvePidForPort` on macOS): ask the OS to authorize a root-level
+ * `kill -9`, via the same sudo-prompt dialog already used to elevate a backend in the first
+ * place. A second explicit admin prompt, so this is never invoked automatically — only in
+ * response to an explicit user action (the orphan dialog's "Force Stop Now"). */
+export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string }> {
+  const orphan = orphanedBackend;
+  if (!orphan?.pid) return { ok: false, message: "no known process id for the orphaned backend" };
+  return new Promise((resolve) => {
+    sudoPrompt.exec(`kill -9 ${orphan.pid}`, { name: "Kathara IDE" }, (error) => {
+      if (error) {
+        resolve({ ok: false, message: error.message });
+        return;
+      }
+      orphanedBackend = null;
+      resolve({ ok: true });
+    });
+  });
+}
+
 /** Records a backend `stopBackend()` couldn't stop, if there's a URL to retry shutting it down
  * against later (an unsignalable process we never even confirmed a URL for isn't worth tracking —
  * there's nothing left to do with it). Always notifies, since even an unrecoverable orphan is
@@ -92,6 +122,26 @@ function markOrphaned(pid: number | null | undefined, baseUrl: string | undefine
   const normalizedPid = pid ?? null;
   if (baseUrl && token) orphanedBackend = { pid: normalizedPid, baseUrl, token };
   orphanListener?.({ pid: normalizedPid, baseUrl: baseUrl ?? "" });
+}
+
+/** macOS only: `runElevatedNative` never gets a process handle back from sudo-prompt, so a
+ * backend orphaned on that path has no PID at all — `markOrphaned` there can only pass `null`.
+ * `lsof` can still resolve one from the outside: reading which process owns a listening socket
+ * doesn't require matching its UID, unlike signaling it. Best-effort — any failure (lsof
+ * missing, port already freed, ambiguous output) just leaves the PID unresolved, same as before
+ * this existed; callers already treat a `null` pid as "unknown". */
+async function resolvePidForPort(port: number): Promise<number | null> {
+  if (process.platform !== "darwin" || !Number.isFinite(port)) return null;
+  return new Promise((resolve) => {
+    execFile("lsof", ["-i", `:${port}`, "-sTCP:LISTEN", "-t"], (error, stdout) => {
+      if (error) {
+        resolve(null);
+        return;
+      }
+      const pid = parseInt(stdout.trim().split("\n")[0], 10);
+      resolve(Number.isFinite(pid) ? pid : null);
+    });
+  });
 }
 
 /**
@@ -128,7 +178,7 @@ async function shutdownAt(baseUrl: string, token: string): Promise<boolean> {
       headers: authHeaders(token),
       signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS),
     });
-    return await waitForDeath(baseUrl, token, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2);
+    return await waitForDeath(baseUrl, token, Date.now() + SHUTDOWN_DEATH_POLL_MS);
   } catch (err) {
     log(`shutdown request to ${baseUrl} failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
@@ -312,6 +362,10 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
     "--factory",
     "--host", "127.0.0.1",
     "--port", String(port),
+    // Bounds SIGTERM's graceful-shutdown wait (see GRACEFUL_SHUTDOWN_TIMEOUT_S) so a lingering
+    // SSE/WebSocket connection from another open lab can't keep this process alive past
+    // stopBackend()'s poll window and leave it (im)possible to reap, especially once elevated.
+    "--timeout-graceful-shutdown", String(GRACEFUL_SHUTDOWN_TIMEOUT_S),
   ];
 
   return { port, baseUrl, token, labs, env, appEnv, args };
@@ -666,7 +720,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     // listening at all — addressed by URL, since there's no handle for it.
     if (!failedToLaunch && !(await shutdownAt(baseUrl, token))) {
       log(`elevated backend at ${baseUrl} did not go down after a failed elevation`);
-      markOrphaned(null, baseUrl, token);
+      markOrphaned(await resolvePidForPort(Number(new URL(baseUrl).port)), baseUrl, token);
     }
 
     // Only a failure of the `sudoPrompt.exec` call itself is an auth outcome. sudo-prompt does
@@ -741,13 +795,13 @@ export async function stopBackend(): Promise<void> {
         // the HTTP request above was the only lever available. A 200 here only proves the process
         // *received* it (it calls os.kill(getpid(), SIGTERM) and returns immediately), not that
         // it's actually gone yet, so poll health instead of assuming success.
-        if (await waitForDeath(current.baseUrl, current.token, Date.now() + SHUTDOWN_HTTP_TIMEOUT_MS * 2)) {
+        if (await waitForDeath(current.baseUrl, current.token, Date.now() + SHUTDOWN_DEATH_POLL_MS)) {
           child = null;
           handle = null;
           return;
         }
         log(`backend at ${current.baseUrl} did not go down after a shutdown request`);
-        markOrphaned(null, current.baseUrl, current.token);
+        markOrphaned(await resolvePidForPort(Number(new URL(current.baseUrl).port)), current.baseUrl, current.token);
         child = null;
         handle = null;
         return;

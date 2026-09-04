@@ -16,6 +16,7 @@ import {
   backendLogPath,
   backendToken,
   backendUrl,
+  forceKillOrphan,
   onBackendExit,
   onOrphanedBackend,
   startBackend,
@@ -801,15 +802,34 @@ if (!app.requestSingleInstanceLock()) {
     // informational, so it must never hold up whatever startup/quit/restart triggered it.
     onOrphanedBackend((info) => {
       log(`backend at ${info.baseUrl || "an unknown address"} (pid ${info.pid ?? "unknown"}) could not be stopped and may still be running`);
-      void dialog.showMessageBox({
-        type: "warning",
-        title: "Kathara backend still running",
-        message: "The previous Kathara backend could not be stopped and may still be running with administrator privileges.",
-        detail:
-          `It was running${info.baseUrl ? ` at ${info.baseUrl}` : ""}${info.pid ? ` (pid ${info.pid})` : ""}. ` +
-          "A new backend has started normally, but you may need to stop the old one manually — " +
-          `for example${info.pid ? `, \`sudo kill ${info.pid}\`` : " via your system's process manager"}.`,
-      });
+      // "Force Stop Now" only offered when a real PID is known: forceKillOrphan has nothing to
+      // target otherwise, and offering a button that can't do anything would be worse than not
+      // offering one — see forceKillOrphan/resolvePidForPort in backend.ts.
+      const buttons = info.pid ? ["OK", "Force Stop Now…"] : ["OK"];
+      void dialog
+        .showMessageBox({
+          type: "warning",
+          title: "Kathara backend still running",
+          message: "The previous Kathara backend could not be stopped and may still be running with administrator privileges.",
+          detail:
+            `It was running${info.baseUrl ? ` at ${info.baseUrl}` : ""}${info.pid ? ` (pid ${info.pid})` : ""}. ` +
+            "A new backend has started normally, but you may need to stop the old one manually — " +
+            `for example${info.pid ? `, \`sudo kill ${info.pid}\`` : " via your system's process manager"}.`,
+          buttons,
+          defaultId: 0,
+          cancelId: 0,
+        })
+        .then(async (result) => {
+          if (!info.pid || result.response !== 1) return;
+          log(`user requested force-kill of orphaned backend (pid ${info.pid})`);
+          const outcome = await forceKillOrphan();
+          if (outcome.ok) {
+            log(`orphaned backend (pid ${info.pid}) force-killed`);
+          } else {
+            log(`force-kill of orphaned backend (pid ${info.pid}) failed: ${outcome.message}`);
+            void dialog.showErrorBox("Could not stop backend", outcome.message ?? "Unknown error.");
+          }
+        });
     });
 
     // After the window, deliberately: on Linux app.setAsDefaultProtocolClient can shell out to
