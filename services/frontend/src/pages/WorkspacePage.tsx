@@ -10,7 +10,7 @@ import {
   type IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { Globe, Loader2, ShieldAlert, SquareTerminal } from "lucide-react";
+import { Globe, Loader2, MoreHorizontal, ShieldAlert, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -42,6 +42,7 @@ import {
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useDeviceActions } from "../hooks/useDeviceActions";
+import { useElementSize } from "../hooks/useElementSize";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useKtTheme } from "../hooks/useKtTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
@@ -239,6 +240,10 @@ const COLLAPSED_GROUP_HEIGHT = 35;
 const RESTORE_GROUP_HEIGHT = 280;
 // A group at/under this height is considered collapsed (header strip only).
 const COLLAPSE_THRESHOLD = 60;
+
+// Below this width, the lab header's action row (Terminal/Layout/Deploy/Download/Delete) collapses
+// into a single dropdown — see the `compactActions` header ref below.
+const HEADER_ACTIONS_COMPACT_WIDTH = 900;
 
 // Fraction of the total width the topology column gets when it's first split off from the left
 // tab group — matches the shipped default screenshot (topology noticeably wider than the tabs).
@@ -480,6 +485,12 @@ export function WorkspacePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [nodeInfoHost, setNodeInfoHost] = useState<HTMLElement | null>(null);
   const railRef = useRef<HTMLElement>(null);
+  // Below this header width, the whole lab-action row (Terminal/Layout/Deploy/Download/Delete)
+  // collapses into a single "more actions" dropdown instead of squeezing/deforming — same pattern
+  // as TopologyGraph's own compact toolbar, measured via ResizeObserver rather than viewport width
+  // since this reacts to the sidebar being resized too, not just the browser window.
+  const { ref: headerRef, width: headerWidth } = useElementSize<HTMLElement>();
+  const compactActions = headerWidth > 0 && headerWidth < HEADER_ACTIONS_COMPACT_WIDTH;
   const didRedirect = useRef(false);
   const setTourReady = useOnboardingTourReady();
   const { requestTour } = useOnboardingTour();
@@ -1120,7 +1131,7 @@ export function WorkspacePage() {
       )}
 
       <div className="kt-ws-main">
-        <header className="kt-ws-header">
+        <header className="kt-ws-header" ref={headerRef}>
           {detail ? (
             <>
               <h5
@@ -1150,64 +1161,127 @@ export function WorkspacePage() {
                 </Badge>
               )}
               <div className="ms-auto d-flex gap-2">
-                <span data-tour="terminal-btn" className="d-inline-flex">
-                  <DropdownButton
-                    size="sm"
-                    variant="outline-secondary"
-                    title="+ Terminal"
-                    disabled={!runningMachines.length}
-                  >
-                    {runningMachines.map((m) => (
-                      <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
-                        {m.name}
+                {compactActions ? (
+                  <>
+                    <DropdownButton
+                      size="sm"
+                      variant="outline-secondary"
+                      title={
+                        <span className="d-inline-flex align-items-center gap-1">
+                          <MoreHorizontal size={16} />
+                          Menu
+                        </span>
+                      }
+                      align="end"
+                    >
+                      <Dropdown.Header>Terminals</Dropdown.Header>
+                      {runningMachines.length ? (
+                        runningMachines.map((m) => (
+                          <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
+                            Open terminal: {m.name}
+                          </Dropdown.Item>
+                        ))
+                      ) : (
+                        <Dropdown.Item disabled>No running devices</Dropdown.Item>
+                      )}
+                      <Dropdown.Item onClick={closeAllTerminals}>Close All Terminals</Dropdown.Item>
+                      <Dropdown.Divider />
+                      <Dropdown.Header>Layout</Dropdown.Header>
+                      <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
+                      <Dropdown.Item onClick={() => applyPreset("topology")}>Focus Topology</Dropdown.Item>
+                      <Dropdown.Item onClick={() => applyPreset("editing")}>Focus Editing</Dropdown.Item>
+                      <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus Terminals</Dropdown.Item>
+                      <Dropdown.Divider />
+                      <Dropdown.Header>Lab</Dropdown.Header>
+                      <Dropdown.Item disabled={busy} onClick={handleDeployToggle}>
+                        {deployAction === "deploy"
+                          ? "Deploying…"
+                          : deployAction === "undeploy"
+                            ? "Undeploying…"
+                            : detail.deployed
+                              ? "Undeploy"
+                              : "Deploy"}
                       </Dropdown.Item>
-                    ))}
-                  </DropdownButton>
-                </span>
-                <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
-                  Close All Terminals
-                </Button>
-                <span data-tour="layout-btn" className="d-inline-flex">
-                  <DropdownButton size="sm" variant="outline-secondary" title="Layout">
-                    <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
-                    <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
-                    <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
-                    <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
-                  </DropdownButton>
-                </span>
-                <span data-tour="deploy-btn" className="d-inline-flex">
-                  <Button
-                    size="sm"
-                    variant={detail.deployed ? "outline-warning" : "primary"}
-                    disabled={busy}
-                    onClick={handleDeployToggle}
-                    className="d-flex align-items-center gap-1"
-                  >
-                    {deployAction && <Loader2 size={14} className="kt-explorer-spin" />}
-                    {deployAction === "deploy"
-                      ? "Deploying…"
-                      : deployAction === "undeploy"
-                        ? "Undeploying…"
-                        : detail.deployed
-                          ? "Undeploy"
-                          : "Deploy"}
-                  </Button>
-                </span>
-                <span data-tour="download-btn" className="d-inline-flex">
-                  <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    disabled={busy}
-                    onClick={() => void handleDownload()}
-                  >
-                    Download
-                  </Button>
-                </span>
-                <span data-tour="delete-btn" className="d-inline-flex">
-                  <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
-                    Delete
-                  </Button>
-                </span>
+                      <Dropdown.Item disabled={busy} onClick={() => void handleDownload()}>
+                        Download
+                      </Dropdown.Item>
+                      <Dropdown.Item className="text-danger" disabled={busy} onClick={() => void handleDelete()}>
+                        Delete
+                      </Dropdown.Item>
+                    </DropdownButton>
+                    {/* Kept in the DOM (display:none, so zero-size) rather than omitted: the
+                        onboarding tour looks these up by data-tour and already treats a zero-size
+                        target as "skip to next step" (see OnboardingTour.tsx), so a tour run at a
+                        narrow width steps past them instead of getting stuck on a selector that
+                        matches nothing. */}
+                    <span data-tour="terminal-btn" style={{ display: "none" }} />
+                    <span data-tour="layout-btn" style={{ display: "none" }} />
+                    <span data-tour="deploy-btn" style={{ display: "none" }} />
+                    <span data-tour="download-btn" style={{ display: "none" }} />
+                    <span data-tour="delete-btn" style={{ display: "none" }} />
+                  </>
+                ) : (
+                  <>
+                    <span data-tour="terminal-btn" className="d-inline-flex">
+                      <DropdownButton
+                        size="sm"
+                        variant="outline-secondary"
+                        title="+ Terminal"
+                        disabled={!runningMachines.length}
+                      >
+                        {runningMachines.map((m) => (
+                          <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
+                            {m.name}
+                          </Dropdown.Item>
+                        ))}
+                      </DropdownButton>
+                    </span>
+                    <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
+                      Close All Terminals
+                    </Button>
+                    <span data-tour="layout-btn" className="d-inline-flex">
+                      <DropdownButton size="sm" variant="outline-secondary" title="Layout">
+                        <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
+                        <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
+                        <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
+                        <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
+                      </DropdownButton>
+                    </span>
+                    <span data-tour="deploy-btn" className="d-inline-flex">
+                      <Button
+                        size="sm"
+                        variant={detail.deployed ? "outline-warning" : "primary"}
+                        disabled={busy}
+                        onClick={handleDeployToggle}
+                        className="d-flex align-items-center gap-1"
+                      >
+                        {deployAction && <Loader2 size={14} className="kt-explorer-spin" />}
+                        {deployAction === "deploy"
+                          ? "Deploying…"
+                          : deployAction === "undeploy"
+                            ? "Undeploying…"
+                            : detail.deployed
+                              ? "Undeploy"
+                              : "Deploy"}
+                      </Button>
+                    </span>
+                    <span data-tour="download-btn" className="d-inline-flex">
+                      <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        disabled={busy}
+                        onClick={() => void handleDownload()}
+                      >
+                        Download
+                      </Button>
+                    </span>
+                    <span data-tour="delete-btn" className="d-inline-flex">
+                      <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
+                        Delete
+                      </Button>
+                    </span>
+                  </>
+                )}
               </div>
             </>
           ) : (
