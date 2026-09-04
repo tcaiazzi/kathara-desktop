@@ -94,14 +94,14 @@
 
       // KEEP IN SYNC with the BootPhase union in main.ts. Order matters: it's the ladder below.
       const MAIN_PHASES = ["environment", "frontend", "docker", "python", "backend"];
-      const INSTALL_PHASES = ["install-venv", "install-pip", "install-wheel"];
+      const INSTALL_PHASES = ["install-prepare", "install-pip", "install-wheel"];
       const PHASE_LABEL = {
         environment: "Reading your shell environment",
         frontend: "Preparing the interface",
         docker: "Contacting Docker",
         python: "Looking for Python and the Kathara packages",
         backend: "Starting the local Kathara API",
-        "install-venv": "Creating a private Python environment",
+        "install-prepare": "Preparing the Python environment",
         "install-pip": "Updating pip",
         "install-wheel": "Installing Kathara and the Kathara API",
       };

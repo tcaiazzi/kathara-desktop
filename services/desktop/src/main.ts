@@ -39,7 +39,7 @@ import {
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { defaultLabsDir, labsDir, packagedVenvPython, resolveStaticDir } from "./paths";
+import { defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
 import { readPrefs, writePrefs } from "./prefs";
 import { runPreflight, type Check, type Preflight, type PreflightProgress } from "./prereqs";
 import { checkForUpdate } from "./updateCheck";
@@ -96,7 +96,7 @@ export type BootPhase =
   | "docker"          // `docker info` round trip to the daemon
   | "python"          // interpreter discovery + the import probe
   | "backend"         // spawning uvicorn and waiting for /api/health
-  | "install-venv"
+  | "install-prepare"
   | "install-pip"
   | "install-wheel";
 
@@ -200,16 +200,34 @@ const PREFLIGHT_PHASE_MESSAGE: Record<"docker" | "python", string> = {
 };
 
 const INSTALL_PHASE: Record<InstallStep, BootPhase> = {
-  venv: "install-venv",
+  prepare: "install-prepare",
   pip: "install-pip",
   wheel: "install-wheel",
 };
 
 const INSTALL_MESSAGE: Record<InstallStep, string> = {
-  venv: "Creating a private Python environment…",
+  prepare: "Preparing the Python environment…",
   pip: "Updating pip…",
   wheel: "Installing Kathara and the Kathara API — this can take several minutes…",
 };
+
+/**
+ * The checks a bundled-wheel install can actually fix (install.ts). A failure outside this set —
+ * Docker, Python itself, the bundled UI — is something the app deliberately doesn't install its
+ * way out of, and is the difference between "install this automatically" and "ask the user".
+ * KEEP IN SYNC with the `installable` list in setup.html, which decides whether the button that
+ * runs the same install by hand is offered.
+ */
+const INSTALLABLE: ReadonlySet<Check["id"]> = new Set<Check["id"]>([
+  "kathara_api",
+  "kathara",
+  "uvicorn",
+  "dependencies",
+]);
+
+/** One automatic install per app run. A second attempt would re-download exactly what just
+ * failed; past the first, "Install missing packages" on the setup page is the retry. */
+let autoInstallAttempted = false;
 
 const INSTALL_TAIL_LINES = 12;
 
@@ -224,6 +242,34 @@ function appendInstallTail(tail: string[], chunk: string): string[] {
     .map((l) => l.trim())
     .filter(Boolean);
   return [...tail, ...lines].slice(-INSTALL_TAIL_LINES);
+}
+
+/**
+ * Runs the bundled-wheel install (install.ts), threading its progress into the status the setup
+ * page polls: the phase ladder plus a live tail of pip's own output, since the wheel step can run
+ * for minutes on a cold PyPI download.
+ *
+ * Shared by the two ways an install starts — startup()'s automatic attempt and the setup page's
+ * button — so both report identically and both leave the caller to decide what happens next.
+ */
+async function runInstall(systemPython: string): Promise<{ ok: boolean; error?: string }> {
+  bootStartedAt = Date.now();
+  // Seeds the checks setPhase carries forward with the full list from the preflight that led
+  // here — preflight's own onProgress only ever accumulated up to the docker+python checks, not
+  // the later kathara_api/kathara/uvicorn/dependencies/frontend ones, and the page still wants to
+  // show the whole list (what's being fixed) alongside the install output.
+  bootChecks = lastPreflight?.checks ?? [];
+  let tail: string[] = [];
+  const result = await runAutoInstall(systemPython, ({ step, line }: InstallProgress) => {
+    if (line) tail = appendInstallTail(tail, line);
+    setPhase(INSTALL_PHASE[step], INSTALL_MESSAGE[step], { output: tail.join("\n") });
+  });
+  if (!result.ok) log(`install failed: ${result.error}`);
+  // No writePrefs of the interpreter that was just installed into: prereqs.ts's
+  // pythonCandidates() already probes both possible targets (the bundled interpreter and the
+  // private venv), so the next preflight finds whichever one this filled in — without an
+  // automatic action quietly overwriting an interpreter the user chose by hand.
+  return result;
 }
 
 /**
@@ -252,12 +298,58 @@ async function startup(resumePath?: string): Promise<void> {
     setPhase(p.phase, PREFLIGHT_PHASE_MESSAGE[p.phase], { checks: p.checks }));
   lastPreflight = preflight;
   if (!preflight.ok || !preflight.python || !staticDir) {
+    // Nothing is missing except packages this app ships a wheel for, so install them instead of
+    // parking on the setup page waiting for a click. That click used to be the only thing between
+    // a fresh machine and a working app, and — now that the packages live inside the bundled
+    // interpreter, which an app update replaces wholesale (install.ts) — it would also come back
+    // after every update, asking the user to authorise the one thing the app can do by itself.
+    if (
+      app.isPackaged &&
+      staticDir &&
+      preflight.systemPython &&
+      !autoInstallAttempted &&
+      preflight.checks.every((c) => c.ok || INSTALLABLE.has(c.id))
+    ) {
+      autoInstallAttempted = true;
+      log("preflight: only installable packages are missing — installing them automatically");
+      // At cold start the splash is still on screen, and this install owns the next few minutes:
+      // the setup page is where its ladder and live pip output are visible.
+      showSetup(win);
+      const result = await runInstall(preflight.systemPython);
+      if (result.ok) {
+        // Guarded by autoInstallAttempted, so this recursion is one level deep at most.
+        await startup(resumePath);
+        return;
+      }
+      setStatus({
+        state: "prereq-failed",
+        checks: preflight.checks,
+        notice: `Kathara IDE tried to install the missing packages by itself and couldn't: ${result.error ?? "unknown error"}. Open the log for the full output, then try again.`,
+      });
+      return;
+    }
     setStatus({ state: "prereq-failed", checks: preflight.checks });
     // Not just for the cold start (where this page is already up): status:retry, setLabsDir and
     // elevation:drop all reach here after stopBackend(), so without this the window would sit on
     // a dead http://127.0.0.1:<old port> origin with no way back.
     showSetup(win);
     return;
+  }
+
+  // The app's own environment works but isn't the backend this build ships — an update replaced
+  // the bundled interpreter and left the previous release's private venv standing (see
+  // Preflight.stale). Reinstall once, then start; if the install fails, start anyway rather than
+  // stranding the user on the setup page over a mismatch they can't act on.
+  if (app.isPackaged && preflight.stale && preflight.systemPython && !autoInstallAttempted) {
+    autoInstallAttempted = true;
+    log("preflight: the environment found predates this build — installing the backend it ships");
+    showSetup(win);
+    const result = await runInstall(preflight.systemPython);
+    if (result.ok) {
+      await startup(resumePath);
+      return;
+    }
+    log("continuing with the environment already present");
   }
 
   setPhase("backend", "Starting the local Kathara API…", { checks: preflight.checks });
@@ -390,42 +482,24 @@ function registerIpc(): void {
     return chosen;
   });
 
-  // Driven from the setup page's "Install automatically" button: installs kathara-api-rest
-  // (and its transitive kathara/uvicorn deps) into a private venv using whatever system Python
-  // preflight found, then re-runs startup() so a successful install proceeds straight to "ready".
+  // Driven from the setup page's "Install missing packages" button — the manual entry to the
+  // same install startup() runs by itself when everything missing is installable. Reachable when
+  // that automatic attempt already ran and failed, or when it was skipped because something the
+  // app can't install (Docker) was failing too and has since been fixed.
   ipcMain.handle("status:install", async () => {
     const systemPython = lastPreflight?.systemPython;
     if (!systemPython) return { ok: false, error: "no usable Python interpreter found" };
-    log("running automatic install");
-    bootStartedAt = Date.now();
-    // Seeds the checks setPhase carries forward below with the full list from the preflight that
-    // led here — its own onProgress only ever accumulated up to the docker+python checks, not the
-    // later kathara_api/kathara/uvicorn/frontend ones, and the page still wants to show the whole
-    // list (what's being fixed) alongside the install output.
-    bootChecks = lastPreflight?.checks ?? [];
-    let tail: string[] = [];
-    const result = await runAutoInstall(systemPython, ({ step, line }: InstallProgress) => {
-      if (line) tail = appendInstallTail(tail, line);
-      setPhase(INSTALL_PHASE[step], INSTALL_MESSAGE[step], { output: tail.join("\n") });
-    });
+    log("running install requested from the setup page");
+    const result = await runInstall(systemPython);
     if (result.ok) {
-      // Point the app at the venv install.ts just created — otherwise the next preflight probes
-      // the same interpreter as before (which was never installed into) and reports the exact
-      // same "missing" checks, as if nothing happened.
-      const venvPython = packagedVenvPython();
-      if (venvPython) {
-        writePrefs({ pythonPath: venvPython });
-        log(`python interpreter set to ${venvPython}`);
-      }
       await startup();
     } else {
-      log(`automatic install failed: ${result.error}`);
       // Previously just logged: the page's own static "Install failed: …" line (setup.html) was
       // immediately overwritten by the next poll's refresh(), so the user saw nothing.
       setStatus({
         state: "prereq-failed",
         checks: lastPreflight?.checks ?? [],
-        notice: `Automatic installation failed: ${result.error ?? "unknown error"}. Open the log for the full output.`,
+        notice: `Installation failed: ${result.error ?? "unknown error"}. Open the log for the full output.`,
       });
     }
     return result;

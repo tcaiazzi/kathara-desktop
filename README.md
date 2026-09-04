@@ -44,13 +44,13 @@ An Electron shell in `services/desktop`. It supervises a local backend and loads
 there is no Compose stack to start and no browser tab to keep track of.
 
 A packaged build **bundles its own Python interpreter** (fetched at build time by
-`services/desktop/scripts/fetch-python.mjs`), so the user needs no system Python; it seeds a
-private virtualenv under the app's user-data directory and installs the bundled
-`kathara-api-rest` wheel into it. Docker and Kathara are **not** bundled — those it drives from
+`services/desktop/scripts/fetch-python.mjs`), so the user needs no system Python: on first run it
+installs the bundled `kathara-api-rest` wheel straight into that interpreter, by itself, and
+shows the progress while it does. Docker and Kathara are **not** bundled — those it drives from
 what is installed on the machine. On startup it runs a preflight (Docker, Python 3.10+,
-`kathara-api-rest`, Kathara, uvicorn, the bundled UI) and, if something is missing, shows what
-to install instead of a blank window. The lab storage is per user
-(`~/.config/kathara-ide/labs` on Linux).
+`kathara-api-rest`, Kathara, uvicorn, its dependency closure, the bundled UI); anything it can
+install it installs, and anything it can't it explains instead of showing a blank window. The lab
+storage is per user (`~/.config/kathara-ide/labs` on Linux).
 
 ### Running from a checkout
 

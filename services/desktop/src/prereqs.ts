@@ -3,16 +3,16 @@
  *
  * The desktop app deliberately does not bundle Docker: it drives whatever is installed on the
  * machine. Python is different: a packaged build ships its own interpreter (bundledPythonPath(),
- * a python-build-standalone build with no packages installed) plus kathara-api-rest's own wheel,
- * and can create a private venv and install kathara/uvicorn/etc. into it itself (see install.ts,
- * driven from the setup page's "Install automatically" button) — so a packaged app never actually
- * requires a system Python, only Docker. A missing dependency is still the most likely first-run
- * failure on a dev checkout (which has no bundled interpreter), so each check reports a remedy the
- * user can act on instead of a blank window.
+ * a python-build-standalone build carrying no packages of its own) plus kathara-api-rest's wheel,
+ * and installs kathara/uvicorn/etc. into that interpreter itself (see install.ts, which main.ts
+ * runs automatically the moment these checks find nothing missing but packages) — so a packaged
+ * app never actually requires a system Python, only Docker. A dev checkout has neither the
+ * bundled interpreter nor the wheel, so there a missing package is still the user's to install,
+ * and each check reports a remedy they can act on instead of a blank window.
  */
 import { execFile } from "node:child_process";
 import { app } from "electron";
-import { bundledPythonPath, devVenvPython } from "./paths";
+import { bundledPythonPath, bundledWheelVersion, devVenvPython, packagedVenvPython } from "./paths";
 import { readPrefs } from "./prefs";
 import { log } from "./logger";
 
@@ -43,10 +43,24 @@ export interface Preflight {
   python?: string;
   /**
    * The Python 3.10+ interpreter found, if any — set even when kathara_api/kathara/uvicorn are
-   * missing (unlike `python` above, which requires every check to pass). This is what a packaged
-   * app's "Install automatically" button (install.ts's runAutoInstall) creates a venv with.
+   * missing (unlike `python` above, which requires every check to pass). This is what install.ts's
+   * runAutoInstall installs with (and, on the fallback path, creates its venv with).
    */
   systemPython?: string;
+  /**
+   * Every check passed, but on an environment the *app itself* owns (the bundled interpreter or
+   * its private venv) carrying a different kathara-api-rest version than this build ships.
+   *
+   * The case this exists for: an app update replaces the bundled interpreter, packages and all,
+   * while the private venv beside it survives — so the previous release's backend is sitting
+   * there, complete and importable, ready to be picked and paired with the new frontend. Nothing
+   * else notices, because "works" and "is the version this app shipped" are different questions.
+   * main.ts reinstalls once when this is set, and carries on with what's there if that fails —
+   * a version-skewed backend still beats no app. An interpreter the *user* pointed at is never
+   * reported stale: that choice is deliberate (a checkout under active development, typically)
+   * and outranks the shipped wheel by design.
+   */
+  stale?: boolean;
 }
 
 const EXEC_TIMEOUT_MS = 15_000;
@@ -171,14 +185,27 @@ function atLeast310(version: string): boolean {
 
 /**
  * Interpreters to try, best first: an explicit user choice always wins, then a dev checkout's
- * virtualenv, then the interpreter bundled with a packaged app (so a packaged app never falls
- * through to PATH in practice), then PATH as a last resort. `py -3` is omitted because it is a
- * launcher, not an interpreter path, and the backend has to be spawned by path later anyway.
+ * virtualenv, then a packaged app's own private venv, then the interpreter bundled with a
+ * packaged app (so a packaged app never falls through to PATH in practice), then PATH as a last
+ * resort. `py -3` is omitted because it is a launcher, not an interpreter path, and the backend
+ * has to be spawned by path later anyway.
+ *
+ * Both of the app's own install targets are here (`packagedVenvPython()`, `bundledPythonPath()`)
+ * and that is now the only thing that points the app at what it installed — main.ts deliberately
+ * doesn't record it in `preferences.json`, so an automatic install never overwrites an interpreter
+ * the user chose by hand. Before that, the recorded preference was the *only* route to the private
+ * venv, and a preference aimed anywhere else (or a reset `preferences.json`) left a perfectly good
+ * `<userData>/venv` invisible while the app asked to install what it had already installed. Both
+ * come after the preference, so an explicit choice still outranks them — it only has to *work*, or
+ * runPreflight falls through to these.
  */
 function pythonCandidates(): string[] {
-  const candidates = [readPrefs().pythonPath, devVenvPython(), bundledPythonPath()].filter(
-    (c): c is string => Boolean(c),
-  );
+  const candidates = [
+    readPrefs().pythonPath,
+    devVenvPython(),
+    packagedVenvPython(),
+    bundledPythonPath(),
+  ].filter((c): c is string => Boolean(c));
   candidates.push(...(process.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"]));
   return [...new Set(candidates)];
 }
@@ -191,28 +218,41 @@ export async function runPreflight(
   const docker = await checkDocker();
   onProgress?.({ phase: "python", checks: [docker] });
 
-  // Three tiers, best first: an interpreter the backend actually imports in, one that has the
-  // API package but an incomplete dependency closure, and finally any usable Python at all. The
-  // middle tier is why this isn't a single "has kathara_api" test — an interpreter whose
-  // environment predates a declared dependency must lose to a complete one, and when it's all
-  // there is, reporting it lets the checks below name the missing module instead of the much
-  // less useful "no Python found".
-  let chosen: { interpreter: string; result: Probe } | null = null;
-  let incomplete: { interpreter: string; result: Probe } | null = null;
-  let fallback: { interpreter: string; result: Probe } | null = null;
+  // Four tiers, best first: an interpreter the backend actually imports in *and* whose backend is
+  // the one this build ships; one it imports in, but from an app-owned environment left behind by
+  // an earlier release (see Preflight.stale); one that has the API package but an incomplete
+  // dependency closure; and finally any usable Python at all. The last two are why this isn't a
+  // single "has kathara_api" test — an interpreter whose environment predates a declared
+  // dependency must lose to a complete one, and when it's all there is, reporting it lets the
+  // checks below name the missing module instead of the much less useful "no Python found".
+  type Found = { interpreter: string; result: Probe };
+  let chosen: Found | null = null;
+  let stale: Found | null = null;
+  let incomplete: Found | null = null;
+  let fallback: Found | null = null;
+
+  // The two environments this app installs into itself (install.ts) — the only ones whose version
+  // is the app's business — and the version it would install into them. Both empty on a dev
+  // checkout, which has neither a bundled interpreter nor a wheel, so nothing is ever stale there.
+  const appOwned = [packagedVenvPython(), bundledPythonPath()].filter((c): c is string => Boolean(c));
+  const shipped = bundledWheelVersion();
 
   for (const interpreter of pythonCandidates()) {
     const result = await probe(interpreter);
     if (!result || !atLeast310(result.python)) continue;
     if (result.kathara_api && result.dependencies) {
-      chosen = { interpreter, result };
-      break;
+      if (!shipped || !appOwned.includes(interpreter) || result.kathara_api === shipped) {
+        chosen = { interpreter, result };
+        break;
+      }
+      stale ??= { interpreter, result };
+      continue;
     }
     if (result.kathara_api) incomplete ??= { interpreter, result };
     else fallback ??= { interpreter, result };
   }
 
-  const found = chosen ?? incomplete ?? fallback;
+  const found = chosen ?? stale ?? incomplete ?? fallback;
   const checks: Check[] = [docker];
 
   if (!found) {
@@ -308,6 +348,16 @@ export async function runPreflight(
   });
 
   const ok = checks.every((c) => c.ok);
+  const isStale = ok && !chosen && found !== null && found === stale;
+  if (isStale) {
+    log(`preflight: ${found?.interpreter} carries kathara-api-rest ${found?.result.kathara_api}, this build ships ${shipped}`);
+  }
   log(`preflight ${ok ? "passed" : "failed"}: ${checks.map((c) => `${c.id}=${c.ok}`).join(" ")}`);
-  return { ok, checks, python: ok ? found?.interpreter : undefined, systemPython: found?.interpreter };
+  return {
+    ok,
+    checks,
+    python: ok ? found?.interpreter : undefined,
+    systemPython: found?.interpreter,
+    stale: isStale,
+  };
 }

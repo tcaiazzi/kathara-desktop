@@ -140,8 +140,10 @@ export function devVenvPython(): string | null {
 }
 
 /**
- * Where a packaged app's auto-installed venv lives: under userData, not inside the installed
- * app bundle (read-only once signed/packaged on most platforms, and wiped on reinstall/update).
+ * Where a packaged app's auto-installed venv lives: under userData, not inside the installed app
+ * bundle. install.ts's fallback target, for the installations where the bundled interpreter can't
+ * be written into — see bundledPythonDir() for which those are, and install.ts's header for why
+ * surviving a reinstall/update is a liability here rather than the feature it looks like.
  */
 export function packagedVenvDir(): string {
   return path.join(app.getPath("userData"), "venv");
@@ -160,19 +162,31 @@ export function packagedVenvPython(): string | null {
 /**
  * The Python interpreter shipped inside the app (a python-build-standalone `install_only_stripped`
  * build, fetched at CI build time by scripts/fetch-python.mjs and shipped as an arch-scoped
- * extraResource — see electron-builder.yml). Has no packages installed; it only exists so
- * prereqs.ts's pythonCandidates() always finds *some* usable ≥3.10 interpreter to seed
- * `<userData>/venv` with (install.ts), without requiring the user to have Python at all. Packaged
- * only: a dev checkout keeps using devVenvPython()/PATH, same as before.
+ * extraResource — see electron-builder.yml). Arrives with no packages beyond pip, and is where
+ * install.ts puts the backend, so a packaged app needs no system Python at all. Packaged only: a
+ * dev checkout keeps using devVenvPython()/PATH, same as before.
  */
 export function bundledPythonPath(): string | null {
-  if (!app.isPackaged) return null;
-  const candidate = path.join(
-    process.resourcesPath,
-    "python",
-    process.platform === "win32" ? "python.exe" : "bin/python3",
-  );
+  const root = bundledPythonDir();
+  if (!root) return null;
+  const candidate = path.join(root, process.platform === "win32" ? "python.exe" : "bin/python3");
   return fs.existsSync(candidate) ? candidate : null;
+}
+
+/**
+ * The root of that bundled interpreter's tree — the directory its `site-packages` lives under.
+ *
+ * Separate from the interpreter path because install.ts installs *into* it (that's the whole
+ * point of shipping an interpreter: the packages land in the app, not in a second environment
+ * beside it) and so has to answer a question the interpreter path can't: whether this
+ * installation is somewhere writable. Where it isn't — an AppImage's read-only squashfs, a
+ * root-owned /opt from the .deb/.rpm, a Program Files directory chosen in the NSIS installer —
+ * install.ts falls back to the private venv under `userData`.
+ */
+export function bundledPythonDir(): string | null {
+  if (!app.isPackaged) return null;
+  const root = path.join(process.resourcesPath, "python");
+  return fs.existsSync(root) ? root : null;
 }
 
 /**
@@ -186,4 +200,22 @@ export function bundledWheelPath(): string | null {
   const dir = path.join(process.resourcesPath, "vendor");
   const wheel = fs.existsSync(dir) ? fs.readdirSync(dir).find((f) => f.endsWith(".whl")) : undefined;
   return wheel ? path.join(dir, wheel) : null;
+}
+
+/**
+ * The kathara-api-rest version that wheel *is* — read out of its filename, which PEP 427 fixes as
+ * `<name>-<version>-<python tag>-<abi tag>-<platform tag>.whl`.
+ *
+ * This, not `app.getVersion()`, is what prereqs.ts compares an installed environment against
+ * (Preflight.stale): the wheel is the thing install.ts installs, so it's the only honest answer to
+ * "is this the backend this build ships". `app.getVersion()` comes from services/desktop's own
+ * package.json, a second version that happens to be bumped alongside the Python package's — and
+ * the one launch in which the two disagreed would have every startup reinstalling a backend that
+ * was already correct.
+ */
+export function bundledWheelVersion(): string | null {
+  const wheel = bundledWheelPath();
+  if (!wheel) return null;
+  const version = path.basename(wheel).split("-")[1];
+  return version || null;
 }

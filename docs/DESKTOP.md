@@ -19,13 +19,16 @@ for how to run and build it; this document covers the "why" behind its behaviour
   per-user lab directory.
 
 Which interpreter runs it is decided by `prereqs.ts`'s `pythonCandidates()`, best first: an
-interpreter the user picked explicitly (`preferences.json`), a dev checkout's `.venv`, the one
-**bundled inside a packaged app** (`paths.ts`'s `bundledPythonPath()` → `resources/python/`,
-put there at build time by `scripts/fetch-python.mjs` — so a packaged app needs no system
-Python), then `PATH` as a last resort. On a packaged build the backend itself lives in a
-private virtualenv under the app's user-data directory, which `install.ts` creates on first run
-by `pip install`ing the bundled `kathara-api-rest` wheel (`paths.ts`'s `bundledWheelPath()` →
-`resources/vendor/*.whl`) into it.
+interpreter the user picked explicitly (`preferences.json`), a dev checkout's `.venv`, a
+packaged app's own private virtualenv (`packagedVenvPython()`), the one **bundled inside a
+packaged app** (`paths.ts`'s `bundledPythonPath()` → `resources/python/`, put there at build
+time by `scripts/fetch-python.mjs` — so a packaged app needs no system Python), then `PATH` as a
+last resort.
+
+A candidate is only accepted if it actually satisfies the checks, so the list is a fallback
+chain, not just a priority order: an interpreter that imports `kathara_api` but not
+`kathara_api.main` (an environment installed before a dependency was declared) loses to one that
+imports both, which is how a stale explicit preference stops being a dead end.
 
 `main.ts` then spawns `uvicorn` with that command, waits for `/api/health`, and loads
 `http://127.0.0.1:<port>/`. Because the UI is served over HTTP from the same origin as the
@@ -45,6 +48,30 @@ Elevated (root) backend starts and orphan-backend recovery go through the same
 > Running `npm start` from a terminal **inside VS Code** works, but note that VS Code exports
 > `ELECTRON_RUN_AS_NODE=1`; `services/desktop/scripts/start.mjs` strips it before launching,
 > because with it set Electron runs as plain Node and never opens a window.
+
+## Installing the backend into the app
+
+On a packaged build the backend is `pip install`ed **into the bundled interpreter itself**
+(`install.ts`, from `paths.ts`'s `bundledWheelPath()` → `resources/vendor/*.whl`), so the app's
+Python environment is one thing an update replaces wholesale, packages included. The private
+virtualenv under the user-data directory is the fallback for installations where writing into the
+app is not possible — an AppImage's read-only squashfs, a root-owned `/opt` from the `.deb`/`.rpm`,
+a Program Files directory chosen in the NSIS installer, and every macOS build, where adding files
+under `Contents/Resources` invalidates the ad-hoc signature `afterPack` applies and Apple Silicon
+then refuses to launch the app at all. `install.ts` decides by probing with a real write.
+
+`main.ts` runs that install **by itself**, no click, whenever preflight's only failures are
+checks the wheel can fix (`kathara_api`/`kathara`/`uvicorn`/`dependencies` — never Docker, Python
+itself or the bundled UI), and once more when the environment it found *works* but carries a
+different `kathara-api-rest` version than the wheel this build ships (`Preflight.stale`) — the
+skew an update produces when it replaces the bundled interpreter and the previous release's
+virtualenv survives beside it. Both are capped at one attempt per app run; past that, the setup
+page's "Install missing packages" button is the retry. A stale environment that fails to
+reinstall still starts: a version-skewed backend beats no app.
+
+Neither path writes the interpreter into `preferences.json` — `pythonCandidates()` probes both
+install targets already, so an automatic action never has to overwrite a choice the user made by
+hand.
 
 ## Building installers
 
