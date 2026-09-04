@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import __version__
-from .config import get_settings
+from .config import format_mb, get_settings
 from .dependencies import get_service, is_origin_allowed, require_auth_token
 from .errors import ForbiddenOriginError, register_exception_handlers
 from .routers import exec as exec_router
@@ -82,6 +82,42 @@ def create_app() -> FastAPI:
             return JSONResponse(
                 status_code=exc.status_code,
                 content=ErrorResponse(detail=str(exc), error_type=type(exc).__name__).model_dump(),
+            )
+        return await call_next(request)
+
+    # Cheap, early reject for the common case (a client that sends `Content-Length`, which every
+    # request this app's own frontend makes does). Not the real enforcement — that counts actual
+    # bytes lower down, per import (KatharaService._check_import_size, LabStore._read_bounded/
+    # _copy_with_cap — see E9), and still applies to a body sent without this header (chunked
+    # transfer) exactly as before. This only saves reading/parsing a request whose *declared* size
+    # alone already rules it out, e.g. before FastAPI buffers a multipart upload into memory.
+    #
+    # `max_bytes_per_lab` is read fresh on every request rather than computed once here: since it's
+    # now editable at runtime from the Settings page (KatharaService.update_settings, see E9's
+    # follow-up), baking it into this closure at app-build time would let this middleware keep
+    # enforcing a stale cap for the rest of the process's life after a Settings save.
+    @app.middleware("http")
+    async def _enforce_body_size(request: Request, call_next):
+        max_body_bytes = get_settings().max_bytes_per_lab + (1 << 20)  # headroom for JSON/multipart framing
+        content_length = request.headers.get("content-length")
+        if content_length is not None and content_length.isdigit() and int(content_length) > max_body_bytes:
+            # Drain the request body before responding. `curl` (and any client that sends `Expect:
+            # 100-continue`) stops sending as soon as it sees this response, but a browser's
+            # fetch()/XHR does not — it's still writing the (possibly multi-MB) upload to the
+            # socket. Responding and letting the connection close with that unread data still
+            # in-flight resets it out from under the browser, which then reports a generic
+            # "NetworkError"/"Failed to fetch" instead of ever surfacing this JSON body.
+            async for _ in request.stream():
+                pass
+            return JSONResponse(
+                status_code=413,
+                content=ErrorResponse(
+                    detail=(
+                        f"Request body is {format_mb(int(content_length))}, more than the "
+                        f"{format_mb(max_body_bytes)} this server allows."
+                    ),
+                    error_type="PayloadTooLargeError",
+                ).model_dump(),
             )
         return await call_next(request)
 

@@ -73,6 +73,18 @@ class ApiSettings(BaseSettings):
     # public repos are ever read, so a token needs no scopes.
     gallery_token: Optional[str] = None
 
+    # What a single lab is allowed to be, for every path that populates one from someone else's
+    # bytes: a gallery install (services/lab_gallery.py), a JSON import (KatharaService.import_lab)
+    # and a .zip upload (LabStore.extract_zip). One shared set of caps rather than one per path —
+    # a mis-set gallery_repo (or a hostile fork), an oversized JSON body, or a zip bomb are all the
+    # same failure mode: something that turns one request into a disk- or memory-filling write.
+    # The defaults match what the gallery import has enforced from the start; overridable because a
+    # *local* upload is the user's own content, not fetched from a repo — a course bundling a large
+    # binary or packet capture may need more room than upstream's own labs (tens of KB) ever would.
+    max_files_per_lab: int = 200
+    max_bytes_per_file: int = 5 * 1024 * 1024
+    max_bytes_per_lab: int = 20 * 1024 * 1024
+
     # Kathara settings applied via Setting.load_from_dict() before the first backend use.
     manager_type: Optional[str] = None
     default_image: Optional[str] = Field(default=None)
@@ -180,3 +192,10 @@ def get_settings() -> ApiSettings:
     if _settings is None:
         _settings = ApiSettings()
     return _settings
+
+
+def format_mb(num_bytes: int) -> str:
+    """Render a byte count the way an operator actually thinks about it, for the user-facing
+    max_bytes_per_file/max_bytes_per_lab messages (E9) — "1048676 bytes" isn't actionable,
+    "1.0 MB" is."""
+    return f"{num_bytes / (1024 * 1024):.1f} MB"

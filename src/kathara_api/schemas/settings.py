@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SystemInfo(BaseModel):
@@ -49,6 +49,16 @@ class SettingsView(BaseModel):
     remote_url: Optional[str] = None
     cert_path: Optional[str] = None
     network_plugin: Optional[str] = None
+    # This project's own upload/import caps (ApiSettings in config.py, see E9) — not a Kathara
+    # `Setting`/`DockerSettingsAddon` field at all, surfaced here purely so they share one editable
+    # page with everything else. Unlike every field above, a change here does NOT persist to
+    # Kathara's own settings file and does NOT survive a backend restart: it mutates the in-process
+    # `ApiSettings` singleton directly, and reverts to `KATHARA_API_MAX_*` (or the built-in default)
+    # the next time the process starts. That's an acceptable trade-off for a cap whose only purpose
+    # is bounding a single running process's memory/disk use, not a durable preference.
+    max_files_per_lab: Optional[int] = None
+    max_bytes_per_file: Optional[int] = None
+    max_bytes_per_lab: Optional[int] = None
 
     # A future/older Kathara version could plausibly add or drop an addon field; tolerate an
     # unknown key here (in the response we build ourselves) rather than fail the whole request —
@@ -80,6 +90,12 @@ class SettingsUpdate(BaseModel):
     GitHub for a release, and the frontend already never sends it back (see the comment in
     ``SettingsPage.tsx``'s submit handler) — modeling it here as a writable field would just be an
     invitation nothing currently uses correctly.
+
+    ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` are the odd ones out: they
+    are not Kathara settings at all, but this project's own upload/import caps (``ApiSettings`` in
+    config.py, see E9) — writable here purely so they live on the same page as everything else.
+    ``update_settings`` routes them to the ``ApiSettings`` singleton instead of
+    ``Setting.load_from_dict``; see that method's docstring.
     """
 
     manager_type: Optional[str] = None
@@ -98,5 +114,8 @@ class SettingsUpdate(BaseModel):
     image_update_policy: Optional[str] = None
     shared_cds: Optional[int] = None
     network_plugin: Optional[str] = None
+    max_files_per_lab: Optional[int] = Field(default=None, gt=0)
+    max_bytes_per_file: Optional[int] = Field(default=None, gt=0)
+    max_bytes_per_lab: Optional[int] = Field(default=None, gt=0)
 
     model_config = ConfigDict(extra="forbid")

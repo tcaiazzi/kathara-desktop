@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from Kathara.setting.Setting import Setting
 from pydantic import ValidationError
 
+from kathara_api.config import get_settings
 from kathara_api.dependencies import get_service
 from kathara_api.main import create_app
 from kathara_api.schemas.settings import SettingsUpdate, SettingsView
@@ -25,8 +26,15 @@ def _restore_device_shell():
     # test_settings_update.py's identical concern for manager_type) — restore what this file's one
     # mutating test (test_put_settings_with_a_known_field_still_works) changes.
     original = Setting.get_instance().device_shell
+    api_settings = get_settings()
+    original_limits = (
+        api_settings.max_files_per_lab,
+        api_settings.max_bytes_per_file,
+        api_settings.max_bytes_per_lab,
+    )
     yield
     Setting.get_instance().load_from_dict({"device_shell": original})
+    api_settings.max_files_per_lab, api_settings.max_bytes_per_file, api_settings.max_bytes_per_lab = original_limits
 
 
 def test_settings_update_accepts_every_known_field():
@@ -47,7 +55,17 @@ def test_settings_update_accepts_every_known_field():
         image_update_policy="Prompt",
         shared_cds=1,
         network_plugin="kathara/katharanp_vde",
+        max_files_per_lab=200,
+        max_bytes_per_file=5 * 1024 * 1024,
+        max_bytes_per_lab=20 * 1024 * 1024,
     )
+
+
+@pytest.mark.parametrize("key", ["max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_settings_update_rejects_non_positive_import_limits(key, value):
+    with pytest.raises(ValidationError):
+        SettingsUpdate(**{key: value})
 
 
 @pytest.mark.parametrize("key,value", [("remote_url", "tcp://evil:2375"), ("cert_path", "/tmp/x"), ("last_checked", 0)])
@@ -102,3 +120,28 @@ def test_put_settings_with_a_known_field_still_works(client_and_service):
     resp = client.put("/api/settings", json={"device_shell": "/bin/zsh"})
     assert resp.status_code == 200
     assert resp.json()["device_shell"] == "/bin/zsh"
+
+
+def test_get_settings_reflects_the_live_api_settings_import_limits(client_and_service):
+    # These three fields aren't Kathara settings — see get_settings_view's docstring — so this is
+    # the one place in this file where the response has to be checked against get_settings()
+    # rather than Setting.get_instance().
+    client, _service = client_and_service
+    api_settings = get_settings()
+    resp = client.get("/api/settings")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["max_files_per_lab"] == api_settings.max_files_per_lab
+    assert body["max_bytes_per_file"] == api_settings.max_bytes_per_file
+    assert body["max_bytes_per_lab"] == api_settings.max_bytes_per_lab
+
+
+def test_put_settings_updates_an_import_limit_on_the_live_api_settings_singleton(client_and_service):
+    # Unlike every other field this router accepts, this one is never handed to
+    # Setting.load_from_dict at all — it lands directly on the process-wide ApiSettings singleton
+    # that main.py's body-size middleware and LabStore.extract_zip already read fresh.
+    client, _service = client_and_service
+    resp = client.put("/api/settings", json={"max_files_per_lab": 7})
+    assert resp.status_code == 200
+    assert resp.json()["max_files_per_lab"] == 7
+    assert get_settings().max_files_per_lab == 7

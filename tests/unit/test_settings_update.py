@@ -3,6 +3,7 @@
 import pytest
 from Kathara.setting.Setting import Setting
 
+from kathara_api.config import get_settings
 from kathara_api.errors import SettingsLockedError
 from kathara_api.services.kathara_service import KatharaService
 
@@ -10,8 +11,24 @@ from kathara_api.services.kathara_service import KatharaService
 @pytest.fixture(autouse=True)
 def _restore_manager_type():
     original = Setting.get_instance().manager_type
+    api_settings = get_settings()
+    original_max_files = api_settings.max_files_per_lab
     yield
     Setting.get_instance().load_from_dict({"manager_type": original})
+    api_settings.max_files_per_lab = original_max_files
+
+
+def test_import_limit_keys_are_not_forwarded_to_kathara_setting():
+    # max_files_per_lab isn't a Kathara Setting/DockerSettingsAddon field — Setting.load_from_dict
+    # would silently `setattr` it anyway (no validation there), which would work by accident today
+    # but leave a ghost attribute nothing reads. It must land on ApiSettings instead.
+    service = KatharaService()
+    service._instance = object()
+
+    service.update_settings({"max_files_per_lab": 3})
+
+    assert get_settings().max_files_per_lab == 3
+    assert not hasattr(Setting.get_instance(), "max_files_per_lab")
 
 
 def test_non_manager_type_settings_update_freely_after_facade_init():

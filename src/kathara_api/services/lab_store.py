@@ -24,6 +24,7 @@ from typing import Any, BinaryIO, Optional, Union
 from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
+from ..config import format_mb, get_settings
 from ..errors import ApiError, LabAlreadyRegisteredError
 
 logger = logging.getLogger("kathara_api")
@@ -397,7 +398,13 @@ class LabStore:
         deliberate exception: it is stripped, and the lab root is re-anchored on whichever
         directory actually contains ``lab.conf``, so *paths* may shift even though every file's
         *bytes* never do.
+
+        Bounded against a zip bomb at every level (ApiSettings, config.py — the same caps a
+        gallery install and a JSON import enforce): the raw upload, the member count, and each
+        member's declared size (the realistic zip-bomb shape: an honest but highly compressible
+        payload) — plus, in ``_copy_with_cap``, the actual bytes written, as defense in depth.
         """
+        settings = get_settings()
         name = sanitize_lab_name(name)
         final = self.lab_dir(name)
         tmp = self._new_scratch_dir(name)
@@ -406,19 +413,39 @@ class LabStore:
             # FastAPI backs `UploadFile.file` with a `SpooledTemporaryFile`, which on Python < 3.11
             # has no `seekable()` (added in gh-95913) — zipfile's `_SharedFile` reads that attribute
             # unconditionally, so `zipfile.ZipFile(data)` crashes with an AttributeError on 3.10.
-            # BytesIO always satisfies the full file-like protocol, on every supported Python version.
-            with zipfile.ZipFile(io.BytesIO(data.read())) as archive:
-                for member in archive.infolist():
+            # BytesIO always satisfies the full file-like protocol, on every supported Python
+            # version — `_read_bounded` is what keeps this from being an unconditional full read.
+            raw = self._read_bounded(data, settings.max_bytes_per_lab)
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                members = archive.infolist()
+                if len(members) > settings.max_files_per_lab:
+                    raise ApiError(
+                        f"This archive has {len(members)} entries, more than the "
+                        f"{settings.max_files_per_lab} this import allows."
+                    )
+                written = 0
+                for member in members:
                     rel = member.filename.lstrip("/")
                     if not rel:
                         continue
                     if member.is_dir():
                         self._safe_join(tmp, rel).mkdir(parents=True, exist_ok=True)
                         continue
+                    if member.file_size > settings.max_bytes_per_file:
+                        # Fast pre-check on the archive's own declared size — real enforcement is
+                        # _copy_with_cap below, which counts bytes actually written instead of
+                        # trusting this field, but there's no reason to open+extract a member this
+                        # already rules out.
+                        raise ApiError(
+                            f"`{rel}` is {format_mb(member.file_size)}, more than the "
+                            f"{format_mb(settings.max_bytes_per_file)} this import allows."
+                        )
                     target = self._safe_join(tmp, rel)  # rejects zip-slip (../ escapes)
                     target.parent.mkdir(parents=True, exist_ok=True)
                     with archive.open(member) as src, open(target, "wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                        written += self._copy_with_cap(
+                            src, dst, rel, settings.max_bytes_per_file, written, settings.max_bytes_per_lab
+                        )
                     # The upper 16 bits of external_attr hold the Unix mode when the archive was
                     # created on a Unix system (create_system == 3); 0 there means "no permission
                     # bits recorded" (e.g. a Windows-authored zip), so leave the OS default alone.
@@ -534,6 +561,53 @@ class LabStore:
         if target != base_resolved and base_resolved not in target.parents:
             raise ApiError(f"Unsafe path in lab archive: {rel!r}")
         return target
+
+    @staticmethod
+    def _read_bounded(data: BinaryIO, cap: int) -> bytes:
+        """Read `data` fully, refusing once the total exceeds `cap` — bounds the whole upload
+        before ``zipfile`` ever sees it, rather than trusting the archive's own idea of its size
+        (an empty/near-empty read fully into memory is exactly the shape of a zip bomb's input).
+        """
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = data.read(1 << 20)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > cap:
+                raise ApiError(f"Upload is larger than the {format_mb(cap)} this import allows.")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    @staticmethod
+    def _copy_with_cap(src: BinaryIO, dst: BinaryIO, rel: str, per_file_cap: int, written_so_far: int, total_cap: int) -> int:
+        """Copy `src` into `dst` in chunks, returning the byte count actually written.
+
+        Checked against bytes actually read off the stream, not `ZipInfo.file_size` (the archive's
+        own *declared* uncompressed size, already checked as a fast pre-check before this even
+        runs, so a genuinely-large member — the realistic zip-bomb shape: an honest, highly
+        compressible payload — is already rejected before extraction starts). Counting real bytes
+        here anyway is defense in depth against that declared size and the real output ever
+        disagreeing, by whatever means — verified that a *plain* undersized `file_size` isn't
+        actually such a means: `zipfile.ZipExtFile.read` already enforces it and raises
+        `BadZipFile` (a CRC mismatch) as soon as the real stream turns out longer, before handing
+        back a single extra byte. `written_so_far` carries the running total across every member
+        already extracted, so the cumulative per-lab cap can't be defeated by many small files
+        each individually under `per_file_cap`.
+        """
+        written = 0
+        while True:
+            chunk = src.read(1 << 20)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > per_file_cap:
+                raise ApiError(f"`{rel}` is larger than the {format_mb(per_file_cap)} this import allows.")
+            if written_so_far + written > total_cap:
+                raise ApiError(f"This archive is larger than the {format_mb(total_cap)} this import allows.")
+            dst.write(chunk)
+        return written
 
     @staticmethod
     def _find_lab_root(base: Path) -> Path:

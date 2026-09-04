@@ -47,6 +47,13 @@ export interface SettingsView {
   remote_url?: string | null;
   cert_path?: string | null;
   network_plugin?: string;
+  // This app's own upload/import caps (ApiSettings, see E9), not a Kathara setting — surfaced here
+  // so they share this page, but a change here does NOT persist past a backend restart (unlike
+  // every field above), since it mutates the in-process ApiSettings singleton, not Kathara's own
+  // settings file.
+  max_files_per_lab?: number;
+  max_bytes_per_file?: number;
+  max_bytes_per_lab?: number;
 }
 
 export type SettingsUpdate = Partial<Omit<SettingsView, "last_checked" | "remote_url" | "cert_path">>;

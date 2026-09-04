@@ -33,6 +33,10 @@ class _FakeSettings:
         self.gallery_section = section
         self.gallery_cache_ttl = 900
         self.gallery_token = None
+        # Same defaults as ApiSettings (config.py) — see E9.
+        self.max_files_per_lab = 200
+        self.max_bytes_per_file = 5 * 1024 * 1024
+        self.max_bytes_per_lab = 20 * 1024 * 1024
 
     def gallery_slug(self):
         return self.gallery_repo
@@ -371,8 +375,12 @@ def test_install_gallery_lab_rolls_back_directory_on_parse_error(tmp_path, monke
 
 
 def test_install_gallery_lab_enforces_the_file_count_cap(tmp_path, monkeypatch):
-    _install_fake_repo(monkeypatch, _TREE, _FILES)
-    monkeypatch.setattr(lab_gallery, "MAX_FILES_PER_LAB", 1)
+    # The cap now lives on ApiSettings (shared with the JSON-import/zip-upload paths — see E9),
+    # not a module constant of lab_gallery's own — set it on the fake settings double that
+    # _install_fake_repo wires in, not the real process-global singleton.
+    settings = _FakeSettings()
+    settings.max_files_per_lab = 1
+    _install_fake_repo(monkeypatch, _TREE, _FILES, settings=settings)
     service = _service(tmp_path)
 
     with pytest.raises(GalleryUnavailableError):
@@ -382,8 +390,9 @@ def test_install_gallery_lab_enforces_the_file_count_cap(tmp_path, monkeypatch):
 
 
 def test_install_gallery_lab_enforces_the_per_file_size_cap(tmp_path, monkeypatch):
-    _install_fake_repo(monkeypatch, _TREE, _FILES)
-    monkeypatch.setattr(lab_gallery, "MAX_BYTES_PER_FILE", 4)  # smaller than "echo hi\n"
+    settings = _FakeSettings()
+    settings.max_bytes_per_file = 4  # smaller than "echo hi\n"
+    _install_fake_repo(monkeypatch, _TREE, _FILES, settings=settings)
     service = _service(tmp_path)
 
     with pytest.raises(GalleryUnavailableError):

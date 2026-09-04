@@ -45,7 +45,7 @@ from Kathara.utils import is_admin
 from Kathara.webhooks.DockerHubApi import DockerHubApi
 from pydantic import ValidationError
 
-from ..config import get_settings
+from ..config import format_mb, get_settings
 from ..errors import (
     ApiError,
     BinaryFileError,
@@ -72,6 +72,34 @@ logger = logging.getLogger("kathara_api")
 # Configuration tab's tree root. Structurally impossible for a real device to collide with: device
 # names are validated against MACHINE_NAME_PATTERN (schemas/machine.py), which is lowercase-only.
 ROOT_MACHINE = "ROOT"
+
+
+def _check_import_size(files: dict[str, str]) -> None:
+    """Enforce the same file-count/size caps a gallery install already has (ApiSettings, config.py)
+    on a JSON import's ``files`` — already fully in memory as parsed request-body strings by the
+    time this runs, so this only stops an oversized import from being written to disk, not the
+    initial request-body cost itself (see the body-size limit in main.py for that).
+    """
+    settings = get_settings()
+    if len(files) > settings.max_files_per_lab:
+        raise ApiError(
+            f"This import has {len(files)} files, more than the {settings.max_files_per_lab} this "
+            "import allows."
+        )
+    total = 0
+    for path, content in files.items():
+        size = len(content.encode("utf-8"))
+        if size > settings.max_bytes_per_file:
+            raise ApiError(
+                f"`{path}` is {format_mb(size)}, more than the {format_mb(settings.max_bytes_per_file)} "
+                "this import allows."
+            )
+        total += size
+    if total > settings.max_bytes_per_lab:
+        raise ApiError(
+            f"This import is {format_mb(total)}, more than the {format_mb(settings.max_bytes_per_lab)} "
+            "this import allows."
+        )
 
 
 class KatharaService:
@@ -168,30 +196,52 @@ class KatharaService:
         if settings:
             Setting.get_instance().load_from_dict(settings)
 
+    # The subset of SettingsUpdate's fields that belong to this project's own ApiSettings (config.py,
+    # see E9), not to Kathara's Setting/DockerSettingsAddon — update_settings/get_settings_view
+    # route these to/from the ApiSettings singleton instead of Setting.load_from_dict/_to_dict.
+    _API_SETTINGS_KEYS = frozenset({"max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"})
+
     def update_settings(self, settings: dict[str, Any]) -> None:
         """Override settings at runtime.
 
-        Every setting except ``manager_type`` is read fresh by the Kathara framework at the
-        point of use, so it's safe to change any of them at any time. ``manager_type`` picks the
-        concrete manager class exactly once, inside ``Kathara.get_instance()``'s constructor, and
-        there's no supported way to swap it out afterward for the life of this process — so an
+        Every Kathara setting except ``manager_type`` is read fresh by the Kathara framework at
+        the point of use, so it's safe to change any of them at any time. ``manager_type`` picks
+        the concrete manager class exactly once, inside ``Kathara.get_instance()``'s constructor,
+        and there's no supported way to swap it out afterward for the life of this process — so an
         actual change to it is rejected once the facade has been instantiated, rather than
         silently accepted but never taking effect.
+
+        ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` (``_API_SETTINGS_KEYS``)
+        aren't Kathara settings at all — they're this project's own ``ApiSettings`` (config.py, see
+        E9), just exposed on the same page. They're set directly on the ``get_settings()``
+        singleton, which every request already reads fresh (``main.py``'s body-size middleware,
+        ``LabStore.extract_zip``, ``_check_import_size``), rather than passed to
+        ``Setting.load_from_dict`` — which has no idea these attributes exist. This mutation is
+        in-process only: it does not persist past a restart (see ``SettingsView``'s docstring).
         """
-        if self._instance is not None and "manager_type" in settings:
+        kathara_settings = {k: v for k, v in settings.items() if k not in self._API_SETTINGS_KEYS}
+        if self._instance is not None and "manager_type" in kathara_settings:
             current = Setting.get_instance().manager_type
-            if settings["manager_type"] != current:
+            if kathara_settings["manager_type"] != current:
                 raise SettingsLockedError(
                     "`manager_type` cannot be changed after the Kathara manager has been "
                     "initialized for this backend session — restart the backend to switch "
                     "managers. Other settings can still be updated freely."
                 )
-        Setting.get_instance().load_from_dict(settings)
+        if kathara_settings:
+            Setting.get_instance().load_from_dict(kathara_settings)
+        api_settings = get_settings()
+        for key in self._API_SETTINGS_KEYS:
+            if key in settings:
+                setattr(api_settings, key, settings[key])
 
     def get_settings_view(self) -> dict[str, Any]:
         setting = Setting.get_instance()
         # _to_dict() holds core settings; addons.merge() adds manager-specific ones.
-        return setting.addons.merge(setting._to_dict())
+        view = setting.addons.merge(setting._to_dict())
+        api_settings = get_settings()
+        view.update({key: getattr(api_settings, key) for key in self._API_SETTINGS_KEYS})
+        return view
 
     def system_info(self) -> dict[str, Any]:
         facade = self._facade()
@@ -645,6 +695,7 @@ class KatharaService:
         """Create a lab from a lab.conf/.startup/folder description, writing every supplied file
         to disk verbatim (the JSON twin of ``upload_lab``) and queuing it for deploy."""
         clean = lab_store.sanitize_lab_name(name)
+        _check_import_size(files)
         # The "is the name free?" check lives *only* inside _claiming_name below. A cheaper copy
         # out here would answer from outside the lock, so a create issued while a delete of the
         # same name is still in flight would get a spurious 409 instead of simply waiting its

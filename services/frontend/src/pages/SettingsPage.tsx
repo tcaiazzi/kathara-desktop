@@ -122,6 +122,10 @@ const SHARED_CDS_OPTIONS = [
   { value: 3, label: "Shared within user" },
 ];
 
+// max_bytes_per_file/max_bytes_per_lab are stored (and sent to the API) in raw bytes; shown here
+// in MB since that's the unit an operator actually thinks in.
+const BYTES_PER_MB = 1024 * 1024;
+
 // Kathara framework settings (GET/PUT /settings), not this app's own config. Most settings can
 // be changed at any time — the one exception is `manager_type`, which Kathara's own
 // Kathara.get_instance() picks once and can't swap out afterward for this backend process's
@@ -342,6 +346,52 @@ export function SettingsPage() {
             checked={form.enable_ipv6 ?? false}
             onChange={(e) => set("enable_ipv6", e.target.checked)}
           />
+        </Panel>
+
+        <Panel title="Upload &amp; import limits" className="mb-3">
+          <p className="text-muted small">
+            Caps applied when installing a gallery lab, importing a lab from JSON, or uploading a
+            lab .zip. Unlike every other setting on this page, these are this app's own — not part
+            of Kathara — and changing them here only lasts for as long as this backend process
+            keeps running: they revert to their configured default the next time it starts.
+          </p>
+          <Form.Group className="mb-2">
+            <Form.Label>Max files per lab</Form.Label>
+            <Form.Control
+              type="number"
+              min={1}
+              value={form.max_files_per_lab ?? ""}
+              onChange={(e) => set("max_files_per_lab", e.target.value === "" ? undefined : Number(e.target.value))}
+            />
+          </Form.Group>
+          <Form.Group className="mb-2">
+            <Form.Label>Max size per file (MB)</Form.Label>
+            <Form.Control
+              type="number"
+              min={1}
+              value={form.max_bytes_per_file != null ? form.max_bytes_per_file / BYTES_PER_MB : ""}
+              onChange={(e) =>
+                set(
+                  "max_bytes_per_file",
+                  e.target.value === "" ? undefined : Math.round(Number(e.target.value) * BYTES_PER_MB)
+                )
+              }
+            />
+          </Form.Group>
+          <Form.Group>
+            <Form.Label>Max total size per lab (MB)</Form.Label>
+            <Form.Control
+              type="number"
+              min={1}
+              value={form.max_bytes_per_lab != null ? form.max_bytes_per_lab / BYTES_PER_MB : ""}
+              onChange={(e) =>
+                set(
+                  "max_bytes_per_lab",
+                  e.target.value === "" ? undefined : Math.round(Number(e.target.value) * BYTES_PER_MB)
+                )
+              }
+            />
+          </Form.Group>
         </Panel>
 
         {form.manager_type === "docker" && (

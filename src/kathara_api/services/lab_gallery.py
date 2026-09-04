@@ -37,16 +37,16 @@ from urllib.parse import quote
 
 import httpx
 
-from ..config import get_settings
+from ..config import format_mb, get_settings
 from ..errors import GalleryLabNotFoundError, GalleryUnavailableError
 
 LAB_CONF = "lab.conf"
 
-# What a single lab is allowed to be. The labs upstream are ~17 files / ~20 KB; these bounds exist
-# so a mis-set gallery_repo (or a hostile fork) can't turn one click into a disk-filling download.
-MAX_FILES_PER_LAB = 200
-MAX_BYTES_PER_FILE = 5 * 1024 * 1024
-MAX_BYTES_PER_LAB = 20 * 1024 * 1024
+# What a single lab is allowed to be — shared with the JSON-import and .zip-upload paths (see
+# ApiSettings.max_files_per_lab and friends in config.py) rather than a copy of the same three
+# numbers kept here: a mis-set gallery_repo (or a hostile fork) turning one click into a
+# disk-filling download is the same failure mode as an oversized upload, just from a different
+# source.
 
 # Enough for a cold GitHub tree of a few thousand entries, short enough that a hung upstream
 # doesn't hold a request open indefinitely.
@@ -300,15 +300,16 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
     ``LabStore.write_lab`` takes either. Keys come from the repo tree, and are written through
     ``LabStore._safe_join``, so they cannot escape the lab directory.
     """
-    if entry.n_files > MAX_FILES_PER_LAB:
+    settings = get_settings()
+    if entry.n_files > settings.max_files_per_lab:
         raise GalleryUnavailableError(
             f"Gallery lab `{entry.id}` has {entry.n_files} files, more than the "
-            f"{MAX_FILES_PER_LAB} this import allows."
+            f"{settings.max_files_per_lab} this import allows."
         )
-    if entry.size_bytes > MAX_BYTES_PER_LAB:
+    if entry.size_bytes > settings.max_bytes_per_lab:
         raise GalleryUnavailableError(
-            f"Gallery lab `{entry.id}` is {entry.size_bytes} bytes, more than the "
-            f"{MAX_BYTES_PER_LAB} this import allows."
+            f"Gallery lab `{entry.id}` is {format_mb(entry.size_bytes)}, more than the "
+            f"{format_mb(settings.max_bytes_per_lab)} this import allows."
         )
 
     base = entry.id + "/"
@@ -323,9 +324,9 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
                 f"Could not download `{path}`: HTTP {response.status_code}."
             )
         content = response.content
-        if len(content) > MAX_BYTES_PER_FILE:
+        if len(content) > settings.max_bytes_per_file:
             raise GalleryUnavailableError(
-                f"`{path}` is larger than the {MAX_BYTES_PER_FILE} bytes this import allows."
+                f"`{path}` is larger than the {format_mb(settings.max_bytes_per_file)} this import allows."
             )
         return path[len(base):], content
 
@@ -334,10 +335,10 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
             files = dict(pool.map(lambda path: fetch(client, path), entry.files))
 
     total = sum(len(content) for content in files.values())
-    if total > MAX_BYTES_PER_LAB:
+    if total > settings.max_bytes_per_lab:
         raise GalleryUnavailableError(
-            f"Gallery lab `{entry.id}` downloaded to {total} bytes, more than the "
-            f"{MAX_BYTES_PER_LAB} this import allows."
+            f"Gallery lab `{entry.id}` downloaded to {format_mb(total)}, more than the "
+            f"{format_mb(settings.max_bytes_per_lab)} this import allows."
         )
     if LAB_CONF not in files:
         # The tree said there was one; if it's gone the catalog is stale rather than the lab bad.
