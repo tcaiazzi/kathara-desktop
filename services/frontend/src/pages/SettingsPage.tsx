@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Form } from "react-bootstrap";
 import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
 import { desktop, isDesktop } from "../desktop/bridge";
+import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useAvailableImages } from "../hooks/useAvailableImages";
 import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
@@ -134,11 +135,19 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const availableImages = useAvailableImages();
+  const requestDeployAuth = useDeployAuthorization();
+
+  // The last settings known to be on disk — what a save is a *transition away from*. Compared
+  // against on submit to decide whether `hosthome_mount` is being turned on right now (see
+  // handleSubmit) rather than merely resubmitted already-on, the same distinction a lab deploy
+  // already makes for its own host-directory mounts.
+  const loadedRef = useRef<SettingsView | null>(null);
 
   const load = useCallback(async () => {
     try {
       const [settings, sys] = await Promise.all([api.getSettings(), api.systemInfo()]);
       setForm(settings);
+      loadedRef.current = settings;
       setSystem(sys);
       setLoadError(null);
     } catch (e) {
@@ -160,12 +169,28 @@ export function SettingsPage() {
     setBusy(true);
     setLockedError(null);
     try {
+      // Mounting the operator's own $HOME into every future device is exactly the kind of thing a
+      // lab's own host volumes already gate behind a password before a deploy — treated the same
+      // way here, reusing that same check (verify-only; hosthome_mount needs no backend restart,
+      // just like a plain volume mount doesn't). Only on the off→on transition: resubmitting the
+      // rest of the form while it's already on shouldn't ask again, the same way redeploying an
+      // already-mounted lab doesn't.
+      if (form.hosthome_mount && !loadedRef.current?.hosthome_mount) {
+        const outcome = await requestDeployAuth({ privileged: false, volumeMachines: [], hosthomeMount: true });
+        if (outcome !== "proceed") {
+          toast.show("Settings were not saved.", "danger");
+          return;
+        }
+      }
       // `last_checked` is Kathara's own "when did I last check for a release" bookkeeping: it is
       // shown above, never edited here, and PUTting it back would write a client-side echo over
-      // whatever the backend has since recorded.
-      const { last_checked: _lastChecked, ...payload } = form;
+      // whatever the backend has since recorded. `remote_url`/`cert_path` are read-only from this
+      // app (see SettingsUpdate's own docstring) — the backend would 422 either back anyway, but
+      // there is no reason to send fields the form only ever displays.
+      const { last_checked: _lastChecked, remote_url: _remoteUrl, cert_path: _certPath, ...payload } = form;
       const updated = await api.updateSettings(payload);
       setForm(updated);
+      loadedRef.current = updated;
       toast.show("Settings saved.", "success");
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -374,17 +399,20 @@ export function SettingsPage() {
                 ))}
               </Form.Select>
             </Form.Group>
-            <Form.Group className="mb-2">
-              <Form.Label>Remote URL (optional)</Form.Label>
-              <Form.Control
-                value={form.remote_url ?? ""}
-                onChange={(e) => set("remote_url", e.target.value || null)}
-              />
-            </Form.Group>
-            <Form.Group>
-              <Form.Label>Certificate path (optional)</Form.Label>
-              <Form.Control value={form.cert_path ?? ""} onChange={(e) => set("cert_path", e.target.value || null)} />
-            </Form.Group>
+            {(form.remote_url || form.cert_path) && (
+              <Form.Group>
+                <Form.Label>Remote Docker daemon</Form.Label>
+                {form.remote_url && (
+                  <Form.Control readOnly className="font-monospace mb-1" value={form.remote_url} />
+                )}
+                {form.cert_path && <Form.Control readOnly className="font-monospace" value={form.cert_path} />}
+                <Form.Text className="text-muted">
+                  Every deploy, exec and wipe this backend performs targets this daemon instead of
+                  the local one. Set outside this app (~/.config/kathara.conf) — not editable here;
+                  change it there and restart the backend.
+                </Form.Text>
+              </Form.Group>
+            )}
           </Panel>
         )}
 

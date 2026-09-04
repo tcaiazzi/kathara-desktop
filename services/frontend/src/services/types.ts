@@ -18,9 +18,9 @@ export interface SystemInfo {
   is_admin: boolean;
 }
 
-// Mirrors Kathara's Setting class plus whichever manager addon is active (extra="allow" on the
-// backend schema, so only manager_type/image are ever guaranteed — everything else here is
-// optional since it depends on which addon merged in).
+// Mirrors Kathara's Setting class plus the Docker addon (schemas/settings.py's SettingsView) — the
+// full known field surface, each optional since it depends on which addon merged in (only
+// manager_type/image are ever guaranteed).
 export interface SettingsView {
   manager_type: string;
   image: string;
@@ -41,12 +41,15 @@ export interface SettingsView {
   shared_mount?: boolean;
   image_update_policy?: string;
   shared_cds?: number;
+  // Read-only: the backend schema (SettingsUpdate) no longer accepts either on write. Redirecting
+  // this backend's Docker client to an arbitrary daemon has no legitimate runtime use case here —
+  // changing it means editing Kathara's own settings file and restarting.
   remote_url?: string | null;
   cert_path?: string | null;
   network_plugin?: string;
 }
 
-export type SettingsUpdate = Partial<Omit<SettingsView, "last_checked">>;
+export type SettingsUpdate = Partial<Omit<SettingsView, "last_checked" | "remote_url" | "cert_path">>;
 
 export interface LabMetadata {
   description: string | null;

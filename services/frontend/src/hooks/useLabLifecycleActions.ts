@@ -70,10 +70,25 @@ export function useLabLifecycleActions() {
         // prompt appears before the attempt, not after — and as a single combined check, so a
         // lab that is both never shows two separate prompts in sequence (see
         // ElevationContext.tsx's "both" mode for why that matters).
+        //
+        // `hosthome_mount` is the same kind of host exposure but a *global* setting (Settings'
+        // own save already gates turning it on — see SettingsPage.tsx), so every deploy while
+        // it's on needs to say so too: it applies to this lab's devices whether or not this lab
+        // itself declares any `volumes`. Fetched fresh rather than cached, since it can change
+        // between deploys and there is nothing else in this app that already tracks it.
+        const hosthomeMount = await api
+          .getSettings()
+          .then((s) => !!s.hosthome_mount)
+          .catch(() => false); // fail open to "off" — the deploy attempt itself will surface anything real
         const volumeMachines = lab.machines.filter((m) => m.volumes.length > 0);
         const needsElevation = lab.machines.some((m) => m.privileged);
-        if (needsElevation || volumeMachines.length > 0) {
-          const outcome = await requestDeployAuth({ privileged: needsElevation, volumeMachines, resumeLab: lab.name });
+        if (needsElevation || volumeMachines.length > 0 || hosthomeMount) {
+          const outcome = await requestDeployAuth({
+            privileged: needsElevation,
+            volumeMachines,
+            hosthomeMount,
+            resumeLab: lab.name,
+          });
           if (outcome === "elevating") return; // a reload is already coming
           if (outcome === "cancelled") {
             toast.show(needsElevation ? PRIVILEGE_CANCELLED_MESSAGE : VOLUME_CANCELLED_MESSAGE, "danger");

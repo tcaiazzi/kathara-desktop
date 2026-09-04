@@ -24,6 +24,13 @@ export type DeployAuthOutcome = "proceed" | "elevating" | "cancelled";
 export interface DeployAuthRequest {
   privileged: boolean;
   volumeMachines: { name: string; volumes: VolumeMount[] }[];
+  /** Whether Settings' "Mount host home directory" is on — a global toggle, not a per-device
+   * volume, so it's its own flag rather than a fake entry in `volumeMachines`: every device this
+   * backend deploys from now on gets the operator's real `$HOME` bind-mounted in, regardless of
+   * what this specific lab declares. Shown and gated exactly like a real host volume — the caller
+   * (a deploy, or Settings' own save) is responsible for checking the current setting value and
+   * passing it in; this module has no way to know it on its own. */
+  hosthomeMount?: boolean;
   /** Only meaningful when `privileged` needs a real elevation: where the post-reload URL should
    * land so the SPA can resume that lab's deploy on its own. */
   resumeLab?: string;
@@ -56,7 +63,9 @@ const OK_LABELS: Record<Mode, string> = {
   privileged: "Continue",
   both: "Continue",
   volumes: "Continue",
-  "volumes-no-shell": "Deploy",
+  // "Deploy" until this had a second caller: SettingsPage's hosthome_mount gate reuses this same
+  // mode/modal from outside any lab-deploy flow, so the label can no longer assume one.
+  "volumes-no-shell": "Continue",
 };
 
 function VolumeList({ machines }: { machines: { name: string; volumes: VolumeMount[] }[] }) {
@@ -77,6 +86,7 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
   const [show, setShow] = useState(false);
   const [mode, setMode] = useState<Mode>("privileged");
   const [volumeMachines, setVolumeMachines] = useState<{ name: string; volumes: VolumeMount[] }[]>([]);
+  const [hosthomeMount, setHosthomeMount] = useState(false);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,24 +95,28 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
 
   const isLinux = desktop()?.platform === "linux";
 
-  const showModal = useCallback((m: Mode, machines: { name: string; volumes: VolumeMount[] }[]) => {
-    // Settle any still-pending request before taking over the single resolveRef slot — same
-    // guard as ConfirmContext/PromptContext, so a second call never wedges the first caller.
-    resolveRef.current?.("cancelled");
-    resolveRef.current = null;
-    setMode(m);
-    setVolumeMachines(machines);
-    setPassword("");
-    setError(null);
-    setShow(true);
-    return new Promise<DeployAuthOutcome>((resolve) => {
-      resolveRef.current = resolve;
-    });
-  }, []);
+  const showModal = useCallback(
+    (m: Mode, machines: { name: string; volumes: VolumeMount[] }[], hosthome: boolean) => {
+      // Settle any still-pending request before taking over the single resolveRef slot — same
+      // guard as ConfirmContext/PromptContext, so a second call never wedges the first caller.
+      resolveRef.current?.("cancelled");
+      resolveRef.current = null;
+      setMode(m);
+      setVolumeMachines(machines);
+      setHosthomeMount(hosthome);
+      setPassword("");
+      setError(null);
+      setShow(true);
+      return new Promise<DeployAuthOutcome>((resolve) => {
+        resolveRef.current = resolve;
+      });
+    },
+    [],
+  );
 
   const requestDeployAuthorization = useCallback<DeployAuthApi>(
-    async ({ privileged, volumeMachines: machines, resumeLab }) => {
-      if (!privileged && machines.length === 0) return "proceed";
+    async ({ privileged, volumeMachines: machines, hosthomeMount: hosthome = false, resumeLab }) => {
+      if (!privileged && machines.length === 0 && !hosthome) return "proceed";
 
       if (privileged) {
         // Checked regardless of desktop-ness, over the same same-origin REST call the rest of
@@ -125,12 +139,13 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
         // volume-only deploy has no OS identity to check outside the desktop app, so it degrades
         // to a plain confirmation instead of being refused.
         if (privileged) return "cancelled";
-        return showModal("volumes-no-shell", machines);
+        return showModal("volumes-no-shell", machines, hosthome);
       }
 
       resumeLabRef.current = resumeLab ?? "";
-      const m: Mode = privileged && machines.length > 0 ? "both" : privileged ? "privileged" : "volumes";
-      return showModal(m, machines);
+      const hasMount = machines.length > 0 || hosthome;
+      const m: Mode = privileged && hasMount ? "both" : privileged ? "privileged" : "volumes";
+      return showModal(m, machines, hosthome);
     },
     [showModal],
   );
@@ -224,15 +239,30 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
             )}
             {mode === "both" && (
               <Alert variant="warning" className="py-2">
-                This lab also declares host directory mounts. A privileged device already has
-                elevated capabilities inside its container — combined with a mounted host
-                directory, a compromised or malicious device could read, modify or delete anything
-                under that path with root-equivalent power on your machine. Only continue if you
-                fully trust every device in this lab.
+                This lab also mounts host directories. A privileged device already has elevated
+                capabilities inside its container — combined with a mounted host directory, a
+                compromised or malicious device could read, modify or delete anything under that
+                path with root-equivalent power on your machine. Only continue if you fully trust
+                every device in this lab.
               </Alert>
             )}
-            {(mode === "volumes" || mode === "both" || mode === "volumes-no-shell") && (
-              <VolumeList machines={volumeMachines} />
+            {hosthomeMount && (
+              <p>
+                <strong>Mount host home directory</strong> is on in Settings: your entire home
+                directory will be mounted read-write at <code>/hosthome</code> inside every device
+                this backend deploys from now on, accessible to any process running inside them —
+                a global setting, not something specific to this lab.
+              </p>
+            )}
+            {volumeMachines.length > 0 && (
+              <>
+                <p className="mb-1">
+                  {hosthomeMount
+                    ? "It also mounts these host directories into its devices:"
+                    : "This lab mounts the following host directories into its devices:"}
+                </p>
+                <VolumeList machines={volumeMachines} />
+              </>
             )}
             {mode === "volumes-no-shell" && (
               <p className="text-muted small mb-0 mt-2">
