@@ -479,6 +479,21 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     return (useFallback ? sourceRef.current.labels.uploadFallbackDir?.() : undefined) ?? "/";
   }, []);
 
+  // Shared by New File and Upload: both write straight to `path`, silently replacing whatever is
+  // already there — unlike paste, which already checks. Only a file collision is worth confirming;
+  // a directory collision makes the write fail on its own with a clear backend error.
+  const confirmOverwriteIfExists = useCallback(
+    async (path: string): Promise<boolean> => {
+      const name = baseName(path);
+      if (!name) return true;
+      const existing = (await sourceRef.current.list(parentOf(path))).find((e) => e.name === name);
+      if (!existing || existing.is_dir) return true;
+      const { title, message } = sourceRef.current.labels.pasteConfirmOverwrite(path, false);
+      return confirm({ title, message, okLabel: "Replace" });
+    },
+    [confirm],
+  );
+
   const handleNewFile = useCallback(
     async (dirOverride?: string) => {
       const dir = dirOverride ?? defaultDir();
@@ -494,13 +509,17 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       const clean = toAbsolutePath(answer);
       if (!clean) return;
 
+      // Unlike paste, writeText("") happily replaces an existing file with an empty one instead
+      // of erroring — so this needs its own overwrite check, reusing the same confirmation labels.
+      if (!(await confirmOverwriteIfExists(clean))) return;
+
       await runBusy(setBusy, sourceRef.current.labels.createFile, async () => {
         await sourceRef.current.writeText(clean, "");
         await refreshDir(parentOf(clean));
         await selectFile(clean);
       });
     },
-    [defaultDir, prompt, refreshDir, runBusy, selectFile],
+    [confirmOverwriteIfExists, defaultDir, prompt, refreshDir, runBusy, selectFile],
   );
 
   const handleNewDirectory = useCallback(async (dirOverride?: string) => {
@@ -544,6 +563,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       const clean = toAbsolutePath(answer);
       if (!clean) return;
 
+      if (!(await confirmOverwriteIfExists(clean))) return;
+
       await runBusy(setBusy, sourceRef.current.labels.upload, async () => {
         await sourceRef.current.upload(clean, file);
         await refreshDir(parentOf(clean));
@@ -551,7 +572,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         toast.show(`Uploaded ${file.name} → ${clean}.`, "success");
       });
     },
-    [defaultDir, prompt, refreshDir, runBusy, selectFile, toast],
+    [confirmOverwriteIfExists, defaultDir, prompt, refreshDir, runBusy, selectFile, toast],
   );
 
   // Drops a path from the clipboard (or rewrites it, and every descendant of it, to its new
