@@ -10,7 +10,7 @@ because an earlier design *did* keep such a cache, and it did exactly that.
 import fs.errors
 import pytest
 
-from kathara_api.errors import ApiError, PathNotFoundError
+from kathara_api.errors import ApiError, LabConfLockedError, PathNotFoundError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import KatharaService
@@ -357,6 +357,131 @@ def test_fs_list_offline_back_reference_path_raises_illegal_back_reference(tmp_p
 
     with pytest.raises(fs.errors.IllegalBackReference):
         service.fs_list_offline("testlab", "../../../etc")
+
+
+# Every spelling that resolves to the lab's own lab.conf. The guards used to compare the raw
+# string (`path.strip("/") == "lab.conf"`), so only the first four were recognised — "./lab.conf"
+# and friends fell through to the generic write path, which overwrote lab.conf with unvalidated
+# text, skipped the 409-while-deployed gate and left the registry on the previous model.
+LAB_CONF_SPELLINGS = [
+    "lab.conf",
+    "/lab.conf",
+    "//lab.conf",
+    "lab.conf/",
+    "./lab.conf",
+    ".//lab.conf",
+    "/./lab.conf",
+    "pc1/../lab.conf",
+    "  ./lab.conf  ",
+]
+
+
+@pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
+def test_writing_lab_conf_is_validated_whatever_the_spelling(tmp_path, path):
+    """Unparseable content must be refused, and lab.conf left byte-for-byte intact — the generic
+    write path does no parsing at all, so reaching it is what made this corrupting."""
+    service, store = _two_machine_lab(tmp_path)
+    before = (store.lab_dir("testlab") / "lab.conf").read_text()
+
+    with pytest.raises(ApiError):
+        service.fs_write_text_offline("testlab", path, "GARBAGE\n")
+
+    assert (store.lab_dir("testlab") / "lab.conf").read_text() == before
+
+
+@pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
+def test_writing_lab_conf_rebuilds_the_model_whatever_the_spelling(tmp_path, path):
+    """A *valid* edit must go through update_lab_conf, i.e. actually rebuild the topology — the
+    bypass wrote the file but left the registry holding the old machines."""
+    service, _store = _two_machine_lab(tmp_path)
+
+    service.fs_write_text_offline("testlab", path, 'pc3[image]="kathara/base"\n')
+
+    assert set(service.registry.get("testlab").machines) == {"pc3"}
+
+
+@pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
+def test_writing_lab_conf_while_deployed_is_refused_whatever_the_spelling(tmp_path, path):
+    service, store = _two_machine_lab(tmp_path)
+    before = (store.lab_dir("testlab") / "lab.conf").read_text()
+    service.deploy_lab("testlab")
+    # `FakeFacadeBase.deploy_lab` is a no-op, so it leaves `api_object` unset — and that attribute
+    # is exactly what the 409 gate reads (`any(m.api_object is not None ...)`). Set it by hand so
+    # the lab really looks deployed to the code under test.
+    for machine in service.get_lab_or_reconstruct("testlab").machines.values():
+        machine.api_object = object()
+
+    with pytest.raises(LabConfLockedError):
+        service.fs_write_text_offline("testlab", path, 'pc3[image]="kathara/base"\n')
+
+    assert (store.lab_dir("testlab") / "lab.conf").read_text() == before
+
+
+@pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
+def test_deleting_lab_conf_is_refused_whatever_the_spelling(tmp_path, path):
+    service, store = _two_machine_lab(tmp_path)
+
+    with pytest.raises(ApiError):
+        service.fs_delete_offline("testlab", path)
+
+    assert (store.lab_dir("testlab") / "lab.conf").exists()
+
+
+@pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
+def test_moving_lab_conf_is_refused_whatever_the_spelling(tmp_path, path):
+    """fs_move_offline's guard had no test at all before this."""
+    service, store = _two_machine_lab(tmp_path)
+
+    with pytest.raises(ApiError):
+        service.fs_move_offline("testlab", path, "/moved.conf")
+    with pytest.raises(ApiError):
+        service.fs_move_offline("testlab", "/notes.txt", path)
+
+    assert (store.lab_dir("testlab") / "lab.conf").exists()
+
+
+@pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
+def test_uploading_over_lab_conf_is_routed_through_update_lab_conf(tmp_path, path):
+    """`fs_upload_bytes_offline` had *no* lab.conf guard whatsoever — not even for the literal
+    path — so it wrote raw bytes over lab.conf with no validation, no 409 and no rebuild. Being
+    bytes, it could also leave the file non-UTF-8, which nothing downstream can parse."""
+    service, store = _two_machine_lab(tmp_path)
+    before = (store.lab_dir("testlab") / "lab.conf").read_bytes()
+
+    with pytest.raises(ApiError):
+        service.fs_upload_bytes_offline("testlab", path, b"\x00\xffnot utf-8\n")
+
+    assert (store.lab_dir("testlab") / "lab.conf").read_bytes() == before
+
+    # A valid edit still works through this entry point, and rebuilds the model.
+    service.fs_upload_bytes_offline("testlab", path, b'pc3[image]="kathara/base"\n')
+    assert set(service.registry.get("testlab").machines) == {"pc3"}
+
+
+@pytest.mark.parametrize("path", ["/", "", "//", "/.", "./", "/./"])
+def test_fs_move_and_copy_offline_reject_the_lab_root(tmp_path, path):
+    """The lab-root guard existed only in fs_delete_offline; moving the root away or copying over
+    it is just as destructive."""
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+
+    with pytest.raises(ApiError):
+        service.fs_move_offline("testlab", path, "/elsewhere")
+    with pytest.raises(ApiError):
+        service.fs_copy_offline("testlab", "/notes.txt", path)
+
+    assert (store.lab_dir("testlab") / "lab.conf").exists()
+    assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
+
+
+def test_a_non_canonical_device_path_still_marks_the_device_dirty(tmp_path):
+    """`_dirty_target_for` splits on "/" too, so "./pc1/etc/motd" used to mark nothing dirty and
+    the write would never be live-pushed on the next deploy."""
+    service, _store = _two_machine_lab(tmp_path)
+
+    service.fs_write_text_offline("testlab", "./pc1/etc/motd", "hi\n")
+
+    assert service.registry.pop_dirty_machines("testlab", {"pc1", "pc2"}) == {"pc1"}
 
 
 def test_fs_write_text_offline_routes_lab_conf_through_update_lab_conf(tmp_path):

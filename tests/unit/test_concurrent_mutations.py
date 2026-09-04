@@ -11,6 +11,18 @@ menu is gated by the same `busy` flag that disables Deploy/Undeploy, so a user c
 and, before it returns, right-click the same device and connect/disconnect/remove it, or switch to
 the Lab Configuration tab and save an edit.
 
+**Lab creation** is a third, separate race, added below (`test_*_create*`): the five creation
+paths (`create_lab`/`import_lab`/`upload_lab`/`install_example`/`install_gallery_lab`) each
+checked "is this name free?" and only *then* wrote to disk, with nothing held in between — so two
+concurrent creates of the same name both passed the check and both wrote. The observed damage was
+not a merely theoretical interleaving: the loser's rollback deleted the *winner's* freshly written
+directory (the winner keeping its 201 and its registry entry, with no files left on disk), or the
+loser's swap replaced the winner's files while the registry kept the winner's model — and an N-way
+race produced raw `FileExistsError`/`FileNotFoundError` 500s instead of clean 409s. They are now
+serialized per lab *name* (`_claiming_name`) rather than behind `_mutate_lock`, because the
+critical section contains the on-disk write itself and holding the global lock across a large .zip
+extraction would stall unrelated labs' deploys.
+
 **Fallback protection** (the `_mutate_lock` discipline fix, finding #10): the primary check above
 has an inherent, unavoidable TOCTOU gap — a `deploy_lab` can start in the instant *after* a mutator
 passes the check but *before* it acquires `_mutate_lock`. `connect_machine`/`disconnect_machine`/
@@ -23,16 +35,17 @@ not fast. The tests for this layer bypass `_check_not_transitioning` via monkeyp
 to force that gap and exercise the lock behavior underneath it, the same way a real race would.
 """
 
+import collections
 import threading
 
 import pytest
 
-from kathara_api.errors import LabTransitioningError
+from kathara_api.errors import LabAlreadyRegisteredError, LabTransitioningError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, zip_bytes
 
 
 class _BlockingFacade(FakeFacadeBase):
@@ -250,3 +263,178 @@ def test_remove_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_
     remove_thread.join(timeout=2)
     assert remove_done.is_set()
     assert facade.calls == ["undeploy_machine"]
+
+
+# -- lab creation races ---------------------------------------------------------------------
+
+
+def _plain_service(tmp_path) -> KatharaService:
+    service = KatharaService(store=LabStore(tmp_path / "labs"))
+    service._instance = FakeFacadeBase()
+    return service
+
+
+def _pause_inside(store, method_name: str):
+    """Suspend `store.<method_name>` on entry, so a create can be held *inside* `_claiming_name`
+    (every one of these store calls is made from within it) while a second create is attempted.
+
+    This is what the fix has to survive: before it, the second create sailed through the
+    check-then-write window while the first was suspended here.
+    """
+    paused, release = threading.Event(), threading.Event()
+    real = getattr(store, method_name)
+
+    def wrapper(*args, **kwargs):
+        paused.set()
+        assert release.wait(timeout=10), "the test never released the suspended create"
+        return real(*args, **kwargs)
+
+    setattr(store, method_name, wrapper)
+    return paused, release, real
+
+
+def test_a_second_import_of_the_same_name_waits_and_then_gets_a_clean_409(tmp_path):
+    service = _plain_service(tmp_path)
+    paused, release, real_write = _pause_inside(service.store, "write_lab")
+
+    winner = threading.Thread(
+        target=lambda: service.import_lab("dup", {"lab.conf": "pcwin[image]=kathara/base\n"}, [])
+    )
+    winner.start()
+    assert paused.wait(timeout=3), "the first import never reached its on-disk write"
+    service.store.write_lab = real_write  # the loser takes the normal path
+
+    loser_done = threading.Event()
+    errors = []
+
+    def run_loser():
+        try:
+            service.import_lab("dup", {"lab.conf": "pclose[image]=kathara/base\n"}, [])
+        except Exception as exc:  # noqa: BLE001 — the type is the assertion
+            errors.append(exc)
+        loser_done.set()
+
+    loser = threading.Thread(target=run_loser)
+    loser.start()
+    # The whole point of the per-name lock: the second create must *wait*, not proceed into the
+    # window between the first one's check and its write.
+    assert not loser_done.wait(timeout=0.5), "the second import did not wait for the first"
+
+    release.set()
+    winner.join(timeout=5)
+    loser.join(timeout=5)
+
+    assert [type(e) for e in errors] == [LabAlreadyRegisteredError]
+    lab_dir = service.store.lab_dir("dup")
+    assert lab_dir.is_dir(), "the loser's rollback deleted the winner's directory"
+    assert lab_dir.joinpath("lab.conf").read_text() == "pcwin[image]=kathara/base\n"
+    assert set(service.registry.get("dup").machines) == {"pcwin"}
+
+
+def test_an_upload_racing_an_import_of_the_same_name_does_not_overwrite_it(tmp_path):
+    """The other half of the damage: the loser's atomic swap used to `rmtree` the published
+    directory and put *its* files there, while the registry kept the winner's model — a silent
+    disagreement between disk and memory, with the loser reporting a 409 as if nothing happened.
+    """
+    service = _plain_service(tmp_path)
+    paused, release, real_extract = _pause_inside(service.store, "extract_zip")
+
+    winner = threading.Thread(
+        target=lambda: service.upload_lab(
+            "dup", zip_bytes({"lab.conf": b"pcwin[image]=kathara/base\n", "winner_was_here": b"x"})
+        )
+    )
+    winner.start()
+    assert paused.wait(timeout=3)
+    service.store.extract_zip = real_extract
+
+    errors = []
+
+    def run_loser():
+        try:
+            service.import_lab("dup", {"lab.conf": "pclose[image]=kathara/base\n", "loser_was_here": "x"}, [])
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    loser = threading.Thread(target=run_loser)
+    loser.start()
+    release.set()
+    winner.join(timeout=5)
+    loser.join(timeout=5)
+
+    assert [type(e) for e in errors] == [LabAlreadyRegisteredError]
+    names = {p.name for p in service.store.lab_dir("dup").iterdir()}
+    assert names == {"lab.conf", "winner_was_here"}, f"the loser's files landed on disk: {names}"
+    assert set(service.registry.get("dup").machines) == {"pcwin"}
+
+
+def test_n_concurrent_imports_of_one_name_yield_one_success_and_the_rest_409(tmp_path):
+    """No 500s (the shared `.<name>.tmp` scratch produced raw FileExistsError/FileNotFoundError),
+    no leftover scratch directories, and a lab whose on-disk files all come from one import."""
+    service = _plain_service(tmp_path)
+    n = 8
+    start = threading.Barrier(n)
+    outcomes = []
+
+    def worker(i):
+        start.wait()
+        try:
+            service.import_lab(
+                "dup",
+                {"lab.conf": f"pc{i}[image]=kathara/base\n", f"pc{i}/etc/hosts": "x" * 2000},
+                [f"pc{i}/etc"],
+            )
+            outcomes.append("created")
+        except LabAlreadyRegisteredError:
+            outcomes.append("conflict")
+        except Exception as exc:  # noqa: BLE001 — anything else is the bug
+            outcomes.append(f"unexpected: {type(exc).__name__}: {exc}")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert collections.Counter(outcomes) == {"created": 1, "conflict": n - 1}
+
+    lab_dir = service.store.lab_dir("dup")
+    files = sorted(p.relative_to(lab_dir).as_posix() for p in lab_dir.rglob("*") if p.is_file())
+    assert len(files) == 2, files
+    # The lab.conf and the device file must come from the *same* import, not a mix of two.
+    device = files[1].split("/")[0]
+    assert lab_dir.joinpath("lab.conf").read_text() == f"{device}[image]=kathara/base\n"
+
+    leftovers = [p.name for p in lab_dir.parent.iterdir() if p.name.startswith(".")]
+    assert leftovers == [], f"scratch directories left behind: {leftovers}"
+
+
+def test_deleting_a_lab_cannot_land_inside_a_concurrent_import_of_the_same_name(tmp_path):
+    """`delete_lab`'s unregister + rmtree pair used to run outside every lock, so it could remove
+    the directory an import had just written."""
+    service = _plain_service(tmp_path)
+    service.import_lab("dup", {"lab.conf": "pcold[image]=kathara/base\n"}, [])
+    paused, release, real_delete = _pause_inside(service.store, "delete_lab")
+
+    deleter = threading.Thread(target=lambda: service.delete_lab("dup"))
+    deleter.start()
+    assert paused.wait(timeout=3)
+    service.store.delete_lab = real_delete
+
+    import_done = threading.Event()
+
+    def run_import():
+        service.import_lab("dup", {"lab.conf": "pcnew[image]=kathara/base\n"}, [])
+        import_done.set()
+
+    importer = threading.Thread(target=run_import)
+    importer.start()
+    assert not import_done.wait(timeout=0.5), "the import did not wait for the in-flight delete"
+
+    release.set()
+    deleter.join(timeout=5)
+    importer.join(timeout=5)
+
+    assert import_done.is_set()
+    assert service.store.lab_dir("dup").joinpath("lab.conf").read_text() == "pcnew[image]=kathara/base\n"
+    assert set(service.registry.get("dup").machines) == {"pcnew"}

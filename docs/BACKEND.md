@@ -10,9 +10,12 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   include it.
 - **`services/kathara_service.py`** (`KatharaService`) — the single integration point with Kathara. It
   holds the `Kathara.get_instance()` facade behind a mutation lock and a process-local `LabRegistry`
-  (`services/registry.py`); state is single-worker by design.
+  (`services/registry.py`); state is single-worker by design. Lab *creation* is serialized per lab
+  **name** (`_claiming_name`) rather than behind that global lock, so the check-then-write that
+  claims a name is atomic without a large `.zip` extraction stalling unrelated labs' deploys.
 - **`services/lab_store.py`** (`LabStore`) — on-disk persistence of labs under `KATHARA_API_LABS_DIR`
-  (atomic tmp-swap writes). An imported/uploaded/hand-edited `lab.conf` is always persisted
+  (atomic tmp-swap writes, into a per-write private scratch dir; publishing over an already-existing
+  lab directory is refused rather than overwriting it). An imported/uploaded/hand-edited `lab.conf` is always persisted
   **verbatim** — byte for byte, comments/quoting/ordering and all — via `write_lab_conf_text`;
   `gen_lab_conf` (a generator, since Kathara ships only readers) is used for exactly one case: a
   JSON-created lab (`POST /labs`) that has no source file to preserve.
@@ -57,7 +60,9 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 - **Offline lab filesystem** (`/api/labs/{lab}/fs/*`) — the Lab Configuration tab's backing store:
   every read/write is a real call against the lab's own on-disk directory (`lab.fs`/`machine.fs`,
   via pyfilesystem2), routed by path (`/lab.conf`, `/<machine>.startup`, `/<machine>/…`, or the lab
-  root for anything else) — there is deliberately no separate in-memory cache of what's queued (an
+  root for anything else) — every path is normalized once on entry (`_clean_offline_path`), so
+  `lab.conf` is recognized in any spelling (`./lab.conf`, `//lab.conf`, …) and always routed to the
+  validating apply rather than to a raw write — there is deliberately no separate in-memory cache of what's queued (an
   earlier design kept one; it repeatedly drifted from disk, most visibly by silently losing content
   on undeploy). A device that's already running when a write lands is marked "dirty"
   (`LabRegistry.mark_dirty`) so the next redeploy live-pushes exactly the machines that actually
@@ -117,10 +122,10 @@ Errors return `{"detail": str, "error_type": str}`.
 | GET | `/api/labs/{lab}/fs/text` | Read a UTF-8 text file (`/lab.conf` routes to the same verbatim read as `GET lab-conf`) | `?path=` | `FsReadTextResponse` |
 | PUT | `/api/labs/{lab}/fs/text` | Write a text file (`/lab.conf` routes to the same verbatim apply as `PUT lab-conf`) | `FsWriteTextRequest {path, content}` | `Message` |
 | POST | `/api/labs/{lab}/fs/mkdir` | Create a directory (and any missing parents) | `FsMkdirRequest {path}` | `Message` |
-| POST | `/api/labs/{lab}/fs/move` | Move/rename a path, including across two devices | `FsMoveRequest {source_path, destination_path}` | `Message` |
-| POST | `/api/labs/{lab}/fs/copy` | Copy a path, including across two devices | `FsCopyRequest {source_path, destination_path}` | `Message` |
+| POST | `/api/labs/{lab}/fs/move` | Move/rename a path, including across two devices (`lab.conf` and the lab root rejected) | `FsMoveRequest {source_path, destination_path}` | `Message` |
+| POST | `/api/labs/{lab}/fs/copy` | Copy a path, including across two devices (`lab.conf` and the lab root rejected as destination) | `FsCopyRequest {source_path, destination_path}` | `Message` |
 | DELETE | `/api/labs/{lab}/fs` | Delete a path (`lab.conf` rejected) | `FsDeleteRequest {path, recursive?}` | `Message` |
-| POST | `/api/labs/{lab}/fs/upload` | Upload a file (binary-safe) | multipart: `path`, `file` | `FsUploadResponse` |
+| POST | `/api/labs/{lab}/fs/upload` | Upload a file (binary-safe; `lab.conf` routes to the same validating apply as `PUT lab-conf`, and must be UTF-8) | multipart: `path`, `file` | `FsUploadResponse` |
 | GET | `/api/labs/{lab}/fs/download` | Download a file (octet-stream) | `?path=` | binary |
 | GET | `/api/labs/{lab}/fs/startups` | Each device's real `<name>.startup` content (`""` if absent) — backs the topology node-info preview | — | `{machine: string}` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |

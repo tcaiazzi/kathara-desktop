@@ -16,6 +16,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, Union
@@ -206,24 +207,20 @@ class LabStore:
     def write_lab(self, name: str, files: dict[str, Union[str, bytes]], dirs: list[str] | None = None) -> Path:
         """Write a lab directory verbatim from a path->content map, atomically.
 
-        Content is written into a sibling ``.<name>.tmp`` dir and then ``os.replace``d onto the final
-        path, so a crash mid-write never leaves a half-populated lab directory.
+        Content is written into a private scratch dir (``_new_scratch_dir``) and then
+        ``os.replace``d onto the final path (``_publish``), so a crash mid-write never leaves a
+        half-populated lab directory, and a concurrent write of the same lab never lands on top
+        of a finished one.
         """
         name = sanitize_lab_name(name)
-        self.ensure_root()
         final = self.lab_dir(name)
-        tmp = self.root / f".{name}.tmp"
-        if tmp.exists():
-            shutil.rmtree(tmp)
-        tmp.mkdir(parents=True)
+        tmp = self._new_scratch_dir(name)
         try:
             for rel, content in files.items():
                 self._write_file(tmp, rel, content)
             for rel_dir in dirs or []:
                 self._safe_join(tmp, rel_dir).mkdir(parents=True, exist_ok=True)
-            if final.exists():
-                shutil.rmtree(final)
-            os.replace(tmp, final)
+            self._publish(tmp, final, name)
         finally:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -395,18 +392,15 @@ class LabStore:
 
         Every member's *content* is extracted verbatim (empty directories are created, not
         skipped, and each file's Unix permission bits — e.g. an executable startup script — are
-        restored from the archive). A single common wrapper folder (``mylab/lab.conf`` →
-        ``lab.conf``) is the one deliberate exception: it is stripped, and the lab root is
-        re-anchored on whichever directory actually contains ``lab.conf``, so *paths* may shift
-        even though every file's *bytes and mode* never do.
+        restored from the archive, minus setuid/setgid/sticky, which are always stripped; see the
+        mask below). A single common wrapper folder (``mylab/lab.conf`` → ``lab.conf``) is the one
+        deliberate exception: it is stripped, and the lab root is re-anchored on whichever
+        directory actually contains ``lab.conf``, so *paths* may shift even though every file's
+        *bytes* never do.
         """
         name = sanitize_lab_name(name)
-        self.ensure_root()
         final = self.lab_dir(name)
-        tmp = self.root / f".{name}.tmp"
-        if tmp.exists():
-            shutil.rmtree(tmp)
-        tmp.mkdir(parents=True)
+        tmp = self._new_scratch_dir(name)
         try:
             # Read fully into a real BytesIO rather than handing zipfile the raw upload object:
             # FastAPI backs `UploadFile.file` with a `SpooledTemporaryFile`, which on Python < 3.11
@@ -428,16 +422,23 @@ class LabStore:
                     # The upper 16 bits of external_attr hold the Unix mode when the archive was
                     # created on a Unix system (create_system == 3); 0 there means "no permission
                     # bits recorded" (e.g. a Windows-authored zip), so leave the OS default alone.
-                    mode = member.external_attr >> 16
+                    #
+                    # Masked to the permission bits, deliberately dropping setuid/setgid/sticky:
+                    # `external_attr >> 16` is the archive's full st_mode, and S_ISUID/S_ISGID/
+                    # S_ISVTX all fall inside the range chmod(2) honours, so an uploaded .zip could
+                    # otherwise deposit a setuid file straight into the labs directory *on the
+                    # host*. That matters most when the backend was relaunched elevated to deploy a
+                    # privileged lab (see services/desktop): the extracted file is then root-owned
+                    # and setuid. (Measured: the bits do *not* reach a deployed container — Kathara
+                    # does not carry a packed device file's mode across, and makes the startup
+                    # script executable itself — so the host directory is the whole blast radius.)
+                    # 0o777 keeps the execute bit, which is the only reason modes are preserved at
+                    # all (see this docstring) and what the zip_lab -> extract_zip round-trip needs.
+                    mode = (member.external_attr >> 16) & 0o777
                     if mode:
                         os.chmod(target, mode)
             lab_root = self._find_lab_root(tmp)
-            if final.exists():
-                shutil.rmtree(final)
-            if lab_root == tmp:
-                os.replace(tmp, final)
-            else:
-                os.replace(lab_root, final)
+            self._publish(lab_root, final, name)
         finally:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -447,23 +448,20 @@ class LabStore:
         """Copy an already-populated lab directory (e.g. a bundled example) into ``<root>/<name>/``,
         verbatim — file bytes and Unix mode bits preserved — atomically.
 
-        Structurally mirrors ``extract_zip``: the same ``.<name>.tmp`` + ``os.replace`` swap, so a
+        Structurally mirrors ``extract_zip``: the same scratch-dir + ``os.replace`` swap, so a
         crash mid-copy never leaves a half-populated lab directory. Deliberately not ``write_lab``:
         that writes from ``read_lab``'s newline-normalized, binary-stripped text map, which is not
         "verbatim" — a bundled example's ``lab.layout``/startup scripts must travel exactly as
         they are on disk, not round-tripped through the text model first.
         """
         name = sanitize_lab_name(name)
-        self.ensure_root()
         final = self.lab_dir(name)
-        tmp = self.root / f".{name}.tmp"
-        if tmp.exists():
-            shutil.rmtree(tmp)
+        tmp = self._new_scratch_dir(name)
         try:
-            shutil.copytree(source, tmp)
-            if final.exists():
-                shutil.rmtree(final)
-            os.replace(tmp, final)
+            # dirs_exist_ok: `_new_scratch_dir` already created `tmp` (atomically, which is the
+            # point), whereas copytree otherwise insists on creating the destination itself.
+            shutil.copytree(source, tmp, dirs_exist_ok=True)
+            self._publish(tmp, final, name)
         finally:
             if tmp.exists():
                 shutil.rmtree(tmp, ignore_errors=True)
@@ -500,6 +498,33 @@ class LabStore:
             target.write_bytes(content)
         else:
             target.write_bytes(content.encode("utf-8"))
+
+    def _new_scratch_dir(self, name: str) -> Path:
+        """A private, uniquely-named scratch directory for one in-flight write of ``name``.
+
+        Unique rather than a single ``.<name>.tmp`` per lab: with the shared spelling, two
+        concurrent writes of the same lab tore each other's tree down (each one began by
+        ``rmtree``-ing whatever was already there) and then collided on ``mkdir``, surfacing to
+        the client as a 500 with the absolute host path in it. ``mkdtemp`` also creates the
+        directory atomically, so there is no exists-then-create window left to lose. The leading
+        dot keeps it invisible to ``lab_names()``, which filters dotfiles.
+        """
+        self.ensure_root()
+        return Path(tempfile.mkdtemp(dir=self.root, prefix=f".{name}.", suffix=".tmp"))
+
+    @staticmethod
+    def _publish(source: Path, final: Path, name: str) -> None:
+        """``os.replace`` a finished scratch tree onto its final path, refusing to clobber.
+
+        Every caller is a lab-*creation* path, and the service asserts the name is free under its
+        per-lab-name lock before calling in — so a ``final`` that exists here means a concurrent
+        create won the race for this name, and the directory is *that lab's*. This used to
+        ``rmtree(final)`` unconditionally, which is precisely how a completed import lost every
+        one of its files to a racer that went on to fail with a 409 anyway.
+        """
+        if final.exists():
+            raise LabAlreadyRegisteredError(f"Lab `{name}` already exists.")
+        os.replace(source, final)
 
     @staticmethod
     def _safe_join(base: Path, rel: str) -> Path:

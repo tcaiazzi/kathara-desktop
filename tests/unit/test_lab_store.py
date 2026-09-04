@@ -1,15 +1,18 @@
 """Unit tests for on-disk lab persistence (no Docker required).
 
-Covers the LabStore serialization/round-trip, zip extraction (including zip-slip rejection),
-directory read-back, and deletion.
+Covers the LabStore serialization/round-trip, zip extraction (including zip-slip rejection and
+the permission bits it does and does not restore), directory read-back, deletion, and the
+refusal to overwrite an already-published lab directory.
 """
 
+import os
+import stat
 import zipfile
 
 import pytest
 from Kathara.exceptions import LabNotFoundError
 
-from kathara_api.errors import ApiError
+from kathara_api.errors import ApiError, LabAlreadyRegisteredError
 from kathara_api.schemas.lab import LabCreate, LabMetadata
 from kathara_api.schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit
 from kathara_api.services import lab_builder, lab_import
@@ -122,6 +125,97 @@ def test_extract_zip_rejects_zip_slip(tmp_path):
     store = LabStore(tmp_path / "labs")
     with pytest.raises(ApiError):
         store.extract_zip("demo", zip_bytes({"../evil.txt": b"pwned\n"}))
+
+
+def test_extract_zip_strips_setuid_setgid_and_sticky_bits(tmp_path):
+    """An uploaded archive must not be able to deposit a setuid file in the lab directory.
+
+    `external_attr >> 16` is the archive's full st_mode, and S_ISUID/S_ISGID/S_ISVTX all fall
+    inside the range chmod(2) honours — so before the mask, a member recorded as 0o104755 landed
+    as a genuinely setuid file, which Kathara then carries into the container at deploy along
+    with the rest of `machine.fs`.
+    """
+    store = LabStore(tmp_path / "labs")
+    store.extract_zip(
+        "demo",
+        zip_bytes(
+            {"lab.conf": b'pc1[0]="A"\n', "pc1/bin/evil": b"#!/bin/sh\n"},
+            modes={"pc1/bin/evil": 0o4755 | stat.S_ISGID | stat.S_ISVTX},
+        ),
+    )
+
+    mode = (tmp_path / "labs" / "demo" / "pc1" / "bin" / "evil").stat().st_mode
+    assert not mode & stat.S_ISUID
+    assert not mode & stat.S_ISGID
+    assert not mode & stat.S_ISVTX
+    # The permission bits themselves still survive — the mask must not throw away exec (below).
+    assert stat.S_IMODE(mode) == 0o755
+
+
+def test_extract_zip_still_restores_the_execute_bit(tmp_path):
+    """The reason modes are preserved at all: an executable startup script stays executable."""
+    store = LabStore(tmp_path / "labs")
+    store.extract_zip(
+        "demo",
+        zip_bytes({"lab.conf": b'pc1[0]="A"\n', "pc1.startup": b"echo hi\n"},
+                  modes={"pc1.startup": 0o755}),
+    )
+
+    assert (tmp_path / "labs" / "demo" / "pc1.startup").stat().st_mode & stat.S_IXUSR
+
+
+def test_download_upload_round_trip_keeps_the_execute_bit(tmp_path):
+    """zip_lab records st_mode (via ZipInfo.from_file), so the round-trip must be mode-preserving
+    for the execute bit — this is what stops the setuid mask from being a fixed-mode normalization."""
+    store = LabStore(tmp_path / "labs")
+    store.write_lab("demo", {"lab.conf": 'pc1[0]="A"\n', "pc1.startup": "echo hi\n"})
+    os.chmod(tmp_path / "labs" / "demo" / "pc1.startup", 0o755)
+
+    buf = store.zip_lab("demo")
+    store.delete_lab("demo")
+    store.extract_zip("demo", buf)
+
+    assert (tmp_path / "labs" / "demo" / "pc1.startup").stat().st_mode & stat.S_IXUSR
+
+
+@pytest.mark.parametrize("populate", ["write_lab", "extract_zip", "copy_lab_dir"])
+def test_publishing_over_an_existing_lab_directory_is_refused(tmp_path, populate):
+    """All three populate-a-lab-directory paths are *creation* paths, and each used to
+    `rmtree(final)` before its swap — which is how a completed import lost every one of its files
+    to a concurrent create that then failed with a 409 anyway. Refused loudly instead.
+    """
+    store = LabStore(tmp_path / "labs")
+    store.write_lab("demo", {"lab.conf": 'pc1[0]="A"\n', "keepme": "precious\n"})
+    source = tmp_path / "example"
+    (source / "sub").mkdir(parents=True)
+    (source / "lab.conf").write_text('pc9[0]="Z"\n')
+
+    with pytest.raises(LabAlreadyRegisteredError):
+        if populate == "write_lab":
+            store.write_lab("demo", {"lab.conf": 'pc9[0]="Z"\n'})
+        elif populate == "extract_zip":
+            store.extract_zip("demo", zip_bytes({"lab.conf": b'pc9[0]="Z"\n'}))
+        else:
+            store.copy_lab_dir("demo", source)
+
+    # Untouched, and no scratch directory left behind.
+    assert (tmp_path / "labs" / "demo" / "keepme").read_text() == "precious\n"
+    assert (tmp_path / "labs" / "demo" / "lab.conf").read_text() == 'pc1[0]="A"\n'
+    assert [p.name for p in (tmp_path / "labs").iterdir() if p.name.startswith(".")] == []
+
+
+def test_scratch_directories_are_unique_per_write(tmp_path):
+    """Two in-flight writes of the same lab must not share a scratch path: the old
+    `.<name>.tmp` spelling had each one `rmtree` the other's tree and then collide on mkdir."""
+    store = LabStore(tmp_path / "labs")
+    store.ensure_root()
+    first = store._new_scratch_dir("demo")
+    second = store._new_scratch_dir("demo")
+
+    assert first != second
+    assert first.is_dir() and second.is_dir()
+    # Hidden, so an in-flight write is never mistaken for an existing lab.
+    assert store.lab_names() == []
 
 
 def test_zip_lab_archives_directory_at_root(tmp_path):
