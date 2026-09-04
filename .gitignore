@@ -18,6 +18,9 @@ data/
 # Historical design-decision log, kept locally for reference only
 docs/refactor-plan.md
 
+# Audit findings + remediation status, kept locally for reference only
+docs/AUDIT.md
+
 # Local-only editor/agent config, kept on disk but not shared via git
 .claude/
 .vscode/
