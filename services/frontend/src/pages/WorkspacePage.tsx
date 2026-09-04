@@ -492,6 +492,9 @@ export function WorkspacePage() {
   const [showUpload, setShowUpload] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  // WorkspacePage isn't remounted on lab change (unkeyed route), so a menu built for the
+  // previous lab's items would otherwise stay open and act on it after navigation.
+  useEffect(() => setCtxMenu(null), [name]);
 
   const dockApiRef = useRef<DockviewApi | null>(null);
 
