@@ -57,7 +57,7 @@ const STEPS: TourStep[] = [
     tourPanel: "node-info",
     tourSelectFirstDevice: true,
     popover: {
-      title: "Node info",
+      title: "Device Information",
       description: "Click any device — in the topology or the Devices list — to see its details here: interfaces, image, running state.",
     },
   },
@@ -73,7 +73,7 @@ const STEPS: TourStep[] = [
     element: groupElement("devices-tab"),
     tourPanel: "devices",
     popover: {
-      title: "Devices",
+      title: "Lab Details",
       description: "All devices in this lab, with their running state. Select one for details, or open a terminal on it.",
     },
   },
@@ -89,7 +89,7 @@ const STEPS: TourStep[] = [
     element: groupElement("runtime-fs-tab"),
     tourPanel: "runtime-fs",
     popover: {
-      title: "Runtime FS",
+      title: "Runtime Filesystem",
       description: "Browse and edit a running device's live filesystem — no shell required.",
     },
   },
@@ -97,7 +97,7 @@ const STEPS: TourStep[] = [
     element: groupElement("stats-tab"),
     tourPanel: "stats",
     popover: {
-      title: "Stats",
+      title: "Statistics",
       description: "Live CPU, memory and network usage for every device, once the lab is deployed.",
     },
   },

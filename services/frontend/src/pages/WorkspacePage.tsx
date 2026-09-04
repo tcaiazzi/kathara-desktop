@@ -247,11 +247,11 @@ const TERMINAL_ID_RE = /^terminal:(.*):(\d+)$/;
 function buildDefaultLayout(api: DockviewApi) {
   // One shared tab group on the left: the inspector plus every tool panel. Node info goes in
   // first so it lands as the left-most tab.
-  api.addPanel({ id: "node-info", component: "node-info", title: "Node info" });
-  api.addPanel({ id: "devices", component: "devices", title: "Devices", position: { referencePanel: "node-info", direction: "within" } });
+  api.addPanel({ id: "node-info", component: "node-info", title: "Device Information" });
+  api.addPanel({ id: "devices", component: "devices", title: "Lab Details", position: { referencePanel: "node-info", direction: "within" } });
   api.addPanel({ id: "files", component: "files", title: "Lab Configuration", position: { referencePanel: "devices", direction: "within" } });
-  api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime FS", position: { referencePanel: "devices", direction: "within" } });
-  api.addPanel({ id: "stats", component: "stats", title: "Stats", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime Filesystem", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "stats", component: "stats", title: "Statistics", position: { referencePanel: "devices", direction: "within" } });
   // Topology: its own full-height column to the right of that shared group.
   api.addPanel({
     id: "topology",
@@ -274,7 +274,7 @@ function showNodeInfo(api: DockviewApi) {
   api.addPanel({
     id: "node-info",
     component: "node-info",
-    title: "Node info",
+    title: "Device Information",
     position: devices ? { referencePanel: "devices", direction: "within" } : undefined,
   });
 }
