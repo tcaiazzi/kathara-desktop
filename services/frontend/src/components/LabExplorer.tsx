@@ -203,7 +203,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
               <div className="alert alert-warning py-1 px-2 mb-2 d-flex justify-content-between align-items-center small">
                 <span>lab.conf changed on disk since you started editing.</span>
                 <Button size="sm" variant="outline-dark" onClick={acceptConfConflict}>
-                  Reload from disk (discards your edits)
+                  Reload from Disk (Discards Your Edits)
                 </Button>
               </div>
             )}

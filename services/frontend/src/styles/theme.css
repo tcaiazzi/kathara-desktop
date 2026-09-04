@@ -75,6 +75,12 @@
   color-scheme: dark;
 }
 
+/* Status badges (running/stopped/up/down/connected/...) read better title-cased than as the raw
+   lowercase strings passed in — including backend/Docker status values we don't control the casing of. */
+.badge {
+  text-transform: capitalize;
+}
+
 /* App navbar brand: light theme uses the black-wordmark logo, dark theme the white-wordmark one
    (chosen in AppNavbar) — so no background chip is needed on either navbar. */
 .kt-navbar-brand {

@@ -104,7 +104,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
           onClick={() => setAdvancedOpen((v) => !v)}
           aria-expanded={advancedOpen}
         >
-          {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Advanced options
+          {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Advanced Options
         </Button>
         <Collapse in={advancedOpen}>
           <div>
@@ -115,7 +115,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
       <ModalSubmitFooter
         onCancel={onClose}
         busy={busy}
-        submitLabel="Add device"
+        submitLabel="Add Device"
         busyLabel="Adding…"
         submitDisabled={!name.trim()}
         onSubmit={handleSubmit}

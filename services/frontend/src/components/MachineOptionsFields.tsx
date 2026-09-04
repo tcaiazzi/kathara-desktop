@@ -154,21 +154,21 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
       <div className="d-flex gap-4 flex-wrap mb-3">
         <Form.Check
           type="checkbox"
-          label="bridged"
+          label="Bridged"
           checked={form.bridged}
           disabled={disabled}
           onChange={(e) => set("bridged", e.target.checked)}
         />
         <Form.Check
           type="checkbox"
-          label="privileged"
+          label="Privileged"
           checked={form.privileged}
           disabled={disabled}
           onChange={(e) => set("privileged", e.target.checked)}
         />
         <Form.Check
           type="checkbox"
-          label="ipv6"
+          label="IPv6"
           checked={form.ipv6}
           disabled={disabled}
           onChange={(e) => set("ipv6", e.target.checked)}
@@ -177,7 +177,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
 
       <div className="row g-2 mb-3">
         <div className="col-6">
-          <Form.Label className="small mb-1">image</Form.Label>
+          <Form.Label className="small mb-1">Image</Form.Label>
           <AutocompleteInput
             size="sm"
             value={form.image}
@@ -188,7 +188,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">mem</Form.Label>
+          <Form.Label className="small mb-1">Mem</Form.Label>
           <Form.Control
             size="sm"
             value={form.mem}
@@ -198,7 +198,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">cpus</Form.Label>
+          <Form.Label className="small mb-1">CPUs</Form.Label>
           <Form.Control
             size="sm"
             type="number"
@@ -210,7 +210,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-4">
-          <Form.Label className="small mb-1">shell</Form.Label>
+          <Form.Label className="small mb-1">Shell</Form.Label>
           <Form.Control
             size="sm"
             value={form.shell}
@@ -220,7 +220,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-2">
-          <Form.Label className="small mb-1">num_terms</Form.Label>
+          <Form.Label className="small mb-1">Num Terms</Form.Label>
           <Form.Control
             size="sm"
             type="number"
@@ -231,7 +231,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">entrypoint</Form.Label>
+          <Form.Label className="small mb-1">Entrypoint</Form.Label>
           <Form.Control
             size="sm"
             value={form.entrypoint}
@@ -240,7 +240,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">args</Form.Label>
+          <Form.Label className="small mb-1">Args</Form.Label>
           <Form.Control
             size="sm"
             value={form.args}

@@ -396,8 +396,6 @@ export function TopologyGraph({
                 <Dropdown.Item active={showIps} onClick={() => setShowIps((v) => !v)}>
                   IPs
                 </Dropdown.Item>
-                <Dropdown.Item onClick={() => zoom(1.2)}>Zoom in</Dropdown.Item>
-                <Dropdown.Item onClick={() => zoom(1 / 1.2)}>Zoom out</Dropdown.Item>
               </DropdownButton>
             ) : (
               <>
@@ -415,6 +413,27 @@ export function TopologyGraph({
                 >
                   IPs
                 </Button>
+              </>
+            )}
+          </div>
+          <div className="kt-topo-layout-toolbar">
+            {compactToolbar ? (
+              <DropdownButton size="sm" variant="outline-secondary" title={<MoreHorizontal size={16} />} align="end">
+                <Dropdown.Item onClick={() => zoom(1.2)}>Zoom In</Dropdown.Item>
+                <Dropdown.Item onClick={() => zoom(1 / 1.2)}>Zoom Out</Dropdown.Item>
+                <Dropdown.Item onClick={handleFit}>Fit</Dropdown.Item>
+                <Dropdown.Item onClick={handleRelayout}>Re-layout</Dropdown.Item>
+                <Dropdown.Item onClick={handleSaveLayout} disabled={savingLayout || isEmpty}>
+                  {hasFixedLayout ? (dirty ? "Save Layout •" : "Save Layout") : "Fix Layout"}
+                </Dropdown.Item>
+                {hasFixedLayout && (
+                  <Dropdown.Item onClick={handleClearLayout} disabled={savingLayout}>
+                    Unfix
+                  </Dropdown.Item>
+                )}
+              </DropdownButton>
+            ) : (
+              <>
                 <div className="kt-topo-zoom">
                   <Button size="sm" variant="outline-secondary" onClick={() => zoom(1.2)} title="Zoom in" aria-label="Zoom in">
                     +
@@ -429,25 +448,6 @@ export function TopologyGraph({
                     −
                   </Button>
                 </div>
-              </>
-            )}
-          </div>
-          <div className="kt-topo-layout-toolbar">
-            {compactToolbar ? (
-              <DropdownButton size="sm" variant="outline-secondary" title={<MoreHorizontal size={16} />} align="end">
-                <Dropdown.Item onClick={handleFit}>Fit</Dropdown.Item>
-                <Dropdown.Item onClick={handleRelayout}>Re-layout</Dropdown.Item>
-                <Dropdown.Item onClick={handleSaveLayout} disabled={savingLayout || isEmpty}>
-                  {hasFixedLayout ? (dirty ? "Save layout •" : "Save layout") : "Fix layout"}
-                </Dropdown.Item>
-                {hasFixedLayout && (
-                  <Dropdown.Item onClick={handleClearLayout} disabled={savingLayout}>
-                    Unfix
-                  </Dropdown.Item>
-                )}
-              </DropdownButton>
-            ) : (
-              <>
                 <Button size="sm" variant="outline-secondary" onClick={handleFit}>
                   Fit
                 </Button>
@@ -474,7 +474,7 @@ export function TopologyGraph({
                       : "Fix this layout for the lab — stores it as lab.layout in the lab directory"
                   }
                 >
-                  {hasFixedLayout ? (dirty ? "Save layout •" : "Save layout") : "Fix layout"}
+                  {hasFixedLayout ? (dirty ? "Save Layout •" : "Save Layout") : "Fix Layout"}
                 </Button>
                 {hasFixedLayout && (
                   <Button
@@ -548,14 +548,14 @@ export function TopologyGraph({
                 {selectedNode.running && (
                   <Button size="sm" variant="dark" onClick={() => openWorkspaceTerminal(selectedNode)}>
                     <SquareTerminal size={14} className="me-1" />
-                    Open terminal
+                    Open Terminal
                   </Button>
                 )}
                 <DropdownButton size="sm" variant="outline-secondary" title="Actions" data-tour="node-actions-btn">
                   {selectedNode.running && (
                     <Dropdown.Item onClick={() => openTerminalPopup(selectedNode)}>
                       <AppWindow size={14} className="me-2" />
-                      Open terminal popup
+                      Open Terminal Popup
                     </Dropdown.Item>
                   )}
                   {selectedNode.running && (
@@ -567,51 +567,51 @@ export function TopologyGraph({
                   {selectedNode.running && <Dropdown.Divider />}
                   <Dropdown.Item onClick={() => openAddInterface(selectedNode)}>
                     <Plug size={14} className="me-2" />
-                    {selectedNode.running ? "Add interface (runtime)" : "Add interface (lab.conf)"}
+                    {selectedNode.running ? "Add Interface (Runtime)" : "Add Interface (lab.conf)"}
                   </Dropdown.Item>
                   <Dropdown.Item className="text-danger" onClick={() => openDisconnect(selectedNode)}>
                     <Unplug size={14} className="me-2" />
-                    {selectedNode.running ? "Disconnect interface (runtime)" : "Remove interface (lab.conf)"}
+                    {selectedNode.running ? "Disconnect Interface (Runtime)" : "Remove Interface (lab.conf)"}
                   </Dropdown.Item>
                   <Dropdown.Divider />
                   <Dropdown.Item onClick={() => openOptions(selectedNode)}>
                     <SlidersHorizontal size={14} className="me-2" />
-                    {detail.deployed ? "View options" : "Edit options"}
+                    {detail.deployed ? "View Options" : "Edit Options"}
                   </Dropdown.Item>
                   <Dropdown.Item onClick={onEditFiles}>
                     <FileEdit size={14} className="me-2" />
-                    Edit configuration
+                    Edit Configuration
                   </Dropdown.Item>
                 </DropdownButton>
               </div>
-              <Kv k="type" v={selectedNode.typeLabel} />
-              <Kv k="image" v={selectedNode.image || "—"} />
+              <Kv k="Type" v={selectedNode.typeLabel} />
+              <Kv k="Image" v={selectedNode.image || "—"} />
               <div className="kv">
-                <span className="k">state</span>
+                <span className="k">State</span>
                 <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
                   {deviceStateLabel(selectedNode)}
                 </span>
               </div>
-              <Kv k="ifaces" v={selectedNode.ifaces.length} />
-              {selectedMachine?.bridged && <Kv k="bridged" v="yes (host bridge)" />}
-              {selectedMachine?.privileged && <Kv k="privileged" v="yes" />}
-              {selectedMachine?.ipv6 != null && <Kv k="ipv6" v={selectedMachine.ipv6 ? "enabled" : "disabled"} />}
-              {selectedMachine?.mem && <Kv k="mem" v={selectedMachine.mem} />}
-              {selectedMachine?.cpus != null && <Kv k="cpus" v={selectedMachine.cpus} />}
-              {selectedMachine?.shell && <Kv k="shell" v={selectedMachine.shell} />}
-              {selectedMachine?.num_terms != null && <Kv k="num_terms" v={selectedMachine.num_terms} />}
-              {selectedMachine?.entrypoint && <Kv k="entrypoint" v={selectedMachine.entrypoint} />}
-              {selectedMachine?.args && <Kv k="args" v={selectedMachine.args} />}
+              <Kv k="Ifaces" v={selectedNode.ifaces.length} />
+              {selectedMachine?.bridged && <Kv k="Bridged" v="yes (host bridge)" />}
+              {selectedMachine?.privileged && <Kv k="Privileged" v="yes" />}
+              {selectedMachine?.ipv6 != null && <Kv k="IPv6" v={selectedMachine.ipv6 ? "enabled" : "disabled"} />}
+              {selectedMachine?.mem && <Kv k="Mem" v={selectedMachine.mem} />}
+              {selectedMachine?.cpus != null && <Kv k="CPUs" v={selectedMachine.cpus} />}
+              {selectedMachine?.shell && <Kv k="Shell" v={selectedMachine.shell} />}
+              {selectedMachine?.num_terms != null && <Kv k="Num Terms" v={selectedMachine.num_terms} />}
+              {selectedMachine?.entrypoint && <Kv k="Entrypoint" v={selectedMachine.entrypoint} />}
+              {selectedMachine?.args && <Kv k="Args" v={selectedMachine.args} />}
               {selectedNode.ifaces.map((it) => (
                 <div className="iface" key={it.num}>
                   <div style={{ fontWeight: 600, fontFamily: "monospace" }}>{formatIface(it.num, it.link)}</div>
-                  {it.ips.length > 0 && <Kv k="ip" v={it.ips.join(", ")} />}
-                  {it.mac && <Kv k="mac" v={it.mac} />}
+                  {it.ips.length > 0 && <Kv k="IP" v={it.ips.join(", ")} />}
+                  {it.mac && <Kv k="MAC" v={it.mac} />}
                 </div>
               ))}
               {selectedMachine?.ports && selectedMachine.ports.length > 0 && (
                 <div className="iface">
-                  <div style={{ fontWeight: 600 }}>ports</div>
+                  <div style={{ fontWeight: 600 }}>Ports</div>
                   {selectedMachine.ports.map((p) => (
                     <Kv
                       key={`${p.host_port}/${p.protocol}`}
@@ -635,7 +635,7 @@ export function TopologyGraph({
               )}
               {selectedMachine && Object.keys(selectedMachine.envs).length > 0 && (
                 <div className="iface">
-                  <div style={{ fontWeight: 600 }}>env</div>
+                  <div style={{ fontWeight: 600 }}>Env</div>
                   {Object.entries(selectedMachine.envs).map(([k, v]) => (
                     <Kv key={k} k={k} v={v} />
                   ))}
@@ -643,7 +643,7 @@ export function TopologyGraph({
               )}
               {selectedMachine && Object.keys(selectedMachine.sysctls).length > 0 && (
                 <div className="iface">
-                  <div style={{ fontWeight: 600 }}>sysctls</div>
+                  <div style={{ fontWeight: 600 }}>Sysctls</div>
                   {Object.entries(selectedMachine.sysctls).map(([k, v]) => (
                     <Kv key={k} k={k} v={String(v)} />
                   ))}
@@ -651,7 +651,7 @@ export function TopologyGraph({
               )}
               {selectedMachine && selectedMachine.ulimits.length > 0 && (
                 <div className="iface">
-                  <div style={{ fontWeight: 600 }}>ulimits</div>
+                  <div style={{ fontWeight: 600 }}>Ulimits</div>
                   {selectedMachine.ulimits.map((u) => (
                     <Kv key={u.name} k={u.name} v={u.hard != null ? `${u.soft} / ${u.hard}` : `${u.soft}`} />
                   ))}
@@ -659,7 +659,7 @@ export function TopologyGraph({
               )}
               {selectedMachine && selectedMachine.volumes.length > 0 && (
                 <div className="iface">
-                  <div style={{ fontWeight: 600 }}>volumes</div>
+                  <div style={{ fontWeight: 600 }}>Volumes</div>
                   {selectedMachine.volumes.map((v) => (
                     <Kv key={`${v.host_path}:${v.guest_path}`} k={v.guest_path} v={`${v.host_path} (${v.mode})`} />
                   ))}
@@ -667,14 +667,14 @@ export function TopologyGraph({
               )}
               {selectedMachine && Object.keys(selectedMachine.metas).length > 0 && (
                 <div className="iface">
-                  <div style={{ fontWeight: 600 }}>other options</div>
+                  <div style={{ fontWeight: 600 }}>Other Options</div>
                   {Object.entries(selectedMachine.metas).map(([k, v]) => (
                     <Kv key={k} k={k} v={v} />
                   ))}
                 </div>
               )}
               <div className="iface">
-                <div style={{ fontWeight: 600 }}>startup</div>
+                <div style={{ fontWeight: 600 }}>Startup</div>
                 {startupText ? (
                   <pre className="startup">{startupText}</pre>
                 ) : (
@@ -684,7 +684,7 @@ export function TopologyGraph({
               {selectedNode.running && (
                 <div className="iface">
                   <div className="d-flex align-items-center justify-content-between">
-                    <span style={{ fontWeight: 600 }}>startup log</span>
+                    <span style={{ fontWeight: 600 }}>Startup Log</span>
                     <span className={`kt-state ${startupStatus?.finished ? "done" : "pending"}`}>
                       {startupStatus?.finished ? "finished" : "running…"}
                     </span>
@@ -700,18 +700,18 @@ export function TopologyGraph({
           ) : (
             <>
               <h4>{selectedNode.name}</h4>
-              <Kv k="type" v={selectedNode.external.length ? "external" : "internal"} />
+              <Kv k="Type" v={selectedNode.external.length ? "External" : "Internal"} />
               <div className="kv">
-                <span className="k">state</span>
+                <span className="k">State</span>
                 <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
                   {selectedNode.running ? "up" : "down"}
                 </span>
               </div>
-              {selectedNode.external.length > 0 && <Kv k="external" v={selectedNode.external.join(", ")} />}
+              {selectedNode.external.length > 0 && <Kv k="External" v={selectedNode.external.join(", ")} />}
               {machineNames().length > 0 && (
                 <div className="mt-2">
                   <Button size="sm" variant="outline-secondary" onClick={() => openConnectExisting(selectedNode)}>
-                    Connect device
+                    Connect Device
                   </Button>
                 </div>
               )}

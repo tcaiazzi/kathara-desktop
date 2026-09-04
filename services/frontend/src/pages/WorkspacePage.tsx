@@ -10,7 +10,7 @@ import {
   type IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { Loader2, ShieldAlert, SquareTerminal } from "lucide-react";
+import { Globe, Loader2, ShieldAlert, SquareTerminal } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -959,6 +959,7 @@ export function WorkspacePage() {
                 Upload
               </Button>
               <Button size="sm" variant="outline-secondary" className="flex-fill" onClick={() => setShowGallery(true)}>
+                <Globe size={14} className="me-1" />
                 Browse
               </Button>
             </div>
@@ -976,7 +977,7 @@ export function WorkspacePage() {
                 onClick={handleWipeAll}
                 title="Force-undeploys every lab running in kathara-ide, not just this one"
               >
-                Wipe all labs
+                Wipe All Labs
               </Button>
             )}
             <Form.Control
@@ -1135,7 +1136,7 @@ export function WorkspacePage() {
                   </DropdownButton>
                 </span>
                 <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
-                  Close all terminals
+                  Close All Terminals
                 </Button>
                 <span data-tour="layout-btn" className="d-inline-flex">
                   <DropdownButton size="sm" variant="outline-secondary" title="Layout">
@@ -1200,7 +1201,7 @@ export function WorkspacePage() {
                 Lab <code>{name}</code> was not found.
               </p>
               <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
-                Clear selection
+                Clear Selection
               </Button>
             </div>
           ) : showWelcome ? (

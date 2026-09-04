@@ -26,23 +26,23 @@ export interface DeviceType {
 
 // Exact image-basename → category/label (the Kathara Docker-Images set).
 const EXACT: Record<string, DeviceType> = {
-  base: { category: "host", label: "host" },
-  core: { category: "host", label: "host" },
-  frr: { category: "router", label: "FRR router" },
-  quagga: { category: "router", label: "Quagga router" },
-  quagga_deprecated: { category: "router", label: "Quagga router" },
-  bird: { category: "router", label: "BIRD router" },
-  bird2: { category: "router", label: "BIRD router" },
-  bird3: { category: "router", label: "BIRD router" },
-  openbgpd: { category: "router", label: "OpenBGPD router" },
-  scion: { category: "router", label: "SCION router" },
-  "rift-python": { category: "router", label: "RIFT router" },
+  base: { category: "host", label: "Host" },
+  core: { category: "host", label: "Host" },
+  frr: { category: "router", label: "FRR Router" },
+  quagga: { category: "router", label: "Quagga Router" },
+  quagga_deprecated: { category: "router", label: "Quagga Router" },
+  bird: { category: "router", label: "BIRD Router" },
+  bird2: { category: "router", label: "BIRD Router" },
+  bird3: { category: "router", label: "BIRD Router" },
+  openbgpd: { category: "router", label: "OpenBGPD Router" },
+  scion: { category: "router", label: "SCION Router" },
+  "rift-python": { category: "router", label: "RIFT Router" },
   openvswitch: { category: "switch", label: "Open vSwitch" },
-  sdn: { category: "switch", label: "SDN switch" },
-  bmv2: { category: "switch", label: "P4 (bmv2) switch" },
-  p4: { category: "switch", label: "P4 switch" },
-  pox: { category: "controller", label: "POX SDN controller" },
-  apache: { category: "server", label: "Apache web server" },
+  sdn: { category: "switch", label: "SDN Switch" },
+  bmv2: { category: "switch", label: "P4 (bmv2) Switch" },
+  p4: { category: "switch", label: "P4 Switch" },
+  pox: { category: "controller", label: "POX SDN Controller" },
+  apache: { category: "server", label: "Apache Web Server" },
   bind: { category: "dns", label: "BIND DNS" },
   dnsmasq: { category: "dns", label: "dnsmasq DNS/DHCP" },
   krill: { category: "security", label: "Krill RPKI CA" },
@@ -52,12 +52,12 @@ const EXACT: Record<string, DeviceType> = {
 
 // Substring rules for non-exact / third-party images (first match wins).
 const KEYWORDS: [RegExp, DeviceType][] = [
-  [/wireshark|tcpdump|tshark/, { category: "analyzer", label: "packet analyzer" }],
-  [/frr|quagga|bird|openbgpd|\bbgp\b|ospf|zebra|scion|rift|rout/, { category: "router", label: "router" }],
-  [/vswitch|\bovs\b|bmv2|\bp4\b|switch|\bsdn\b/, { category: "switch", label: "switch" }],
-  [/controller|\bpox\b|ryu|onos|floodlight/, { category: "controller", label: "SDN controller" }],
+  [/wireshark|tcpdump|tshark/, { category: "analyzer", label: "Packet Analyzer" }],
+  [/frr|quagga|bird|openbgpd|\bbgp\b|ospf|zebra|scion|rift|rout/, { category: "router", label: "Router" }],
+  [/vswitch|\bovs\b|bmv2|\bp4\b|switch|\bsdn\b/, { category: "switch", label: "Switch" }],
+  [/controller|\bpox\b|ryu|onos|floodlight/, { category: "controller", label: "SDN Controller" }],
   [/dnsmasq|\bbind\b|unbound|\bdns\b/, { category: "dns", label: "DNS" }],
-  [/apache|nginx|httpd|\bweb\b|caddy/, { category: "server", label: "web server" }],
+  [/apache|nginx|httpd|\bweb\b|caddy/, { category: "server", label: "Web Server" }],
   [/rpki|krill|routinator/, { category: "security", label: "RPKI" }],
 ];
 
@@ -72,13 +72,13 @@ function imageBasename(image: string): string {
 // rule (covers third-party / tagged images), else a generic "device" (unknown image).
 export function deviceType(machine: MachineDetail): DeviceType {
   const name = machine.image ? imageBasename(machine.image) : "";
-  if (!name) return { category: "device", label: "device" };
+  if (!name) return { category: "device", label: "Device" };
 
   const exact = EXACT[name];
   if (exact) return exact;
   for (const [re, type] of KEYWORDS) if (re.test(name)) return type;
 
-  return { category: "device", label: machine.image ?? "device" };
+  return { category: "device", label: machine.image ?? "Device" };
 }
 
 // Inline SVG line-art per category (16×16 user units, stroke = currentColor), as element specs

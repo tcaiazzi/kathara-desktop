@@ -103,7 +103,7 @@ function DesktopLabsDirSettings() {
         </Button>
         {!isDefault && (
           <Button type="button" size="sm" variant="outline-secondary" disabled={restarting} onClick={handleReset}>
-            Reset to default
+            Reset to Default
           </Button>
         )}
       </div>
@@ -389,7 +389,7 @@ export function SettingsPage() {
         )}
 
         <Button type="submit" disabled={busy}>
-          {busy ? "Saving..." : "Save settings"}
+          {busy ? "Saving..." : "Save Settings"}
         </Button>
       </Form>
     </div>

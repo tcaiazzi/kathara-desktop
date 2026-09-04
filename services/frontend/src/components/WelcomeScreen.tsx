@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "react-bootstrap";
-import { Compass, Loader2, Plus, Upload } from "lucide-react";
+import { Globe, Loader2, Plus, Upload } from "lucide-react";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useToast } from "../context/ToastContext";
@@ -90,14 +90,14 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
       <div className="kt-welcome-cta">
         <Button variant="primary" onClick={onNewLab}>
           <Plus size={16} className="me-1" />
-          New lab
+          New Lab
         </Button>
         <Button variant="outline-secondary" onClick={onImportLab}>
           <Upload size={16} className="me-1" />
           Import a .zip…
         </Button>
         <Button variant="outline-secondary" onClick={onBrowseGallery}>
-          <Compass size={16} className="me-1" />
+          <Globe size={16} className="me-1" />
           Browse Kathara Labs…
         </Button>
       </div>
@@ -156,7 +156,7 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
           <>
             {" · "}
             <Button variant="link" size="sm" className="p-0 align-baseline" onClick={onDismiss}>
-              Hide welcome
+              Hide Welcome
             </Button>
           </>
         )}

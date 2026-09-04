@@ -119,7 +119,7 @@ export function useDeviceActions({
   function openAddDomain() {
     setActionConfig({
       title: "Add collision domain",
-      submitLabel: "Add domain",
+      submitLabel: "Add Domain",
       fields: [{ name: "name", label: "Domain name", required: true, placeholder: "A" }],
       onSubmit: async ({ name }) => {
         const clean = name.trim();
@@ -137,22 +137,22 @@ export function useDeviceActions({
     const linkField: TopoActionField = domains.length
       ? {
           name: "link",
-          label: "Collision domain",
+          label: "Collision Domain",
           options: domains.map((v) => ({ value: v, label: v })),
           value: domains.includes(prefillLink) ? prefillLink : domains[0],
         }
-      : { name: "link", label: "Collision domain", required: true, placeholder: "A", hint: "No domains found — create one first." };
-    const macField: TopoActionField = { name: "mac_address", label: "MAC address (optional)", placeholder: "02:00:00:00:00:01" };
+      : { name: "link", label: "Collision Domain", required: true, placeholder: "A", hint: "No domains found — create one first." };
+    const macField: TopoActionField = { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01" };
     setActionConfig({
       title: running ? `Add interface on ${deviceNode.name} (runtime)` : `Add interface on ${deviceNode.name} (lab.conf)`,
       hint: running
         ? "Live change on the running device — the interface number is assigned automatically and this is not saved to lab.conf."
         : "Static edit — saved to lab.conf and applied on the next deploy.",
-      submitLabel: "Add interface",
+      submitLabel: "Add Interface",
       // Only a stopped device can take an explicit interface number (Kathara auto-numbers at runtime).
       fields: running
         ? [linkField, macField]
-        : [linkField, { name: "interface_number", label: "Interface number", type: "number", value: String(nextIf), required: true, min: 0 }, macField],
+        : [linkField, { name: "interface_number", label: "Interface Number", type: "number", value: String(nextIf), required: true, min: 0 }, macField],
       onSubmit: async ({ link, interface_number, mac_address }) => {
         const clean = link.trim();
         if (!clean) return false;
@@ -185,7 +185,7 @@ export function useDeviceActions({
     setActionConfig({
       title: `Add interface to ${domainNode.name}`,
       hint: "Mode follows the chosen device's state: a stopped device edits lab.conf (uses the interface number); a running device is a runtime change (auto-numbered, not saved to lab.conf).",
-      submitLabel: "Add interface",
+      submitLabel: "Add Interface",
       fields: [
         { name: "machine", label: "Device", options: names.map((v) => ({ value: v, label: v })), value: names[0] },
         // Deliberately left empty rather than pre-filled with the first device's next free
@@ -194,13 +194,13 @@ export function useDeviceActions({
         // uses. Empty means "next free one", resolved server-side against the real lab.conf.
         {
           name: "interface_number",
-          label: "Interface number (stopped devices only)",
+          label: "Interface Number (Stopped Devices Only)",
           type: "number",
           value: "",
           min: 0,
           hint: "Leave empty to use the device's next free interface number.",
         },
-        { name: "mac_address", label: "MAC address (optional)", placeholder: "02:00:00:00:00:01" },
+        { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01" },
       ],
       onSubmit: async ({ machine, interface_number, mac_address }) => {
         const clean = machine.trim();
@@ -237,7 +237,7 @@ export function useDeviceActions({
       hint: running
         ? "Live change on the running device — not saved to lab.conf."
         : "Static edit — saved to lab.conf and applied on the next deploy.",
-      submitLabel: running ? "Disconnect" : "Remove interface",
+      submitLabel: running ? "Disconnect" : "Remove Interface",
       fields: [{ name: "link", label: "Domain", options: links.map((v) => ({ value: v, label: v })), value: links[0] }],
       onSubmit: async ({ link }) => {
         const clean = link.trim();
@@ -328,38 +328,38 @@ export function useDeviceActions({
 
   function deviceContextItems(nd: DeviceNode): ContextMenuItem[] {
     const items: ContextMenuItem[] = [
-      { label: "Edit configuration", action: onEditFiles },
-      { label: detail?.deployed ? "View options" : "Edit options", action: () => openOptions(nd) },
+      { label: "Edit Configuration", action: onEditFiles },
+      { label: detail?.deployed ? "View Options" : "Edit Options", action: () => openOptions(nd) },
     ];
     if (!nd.running) {
-      items.push({ label: "Deploy device", success: true, action: () => deployDevice(nd) });
+      items.push({ label: "Deploy Device", success: true, action: () => deployDevice(nd) });
     }
     items.push(
-      { label: "Show runtime filesystem", ...runningGate(nd), action: () => openRuntimeFs(nd) },
-      { label: "Open terminal", ...runningGate(nd), action: () => openWorkspaceTerminal(nd) },
-      { label: "Open terminal popup", ...runningGate(nd), action: () => openTerminalPopup(nd) },
+      { label: "Show Runtime Filesystem", ...runningGate(nd), action: () => openRuntimeFs(nd) },
+      { label: "Open Terminal", ...runningGate(nd), action: () => openWorkspaceTerminal(nd) },
+      { label: "Open Terminal Popup", ...runningGate(nd), action: () => openTerminalPopup(nd) },
       {
-        label: nd.running ? "Add interface (runtime)" : "Add interface (lab.conf)",
+        label: nd.running ? "Add Interface (Runtime)" : "Add Interface (lab.conf)",
         action: () => openAddInterface(nd),
       },
       {
-        label: nd.running ? "Disconnect interface (runtime)" : "Remove interface (lab.conf)",
+        label: nd.running ? "Disconnect Interface (Runtime)" : "Remove Interface (lab.conf)",
         action: () => openDisconnect(nd),
       },
     );
     items.push(
       nd.running
-        ? { label: "Undeploy device", danger: true, action: () => undeployDevice(nd) }
-        : { label: "Remove device", danger: true, action: () => removeDevice(nd) },
+        ? { label: "Undeploy Device", danger: true, action: () => undeployDevice(nd) }
+        : { label: "Remove Device", danger: true, action: () => removeDevice(nd) },
     );
     return items;
   }
 
   function domainContextItems(nd: DomainNode): ContextMenuItem[] {
     return [
-      { label: "Add device attached here", action: () => openAddDevice(nd.name) },
-      { label: "Connect existing device", action: () => openConnectExisting(nd) },
-      { label: "Remove domain", danger: true, action: () => removeDomain(nd) },
+      { label: "Add Device Attached Here", action: () => openAddDevice(nd.name) },
+      { label: "Connect Existing Device", action: () => openConnectExisting(nd) },
+      { label: "Remove Domain", danger: true, action: () => removeDomain(nd) },
     ];
   }
 
