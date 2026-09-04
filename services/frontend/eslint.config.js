@@ -43,7 +43,7 @@ export default tseslint.config(
             "useConfirm",
             "useDesktopCommand",
             "useDesktopDispatch",
-            "useElevate",
+            "useDeployAuthorization",
             "useOnboardingTour",
             "useOnboardingTourReady",
             "useOnboardingTourFocusPanel",

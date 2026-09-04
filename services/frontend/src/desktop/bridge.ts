@@ -66,6 +66,14 @@ export interface DesktopApi {
    * any undeploy, not just ones you know were privileged. `openLab`, if given, is reflected into
    * the post-reload URL so the reload lands back on the lab that was open instead of bare root. */
   dropElevation(openLab?: string): Promise<{ dropped: boolean }>;
+  /** Verifies the user could elevate, without touching the backend — used for a deploy that only
+   * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
+   * be root, only proof the user could authorize it. `password` is required on Linux, ignored on
+   * macOS/Windows (native OS prompt instead). Unlike elevateBackend, never restarts the backend
+   * and never reloads the window — the result always reflects this call directly. */
+  verifyCanElevate(
+    password?: string,
+  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }>;
   /** Native "Import lab" picker; null when the user cancels. */
   pickLabArchive(): Promise<{ name: string; data: Uint8Array } | null>;
   saveFile(name: string, data: Uint8Array): Promise<string | null>;

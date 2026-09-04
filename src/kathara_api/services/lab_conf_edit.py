@@ -2,8 +2,8 @@
 
 Every offline structural edit used to rebuild an in-memory ``Lab`` from disk and re-serialize the
 whole file with ``lab_store.gen_lab_conf``, which silently dropped everything the IDE's model does
-not carry: comments, line ordering, quoting style, ``[volume]``/``[num_terms]``/``[entrypoint]``/
-``[args]`` and any option this API doesn't interpret. Every function here instead takes the file's
+not carry: comments, line ordering, quoting style, ``[num_terms]``/``[entrypoint]``/``[args]`` and
+any option this API doesn't interpret. Every function here instead takes the file's
 full text and returns it with only the lines it must touch changed — anything else, including
 lines this project's own parser only warns about, survives byte for byte.
 

@@ -1,5 +1,6 @@
 """Unit tests for the backend lab.conf/folder import parser (no Docker required)."""
 
+from kathara_api.schemas.machine import VolumeMount
 from kathara_api.services import lab_import
 
 LAB_CONF = """LAB_DESCRIPTION="Two routers and two PCs (static routing)"
@@ -62,7 +63,9 @@ def test_parse_lab_conf_flags_unsupported_options():
     # bridged is now supported (parsed onto the model), so it must NOT be flagged unsupported.
     assert pc1.bridged is True
     assert not any("bridged" in w for w in pc1.unsupported)
-    assert any("volume" in w for w in pc1.unsupported)
+    # volume is now supported too (see _parse_volume) — applied to the model, not flagged.
+    assert pc1.volumes == [VolumeMount(host_path="/h", guest_path="/g", mode="rw")]
+    assert not any("volume" in w for w in pc1.unsupported)
 
 
 def test_parse_lab_ext_groups_external_interfaces_by_link():
@@ -177,9 +180,30 @@ def test_translate_lab_files_carries_num_terms_entrypoint_args_and_metas():
     assert any("frobnicate" in w for w in t.warnings)
 
 
-def test_translate_lab_files_volume_is_warned_but_not_applied_to_the_model():
+def test_translate_lab_files_volume_is_applied_to_the_model():
     files = {"lab.conf": 'pc1[image]=kathara/base\npc1[0]=A\npc1[volume]=/host|/mnt|rw\n'}
     t = lab_import.translate_lab_files(files, "lab")
     pc1 = next(m for m in t.payload.machines if m.name == "pc1")
-    assert pc1.volumes == []
-    assert any("volume" in w and "aren't applied" in w for w in t.warnings)
+    assert pc1.volumes == [VolumeMount(host_path="/host", guest_path="/mnt", mode="rw")]
+    assert not any("volume" in w for w in t.warnings)
+
+
+def test_parse_lab_conf_volume_two_field_form_defaults_to_ro():
+    # Kathara's own Machine.add_meta defaults mode to "ro" for the 2-field form — matched here so
+    # a lab.conf parsed by this API behaves like one parsed by the Kathara CLI itself.
+    parsed = lab_import.parse_lab_conf("pc1[volume]=/host|/mnt\n")
+    assert parsed.machines["pc1"].volumes == [VolumeMount(host_path="/host", guest_path="/mnt", mode="ro")]
+
+
+def test_parse_lab_conf_malformed_volume_is_an_error():
+    parsed = lab_import.parse_lab_conf("pc1[volume]=bad\n")
+    assert any("invalid volume" in e for e in parsed.errors)
+    assert parsed.machines["pc1"].volumes == []
+
+
+def test_parse_lab_conf_volume_with_relative_host_path_is_an_error():
+    # Same VolumeMount validation the JSON path already gets — a relative host_path is silently
+    # relative to the API process's own cwd otherwise (see schemas/machine.py).
+    parsed = lab_import.parse_lab_conf("pc1[volume]=data|/mnt|rw\n")
+    assert any("invalid volume" in e for e in parsed.errors)
+    assert parsed.machines["pc1"].volumes == []

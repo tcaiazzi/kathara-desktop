@@ -41,8 +41,10 @@ export const MAPPED_OPTIONS = [
   "args",
 ] as const;
 
-// Parsed but never applied to the model (kept in lab.conf, not interpreted) — see
-// lab_import._apply_conf_option's `volume` branch.
+// Recognized, and applied to the model (see lab_import._parse_volume) — but not run through the
+// lint's generic optionError value-check like MAPPED_OPTIONS are: validating an absolute host
+// path depends on the *backend's* OS (os.path.isabs), which this browser-side linter has no way
+// to know, so a malformed value is left for the backend to reject instead of guessed at here.
 export const PASSTHROUGH_OPTIONS = ["volume"] as const;
 
 export const OPTION_KEYWORDS = [...MAPPED_OPTIONS, "num_terms", ...PASSTHROUGH_OPTIONS] as const;

@@ -19,9 +19,14 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 - **`services/lab_import.py`** / **`lab_builder.py`** / **`serializers.py`** — parse `lab.conf`/folders,
   build Kathara model objects, and serialize models back to response schemas. Options this API
   doesn't interpret (an unknown `machine[key]=value`, an unrecognized top-level `KEY=value` line)
-  are warnings, not errors: they stay in the file untouched but don't block the import. Only
-  `[volume]` is *never* applied to the model (an arbitrary host bind-mount is a real risk over
-  REST), though it too survives verbatim in the file.
+  are warnings, not errors: they stay in the file untouched but don't block the import. `[volume]`
+  is applied like every other option, whether it arrives as JSON (the device options form and its
+  host-path browser) or parsed from an imported `lab.conf` — both go through `schemas/machine.py`'s
+  `VolumeMount`, which validates both halves precisely because they get written back into
+  `lab.conf`. Host bind-mounts are gated in the frontend instead, at deploy time: the desktop
+  shell requires the user's own password before a deploy that would mount one goes ahead (see
+  `services/frontend/src/desktop/ElevationContext.tsx`), and the `lab.conf` editor flags a
+  `[volume]` line with a security warning as soon as it's typed.
 - **`services/lab_conf_edit.py`** — surgical, line-level `lab.conf` text edits (add/remove a device,
   add/remove an interface, set/unset a meta or `LAB_*` directive). Every offline structural change
   (`add_machine`, `remove_machine`, `connect_machine`/`disconnect_machine` on a stopped device) goes
@@ -149,10 +154,11 @@ Errors return `{"detail": str, "error_type": str}`.
 
 > **`PUT …/machines/{m}` is a full replacement.** The body is the device's complete option set,
 > so any option absent from it is unset — there is no partial-update shape. Note the current
-> limitation: options this API parses but deliberately does *not* model (`[volume]`, a
-> non-integer `[num_terms]` — see `lab_import._apply_conf_option`, which records them as
-> warnings and leaves them in the file) are **not** carried through a round-trip, so a
-> `MachineDetail` → `MachineUpdate` submitted unchanged drops those lines from `lab.conf`.
+> limitation: an option this API parses but deliberately does *not* model — a non-integer
+> `[num_terms]` (see `lab_import._apply_conf_option`, which records it as a warning and leaves it
+> in the file) — is **not** carried through a round-trip, so a `MachineDetail` → `MachineUpdate`
+> submitted unchanged drops that line from `lab.conf`. `[volume]` used to be in this category too;
+> it no longer is, since it's now modeled from either source.
 
 ## Exec — `/api/labs/{lab}/machines/{m}`
 

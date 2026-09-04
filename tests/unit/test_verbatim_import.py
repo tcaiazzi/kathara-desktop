@@ -38,9 +38,10 @@ class _RecordingFacade(FakeFacadeBase):
         self.copied.append((machine.name, decoded))
 
 
-# A deliberately hostile lab.conf: comments, unusual ordering, single quotes, [volume],
-# [num_terms], an unknown meta, a trailing comment, LAB_NAME different from the target lab name,
-# and CRLF line endings.
+# A deliberately hostile lab.conf: comments, unusual ordering, single quotes, [num_terms], an
+# unknown meta, a trailing comment, LAB_NAME different from the target lab name, and CRLF line
+# endings. Also carries a [volume] line, applied like any other option (see lab_import.py) — kept
+# here to prove it round-trips byte-for-byte on disk same as everything else, applied or not.
 NASTY_LAB_CONF = (
     "# a leading comment\r\n"
     'LAB_NAME="original-name"\r\n'
@@ -70,9 +71,11 @@ def test_upload_lab_keeps_lab_conf_byte_for_byte(tmp_path):
     lab_dir = service.store.lab_dir("uploaded")
     assert (lab_dir / "lab.conf").read_bytes() == NASTY_LAB_CONF.encode("utf-8")
     # Warnings mention what wasn't applied, without erroring the whole import.
-    assert any("volume" in w for w in warnings)
     assert any("MY_CUSTOM_META" in w or "not interpreted" in w for w in warnings)
     assert lab.machines["pc1"] is not None
+    # The volume line above IS applied — read from `meta` directly (not `get_volumes()`, which
+    # would additionally enforce `volume_mount_policy`; see serializers._volumes_to_schema).
+    assert "/host/data" in lab.machines["pc1"].meta.get("volumes", {})
 
 
 def test_upload_lab_preserves_every_archive_member_byte_for_byte(tmp_path):

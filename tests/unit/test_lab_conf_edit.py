@@ -12,9 +12,11 @@ from kathara_api.errors import ApiError
 from kathara_api.schemas.machine import MachineCreate, MachineUpdate, PortMapping, Ulimit
 from kathara_api.services import lab_conf_edit as lce
 
-# A deliberately hostile lab.conf: comments, unusual interface ordering, single quotes, [volume],
+# A deliberately hostile lab.conf: comments, unusual interface ordering, single quotes,
 # [num_terms]/[entrypoint]/[args], an unknown meta, a trailing comment on a line that will later be
-# renumbered, and a device's line interleaved into another device's block.
+# renumbered, and a device's line interleaved into another device's block. Also carries a
+# [volume] line — applied to the model like any other option now, but included here for the same
+# reason as everything else: proving it survives an unrelated surgical edit byte-for-byte.
 GNARLY = (
     "# Static routing lab — hand written, please do not reformat.\n"
     'LAB_DESCRIPTION="Two routers"\n'

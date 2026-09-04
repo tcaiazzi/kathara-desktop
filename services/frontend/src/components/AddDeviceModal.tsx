@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
+import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
 import {
@@ -32,6 +33,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const runBusy = useBusyAction();
+  const requestDeployAuth = useDeployAuthorization();
 
   useEffect(() => {
     if (!show) return;
@@ -49,10 +51,22 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
   async function handleSubmit() {
     const cleanName = name.trim();
     if (!cleanName) return;
+    const payload: Parameters<typeof api.addMachine>[1] = { name: cleanName, ...optionsFormStateToPayload(options) };
+    const cleanLink = link.trim();
+    if (cleanLink) payload.interfaces = [{ link: cleanLink, number: 0 }];
+
+    // Same "volumes" case as a single-device redeploy (useDeviceActions.deployDevice) — never
+    // "both" even if the Advanced options' privileged checkbox is also set, for the same reason:
+    // no resume-after-reload path exists for this modal's form state across a full page reload.
+    if (payload.volumes && payload.volumes.length > 0) {
+      const outcome = await requestDeployAuth({
+        privileged: false,
+        volumeMachines: [{ name: cleanName, volumes: payload.volumes }],
+      });
+      if (outcome !== "proceed") return;
+    }
+
     await runBusy(setBusy, "Add device", async () => {
-      const payload: Parameters<typeof api.addMachine>[1] = { name: cleanName, ...optionsFormStateToPayload(options) };
-      const cleanLink = link.trim();
-      if (cleanLink) payload.interfaces = [{ link: cleanLink, number: 0 }];
       await api.addMachine(labName, payload);
       await onAdded();
       onClose();

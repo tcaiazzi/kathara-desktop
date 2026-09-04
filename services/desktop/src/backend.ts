@@ -454,6 +454,30 @@ async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok
 }
 
 /**
+ * Verify the user could elevate, without touching the backend at all — used when the only reason
+ * to ask is a volume mount, which (unlike a privileged device) doesn't need this *process*'s real
+ * UID to be root, only proof the user could authorize it if asked.
+ *
+ * Linux reuses `verifySudoPassword` unchanged — it already validates without running anything.
+ * macOS/Windows have no password field of their own: the only credential-collection UI either
+ * has is sudo-prompt's native dialog, which is inherently tied to *running* something elevated —
+ * so this runs a throwaway no-op through it instead of the real backend command. Failures collapse
+ * the same way `runElevatedNative` collapses them: sudo-prompt can't tell "dialog dismissed" from
+ * "wrong password" apart in any stable cross-platform way, so both land on "cancelled" here too.
+ */
+export async function verifyCanElevate(password?: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+  if (process.platform !== "darwin" && process.platform !== "win32") {
+    return verifySudoPassword(password ?? "");
+  }
+  return new Promise((resolve) => {
+    const cmd = process.platform === "win32" ? "cmd /c exit /b 0" : "/usr/bin/true";
+    sudoPrompt.exec(cmd, { name: "Kathara IDE" }, (error) => {
+      resolve(error ? { ok: false, reason: "cancelled", message: error.message } : { ok: true });
+    });
+  });
+}
+
+/**
  * Linux only: kill the current backend and relaunch it under `sudo`, feeding `password` on
  * stdin. Kathara's own privileged-device gate (`Kathara.utils.is_admin()`) checks the process's
  * *real* UID, so this is the only way to satisfy it — there is no in-place elevation of an

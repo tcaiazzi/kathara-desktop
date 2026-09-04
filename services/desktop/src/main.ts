@@ -22,6 +22,7 @@ import {
   startBackendElevatedLinux,
   startBackendElevatedNative,
   stopBackend,
+  verifyCanElevate,
   type ElevateResult,
 } from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
@@ -348,6 +349,15 @@ function registerIpc(): void {
     }
     return result;
   });
+
+  // Driven from the same elevation prompt, but for a deploy that only mounts a host volume — a
+  // volume doesn't need this *process* to be root (unlike a privileged device), only proof the
+  // user could authorize it. Unlike elevation:elevate above, this never touches the backend: no
+  // restart, no new port, no reload — the caller just gets ok/not-ok back synchronously.
+  ipcMain.handle(
+    "elevation:verify",
+    (_e, password?: string): ReturnType<typeof verifyCanElevate> => verifyCanElevate(password),
+  );
 
   // Driven after a successful undeploy (see useLabLifecycleActions.ts): least-privilege — an
   // elevated backend shouldn't keep running as root once nothing it's doing needs that. There's

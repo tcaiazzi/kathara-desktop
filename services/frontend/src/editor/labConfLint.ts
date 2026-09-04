@@ -99,7 +99,15 @@ function computeDiagnostics(view: EditorView): Diagnostic[] {
         const err = optionError(arg, value);
         if (err) push(err);
       } else if (arg === "volume") {
-        push(`${name}[volume] — host volumes aren't applied by the API (kept in lab.conf)`, "warning");
+        // Applied — see the backend's lab_import._parse_volume and schemas/machine.py's
+        // VolumeMount. Flagged here purely as a security reminder, not a format check: the
+        // deploy-time password prompt is the real gate (see ElevationContext.tsx), this is just
+        // visible earlier, while editing.
+        push(
+          `${name}[volume] — mounts a directory from the host filesystem into this device; ` +
+            `make sure you trust this lab before deploying it.`,
+          "warning",
+        );
       } else {
         push(`meta "${arg}" not recognized`, "warning");
       }

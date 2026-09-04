@@ -130,8 +130,9 @@ def test_build_machine_applies_unknown_pass_through_meta():
 
 def test_build_machine_pass_through_meta_cannot_smuggle_a_volume():
     # A pass-through meta named "volume" must never reach Machine.add_meta, whose special-case
-    # for "volume" turns a value into a host bind mount — that's exactly the hole `[volume]` in
-    # lab.conf is deliberately kept out of the model for (see lab_import.py).
+    # for "volume" turns a value into a host bind mount. This is a different hole than lab.conf's
+    # typed `[volume]`/JSON's `volumes` (both applied, both validated by VolumeMount) — this one
+    # is the generic `metas` passthrough trying to sneak a mount in under a key it isn't.
     spec = LabCreate.model_validate(
         {"name": "metalab", "machines": [{"name": "pc1", "metas": {"volume": "/etc|/etc|rw"}}]}
     )

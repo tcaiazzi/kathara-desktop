@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
+import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
@@ -44,6 +45,7 @@ export function useDeviceActions({
 }: UseDeviceActionsOptions) {
   const toast = useToast();
   const confirm = useConfirm();
+  const requestDeployAuth = useDeployAuthorization();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
   const [startups, setStartups] = useState<Record<string, string>>({});
 
@@ -259,6 +261,16 @@ export function useDeviceActions({
   }
 
   async function deployDevice(deviceNode: DeviceNode) {
+    // Only ever requests the "volumes" case — never "both", even if this device happens to also
+    // be privileged: that would need the same resume-after-reload machinery the full-lab deploy
+    // has (see useLabLifecycleActions.ts), which a single device redeploy has no way to resume
+    // into. A privileged device deployed from here fails with the same unhandled PrivilegeError
+    // it would today — a pre-existing, narrower gap this doesn't widen.
+    const machine = detail?.machines.find((m) => m.name === deviceNode.name);
+    if (machine && machine.volumes.length > 0) {
+      const outcome = await requestDeployAuth({ privileged: false, volumeMachines: [machine] });
+      if (outcome !== "proceed") return;
+    }
     await withRefresh(() => api.deployDevice(labName, deviceNode.name), `Device ${deviceNode.name} deployed.`);
   }
 

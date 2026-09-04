@@ -1,5 +1,7 @@
 """Schemas describing Kathara devices (machines)."""
 
+import os
+from pathlib import PurePosixPath
 from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -18,11 +20,50 @@ class PortMapping(BaseModel):
 
 
 class VolumeMount(BaseModel):
-    """A host directory bind-mounted inside the device."""
+    """A host directory bind-mounted inside the device.
+
+    Shared by both sources a volume can come from: the device options form and its host-path
+    browser (JSON), and an imported ``lab.conf``'s ``[volume]`` (see
+    ``lab_import._parse_volume``) — both are applied, and both get written back out as a
+    ``pc[volume]="host|guest|mode"`` line, so both halves need the validation below regardless of
+    where the value originated.
+    """
 
     host_path: str
     guest_path: str
     mode: Literal["ro", "rw", "rx"] = "rw"
+
+    @field_validator("host_path", "guest_path")
+    @classmethod
+    def _no_quotes(cls, value: str) -> str:
+        # These are rendered into an always-double-quoted lab.conf line by
+        # `lab_store.gen_device_lines`/`lab_conf_edit.set_meta_group`, neither of which routes
+        # them through `lab_store.conf_value` — so without this a `"` here writes a malformed
+        # line, and the whole lab stops parsing on the next reload.
+        return reject_lab_conf_quotes(value)
+
+    @field_validator("host_path")
+    @classmethod
+    def _host_path_absolute(cls, value: str) -> str:
+        # Kathara resolves the host side with `os.path.abspath` (model/Machine.py), so a relative
+        # path silently means "relative to the API process's working directory" — which differs
+        # between the desktop app, Compose and a plain dev run. Reject it rather than mount
+        # somewhere the user didn't mean.
+        #
+        # `os.path.isabs`, not PurePosixPath: this is a path on whatever host this backend runs
+        # on, so on a Windows desktop install `C:\labs\data` is exactly what the host-path
+        # browser returns and has to be accepted.
+        if not os.path.isabs(value):
+            raise ValueError(f"must be an absolute path on the host, got {value!r}")
+        return value
+
+    @field_validator("guest_path")
+    @classmethod
+    def _guest_path_absolute(cls, value: str) -> str:
+        # The guest side is always a path inside a Linux container, whatever the host OS.
+        if not PurePosixPath(value).is_absolute():
+            raise ValueError(f"must be an absolute path inside the device, got {value!r}")
+        return value
 
 
 class Ulimit(BaseModel):

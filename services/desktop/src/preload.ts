@@ -75,6 +75,14 @@ const api = {
    * post-reload URL so the reload lands back on the lab that was open instead of the bare root. */
   dropElevation: (openLab?: string): Promise<{ dropped: boolean }> =>
     ipcRenderer.invoke("elevation:drop", openLab),
+  /** Verifies the user could elevate, without touching the backend — used for a deploy that only
+   * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
+   * be root. `password` is required on Linux, ignored on macOS/Windows (native OS prompt
+   * instead). Never restarts anything and never reloads the window, unlike elevateBackend. */
+  verifyCanElevate: (
+    password?: string,
+  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }> =>
+    ipcRenderer.invoke("elevation:verify", password),
 
   // -- window / shell actions behind the app-drawn menu bar --
   getAppInfo: (): Promise<{ version: string; platform: string }> =>

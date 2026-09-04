@@ -13,9 +13,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from pydantic import ValidationError
+
 from ..schemas.lab import LabCreate, LabMetadata
 from ..schemas.link import LinkCreate
-from ..schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit
+from ..schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit, VolumeMount
 
 RESERVED_NAMES = {"shared", "_test"}
 LAB_META_KEYS = {"LAB_NAME", "LAB_DESCRIPTION", "LAB_VERSION", "LAB_AUTHOR", "LAB_EMAIL", "LAB_WEB"}
@@ -43,6 +45,7 @@ class _ConfMachine:
     num_terms: Optional[int] = None
     entrypoint: Optional[str] = None
     args: Optional[str] = None
+    volumes: list = field(default_factory=list)
     # Options this parser does not interpret, kept so they reach the Kathara model untouched
     # (last one wins, mirroring Kathara's own `assign_meta_to_machine`).
     metas: dict = field(default_factory=dict)
@@ -92,6 +95,28 @@ def _parse_ulimit(value: str) -> Optional[Ulimit]:
     soft = int(m.group(2))
     hard = int(m.group(3)) if m.group(3) is not None else soft
     return Ulimit(name=m.group(1), soft=soft, hard=hard)
+
+
+def _parse_volume(value: str) -> Optional[VolumeMount]:
+    """``<host_path>|<guest_path>|[<mode>]``, matching Kathara's own ``Machine.add_meta`` parsing
+    of the same directive exactly (2 or 3 non-empty ``|``-separated fields; a 2-field form
+    defaults ``mode`` to ``"ro"``) — so a lab.conf parsed by this API behaves like one parsed by
+    the Kathara CLI itself. Routed through ``VolumeMount`` rather than applied as a raw string so
+    it picks up the same validation the JSON path already has (absolute paths, no quotes) for
+    free — necessary here too, since this now gets written back into lab.conf same as a
+    JSON-supplied volume.
+    """
+    parts = [p for p in value.split("|") if p]
+    if len(parts) == 3:
+        host_path, guest_path, mode = parts
+    elif len(parts) == 2:
+        host_path, guest_path, mode = parts[0], parts[1], "ro"
+    else:
+        return None
+    try:
+        return VolumeMount(host_path=host_path, guest_path=guest_path, mode=mode)
+    except ValidationError:
+        return None
 
 
 def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int, errors: list) -> None:
@@ -154,12 +179,19 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
     elif opt == "args":
         machine.args = value
     elif opt == "volume":
-        # Deliberately not applied: a lab.conf can name any host path, and this API is reachable
-        # over the network. The directive stays in lab.conf untouched.
-        machine.unsupported.append(
-            f"{machine.name}[volume] (line {line_no}) — host volumes aren't applied by the API "
-            f"(kept in lab.conf)"
-        )
+        # Applied like any other structured option (see _parse_volume) — the API used to refuse
+        # this specifically on import, on the theory that a shared lab.conf is untrusted content.
+        # It no longer does: mounting a host directory now always needs the user's own
+        # confirmation at deploy time regardless of where the volume came from (the frontend's
+        # deploy-authorization prompt), so there is no longer a reason for import and the JSON
+        # path to disagree about whether the directive itself is honored.
+        v = _parse_volume(value)
+        if v:
+            machine.volumes.append(v)
+        else:
+            errors.append(
+                f'line {line_no}: invalid volume "{value}" (expected <host_path>|<guest_path>|[<mode>])'
+            )
     else:
         machine.metas[opt] = value
         machine.unsupported.append(f'meta "{opt}" not recognized')
@@ -324,6 +356,7 @@ def translate_lab_files(
             num_terms=m.num_terms,
             entrypoint=m.entrypoint,
             args=m.args,
+            volumes=m.volumes,
             metas=dict(m.metas),
             interfaces=m.interfaces,
         )

@@ -3,12 +3,15 @@ import { useConfirm } from "../context/ConfirmContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
 import { desktop } from "../desktop/bridge";
-import { useElevate } from "../desktop/ElevationContext";
+import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { api, ApiError } from "../services/api";
+import type { VolumeMount } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
 
 const PRIVILEGE_CANCELLED_MESSAGE =
   "Deploy cancelled — this lab has privileged devices and needs administrator privileges.";
+const VOLUME_CANCELLED_MESSAGE =
+  "Deploy cancelled — this lab mounts host directories and needs confirmation.";
 
 // Best-effort, never lets a failure here read as the undeploy/wipe itself having failed (which
 // already succeeded by the time this runs) — see ElevationContext.tsx and backend.ts's
@@ -30,11 +33,15 @@ export function useLabLifecycleActions() {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const runBusy = useBusyAction();
-  const requestElevation = useElevate();
+  const requestDeployAuth = useDeployAuthorization();
 
   const deployToggle = useCallback(
     async (
-      lab: { name: string; deployed: boolean; machines: { privileged: boolean }[] },
+      lab: {
+        name: string;
+        deployed: boolean;
+        machines: { name: string; privileged: boolean; volumes: VolumeMount[] }[];
+      },
       setBusy: (busy: boolean) => void,
       onDone: () => Promise<void>,
     ) => {
@@ -57,26 +64,33 @@ export function useLabLifecycleActions() {
         }
 
         // Kathara's own privileged-device gate needs the whole backend process's real UID to be
-        // 0 — on the desktop app, that means relaunching the backend as root first. Precheck
-        // client-side (we already know each device's `privileged` flag) so the prompt appears
-        // before the failed attempt, not after.
-        if (lab.machines.some((m) => m.privileged)) {
-          const outcome = await requestElevation(lab.name);
+        // 0 — on the desktop app, that means relaunching the backend as root first. A volume
+        // mount doesn't need that, but still needs the user's own password before it happens.
+        // Precheck client-side (we already know each device's `privileged`/`volumes`) so the
+        // prompt appears before the attempt, not after — and as a single combined check, so a
+        // lab that is both never shows two separate prompts in sequence (see
+        // ElevationContext.tsx's "both" mode for why that matters).
+        const volumeMachines = lab.machines.filter((m) => m.volumes.length > 0);
+        const needsElevation = lab.machines.some((m) => m.privileged);
+        if (needsElevation || volumeMachines.length > 0) {
+          const outcome = await requestDeployAuth({ privileged: needsElevation, volumeMachines, resumeLab: lab.name });
           if (outcome === "elevating") return; // a reload is already coming
           if (outcome === "cancelled") {
-            toast.show(PRIVILEGE_CANCELLED_MESSAGE, "danger");
+            toast.show(needsElevation ? PRIVILEGE_CANCELLED_MESSAGE : VOLUME_CANCELLED_MESSAGE, "danger");
             return;
           }
-          // "already-elevated": fall through and deploy normally.
+          // "proceed": fall through and deploy normally.
         }
 
         try {
           await api.deployLab(lab.name);
         } catch (e) {
           // Reactive fallback for the precheck above: a device can be made privileged via a raw
-          // lab.conf edit that bypasses the UI's `privileged` field entirely.
+          // lab.conf edit that bypasses the UI's `privileged` field entirely. No equivalent
+          // exists for volumes — `MachineDetail.volumes` read from the last `detail` is already
+          // accurate, there is no "discovered only on failure" case for it.
           if (e instanceof ApiError && e.errorType === "PrivilegeError") {
-            const outcome = await requestElevation(lab.name);
+            const outcome = await requestDeployAuth({ privileged: true, volumeMachines: [], resumeLab: lab.name });
             if (outcome === "elevating") return;
             if (outcome === "cancelled") {
               toast.show(PRIVILEGE_CANCELLED_MESSAGE, "danger");
@@ -97,7 +111,7 @@ export function useLabLifecycleActions() {
         await onDone();
       });
     },
-    [requestElevation, runBusy, toast],
+    [requestDeployAuth, runBusy, toast],
   );
 
   const deleteLab = useCallback(

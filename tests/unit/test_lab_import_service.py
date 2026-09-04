@@ -7,7 +7,8 @@ import pytest
 
 from kathara_api.errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError
 from kathara_api.schemas.lab import LabCreate
-from kathara_api.schemas.machine import MachineCreate, MachineUpdate
+from kathara_api.schemas.machine import MachineCreate, MachineOptionsBase, MachineUpdate
+from kathara_api.services import serializers
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import FakeFacadeBase, zip_bytes
@@ -340,6 +341,26 @@ def test_update_machine_persists_to_lab_conf_when_stopped(tmp_path):
     service._reload_lab_from_disk("lab1")
     reloaded = service.registry.get("lab1").machines["pc1"]
     assert reloaded.meta["mem"] == "256m"
+
+
+def test_update_machine_unchanged_round_trip_keeps_an_imported_volume(tmp_path):
+    # docs/BACKEND.md used to warn that a MachineDetail -> MachineUpdate round-trip drops a
+    # [volume] line, because an imported lab.conf's volume never reached the model in the first
+    # place. Now that lab_import applies it like any other option, the round-trip must preserve
+    # it — this is the regression test for that fix.
+    service = _service(tmp_path)
+    service.import_lab(
+        "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[volume]=/host|/mnt|rw\n"}, []
+    )
+
+    detail = serializers.machine_to_detail(service.get_machine("lab1", "pc1"))
+    assert detail.volumes  # sanity: the import really did populate it
+
+    unchanged = MachineUpdate(**detail.model_dump(include=set(MachineOptionsBase.model_fields)))
+    service.update_machine("lab1", "pc1", unchanged)
+
+    conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    assert 'pc1[volume]="/host|/mnt|rw"' in conf
 
 
 def test_update_machine_rejects_when_deployed(tmp_path):
