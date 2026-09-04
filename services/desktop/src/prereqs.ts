@@ -17,7 +17,7 @@ import { readPrefs } from "./prefs";
 import { log } from "./logger";
 
 export interface Check {
-  id: "docker" | "python" | "kathara" | "kathara_api" | "uvicorn" | "frontend";
+  id: "docker" | "python" | "kathara" | "kathara_api" | "dependencies" | "uvicorn" | "frontend";
   label: string;
   ok: boolean;
   /** What was found (a version) or what went wrong. */
@@ -113,9 +113,16 @@ async function checkDocker(): Promise<Check> {
 }
 
 /**
- * One interpreter probe, in one subprocess: version plus the three imports that matter. Doing
- * it in a single spawn keeps startup fast and, more importantly, guarantees every answer comes
- * from the *same* interpreter — probing them separately could mix two Pythons.
+ * One interpreter probe, in one subprocess: version plus the imports that matter. Doing it in a
+ * single spawn keeps startup fast and, more importantly, guarantees every answer comes from the
+ * *same* interpreter — probing them separately could mix two Pythons.
+ *
+ * The last entry is the one that mirrors what the backend really does: `kathara_api` alone only
+ * touches src/kathara_api/__init__.py (a version string), while uvicorn imports
+ * `kathara_api.main`, which drags in the whole dependency closure — fastapi, Kathara, fs,
+ * chardet, httpx. Those two come apart on any environment installed before a dependency was
+ * declared: the package imports, the app doesn't, and without this the app passed preflight and
+ * then died with a bare ModuleNotFoundError traceback in the log.
  */
 const PROBE = `
 import json, sys
@@ -124,6 +131,7 @@ for key, expr in (
     ("kathara_api", "import kathara_api; v = kathara_api.__version__"),
     ("kathara", "from Kathara.version import CURRENT_VERSION as v"),
     ("uvicorn", "import uvicorn; v = uvicorn.__version__"),
+    ("dependencies", "import kathara_api.main; v = 'satisfied'"),
 ):
     scope = {}
     try:
@@ -139,9 +147,11 @@ interface Probe {
   kathara_api?: string;
   kathara?: string;
   uvicorn?: string;
+  dependencies?: string;
   kathara_api_error?: string;
   kathara_error?: string;
   uvicorn_error?: string;
+  dependencies_error?: string;
 }
 
 async function probe(interpreter: string): Promise<Probe | null> {
@@ -181,23 +191,28 @@ export async function runPreflight(
   const docker = await checkDocker();
   onProgress?.({ phase: "python", checks: [docker] });
 
-  // Prefer an interpreter that has the API package; fall back to reporting the best usable
-  // Python we found, so the user is told "Python is fine, kathara-api is missing" rather than
-  // the much less useful "no Python found".
+  // Three tiers, best first: an interpreter the backend actually imports in, one that has the
+  // API package but an incomplete dependency closure, and finally any usable Python at all. The
+  // middle tier is why this isn't a single "has kathara_api" test — an interpreter whose
+  // environment predates a declared dependency must lose to a complete one, and when it's all
+  // there is, reporting it lets the checks below name the missing module instead of the much
+  // less useful "no Python found".
   let chosen: { interpreter: string; result: Probe } | null = null;
+  let incomplete: { interpreter: string; result: Probe } | null = null;
   let fallback: { interpreter: string; result: Probe } | null = null;
 
   for (const interpreter of pythonCandidates()) {
     const result = await probe(interpreter);
     if (!result || !atLeast310(result.python)) continue;
-    if (result.kathara_api) {
+    if (result.kathara_api && result.dependencies) {
       chosen = { interpreter, result };
       break;
     }
-    fallback ??= { interpreter, result };
+    if (result.kathara_api) incomplete ??= { interpreter, result };
+    else fallback ??= { interpreter, result };
   }
 
-  const found = chosen ?? fallback;
+  const found = chosen ?? incomplete ?? fallback;
   const checks: Check[] = [docker];
 
   if (!found) {
@@ -262,6 +277,25 @@ export async function runPreflight(
           ? "Choose “Install missing packages” below."
           : `Install it: "${interpreter} -m pip install 'uvicorn[standard]'".`,
     });
+    // Only worth reporting once the three named packages are there: until then `import
+    // kathara_api.main` fails on one of *them*, and this check would just repeat whichever one
+    // is already marked ✕ above. Past that point it's the catch-all for every other import the
+    // backend needs (fastapi, fs, chardet, httpx, …) — the ones no check names individually.
+    if (result.kathara_api && result.kathara && result.uvicorn) {
+      checks.push({
+        id: "dependencies",
+        label: "Backend dependencies",
+        ok: Boolean(result.dependencies),
+        detail: result.dependencies ?? result.dependencies_error ?? "not importable",
+        remedy: result.dependencies
+          ? undefined
+          : app.isPackaged
+            ? "Choose “Install missing packages” below."
+            : `This interpreter's environment is missing something the backend imports. ` +
+              `Reinstall the backend with its current dependencies: ` +
+              `"${interpreter} -m pip install -e ." from this checkout.`,
+      });
+    }
   }
 
   checks.push({

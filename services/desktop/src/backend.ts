@@ -11,6 +11,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import net from "node:net";
 import fs from "node:fs";
+import path from "node:path";
 import sudoPrompt from "@vscode/sudo-prompt";
 import { backendSrcDir, labsDir, logFile } from "./paths";
 import { log, logRaw } from "./logger";
@@ -296,7 +297,11 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
     KATHARA_API_LABS_DIR: labs,
     KATHARA_API_AUTH_TOKEN: token,
     PYTHONUNBUFFERED: "1",
-    ...(srcDir ? { PYTHONPATH: [srcDir, process.env.PYTHONPATH].filter(Boolean).join(":") } : {}),
+    // path.delimiter, not ":" — on Windows the separator is ";", so a machine that already had
+    // a PYTHONPATH set produced one unparseable entry and the repo's src/ silently dropped out.
+    ...(srcDir
+      ? { PYTHONPATH: [srcDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) }
+      : {}),
   };
   const env: NodeJS.ProcessEnv = { ...process.env, ...appEnv };
 
