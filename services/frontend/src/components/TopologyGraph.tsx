@@ -685,9 +685,11 @@ export function TopologyGraph({
                 <div className="iface">
                   <div className="d-flex align-items-center justify-content-between">
                     <span style={{ fontWeight: 600 }}>Startup Log</span>
-                    <span className={`kt-state ${startupStatus?.finished ? "done" : "pending"}`}>
-                      {startupStatus?.finished ? "finished" : "running…"}
-                    </span>
+                    {startupStatus && (
+                      <span className={`kt-state ${startupStatus.finished ? "done" : "pending"}`}>
+                        {startupStatus.finished ? "finished" : "running…"}
+                      </span>
+                    )}
                   </div>
                   {startupStatus?.log ? (
                     <pre className="startup">{startupStatus.log}</pre>
