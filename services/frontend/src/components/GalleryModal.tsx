@@ -15,7 +15,6 @@ interface GalleryModalProps {
 
 interface CategoryGroup {
   category: string;
-  title: string;
   labs: GalleryLab[];
 }
 
@@ -25,7 +24,7 @@ function groupByCategory(labs: GalleryLab[]): CategoryGroup[] {
   for (const lab of labs) {
     let group = byCategory.get(lab.category);
     if (!group) {
-      group = { category: lab.category, title: lab.title ?? lab.category, labs: [] };
+      group = { category: lab.category, labs: [] };
       byCategory.set(lab.category, group);
       groups.push(group);
     }
@@ -35,7 +34,7 @@ function groupByCategory(labs: GalleryLab[]): CategoryGroup[] {
 }
 
 function matches(lab: GalleryLab, query: string): boolean {
-  const haystack = `${lab.name} ${lab.title ?? ""} ${lab.description ?? ""} ${lab.category}`.toLowerCase();
+  const haystack = `${lab.name} ${lab.category}`.toLowerCase();
   return haystack.includes(query);
 }
 
@@ -179,7 +178,7 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
                   aria-expanded={!isCollapsed}
                 >
                   {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
-                  {group.title}
+                  {group.category}
                   <span className="kt-gallery-group-count">{group.labs.length}</span>
                 </button>
                 <Collapse in={!isCollapsed}>
@@ -187,18 +186,13 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
                     {group.labs.map((lab) => (
                       <div className="kt-gallery-row" key={lab.id}>
                         <div className="kt-gallery-row-main">
-                          <div className="kt-gallery-row-name">{lab.title || lab.name}</div>
-                          {lab.description && <div className="kt-gallery-row-desc">{lab.description}</div>}
+                          <div className="kt-gallery-row-name">{lab.name}</div>
                           <div className="kt-gallery-row-meta">
-                            {lab.name} · {lab.n_files} file{lab.n_files === 1 ? "" : "s"}
-                            {lab.slides_url && (
-                              <>
-                                {" · "}
-                                <a href={lab.slides_url} target="_blank" rel="noopener noreferrer">
-                                  Slides <ExternalLink size={11} />
-                                </a>
-                              </>
-                            )}
+                            {lab.n_files} file{lab.n_files === 1 ? "" : "s"}
+                            {" · "}
+                            <a href={lab.repo_url} target="_blank" rel="noopener noreferrer">
+                              View on GitHub <ExternalLink size={11} />
+                            </a>
                           </div>
                         </div>
                         <Button

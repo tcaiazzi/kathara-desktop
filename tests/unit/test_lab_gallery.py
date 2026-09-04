@@ -107,17 +107,10 @@ def _clear_gallery_cache():
     lab_gallery.invalidate_cache()
 
 
-# A small two-category repo used by most tests: one lab with a described README table, one pair
-# of same-basename labs (the frr/quagga collision), and one grouped-labs README fallback case.
+# A small two-category repo used by most tests: one lab with a sibling slides PDF, one pair of
+# same-basename labs (the frr/quagga collision), and one grouped-labs case (two labs sharing a
+# parent directory).
 _TREE = [
-    _blob("main-labs/README.md", "# Main Labs\n* [Basic Topics](basic-topics)\n* [Grouped](grouped)\n"),
-    _blob(
-        "main-labs/basic-topics/README.md",
-        "# Basic Topics\n"
-        "| Name | Description | Slides | Lab |\n"
-        "|---|---|---|---|\n"
-        "| **ARP** | Understanding ARP. | [pdf](arp/005-arp.pdf) | [zip](arp/kathara-lab_arp.zip) |\n",
-    ),
     _blob("main-labs/basic-topics/arp/005-arp.pdf", b"%PDF-fake"),
     _blob("main-labs/basic-topics/arp/kathara-lab_arp/lab.conf", "pc1[image]=kathara/base\npc1[0]=A\n"),
     _blob("main-labs/basic-topics/arp/kathara-lab_arp/pc1.startup", "echo hi\n"),
@@ -131,13 +124,6 @@ _TREE = [
         "r1[image]=kathara/base\nr1[0]=A\n",
     ),
     _blob("main-labs/interdomain/quagga/bgp/kathara-lab_bgp/r1.startup", "echo quagga\n"),
-    _blob(
-        "main-labs/grouped/README.md",
-        "# Grouped\n"
-        "| Name | Description | Slides | Lab |\n"
-        "|---|---|---|---|\n"
-        "| **OSPF** | A grouped OSPF scenario. | [pdf](ospf/000-ospf.pdf) | - |\n",
-    ),
     _blob("main-labs/grouped/ospf/000-ospf.pdf", b"%PDF-fake"),
     _blob("main-labs/grouped/ospf/subA/lab.conf", "pc1[image]=kathara/base\npc1[0]=A\n"),
     _blob("main-labs/grouped/ospf/subA/pc1.startup", "echo a\n"),
@@ -147,13 +133,6 @@ _TREE = [
     _blob("exam-labs/some-exam/lab.conf", "pc1[image]=kathara/base\npc1[0]=A\n"),
 ]
 _FILES = {
-    "main-labs/README.md": "# Main Labs\n* [Basic Topics](basic-topics)\n* [Grouped](grouped)\n",
-    "main-labs/basic-topics/README.md": (
-        "# Basic Topics\n"
-        "| Name | Description | Slides | Lab |\n"
-        "|---|---|---|---|\n"
-        "| **ARP** | Understanding ARP. | [pdf](arp/005-arp.pdf) | [zip](arp/kathara-lab_arp.zip) |\n"
-    ),
     "main-labs/basic-topics/arp/005-arp.pdf": b"%PDF-fake",
     "main-labs/basic-topics/arp/kathara-lab_arp/lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n",
     "main-labs/basic-topics/arp/kathara-lab_arp/pc1.startup": "echo hi\n",
@@ -161,12 +140,6 @@ _FILES = {
     "main-labs/interdomain/frr/bgp/kathara-lab_bgp/r1.startup": "echo frr\n",
     "main-labs/interdomain/quagga/bgp/kathara-lab_bgp/lab.conf": "r1[image]=kathara/base\nr1[0]=A\n",
     "main-labs/interdomain/quagga/bgp/kathara-lab_bgp/r1.startup": "echo quagga\n",
-    "main-labs/grouped/README.md": (
-        "# Grouped\n"
-        "| Name | Description | Slides | Lab |\n"
-        "|---|---|---|---|\n"
-        "| **OSPF** | A grouped OSPF scenario. | [pdf](ospf/000-ospf.pdf) | - |\n"
-    ),
     "main-labs/grouped/ospf/000-ospf.pdf": b"%PDF-fake",
     "main-labs/grouped/ospf/subA/lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n",
     "main-labs/grouped/ospf/subA/pc1.startup": "echo a\n",
@@ -229,66 +202,13 @@ def test_non_colliding_lab_keeps_its_plain_basename(monkeypatch):
     assert arp.name == "kathara-lab_arp"
 
 
-def test_slides_link_points_at_the_sibling_pdf(monkeypatch):
+def test_repo_url_points_at_the_lab_parent_directory(monkeypatch):
+    """repo_url links the folder *above* the lab dir — upstream's actual browsable unit, which
+    also holds the sibling slides PDF (if any) and a README (if any)."""
     catalog = _catalog(monkeypatch)
 
     arp = catalog.entries["main-labs/basic-topics/arp/kathara-lab_arp"]
-    assert arp.slides_url == lab_gallery._blob_url("main-labs/basic-topics/arp/005-arp.pdf")
-
-
-def test_repo_url_points_at_the_lab_directory(monkeypatch):
-    catalog = _catalog(monkeypatch)
-
-    arp = catalog.entries["main-labs/basic-topics/arp/kathara-lab_arp"]
-    assert arp.repo_url == lab_gallery._tree_url("main-labs/basic-topics/arp/kathara-lab_arp")
-
-
-def test_readme_table_supplies_title_and_description(monkeypatch):
-    catalog = _catalog(monkeypatch)
-
-    arp = catalog.entries["main-labs/basic-topics/arp/kathara-lab_arp"]
-    assert arp.title == "ARP"
-    assert arp.description == "Understanding ARP."
-    assert arp.category == "basic-topics"
-    assert arp.category_title == "Basic Topics"
-
-
-def test_readme_row_with_no_zip_falls_back_to_the_slides_directory(monkeypatch):
-    catalog = _catalog(monkeypatch)
-
-    sub_a = catalog.entries["main-labs/grouped/ospf/subA"]
-    sub_b = catalog.entries["main-labs/grouped/ospf/subB"]
-    assert sub_a.title == sub_b.title == "OSPF"
-    assert "grouped OSPF" in sub_a.description
-
-
-def test_section_readme_supplies_category_order(monkeypatch):
-    catalog = _catalog(monkeypatch)
-
-    orders = {entry.category: entry.category_order for entry in catalog.entries.values()}
-    assert orders["basic-topics"] < orders["grouped"]
-
-
-def test_missing_readmes_leave_labs_undescribed_without_raising(monkeypatch):
-    tree = [_blob("main-labs/noreadme/kathara-lab_x/lab.conf", "pc1[image]=kathara/base\npc1[0]=A\n")]
-    files = {"main-labs/noreadme/kathara-lab_x/lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}
-
-    catalog = _catalog(monkeypatch, tree=tree, files=files)
-
-    entry = catalog.entries["main-labs/noreadme/kathara-lab_x"]
-    assert entry.title is None
-    assert entry.description is None
-
-
-def test_a_broken_readme_fetch_does_not_break_the_catalog(monkeypatch):
-    """_enrich is decoration only — a README that 404s (or the whole README fetch blowing up)
-    must never cost the user the underlying lab list, mirroring examples.list_examples."""
-    _install_fake_repo(monkeypatch, _TREE, {})  # every raw file 404s
-
-    catalog = lab_gallery.fetch_catalog()
-
-    assert len(catalog.entries) == 5
-    assert all(entry.title is None for entry in catalog.entries.values())
+    assert arp.repo_url == lab_gallery._tree_url("main-labs/basic-topics/arp")
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +281,6 @@ def test_catalog_is_cached_until_refresh_is_requested(monkeypatch):
         return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
 
     monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
-    monkeypatch.setattr(lab_gallery.httpx, "Client", lambda *a, **kw: _NullClient())
 
     lab_gallery.fetch_catalog()
     lab_gallery.fetch_catalog()
@@ -369,17 +288,6 @@ def test_catalog_is_cached_until_refresh_is_requested(monkeypatch):
 
     lab_gallery.fetch_catalog(refresh=True)
     assert len(calls) == 2
-
-
-class _NullClient:
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-    def get(self, *a, **kw):
-        return _FakeResponse(404)  # READMEs 404 — fine, enrichment is best-effort
 
 
 # ---------------------------------------------------------------------------
@@ -571,4 +479,3 @@ def test_real_gallery_has_the_expected_shape():
     assert catalog.repo == "KatharaFramework/Kathara-Labs"
     assert len(catalog.entries) >= 60
     assert all("/" in entry.id for entry in catalog.entries.values())
-    assert any(entry.description for entry in catalog.entries.values())

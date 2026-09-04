@@ -735,11 +735,8 @@ class KatharaService:
                     id=entry.id,
                     name=entry.name,
                     category=entry.category,
-                    title=entry.title,
-                    description=entry.description,
                     n_files=entry.n_files,
                     size_bytes=entry.size_bytes,
-                    slides_url=entry.slides_url,
                     repo_url=entry.repo_url,
                     installed=entry.name in installed,
                 )

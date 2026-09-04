@@ -19,11 +19,15 @@ per-lab ``.zip`` archives that exist upstream: only some labs have one, and a fe
 bundle several labs together (``kathara-lab_ospf.zip`` holds three), so extracting them would
 produce something that isn't one lab. Per-file download is uniform, and the labs are tiny — tens of
 files, tens of kilobytes.
+
+**No README fetching.** Titles are just the lab's directory name and labs are grouped by their raw
+category slug — this deliberately avoids probing upstream directories for README.md files (a lot of
+extra round-trips for decorative text). ``repo_url`` points at the lab's *parent* directory rather
+than the lab directory itself, since that's upstream's actual unit of browsing: it holds the lab
+folder, its slides PDF (if any), and its README (if any), all in one GitHub folder view.
 """
 
-import logging
 import posixpath
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -35,8 +39,6 @@ import httpx
 
 from ..config import get_settings
 from ..errors import GalleryLabNotFoundError, GalleryUnavailableError
-
-logger = logging.getLogger("kathara_api")
 
 LAB_CONF = "lab.conf"
 
@@ -54,9 +56,6 @@ FILE_TIMEOUT = 20.0
 # without hammering the CDN.
 DOWNLOAD_CONCURRENCY = 8
 
-# Markdown link: [text](target)
-_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)")
-
 
 @dataclass
 class GalleryEntry:
@@ -65,14 +64,9 @@ class GalleryEntry:
     id: str
     name: str
     category: str
-    category_title: Optional[str] = None
-    category_order: int = 0
-    title: Optional[str] = None
-    description: Optional[str] = None
     # Repo-relative paths of every blob under the lab directory.
     files: list[str] = field(default_factory=list)
     size_bytes: int = 0
-    slides_url: Optional[str] = None
     repo_url: str = ""
 
     @property
@@ -86,7 +80,7 @@ class Catalog:
     ref: str
     section: str
     fetched_at: float
-    # Insertion-ordered by (category order, lab name) so the frontend can group by walking the list.
+    # Insertion-ordered by (category, lab name) so the frontend can group by walking the list.
     entries: dict[str, GalleryEntry]
 
 
@@ -104,11 +98,6 @@ def _api_base() -> str:
 def _raw_url(path: str) -> str:
     s = get_settings()
     return f"https://raw.githubusercontent.com/{s.gallery_slug()}/{quote(s.gallery_ref_value())}/{quote(path)}"
-
-
-def _blob_url(path: str) -> str:
-    s = get_settings()
-    return f"https://github.com/{s.gallery_slug()}/blob/{quote(s.gallery_ref_value())}/{quote(path)}"
 
 
 def _tree_url(path: str) -> str:
@@ -225,14 +214,11 @@ def _build_entries(tree: list[dict], section: str) -> dict[str, GalleryEntry]:
     # One pass over the blobs per lab would be O(labs x blobs); bucket by root instead.
     files: dict[str, list[str]] = {root: [] for root in roots}
     sizes: dict[str, int] = dict.fromkeys(roots, 0)
-    by_dir: dict[str, list[str]] = {}
     for blob in blobs:
         path = blob["path"]
-        parent = posixpath.dirname(path)
-        by_dir.setdefault(parent, []).append(path)
         # A lab's files are the blobs under its directory. Roots never nest (no lab.conf has
         # another lab.conf beneath it), so a blob belongs to at most one lab.
-        root = parent
+        root = posixpath.dirname(path)
         while root:
             if root in files:
                 files[root].append(path)
@@ -243,170 +229,24 @@ def _build_entries(tree: list[dict], section: str) -> dict[str, GalleryEntry]:
     entries: dict[str, GalleryEntry] = {}
     for root in roots:
         relative = root[len(prefix):]
-        # Slides live *beside* the lab directory, in its parent — outside the lab, so they are
-        # linked and never downloaded.
-        slides = sorted(
-            path
-            for path in by_dir.get(posixpath.dirname(root), [])
-            if path.lower().endswith(".pdf")
-        )
         entries[root] = GalleryEntry(
             id=root,
             name=names[root],
             category=relative.split("/")[0] if "/" in relative else relative,
             files=sorted(files[root]),
             size_bytes=sizes[root],
-            slides_url=_blob_url(slides[0]) if slides else None,
-            repo_url=_tree_url(root),
+            # The parent dir, not the lab dir itself: upstream keeps the slides PDF (if any) and a
+            # README (if any) beside the lab folder, so that's the browsable unit a link should hit.
+            repo_url=_tree_url(posixpath.dirname(root)),
         )
     return entries
-
-
-def _parse_readme_table(text: str, readme_dir: str) -> list[tuple[str, str, str]]:
-    """Rows of a category README's lab table as ``(lab-or-dir path, title, description)``.
-
-    Upstream documents each lab in a ``| Name | Description | Slides | Lab |`` table whose Lab cell
-    links the lab's ``.zip``; dropping the ``.zip`` yields the lab directory. Rows with no archive
-    (``-``) fall back to the Slides link's directory. Either way the path is a *candidate* — the
-    caller matches it against real labs, so a table that has drifted from the tree simply produces
-    no descriptions rather than wrong ones.
-    """
-    rows: list[tuple[str, str, str]] = []
-    columns: Optional[dict[str, int]] = None
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("|"):
-            columns = None  # a table ends where the pipes stop
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if columns is None:
-            headers = [cell.strip().lower() for cell in cells]
-            if "name" in headers and "description" in headers:
-                columns = {name: i for i, name in enumerate(headers)}
-            continue
-        if all(set(cell) <= {"-", ":", ""} for cell in cells):
-            continue  # the |---|---| separator
-        if len(cells) <= max(columns.values()):
-            continue
-
-        def cell(key: str) -> str:
-            index = columns.get(key, -1)
-            return cells[index] if 0 <= index < len(cells) else ""
-
-        title = cell("name").replace("*", "").strip()
-        description = cell("description").strip()
-        target = ""
-        lab_link = _LINK_RE.search(cell("lab"))
-        if lab_link and lab_link.group(2).endswith(".zip"):
-            target = posixpath.normpath(posixpath.join(readme_dir, lab_link.group(2)[: -len(".zip")]))
-        else:
-            slides_link = _LINK_RE.search(cell("slides"))
-            if slides_link:
-                target = posixpath.dirname(
-                    posixpath.normpath(posixpath.join(readme_dir, slides_link.group(2)))
-                )
-        if target and (title or description):
-            rows.append((target, title, description))
-    return rows
-
-
-def _parse_section_index(text: str) -> list[tuple[str, str]]:
-    """``(slug, title)`` for each category linked from the section README, in document order.
-
-    Only used for presentation: it gives the categories their upstream titles ("Basic Topics") and
-    the pedagogical order the course uses, which alphabetical sorting would scramble.
-    """
-    seen: dict[str, str] = {}
-    for title, target in _LINK_RE.findall(text):
-        slug = posixpath.normpath(target).strip("/")
-        if "/" in slug or slug.startswith(".") or not slug or slug in seen:
-            continue
-        seen[slug] = re.sub(r"\s+", " ", title).strip()
-    return list(seen.items())
-
-
-def _get_text(client: httpx.Client, path: str) -> Optional[str]:
-    """Fetch a repo file as text, or None if it isn't there / can't be read.
-
-    Used only for the READMEs behind titles and descriptions, which are decoration: a failure here
-    must never cost the user the catalog itself.
-    """
-    try:
-        response = client.get(_raw_url(path), timeout=FILE_TIMEOUT, follow_redirects=True)
-    except httpx.HTTPError:
-        return None
-    if response.status_code != 200:
-        return None
-    return response.text
-
-
-def _enrich(entries: dict[str, GalleryEntry], section: str) -> None:
-    """Attach titles, descriptions and category ordering from the repo's READMEs, best-effort.
-
-    Deliberately failure-tolerant, like ``examples.list_examples`` skipping one broken example: a
-    reorganised or table-less section (``main-labs/p4`` has no table) leaves the affected labs with
-    just a name, which the frontend renders fine.
-    """
-    categories = sorted({entry.category for entry in entries.values() if entry.category})
-    readme_dirs = [f"{section}/{category}".strip("/") for category in categories]
-    # Category READMEs sometimes only index sub-sections (interdomain-routing -> frr/, quagga/),
-    # so also read the README of every directory on the way down to a lab.
-    for entry in entries.values():
-        parent = posixpath.dirname(entry.id)
-        while parent and parent != section and parent not in readme_dirs:
-            readme_dirs.append(parent)
-            parent = posixpath.dirname(parent)
-
-    with httpx.Client(headers={"User-Agent": "kathara-ide"}) as client:
-        with ThreadPoolExecutor(max_workers=DOWNLOAD_CONCURRENCY) as pool:
-            index = pool.submit(_get_text, client, f"{section}/README.md".strip("/"))
-            readmes = list(
-                pool.map(lambda d: (d, _get_text(client, f"{d}/README.md")), sorted(set(readme_dirs)))
-            )
-            section_index = index.result()
-
-    order: dict[str, int] = {}
-    titles: dict[str, str] = {}
-    for position, (slug, title) in enumerate(_parse_section_index(section_index or "")):
-        order[slug] = position
-        titles[slug] = title
-
-    # Two ways a row matches a lab: it names the lab directory outright, or it names a directory the
-    # lab sits under (which is how the grouped labs — ospf, subnetting — are documented).
-    exact: dict[str, tuple[str, str]] = {}
-    prefixes: dict[str, tuple[str, str]] = {}
-    for readme_dir, text in readmes:
-        if not text:
-            continue
-        for target, title, description in _parse_readme_table(text, readme_dir):
-            exact.setdefault(target, (title, description))
-            prefixes.setdefault(target, (title, description))
-
-    for entry in entries.values():
-        entry.category_title = titles.get(entry.category)
-        entry.category_order = order.get(entry.category, len(order))
-        match = exact.get(entry.id)
-        if match is None:
-            # Longest enclosing directory wins, so a lab-specific row beats a section-wide one.
-            candidates = [path for path in prefixes if entry.id.startswith(path + "/")]
-            if candidates:
-                match = prefixes[max(candidates, key=len)]
-        if match:
-            entry.title = match[0] or None
-            entry.description = match[1] or None
 
 
 def _build_catalog() -> Catalog:
     settings = get_settings()
     section = settings.gallery_section_path()
     entries = _build_entries(_fetch_tree(), section)
-    try:
-        _enrich(entries, section)
-    except Exception:  # noqa: BLE001 - decoration must never cost the catalog
-        logger.exception("could not read gallery READMEs; listing labs without descriptions")
-    ordered = dict(
-        sorted(entries.items(), key=lambda kv: (kv[1].category_order, kv[1].category, kv[1].name))
-    )
+    ordered = dict(sorted(entries.items(), key=lambda kv: (kv[1].category, kv[1].name)))
     return Catalog(
         repo=settings.gallery_slug(),
         ref=settings.gallery_ref_value(),

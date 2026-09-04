@@ -2,7 +2,7 @@
 
 The remote twin of schemas/examples.py: same "catalog of installable scenarios, each flagged
 against what's already on disk" shape, with the extra fields a *remote* catalog needs — where the
-lab lives upstream, how big it is, and where its slides are.
+lab lives upstream and how big it is.
 """
 
 from typing import Optional
@@ -23,15 +23,11 @@ class GalleryLabSummary(BaseModel):
     # First path segment below the configured section, e.g. "basic-topics" — the frontend groups by
     # this.
     category: str
-    # Human title from the category README table ("BGP Announcement"), when there is one.
-    title: Optional[str] = None
-    description: Optional[str] = None
     n_files: int
     size_bytes: int
-    # github.com link to the lab's slides PDF, which live *beside* the lab directory upstream and
-    # are therefore never downloaded — only linked.
-    slides_url: Optional[str] = None
-    # github.com link to the lab directory itself.
+    # github.com link to the lab's *parent* directory upstream — not the lab directory itself, since
+    # the parent is what also holds the lab's slides PDF (if any) and README (if any), all browsable
+    # in one GitHub folder view.
     repo_url: str
     # Whether a lab named `name` already exists locally — the frontend renders "Open" instead of
     # "Import" when true, exactly as it does for bundled examples.

@@ -168,13 +168,10 @@ export interface GalleryLab {
   // Lab name this installs as (disambiguated server-side when two upstream labs share a basename).
   name: string;
   category: string;
-  title: string | null;
-  description: string | null;
   n_files: number;
   size_bytes: number;
-  // github.com link to the lab's slides PDF, when it has one — slides live outside the lab
-  // directory upstream, so they're linked rather than imported.
-  slides_url: string | null;
+  // github.com link to the lab's *parent* directory upstream — not the lab directory itself, since
+  // the parent also holds the lab's slides PDF (if any) and README (if any).
   repo_url: string;
   // Whether a lab named `name` already exists locally — same "Open" vs "Import" convention as
   // ExampleLab.installed.
