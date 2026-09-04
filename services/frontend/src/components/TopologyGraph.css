@@ -89,6 +89,21 @@
   display: flex;
   gap: 6px;
   z-index: 2;
+  max-width: calc(100% - 16px);
+}
+
+/* Graph-layout controls (Fit, Re-layout, Save/Fix layout, Unfix): kept separate from the toolbar
+   above so they read as "acting on the graph's arrangement" rather than "adding content". */
+.kt-topo-layout-toolbar {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  /* Above .kt-topo-legend (z-index: 2), which sits at the same bottom edge and follows it in DOM
+     order — without this its open dropdown menu would paint underneath the legend. */
+  z-index: 3;
+  max-width: calc(100% - 16px);
 }
 
 .kt-topo-legend {
@@ -437,10 +452,7 @@
   text-align: right;
 }
 
-/* Toolbar search + zoom controls. */
-.kt-topo-search {
-  width: 130px;
-}
+/* Toolbar zoom controls. */
 .kt-topo-zoom {
   display: inline-flex;
 }

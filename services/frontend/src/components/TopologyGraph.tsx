@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Button, Dropdown, DropdownButton } from "react-bootstrap";
-import { AppWindow, FileEdit, FolderOpen, Plug, SlidersHorizontal, SquareTerminal, Unplug } from "lucide-react";
+import {
+  AppWindow,
+  FileEdit,
+  FolderOpen,
+  MoreHorizontal,
+  Plug,
+  SlidersHorizontal,
+  SquareTerminal,
+  Unplug,
+} from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
@@ -13,7 +22,6 @@ import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/
 import { deviceStateLabel, formatIface, formatPort } from "../services/topology";
 import type { LabDetail, StartupStatus } from "../services/types";
 import "./TopologyGraph.css";
-import { AutocompleteInput } from "./AutocompleteInput";
 import type { ContextMenuState } from "./TopologyContextMenu";
 
 // Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
@@ -76,6 +84,11 @@ function samePositions(a: NodePositions, b: NodePositions | null): boolean {
   );
 }
 
+// Below this canvas width, each toolbar collapses from its row of buttons into a single "more
+// actions" dropdown (see the ResizeObserver effect below) — the panel is user-resizable (dockview),
+// so the buttons must react to it shrinking, not just the browser window.
+const TOOLBAR_COMPACT_WIDTH = 480;
+
 // Force-directed SVG topology graph (device + collision-domain nodes, edges = interfaces), no
 // charting library. The simulation/render loop manipulates SVG DOM attributes directly every
 // animation frame rather than going through React state: dozens of position updates per second
@@ -108,8 +121,9 @@ export function TopologyGraph({
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelectedId;
   const setSelectedId = onSelectId ?? setInternalSelectedId;
   const [showIps, setShowIps] = useState(() => localStorage.getItem("kt-topo-ips") !== "false");
-  const [search, setSearch] = useState("");
   const [relayoutNonce, setRelayoutNonce] = useState(0);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
+  const [compactToolbar, setCompactToolbar] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -236,7 +250,7 @@ export function TopologyGraph({
     });
   }
 
-  const { canvasRef, fit: handleFit, select, zoom, centerOn } = useForceLayout(
+  const { canvasRef, fit: handleFit, select, zoom } = useForceLayout(
     model,
     // Rebuild token: Re-layout bumps one counter, the arrival of the lab's fixed layout the other
     // (it can resolve after the engine's first build). Both only ever increase.
@@ -270,15 +284,18 @@ export function TopologyGraph({
     localStorage.setItem("kt-topo-ips", String(showIps));
   }, [showIps]);
 
-  // Jump to a device typed/picked in the search box (exact name match → select + center).
-  function onSearch(value: string) {
-    setSearch(value);
-    const id = `dev:${value.trim()}`;
-    if (model.nodes.some((n) => n.id === id)) {
-      setSelectedId(id);
-      centerOn(id);
-    }
-  }
+  // Collapse each toolbar into a single dropdown once the (user-resizable) canvas gets too narrow
+  // to show its buttons in a row.
+  useEffect(() => {
+    const el = canvasWrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      setCompactToolbar(width < TOOLBAR_COMPACT_WIDTH);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Sync the SVG highlight when selection is driven externally (controlled mode). Guarded inside
   // the hook so a graph-originated selection doesn't loop back through here.
@@ -356,7 +373,7 @@ export function TopologyGraph({
         ))}
       </div>
       <div className="kt-topo-wrap">
-        <div className="kt-topo-canvas">
+        <div className="kt-topo-canvas" ref={canvasWrapRef}>
           <div className={`kt-topo-svg-mount${showIps ? "" : " kt-topo-hide-ips"}`} ref={canvasRef} />
           {isEmpty && (
             <div className="kt-topo-empty">
@@ -372,75 +389,105 @@ export function TopologyGraph({
             </div>
           )}
           <div className="kt-topo-toolbar">
-            <AutocompleteInput
-              size="sm"
-              className="kt-topo-search"
-              placeholder="Find device…"
-              aria-label="Find device"
-              value={search}
-              onChange={onSearch}
-              options={model.nodes.filter((n) => n.type === "dev").map((n) => n.name)}
-            />
-            <Button size="sm" variant="outline-secondary" onClick={() => openAddDevice()}>
-              + Device
-            </Button>
-            <Button size="sm" variant="outline-secondary" onClick={openAddDomain}>
-              + Domain
-            </Button>
-            <Button
-              size="sm"
-              variant={showIps ? "secondary" : "outline-secondary"}
-              onClick={() => setShowIps((v) => !v)}
-              title="Show interface IPs on the graph"
-            >
-              IPs
-            </Button>
-            <div className="kt-topo-zoom">
-              <Button size="sm" variant="outline-secondary" onClick={() => zoom(1.2)} title="Zoom in" aria-label="Zoom in">
-                +
-              </Button>
-              <Button size="sm" variant="outline-secondary" onClick={() => zoom(1 / 1.2)} title="Zoom out" aria-label="Zoom out">
-                −
-              </Button>
-            </div>
-            <Button size="sm" variant="outline-secondary" onClick={handleFit}>
-              Fit
-            </Button>
-            <Button
-              size="sm"
-              variant="outline-secondary"
-              onClick={handleRelayout}
-              title={
-                hasFixedLayout
-                  ? "Restore the lab's fixed layout, discarding unsaved moves"
-                  : "Lay the graph out again from scratch"
-              }
-            >
-              Re-layout
-            </Button>
-            <Button
-              size="sm"
-              variant={dirty ? "primary" : "outline-secondary"}
-              onClick={handleSaveLayout}
-              disabled={savingLayout || isEmpty}
-              title={
-                hasFixedLayout
-                  ? "Update the lab's fixed layout (lab.layout in the lab directory)"
-                  : "Fix this layout for the lab — stores it as lab.layout in the lab directory"
-              }
-            >
-              {hasFixedLayout ? (dirty ? "Save layout •" : "Save layout") : "Fix layout"}
-            </Button>
-            {hasFixedLayout && (
-              <Button
-                size="sm"
-                variant="outline-secondary"
-                onClick={handleClearLayout}
-                disabled={savingLayout}
-                title="Remove the lab's fixed layout (lab.layout) and lay the graph out automatically"
-              >
-                Unfix
-              </Button>
+            {compactToolbar ? (
+              <DropdownButton size="sm" variant="outline-secondary" title={<MoreHorizontal size={16} />} align="end">
+                <Dropdown.Item onClick={() => openAddDevice()}>+ Device</Dropdown.Item>
+                <Dropdown.Item onClick={openAddDomain}>+ Domain</Dropdown.Item>
+                <Dropdown.Item active={showIps} onClick={() => setShowIps((v) => !v)}>
+                  IPs
+                </Dropdown.Item>
+                <Dropdown.Item onClick={() => zoom(1.2)}>Zoom in</Dropdown.Item>
+                <Dropdown.Item onClick={() => zoom(1 / 1.2)}>Zoom out</Dropdown.Item>
+              </DropdownButton>
+            ) : (
+              <>
+                <Button size="sm" variant="outline-secondary" onClick={() => openAddDevice()}>
+                  + Device
+                </Button>
+                <Button size="sm" variant="outline-secondary" onClick={openAddDomain}>
+                  + Domain
+                </Button>
+                <Button
+                  size="sm"
+                  variant={showIps ? "secondary" : "outline-secondary"}
+                  onClick={() => setShowIps((v) => !v)}
+                  title="Show interface IPs on the graph"
+                >
+                  IPs
+                </Button>
+                <div className="kt-topo-zoom">
+                  <Button size="sm" variant="outline-secondary" onClick={() => zoom(1.2)} title="Zoom in" aria-label="Zoom in">
+                    +
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    onClick={() => zoom(1 / 1.2)}
+                    title="Zoom out"
+                    aria-label="Zoom out"
+                  >
+                    −
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="kt-topo-layout-toolbar">
+            {compactToolbar ? (
+              <DropdownButton size="sm" variant="outline-secondary" title={<MoreHorizontal size={16} />} align="end">
+                <Dropdown.Item onClick={handleFit}>Fit</Dropdown.Item>
+                <Dropdown.Item onClick={handleRelayout}>Re-layout</Dropdown.Item>
+                <Dropdown.Item onClick={handleSaveLayout} disabled={savingLayout || isEmpty}>
+                  {hasFixedLayout ? (dirty ? "Save layout •" : "Save layout") : "Fix layout"}
+                </Dropdown.Item>
+                {hasFixedLayout && (
+                  <Dropdown.Item onClick={handleClearLayout} disabled={savingLayout}>
+                    Unfix
+                  </Dropdown.Item>
+                )}
+              </DropdownButton>
+            ) : (
+              <>
+                <Button size="sm" variant="outline-secondary" onClick={handleFit}>
+                  Fit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline-secondary"
+                  onClick={handleRelayout}
+                  title={
+                    hasFixedLayout
+                      ? "Restore the lab's fixed layout, discarding unsaved moves"
+                      : "Lay the graph out again from scratch"
+                  }
+                >
+                  Re-layout
+                </Button>
+                <Button
+                  size="sm"
+                  variant={dirty ? "primary" : "outline-secondary"}
+                  onClick={handleSaveLayout}
+                  disabled={savingLayout || isEmpty}
+                  title={
+                    hasFixedLayout
+                      ? "Update the lab's fixed layout (lab.layout in the lab directory)"
+                      : "Fix this layout for the lab — stores it as lab.layout in the lab directory"
+                  }
+                >
+                  {hasFixedLayout ? (dirty ? "Save layout •" : "Save layout") : "Fix layout"}
+                </Button>
+                {hasFixedLayout && (
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    onClick={handleClearLayout}
+                    disabled={savingLayout}
+                    title="Remove the lab's fixed layout (lab.layout) and lay the graph out automatically"
+                  >
+                    Unfix
+                  </Button>
+                )}
+              </>
             )}
           </div>
           <div className="kt-topo-legend">
