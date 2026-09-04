@@ -139,9 +139,13 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   const refreshKey = useMemo(() => ({}), [detail, confReloadKey]);
   const tree = useFsTree({ source, scopeKey: labName, refreshKey });
 
-  // Read through refs so this effect doesn't re-run on every keystroke in the editor.
-  const selectedRef = useRef(tree.selected);
-  selectedRef.current = tree.selected;
+  // Read through refs so this effect doesn't re-run on every keystroke in the editor. Keyed off
+  // `bufferPath` rather than `selected`: it's the file whose content `dirty`/`setBuffer` actually
+  // act on, and the two can differ (e.g. a multi-selection moves `selected` without touching the
+  // buffer) — checking `selected` here asked the wrong question and could show/discard a conflict
+  // for whatever is merely highlighted, not what's actually loaded in the editor.
+  const bufferPathRef = useRef(tree.bufferPath);
+  bufferPathRef.current = tree.bufferPath;
   const dirtyRef = useRef(tree.dirty);
   dirtyRef.current = tree.dirty;
   const setBuffer = tree.setBuffer;
@@ -154,7 +158,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
       try {
         const conf = await api.getLabConf(labName);
         if (cancelled) return;
-        const editing = selectedRef.current === LAB_CONF_PATH;
+        const editing = bufferPathRef.current === LAB_CONF_PATH;
         const changed = conf.content !== serverConfRef.current;
         if (editing && dirtyRef.current && changed) {
           setConfConflict(conf.content);
@@ -176,11 +180,11 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
   function acceptConfConflict() {
     if (confConflict === null) return;
     serverConfRef.current = confConflict;
-    if (selectedRef.current === LAB_CONF_PATH) setBuffer(confConflict);
+    if (bufferPathRef.current === LAB_CONF_PATH) setBuffer(confConflict);
     setConfConflict(null);
   }
 
-  const editingLabConf = tree.selected === LAB_CONF_PATH;
+  const editingLabConf = tree.bufferPath === LAB_CONF_PATH;
 
   return (
     <FsTreePanel

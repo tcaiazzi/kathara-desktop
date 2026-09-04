@@ -8,13 +8,16 @@ import { saveBlob } from "../services/download";
 import {
   entryToNode,
   findNode,
+  freshScopeState,
   mergeNodeList,
   parentOf,
   toAbsolutePath,
   withMergedChildrenAt,
+  type FsClipboard,
   type FsNode,
+  type FsTreeScopeState,
 } from "../services/fsTree";
-import { baseName, isSubPath } from "../services/paths";
+import { baseName, isSubPath, remapPath } from "../services/paths";
 import type { FsEntry } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
 import { useConfirmDiscard } from "./useConfirmDiscard";
@@ -86,18 +89,12 @@ export interface UseFsTreeOptions {
   refreshKey?: unknown;
 }
 
-/** A pending Copy or Cut, holding the paths it was taken from. */
-export interface FsClipboard {
-  paths: string[];
-  mode: "copy" | "cut";
-}
-
 export interface UseFsTree {
   treeRef: React.MutableRefObject<TreeApi<FsNode> | undefined>;
   data: FsNode[];
   loaded: boolean;
   busy: boolean;
-  /** The *primary* selected path — what the editor shows, what rename/new-file "default dir" use. */
+  /** The *primary* selected path — what rename/delete/new-file "default dir" target. */
   selected: string | null;
   /** The full current multi-selection; always contains `selected` when non-empty. */
   selectedPaths: string[];
@@ -114,6 +111,8 @@ export interface UseFsTree {
    * buffer doesn't immediately read as unsaved.
    */
   setBuffer: (content: string) => void;
+  /** The path `editorText`/`loadedText` actually belong to — see FsTreeScopeState's own doc. */
+  bufferPath: string | null;
   /** Whether the editor buffer differs from what was last loaded/saved. */
   dirty: boolean;
   canModify: (path: string) => boolean;
@@ -165,6 +164,12 @@ export interface FsRowActions {
 
 const ALWAYS_MODIFIABLE = () => true;
 
+// A path that either equals `path` or sits underneath it — the shared question behind "does
+// deleting/moving `path` affect this selection/buffer/clipboard entry?".
+function isOrUnder(candidate: string | null, path: string): boolean {
+  return candidate === path || (!!candidate && isSubPath(candidate, path));
+}
+
 // The whole state machine behind a lazily-loaded, editable filesystem tree: listing and merging
 // directories, the selection/discard-confirmation flow, the editor buffer, and every mutation
 // (create, upload, rename, move, delete, download). Both filesystem panels run on this one copy
@@ -175,14 +180,10 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   const [loaded, setLoaded] = useState(false);
   const [tree, setTree] = useState<FsNode[]>([]);
-  const treeRefValue = useRef<FsNode[]>(tree);
-  useEffect(() => {
-    treeRefValue.current = tree;
-  }, [tree]);
-
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [clipboard, setClipboard] = useState<FsClipboard | null>(null);
+  const [bufferPath, setBufferPath] = useState<string | null>(null);
   const [editorText, setEditorText] = useState("");
   const [loadedText, setLoadedText] = useState("");
   const [isBinary, setIsBinary] = useState(false);
@@ -201,38 +202,35 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   sourceRef.current = source;
   const canModify = useCallback((path: string) => (sourceRef.current.canModify ?? ALWAYS_MODIFIABLE)(path), []);
 
-  const selectedRef = useRef(selected);
+  // Everything derived from `scopeKey` that a callback needs to read synchronously — never only
+  // through the React state above, which only lands after the render that scheduled it — lives in
+  // one ref object instead of one ref per field. See FsTreeScopeState's own doc for why: a field
+  // left out of this type can't be forgotten when the scope resets below.
+  const scoped = useRef<FsTreeScopeState>(freshScopeState());
   useEffect(() => {
-    selectedRef.current = selected;
+    scoped.current.tree = tree;
+  }, [tree]);
+  useEffect(() => {
+    scoped.current.selected = selected;
   }, [selected]);
-  const selectedPathsRef = useRef(selectedPaths);
   useEffect(() => {
-    selectedPathsRef.current = selectedPaths;
+    scoped.current.selectedPaths = selectedPaths;
   }, [selectedPaths]);
-  // Read through a ref: rowActions/the row renderer read clipboard state outside React's render
-  // cycle (isCutPending is called per-row from a memoized context value).
-  const clipboardRef = useRef(clipboard);
   useEffect(() => {
-    clipboardRef.current = clipboard;
+    scoped.current.clipboard = clipboard;
   }, [clipboard]);
-  // react-arborist's onSelect fires more than once for a single click (its own focus + selection
-  // updates each trigger a callback) — without this, each firing independently runs the discard-
-  // confirmation + fetch flow for the same target before `selected` has committed from the first
-  // one, so `selectedRef.current` (checked below) hasn't caught up yet and doesn't dedupe them.
-  const pendingSelectPathRef = useRef<string | null>(null);
+  useEffect(() => {
+    scoped.current.bufferPath = bufferPath;
+  }, [bufferPath]);
 
   // A change of scope is a different filesystem: drop the tree and everything derived from it
-  // rather than merging one device's listing into another's (both may have an `/etc`). The refs
-  // are cleared during render, ahead of the effect, so nothing in flight can write stale state
-  // against the new scope in between.
+  // rather than merging one device's listing into another's (both may have an `/etc`). `scoped` is
+  // replaced wholesale during render, ahead of the effect below, so nothing in flight — including
+  // a read issued against the *previous* scope — can write stale state against the new one.
   const scopeRef = useRef(scopeKey);
   if (scopeRef.current !== scopeKey) {
     scopeRef.current = scopeKey;
-    treeRefValue.current = [];
-    pendingSelectPathRef.current = null;
-    selectedRef.current = null;
-    selectedPathsRef.current = [];
-    clipboardRef.current = null;
+    scoped.current = freshScopeState();
   }
   useEffect(() => {
     setTree([]);
@@ -240,6 +238,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setSelected(null);
     setSelectedPaths([]);
     setClipboard(null);
+    setBufferPath(null);
     setEditorText("");
     setLoadedText("");
     setIsBinary(false);
@@ -302,7 +301,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   // undefined` is exactly "never listed yet".
   const ensureLoaded = useCallback(
     async (path: string) => {
-      const node = findNode(treeRefValue.current, path);
+      const node = findNode(scoped.current.tree, path);
       if (!node || !node.dir || node.children !== undefined) return;
       setLoadingPath(path);
       try {
@@ -327,7 +326,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           let acc = "";
           for (let i = 0; i < segments.length - 1; i++) {
             acc += `/${segments[i]}`;
-            if (!findNode(treeRefValue.current, acc)) await loadAndMerge(acc);
+            if (!findNode(scoped.current.tree, acc)) await loadAndMerge(acc);
           }
         }
         await loadAndMerge(path);
@@ -354,29 +353,27 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     // Wrapped, unlike the callers' bare `void reload()`: a failure here used to surface as nothing
     // at all (an unhandled rejection), while every sibling operation reports through a toast.
     try {
-      const merged = mergeNodeList(treeRefValue.current, (await list("/")).map(entryToNode));
+      const merged = mergeNodeList(scoped.current.tree, (await list("/")).map(entryToNode));
       setTree(await reloadLevel(merged));
     } catch (e) {
       toast.reportError(sourceRef.current.labels.openFile, e);
     }
   }, [toast]);
 
-  // Guards selectDir/selectFile against out-of-order responses: clicking file A then quickly file
-  // B could otherwise let A's slower fetch land after B's and clobber the editor with stale
-  // content. Each call captures its own generation at the start; any `setState` after an `await`
-  // is skipped once a newer call has bumped the counter past it.
-  const selectGenRef = useRef(0);
   const editorTextRef = useRef(editorText);
   editorTextRef.current = editorText;
   const loadedTextRef = useRef(loadedText);
   loadedTextRef.current = loadedText;
 
+  // The discard-confirmation prompt is about the *buffer*, not about `selected` — they can differ
+  // (see FsTreeScopeState.bufferPath), and asking about the wrong file is exactly how a stale
+  // buffer used to get silently overwritten.
   const requestFileSwitch = useCallback(
     (nextPath: string) =>
       confirmDiscard({
-        currentPath: selectedRef.current,
+        currentPath: scoped.current.bufferPath,
         nextPath,
-        hasUnsavedChanges: !!selectedRef.current && editorTextRef.current !== loadedTextRef.current,
+        hasUnsavedChanges: !!scoped.current.bufferPath && editorTextRef.current !== loadedTextRef.current,
       }),
     [confirmDiscard],
   );
@@ -385,14 +382,15 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   // content to load, and the editor pane just goes blank/disabled for it.
   const selectDir = useCallback(
     async (path: string) => {
-      const gen = ++selectGenRef.current;
+      const gen = ++scoped.current.selectGen;
       const ok = await requestFileSwitch(path);
-      if (selectGenRef.current !== gen) return;
+      if (scoped.current.selectGen !== gen) return;
       if (!ok) {
-        revealAndSelect(selectedRef.current);
+        revealAndSelect(scoped.current.selected);
         return;
       }
       setSelected(path);
+      setBufferPath(null);
       setEditorText("");
       setLoadedText("");
       setIsBinary(false);
@@ -402,11 +400,11 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   const selectFile = useCallback(
     async (path: string) => {
-      const gen = ++selectGenRef.current;
+      const gen = ++scoped.current.selectGen;
       const ok = await requestFileSwitch(path);
-      if (selectGenRef.current !== gen) return;
+      if (scoped.current.selectGen !== gen) return;
       if (!ok) {
-        revealAndSelect(selectedRef.current);
+        revealAndSelect(scoped.current.selected);
         return;
       }
       setLoadingPath(path);
@@ -414,8 +412,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         await runBusy(setBusy, sourceRef.current.labels.openFile, async () => {
           try {
             const content = await sourceRef.current.readText(path);
-            if (selectGenRef.current !== gen) return;
+            if (scoped.current.selectGen !== gen) return;
             setSelected(path);
+            setBufferPath(path);
             setEditorText(content);
             setLoadedText(content);
             setIsBinary(false);
@@ -423,8 +422,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
             if (e instanceof ApiError && e.errorType === "BinaryFileError") {
               // Not a failure from the user's point of view: select the file so download/delete/
               // rename work, just without a text preview.
-              if (selectGenRef.current !== gen) return;
+              if (scoped.current.selectGen !== gen) return;
               setSelected(path);
+              setBufferPath(null);
               setEditorText("");
               setLoadedText("");
               setIsBinary(true);
@@ -434,7 +434,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           }
         });
       } finally {
-        if (selectGenRef.current === gen) setLoadingPath((prev) => (prev === path ? null : prev));
+        if (scoped.current.selectGen === gen) setLoadingPath((prev) => (prev === path ? null : prev));
       }
     },
     [requestFileSwitch, revealAndSelect, runBusy],
@@ -443,28 +443,34 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const selectedIsDir = !!selected && (findNode(tree, selected)?.dir ?? false);
 
   const setBuffer = useCallback((content: string) => {
+    // Self-correcting rather than trusting the caller to have checked first: whichever path is
+    // currently selected is, by construction, what a freshly-installed buffer belongs to.
+    setBufferPath(scoped.current.selected);
     setEditorText(content);
     setLoadedText(content);
     setIsBinary(false);
   }, []);
 
   const handleSave = useCallback(async () => {
-    const path = selectedRef.current;
+    const path = scoped.current.bufferPath;
     if (!path) return;
     const content = editorTextRef.current;
     await runBusy(setBusy, sourceRef.current.labels.saveFile, async () => {
       await sourceRef.current.writeText(path, content);
-      setLoadedText(content);
       toast.show(sourceRef.current.labels.saved(path), "success");
       await refreshDir(parentOf(path));
+      // The buffer may now belong to a different file — the user switched away while this save
+      // was in flight. Only *this* file's own baseline gets marked clean; installing `content` as
+      // the saved baseline of whatever is loaded now would make it look saved when it isn't.
+      if (scoped.current.bufferPath === path) setLoadedText(content);
     });
   }, [refreshDir, runBusy, toast]);
 
   // The directory a create/upload should default to: the selected folder, or the selected file's
   // parent. `useFallback` additionally lets an upload land somewhere more useful than the root.
   const defaultDir = useCallback((useFallback = false): string => {
-    const path = selectedRef.current;
-    const fromSelection = path ? (findNode(treeRefValue.current, path)?.dir ? path : parentOf(path)) : "/";
+    const path = scoped.current.selected;
+    const fromSelection = path ? (findNode(scoped.current.tree, path)?.dir ? path : parentOf(path)) : "/";
     if (fromSelection !== "/") return fromSelection;
     return (useFallback ? sourceRef.current.labels.uploadFallbackDir?.() : undefined) ?? "/";
   }, []);
@@ -544,13 +550,20 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     [defaultDir, prompt, refreshDir, runBusy, selectFile, toast],
   );
 
-  // Drops a path from the clipboard (or rewrites it to its new location) so a since-deleted or
-  // since-renamed cut item silently falls out instead of erroring at paste time.
+  // Drops a path from the clipboard (or rewrites it, and every descendant of it, to its new
+  // location) so a since-deleted or since-renamed/moved cut item silently falls out or follows,
+  // instead of erroring — or landing on a dead path — at paste time.
   const pruneClipboard = useCallback((removedOrRenamedPath: string, renamedTo?: string) => {
     setClipboard((cb) => {
       if (!cb) return cb;
       const next = cb.paths
-        .map((p) => (p === removedOrRenamedPath ? renamedTo : p))
+        .map((p) =>
+          renamedTo !== undefined
+            ? (remapPath(p, removedOrRenamedPath, renamedTo) ?? p)
+            : isOrUnder(p, removedOrRenamedPath)
+              ? undefined
+              : p,
+        )
         .filter((p): p is string => p !== undefined);
       if (next.length === 0) return null;
       if (next.length === cb.paths.length && next.every((p, i) => p === cb.paths[i])) return cb;
@@ -560,30 +573,29 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   const handleDelete = useCallback(
     async (paths?: string[]) => {
-      const targets = (paths ?? selectedPathsRef.current).filter(canModify);
+      const targets = (paths ?? scoped.current.selectedPaths).filter(canModify);
       if (targets.length === 0) return;
       const multiple = targets.length > 1;
       const { title, message } = multiple
         ? sourceRef.current.labels.deleteConfirmMultiple(targets.length)
-        : sourceRef.current.labels.deleteConfirm(
-            targets[0],
-            findNode(treeRefValue.current, targets[0])?.dir ?? false,
-          );
+        : sourceRef.current.labels.deleteConfirm(targets[0], findNode(scoped.current.tree, targets[0])?.dir ?? false);
       if (!(await confirm({ title, message, okLabel: "Delete" }))) return;
 
       await runBusy(setBusy, sourceRef.current.labels.delete, async () => {
         const parents = new Set<string>();
         let clearedEditor = false;
         for (const path of targets) {
-          const isDir = findNode(treeRefValue.current, path)?.dir ?? false;
+          const isDir = findNode(scoped.current.tree, path)?.dir ?? false;
           await sourceRef.current.remove(path);
           parents.add(parentOf(path));
           pruneClipboard(path);
-          if (
-            !clearedEditor &&
-            (selectedRef.current === path || (isDir && selectedRef.current?.startsWith(`${path}/`)))
-          ) {
+          const affectsSelection = isDir
+            ? isOrUnder(scoped.current.selected, path)
+            : scoped.current.selected === path;
+          const affectsBuffer = isDir ? isOrUnder(scoped.current.bufferPath, path) : scoped.current.bufferPath === path;
+          if (!clearedEditor && (affectsSelection || affectsBuffer)) {
             setSelected(null);
+            setBufferPath(null);
             setEditorText("");
             setLoadedText("");
             setIsBinary(false);
@@ -623,7 +635,17 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         await sourceRef.current.move(sourcePath, destPath);
         toast.show(`Moved ${sourcePath} → ${destPath}.`, "success");
         await Promise.all([refreshDir(parentOf(sourcePath)), refreshDir(destDir)]);
-        if (selectedRef.current === sourcePath) setSelected(destPath);
+
+        // Rewrite the selection/buffer, following into a renamed *directory* too — not just an
+        // exact match on `sourcePath` itself, which is what let the editor keep pointing at a
+        // path that no longer existed after a folder rename.
+        const remappedSelected = scoped.current.selected && remapPath(scoped.current.selected, sourcePath, destPath);
+        if (remappedSelected) setSelected(remappedSelected);
+        const remappedPaths = scoped.current.selectedPaths.map((p) => remapPath(p, sourcePath, destPath) ?? p);
+        if (remappedPaths.some((p, i) => p !== scoped.current.selectedPaths[i])) setSelectedPaths(remappedPaths);
+        const remappedBuffer = scoped.current.bufferPath && remapPath(scoped.current.bufferPath, sourcePath, destPath);
+        if (remappedBuffer) setBufferPath(remappedBuffer);
+
         pruneClipboard(sourcePath, destPath);
       });
     },
@@ -656,14 +678,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   );
 
   const handleCopy = useCallback((paths?: string[]) => {
-    const targets = paths ?? selectedPathsRef.current;
+    const targets = paths ?? scoped.current.selectedPaths;
     if (targets.length === 0) return;
     setClipboard({ paths: targets, mode: "copy" });
   }, []);
 
   const handleCut = useCallback(
     (paths?: string[]) => {
-      const targets = (paths ?? selectedPathsRef.current).filter(canModify);
+      const targets = (paths ?? scoped.current.selectedPaths).filter(canModify);
       if (targets.length === 0) return;
       setClipboard({ paths: targets, mode: "cut" });
     },
@@ -671,13 +693,13 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   );
 
   const isCutPending = useCallback(
-    (path: string) => clipboardRef.current?.mode === "cut" && clipboardRef.current.paths.includes(path),
+    (path: string) => scoped.current.clipboard?.mode === "cut" && scoped.current.clipboard.paths.includes(path),
     [],
   );
 
   const handlePaste = useCallback(
     async (destDirOverride?: string) => {
-      const cb = clipboardRef.current;
+      const cb = scoped.current.clipboard;
       if (!cb || cb.paths.length === 0) return;
       const destDir = destDirOverride ?? defaultDir();
       if (!canModify(destDir)) return;
@@ -773,12 +795,13 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       // `setSelected(path)` fires unconditionally once its fetch resolves, silently clobbering
       // whatever the user has selected by then (a ctrl/shift multi-selection included: nothing
       // else invalidates it, since only selectFile/selectDir themselves used to touch this ref).
-      selectGenRef.current++;
+      scoped.current.selectGen++;
       const paths = nodes.map((n) => n.data.path);
       setSelectedPaths(paths);
       if (paths.length === 0) {
-        pendingSelectPathRef.current = null;
+        scoped.current.pendingSelect = null;
         setSelected(null);
+        setBufferPath(null);
         setEditorText("");
         setLoadedText("");
         setIsBinary(false);
@@ -791,21 +814,24 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       const primary = primaryNode.data.path;
       if (paths.length > 1) {
         // Multi-selection: move the "selected" pointer for delete/rename-target purposes, but
-        // skip the file-read/discard-confirm dance — there's no single file's content to show.
-        if (primary === selectedRef.current) return;
+        // leave the editor buffer alone — there's no single file's content to show, but nothing
+        // needs to be thrown away either. Returning to a single selection below picks the buffer
+        // back up if it's still the right one, or goes through the normal discard-confirm flow if
+        // it isn't.
+        if (primary === scoped.current.selected) return;
         setSelected(primary);
-        setEditorText("");
-        setLoadedText("");
-        setIsBinary(false);
         return;
       }
-      // Single selection: existing behavior, unchanged.
-      if (primary === selectedRef.current) return;
-      if (primary === pendingSelectPathRef.current) return;
-      pendingSelectPathRef.current = primary;
+      // Single selection. Skip the reload only when this file's buffer is *already* the one in
+      // hand — checking `bufferPath` too (not just `selected`) is what makes returning here from
+      // a multi-selection above actually reload a file whose content was never fetched, instead of
+      // leaving the previous buffer displayed (and later silently overwriting this file with it).
+      if (primary === scoped.current.selected && primary === scoped.current.bufferPath) return;
+      if (primary === scoped.current.pendingSelect) return;
+      scoped.current.pendingSelect = primary;
       const run = primaryNode.data.dir ? selectDir(primary) : selectFile(primary);
       void run.finally(() => {
-        if (pendingSelectPathRef.current === primary) pendingSelectPathRef.current = null;
+        if (scoped.current.pendingSelect === primary) scoped.current.pendingSelect = null;
       });
     },
     [selectDir, selectFile],
@@ -835,7 +861,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     editorText,
     setEditorText,
     setBuffer,
-    dirty: !!selected && editorText !== loadedText,
+    bufferPath,
+    dirty: !!bufferPath && editorText !== loadedText,
     canModify,
     hasDownload,
     rowActions,

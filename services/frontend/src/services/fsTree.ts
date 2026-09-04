@@ -19,6 +19,55 @@ export function entryToNode(e: FsEntry): FsNode {
   return { name: e.name, path: e.path, dir: e.is_dir };
 }
 
+/** A pending Copy or Cut, holding the paths it was taken from. */
+export interface FsClipboard {
+  paths: string[];
+  mode: "copy" | "cut";
+}
+
+/**
+ * Everything hooks/useFsTree.ts derives from its `scopeKey` (lab name, or lab+device) and needs to
+ * read *synchronously* inside a callback — never only through React state, which only lands after
+ * the render that scheduled it. Grouped into one type, reset by replacing the whole object, rather
+ * than one ref per field: a field that isn't part of this type can't be left out of a reset the
+ * way `selectGen` used to be — declared, incremented and compared far from the rest of the
+ * per-scope refs, and *not* among them when a scope change cleared everything else. That let a
+ * still-in-flight read from a *previous* device's filesystem land under a newly selected one.
+ */
+export interface FsTreeScopeState {
+  tree: FsNode[];
+  /** Dedupes react-arborist's own double-firing of a single click's selection event. */
+  pendingSelect: string | null;
+  selected: string | null;
+  selectedPaths: string[];
+  clipboard: FsClipboard | null;
+  /** Bumped by every selectDir/selectFile/onTreeSelect call; invalidates a still-in-flight one. */
+  selectGen: number;
+  /**
+   * The path whose content `editorText`/`loadedText` actually hold. Not always `selected` — e.g.
+   * a multi-selection moves `selected` without touching the buffer (there's nothing of theirs to
+   * show), and a slow file read still in flight hasn't claimed it yet. Saving, and the
+   * discard-confirmation prompt, both act on *this*, never on `selected` directly.
+   */
+  bufferPath: string | null;
+}
+
+/**
+ * A fresh, empty `FsTreeScopeState` — a new object (arrays included) on every call, so two scopes
+ * never end up sharing the same array underneath.
+ */
+export function freshScopeState(): FsTreeScopeState {
+  return {
+    tree: [],
+    pendingSelect: null,
+    selected: null,
+    selectedPaths: [],
+    clipboard: null,
+    selectGen: 0,
+    bufferPath: null,
+  };
+}
+
 export function parentOf(path: string): string {
   const idx = path.lastIndexOf("/");
   return idx <= 0 ? "/" : path.slice(0, idx);
