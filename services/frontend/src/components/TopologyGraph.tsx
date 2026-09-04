@@ -321,6 +321,7 @@ export function TopologyGraph({
   const selectedDeviceName = selectedNode?.type === "dev" ? selectedNode.name : null;
   const selectedDeviceRunning = selectedNode?.type === "dev" ? selectedNode.running : false;
   const [startupStatus, setStartupStatus] = useState<StartupStatus | null>(null);
+  const [pollTimedOut, setPollTimedOut] = useState(false);
 
   // Poll the running device's boot-time startup log (/var/log/startup.log) until its startup
   // commands finish — signaled by the /tmp/EOS marker Kathara's own startup sequence touches last
@@ -332,20 +333,36 @@ export function TopologyGraph({
   // "Loading…") on every such refresh instead of only on an actual selection change.
   useEffect(() => {
     setStartupStatus(null);
+    setPollTimedOut(false);
     if (!selectedDeviceName || !selectedDeviceRunning) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const startedAt = Date.now();
+    // A broken startup script that never touches the /tmp/EOS marker used to poll forever at a
+    // flat 1.5s, on both pending status and network errors alike. Back off exponentially and give
+    // up after two minutes instead.
+    const POLL_TIMEOUT_MS = 120_000;
+    const scheduleRetry = () => {
+      if (Date.now() - startedAt >= POLL_TIMEOUT_MS) {
+        setPollTimedOut(true);
+        return;
+      }
+      const delay = Math.min(1500 * 2 ** attempts, 15_000);
+      attempts++;
+      timer = setTimeout(poll, delay);
+    };
     const poll = () => {
       api
         .getStartupStatus(labName, selectedDeviceName)
         .then((status) => {
           if (cancelled) return;
           setStartupStatus(status);
-          if (!status.finished) timer = setTimeout(poll, 1500);
+          if (!status.finished) scheduleRetry();
         })
         .catch(() => {
           if (cancelled) return;
-          timer = setTimeout(poll, 1500);
+          scheduleRetry();
         });
     };
     poll();
@@ -685,16 +702,18 @@ export function TopologyGraph({
                 <div className="iface">
                   <div className="d-flex align-items-center justify-content-between">
                     <span style={{ fontWeight: 600 }}>Startup Log</span>
-                    {startupStatus && (
-                      <span className={`kt-state ${startupStatus.finished ? "done" : "pending"}`}>
-                        {startupStatus.finished ? "finished" : "running…"}
+                    {(startupStatus || pollTimedOut) && (
+                      <span className={`kt-state ${startupStatus?.finished ? "done" : "pending"}`}>
+                        {startupStatus?.finished ? "finished" : pollTimedOut ? "timed out" : "running…"}
                       </span>
                     )}
                   </div>
                   {startupStatus?.log ? (
                     <pre className="startup">{startupStatus.log}</pre>
                   ) : (
-                    <div className="hint">{startupStatus ? "No output yet." : "Loading…"}</div>
+                    <div className="hint">
+                      {pollTimedOut ? "Startup status check timed out." : startupStatus ? "No output yet." : "Loading…"}
+                    </div>
                   )}
                 </div>
               )}
