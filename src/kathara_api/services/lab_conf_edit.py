@@ -575,6 +575,10 @@ def replace_device_options(text: str, device: str, spec: MachineUpdate) -> str:
     existing_passthrough = doc.device_meta_keys(device) - modeled
     for stale_key in existing_passthrough - set(spec.metas):
         doc.unset_meta(device, stale_key)
+    # `key` is rendered raw into `name[key]=...` by `_set_scalar`/`_Line.render` below, with no
+    # escaping of its own — safe only because `MachineOptionsBase._valid_meta_keys` already
+    # guarantees every key in `spec.metas` looks like a bare identifier and isn't one of the names
+    # `groups`/the scalar loop above already own, by the time `spec` exists at all.
     for key, value in spec.metas.items():
         _set_scalar(doc, device, key, value)
 

@@ -91,23 +91,6 @@ def _machine_kwargs(spec: MachineOptionsBase) -> dict:
     return kwargs
 
 
-# Meta keys already handled explicitly (by `_machine_kwargs`/`update_meta` or the volume loop
-# below) or derived by the manager at deploy time. A `MachineCreate.metas` pass-through entry
-# using one of these names is ignored rather than applied — most importantly `volume`, whose
-# special handling in Kathara's own `Machine.add_meta` turns a value into a host bind mount, and
-# `bridged_iface`, which Kathara's `Machine.check` folds into interface-numbering validation.
-# Pass-through metas are assigned straight into `machine.meta` (never through `add_meta`), so this
-# list is what stands between an arbitrary lab.conf/JSON key and re-opening either hole.
-_RESERVED_META_KEYS = frozenset(
-    {
-        "image", "mem", "cpus", "shell", "ipv6", "privileged", "bridged", "bridged_iface",
-        "num_terms", "entrypoint", "args",
-        "exec", "exec_commands", "port", "ports", "env", "envs", "sysctl", "sysctls",
-        "ulimit", "ulimits", "volume", "volumes",
-    }
-)
-
-
 def apply_options(machine: Machine, spec: MachineOptionsBase) -> None:
     """(Re)populate ``machine.meta`` from ``spec``, wholesale — resets to the same default shape
     ``Machine.__init__`` starts from, then reapplies every option, so calling this twice on the
@@ -119,9 +102,11 @@ def apply_options(machine: Machine, spec: MachineOptionsBase) -> None:
     for volume in spec.volumes:
         machine.add_meta("volume", _format_volume(volume))
 
+    # `MachineOptionsBase._valid_meta_keys` already rejects any key this API models explicitly
+    # (`volume` included) before a request ever reaches here, so nothing routes through `add_meta`
+    # a second time under a different name — assigned straight into `machine.meta`, never through
+    # it, is what keeps a pass-through key from behaving like the field it's shadowing.
     for key, value in spec.metas.items():
-        if key in _RESERVED_META_KEYS:
-            continue
         machine.meta[key] = value
 
 

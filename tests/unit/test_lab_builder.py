@@ -1,6 +1,7 @@
 """Unit tests for the JSON -> Kathara model builder (no Docker required)."""
 
 import pytest
+from pydantic import ValidationError
 
 from kathara_api.errors import ApiError
 from kathara_api.schemas.lab import LabCreate
@@ -133,18 +134,21 @@ def test_build_machine_pass_through_meta_cannot_smuggle_a_volume():
     # for "volume" turns a value into a host bind mount. This is a different hole than lab.conf's
     # typed `[volume]`/JSON's `volumes` (both applied, both validated by VolumeMount) — this one
     # is the generic `metas` passthrough trying to sneak a mount in under a key it isn't.
-    spec = LabCreate.model_validate(
-        {"name": "metalab", "machines": [{"name": "pc1", "metas": {"volume": "/etc|/etc|rw"}}]}
-    )
-    lab = lab_builder.build_lab(spec)
-    assert lab.machines["pc1"].get_volumes() == {}
+    #
+    # Rejected at construction now (MachineOptionsBase._valid_meta_keys, see
+    # test_metas_validation.py) rather than silently dropped once it reached lab_builder — the
+    # request never becomes a `LabCreate` at all, so there is no `Lab` here to assert against.
+    with pytest.raises(ValidationError):
+        LabCreate.model_validate(
+            {"name": "metalab", "machines": [{"name": "pc1", "metas": {"volume": "/etc|/etc|rw"}}]}
+        )
 
 
 def test_build_machine_pass_through_meta_cannot_override_reserved_keys():
-    # "image" is handled by _machine_kwargs already; a pass-through entry for it must be ignored,
-    # not silently clobber the value that was set through the normal path.
-    spec = LabCreate.model_validate(
-        {"name": "metalab", "machines": [{"name": "pc1", "image": "kathara/base", "metas": {"image": "evil"}}]}
-    )
-    lab = lab_builder.build_lab(spec)
-    assert lab.machines["pc1"].get_image() == "kathara/base"
+    # "image" is handled by _machine_kwargs already; a pass-through entry for it must be refused,
+    # not silently clobber (or be silently dropped in favor of) the value set through the normal
+    # path — rejected at construction now, same as the volume case above.
+    with pytest.raises(ValidationError):
+        LabCreate.model_validate(
+            {"name": "metalab", "machines": [{"name": "pc1", "image": "kathara/base", "metas": {"image": "evil"}}]}
+        )

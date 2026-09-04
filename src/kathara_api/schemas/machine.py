@@ -1,6 +1,7 @@
 """Schemas describing Kathara devices (machines)."""
 
 import os
+import re
 from pathlib import PurePosixPath
 from typing import Literal, Optional, Union
 
@@ -9,6 +10,35 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .common import reject_lab_conf_quotes
 
 MACHINE_NAME_PATTERN = r"^[a-z0-9_]{1,30}$"
+
+# A `metas` key is rendered raw into a `name[key]=...` lab.conf line by both
+# `lab_store.gen_device_lines` and `lab_conf_edit.replace_device_options` — unlike the *value*,
+# which both routes quote/escape, the key never was. Restricting it to a bare identifier closes
+# two ways that used to reach real damage: an embedded newline split one rendered line into two,
+# and the second half — if it happened to match the lab.conf line grammar — became an independent,
+# unrelated device directive; a purely numeric key was indistinguishable from a real interface
+# number on the next parse. Requiring a leading letter/underscore rules out the numeric case by
+# construction, and the character class rules out the newline (and brackets/quotes/whitespace)
+# case the same way.
+_META_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# Names this API models explicitly (as a first-class field, or a container it renders itself) or
+# that Kathara's own `Machine.add_meta`/`Machine.check` treat specially. A `metas` pass-through
+# entry using one of these is never applied on the *live* JSON-create/update path (see
+# `lab_builder.apply_options`, which never routes metas through `add_meta` in the first place) —
+# but `metas` also round-trips through lab.conf text (`lab_conf_edit.replace_device_options`), and
+# that path re-parses on the next load, where a key like `volume` *is* interpreted specially. Since
+# every one of these already has its own modeled field with its own validation, a `metas` entry
+# using the same name can't add any capability a request doesn't already have through that field —
+# rejecting it here just keeps the two paths from disagreeing about it.
+_RESERVED_META_KEYS = frozenset(
+    {
+        "image", "mem", "cpus", "shell", "ipv6", "privileged", "bridged", "bridged_iface",
+        "num_terms", "entrypoint", "args",
+        "exec", "exec_commands", "port", "ports", "env", "envs", "sysctl", "sysctls",
+        "ulimit", "ulimits", "volume", "volumes",
+    }
+)
 
 
 class PortMapping(BaseModel):
@@ -111,9 +141,8 @@ class MachineOptionsBase(BaseModel):
     entrypoint: Optional[str] = None
     args: Optional[str] = None
     # Options this API doesn't interpret (from an imported lab.conf, or authored directly), passed
-    # to the device unchanged. Never routed through Kathara's `Machine.add_meta` (see
-    # `lab_builder.apply_options`) — only assigned straight into `machine.meta` — so a key like
-    # `volume` can't smuggle a host bind mount in through this side door.
+    # to the device unchanged. `_valid_meta_keys` below is what actually keeps a key safe to render
+    # into a lab.conf line and out of every already-modeled field's territory (`volume` included).
     metas: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("image", "mem", "shell", "entrypoint", "args")
@@ -127,6 +156,16 @@ class MachineOptionsBase(BaseModel):
         for value in values.values():
             if isinstance(value, str):
                 reject_lab_conf_quotes(value)
+        return values
+
+    @field_validator("metas")
+    @classmethod
+    def _valid_meta_keys(cls, values: dict) -> dict:
+        for key in values:
+            if not _META_KEY_RE.match(key):
+                raise ValueError(f"invalid metas key {key!r}: must look like a bare option name")
+            if key in _RESERVED_META_KEYS:
+                raise ValueError(f"metas key {key!r} is already a modeled option — use that field instead")
         return values
 
 
