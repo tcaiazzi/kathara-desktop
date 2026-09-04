@@ -83,6 +83,15 @@
       details { margin: 0 0 1rem; }
       details summary { cursor: pointer; color: var(--muted); }
       details pre { margin-top: .5rem; }
+      .callout {
+        display: flex; gap: .9rem; align-items: flex-start;
+        border: 1px solid var(--warn); border-radius: 8px;
+        padding: 1rem 1.15rem; margin: 0 0 1.5rem;
+        background: color-mix(in srgb, var(--warn) 12%, transparent);
+      }
+      .callout .icon { font-size: 1.6rem; line-height: 1; }
+      .callout h2 { margin: 0 0 .3rem; font-size: 1.05rem; }
+      .callout p { margin: 0; color: var(--fg); }
     </style>
   </head>
   <body>
@@ -146,14 +155,37 @@
         return `<ul>${items}</ul>`;
       }
 
+      // Once packages install themselves automatically (see main.ts's Docker-exempt auto-install
+      // gate), Docker being the *only* thing still failing is the common case, not an edge case —
+      // it's the one prerequisite the app can never satisfy for the user. A muted `.remedy` line
+      // buried in the checklist, the same weight as every other check, undersells that. This is
+      // additive to checksHtml() above, not a replacement: the checklist still lists Docker (and
+      // its own remedy text) normally underneath, for anyone who scrolls past the callout.
+      function dockerCallout(checks) {
+        const failing = checks.filter((c) => !c.ok);
+        if (failing.length !== 1 || failing[0].id !== "docker") return "";
+        const platform = window.katharaDesktop.platform;
+        const product = platform === "darwin" || platform === "win32" ? "Docker Desktop" : "Docker Engine";
+        return `
+          <div class="callout">
+            <span class="icon">🐳</span>
+            <div>
+              <h2>Start ${esc(product)}</h2>
+              <p>${esc(failing[0].remedy ?? failing[0].detail)}</p>
+            </div>
+          </div>`;
+      }
+
       function renderStarting(status) {
         const elapsedSec = Math.max(0, Math.round((Date.now() - status.startedAt) / 1000));
         const hint = PATIENCE_HINTS.find((h) => h.phase === status.phase && elapsedSec >= h.afterSec);
 
         const heading = status.firstRun ? "Welcome to Kathara IDE" : "Starting Kathara IDE";
         const lead = status.firstRun
-          ? "Kathara IDE doesn't bundle its own network emulator — it drives the Docker and Kathara " +
-            "already installed on this computer. Checking that everything is in place…"
+          ? "Kathara IDE doesn't bundle its own network emulator — it drives Docker, which must " +
+            "already be installed and running on this computer. The Kathara Python packages it " +
+            "needs are installed automatically, into a Python environment bundled with the app. " +
+            "Checking that everything is in place…"
           : esc(status.message) || "Getting the local Kathara API ready…";
 
         app.innerHTML = `
@@ -173,22 +205,27 @@
       function renderChecks(status) {
         const failed = status.state === "prereq-failed";
 
-        // "Install missing packages" only helps with these — it can't fix a missing Docker
-        // or Python, which the app deliberately doesn't touch (prereqs.ts). "dependencies" is
-        // in the list because a fresh venv built from the bundled wheel resolves whatever the
-        // current interpreter's environment is missing.
+        // "Install missing packages" only helps with these, and only when Docker (which the app
+        // deliberately doesn't touch — prereqs.ts) isn't also the problem: matches main.ts's own
+        // auto-install gate, which ignores Docker for the same reason (installing the wheel needs
+        // nothing from it) but still won't run when something else it can't fix is failing too.
+        // "dependencies" is in the list because a fresh venv built from the bundled wheel resolves
+        // whatever the current interpreter's environment is missing.
         const installable = ["kathara_api", "kathara", "uvicorn", "dependencies"];
-        const canAutoInstall = status.checks.some((c) => !c.ok && installable.includes(c.id));
+        const nonDocker = status.checks.filter((c) => c.id !== "docker");
+        const canAutoInstall =
+          nonDocker.some((c) => !c.ok) && nonDocker.every((c) => c.ok || installable.includes(c.id));
 
         app.innerHTML = `
           <h1>${failed ? "A few things are missing" : "Kathara IDE couldn't start its local API"}</h1>
           <p class="sub">${failed
-            ? "Kathara IDE runs on top of Docker and Kathara installed on this computer, so it " +
-              "can't fix everything by itself. Sort out anything marked ✕ below, then choose " +
-              "“Check again”."
+            ? "Kathara IDE installs the Python packages it needs by itself, but it can't install " +
+              "or start Docker for you — that has to already be installed and running on this " +
+              "computer. Sort out anything marked ✕ below, then choose “Check again”."
             : "Everything it needs is installed, but the API process didn't come up. The " +
               "technical details below usually say why."}</p>
           ${failed && status.notice ? `<p class="sub">${esc(status.notice)}</p>` : ""}
+          ${failed ? dockerCallout(status.checks) : ""}
           ${checksHtml(status.checks)}
           ${!failed && status.error ? `<p class="sub">${esc(status.error)}</p>` : ""}
           ${status.logTail ? `<details><summary>Technical details</summary><pre>${esc(status.logTail)}</pre></details>` : ""}

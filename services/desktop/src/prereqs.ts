@@ -95,6 +95,12 @@ function run(file: string, args: string[]): Promise<ExecResult> {
 const DOCKER_URL = "https://docs.docker.com/get-docker/";
 const KATHARA_URL = "https://www.kathara.org/download.html";
 
+/** "Docker Desktop" on macOS/Windows, "Docker Engine" on Linux — the two are installed and
+ * started differently enough that naming both every time (the old wording) just made the reader
+ * find the sentence that actually applies to them. */
+const DOCKER_PRODUCT_NAME =
+  process.platform === "darwin" || process.platform === "win32" ? "Docker Desktop" : "Docker Engine";
+
 async function checkDocker(): Promise<Check> {
   // `docker info` (not `docker --version`) because it round-trips to the daemon: the CLI being
   // installed says nothing about whether anything can actually be deployed.
@@ -105,8 +111,7 @@ async function checkDocker(): Promise<Check> {
       label: "Docker",
       ok: false,
       detail: "The docker command was not found on PATH.",
-      remedy: "Install Docker Desktop (macOS, Windows) or Docker Engine (Linux), start it, " +
-        "then choose “Check again”.",
+      remedy: `Install ${DOCKER_PRODUCT_NAME}, start it, then choose “Check again”.`,
       docsUrl: DOCKER_URL,
     };
   }
@@ -118,9 +123,11 @@ async function checkDocker(): Promise<Check> {
       ok: false,
       detail: (res.stderr.trim() || "docker info failed").split("\n")[0],
       remedy:
-        "Docker is installed but not answering. Start Docker Desktop — on Linux, run " +
-        "“sudo systemctl start docker” — and make sure your user is in the “docker” group. " +
-        "Then choose “Check again”.",
+        process.platform === "darwin" || process.platform === "win32"
+          ? `Docker is installed but not running. Open ${DOCKER_PRODUCT_NAME} and wait for it to ` +
+            "finish starting, then choose “Check again”."
+          : "Docker is installed but not answering. Start it — “sudo systemctl start docker” — " +
+            "and make sure your user is in the “docker” group. Then choose “Check again”.",
       docsUrl: DOCKER_URL,
     };
   }

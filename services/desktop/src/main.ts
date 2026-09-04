@@ -218,17 +218,22 @@ const INSTALL_PHASE: Record<InstallStep, BootPhase> = {
 };
 
 const INSTALL_MESSAGE: Record<InstallStep, string> = {
-  prepare: "Preparing the Python environment…",
+  prepare: "Preparing the app's bundled Python environment…",
   pip: "Updating pip…",
-  wheel: "Installing Kathara and the Kathara API — this can take several minutes…",
+  wheel: "Installing Kathara and the Kathara API into the app's bundled Python — this can take several minutes…",
 };
 
 /**
  * The checks a bundled-wheel install can actually fix (install.ts). A failure outside this set —
- * Docker, Python itself, the bundled UI — is something the app deliberately doesn't install its
- * way out of, and is the difference between "install this automatically" and "ask the user".
+ * Python itself, the bundled UI — is something the app deliberately doesn't install its way out
+ * of, and is the difference between "install this automatically" and "ask the user".
  * KEEP IN SYNC with the `installable` list in setup.html, which decides whether the button that
  * runs the same install by hand is offered.
+ *
+ * Docker is deliberately *not* in this set, but is still special-cased out of the gate below
+ * rather than folded into it: unlike these four, the app can never install Docker for the user,
+ * so a missing/stopped Docker daemon must never be treated as "installable" — only as a check
+ * that's allowed to keep failing while the install proceeds anyway (see startup()).
  */
 const INSTALLABLE: ReadonlySet<Check["id"]> = new Set<Check["id"]>([
   "kathara_api",
@@ -315,15 +320,23 @@ async function startup(resumePath?: string): Promise<void> {
     // a fresh machine and a working app, and — now that the packages live inside the bundled
     // interpreter, which an app update replaces wholesale (install.ts) — it would also come back
     // after every update, asking the user to authorise the one thing the app can do by itself.
+    //
+    // Docker is excluded from this check on purpose: installing the bundled wheel is a plain `pip
+    // install` into the app's own Python and needs nothing from Docker, so a missing or stopped
+    // Docker daemon must not block it — a user on a fresh machine with neither Docker nor the
+    // Python packages yet should still get the packages installed automatically, and land on a
+    // failure screen naming only the one thing the app truly can't do for them.
+    const nonDocker = preflight.checks.filter((c) => c.id !== "docker");
     if (
       app.isPackaged &&
       staticDir &&
       preflight.systemPython &&
       !autoInstallAttempted &&
-      preflight.checks.every((c) => c.ok || INSTALLABLE.has(c.id))
+      nonDocker.some((c) => !c.ok) &&
+      nonDocker.every((c) => c.ok || INSTALLABLE.has(c.id))
     ) {
       autoInstallAttempted = true;
-      log("preflight: only installable packages are missing — installing them automatically");
+      log("preflight: only installable packages (Docker aside) are missing — installing them automatically");
       // At cold start the splash is still on screen, and this install owns the next few minutes:
       // the setup page is where its ladder and live pip output are visible.
       showSetup(win);
