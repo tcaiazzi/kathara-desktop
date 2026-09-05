@@ -464,6 +464,7 @@ export function WorkspacePage() {
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
   const [labFilter, setLabFilter] = useState("");
+  const [labPickerOpen, setLabPickerOpen] = useState(false);
   const [detail, setDetail] = useState<LabDetail | null>(null);
   // Mirrors `detail` for onDockReady (stable `useCallback([])`, so it can't read fresh state from
   // its own closure) to prune restored terminals against, without changing onDockReady's identity.
@@ -560,6 +561,7 @@ export function WorkspacePage() {
     setDetail(null);
     setNotFound(false);
     setSelectedId(null);
+    setLabPickerOpen(false);
     load();
   }, [load]);
 
@@ -797,6 +799,9 @@ export function WorkspacePage() {
     if (!q) return labs;
     return labs.filter((l) => (l.name ?? "").toLowerCase().includes(q));
   }, [labs, labFilter]);
+
+  const currentLab = useMemo(() => labs?.find((l) => l.name === name) ?? null, [labs, name]);
+  const showLabList = !currentLab || labPickerOpen;
 
   async function handleDeployToggle() {
     if (!detail) return;
@@ -1038,35 +1043,71 @@ export function WorkspacePage() {
                 Wipe All Labs
               </Button>
             )}
-            <Form.Control
-              size="sm"
-              type="search"
-              placeholder="Filter labs…"
-              value={labFilter}
-              onChange={(e) => setLabFilter(e.target.value)}
-              className="mb-2"
-            />
-            <div className="kt-ws-list">
-              {labs == null ? (
-                <div className="kt-ws-muted">Loading…</div>
-              ) : filteredLabs && filteredLabs.length === 0 ? (
-                <div className="kt-ws-muted">{labs.length === 0 ? "No labs yet." : "No matches."}</div>
-              ) : (
-                filteredLabs?.map((l) => (
-                  <button
-                    key={l.name ?? l.hash}
-                    className={`kt-ws-row ${l.name === name ? "active" : ""}`}
-                    onClick={() => l.name && navigate(`/workspace/${encodeURIComponent(l.name)}`)}
-                    onContextMenu={(e) => openLabMenu(e, l)}
-                    title={l.name ? `${l.name} — click to open · right-click for actions` : ""}
+            {showLabList ? (
+              <>
+                <Form.Control
+                  size="sm"
+                  type="search"
+                  placeholder="Filter labs…"
+                  value={labFilter}
+                  onChange={(e) => setLabFilter(e.target.value)}
+                  className="mb-2"
+                />
+                <div className="kt-ws-list">
+                  {labs == null ? (
+                    <div className="kt-ws-muted">Loading…</div>
+                  ) : filteredLabs && filteredLabs.length === 0 ? (
+                    <div className="kt-ws-muted">{labs.length === 0 ? "No labs yet." : "No matches."}</div>
+                  ) : (
+                    filteredLabs?.map((l) => (
+                      <button
+                        key={l.name ?? l.hash}
+                        className={`kt-ws-row ${l.name === name ? "active" : ""}`}
+                        onClick={() => {
+                          if (l.name === name) {
+                            setLabPickerOpen(false);
+                          } else if (l.name) {
+                            navigate(`/workspace/${encodeURIComponent(l.name)}`);
+                          }
+                        }}
+                        onContextMenu={(e) => openLabMenu(e, l)}
+                        title={
+                          l.name === name
+                            ? `${l.name} — click to hide other labs · right-click for actions`
+                            : l.name
+                              ? `${l.name} — click to open · right-click for actions`
+                              : ""
+                        }
+                      >
+                        <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
+                        <span className="kt-ws-row-name">{l.name || "(unnamed)"}</span>
+                        <span className="kt-ws-row-meta">{l.n_machines}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </>
+            ) : (
+              currentLab && (
+                <>
+                  <div className="kt-ws-list">
+                    <div className="kt-ws-row kt-ws-row--static" onContextMenu={(e) => openLabMenu(e, currentLab)}>
+                      <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
+                      <span className="kt-ws-row-name">{currentLab.name || "(unnamed)"}</span>
+                      <span className="kt-ws-row-meta">{currentLab.n_machines}</span>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    className="w-100 mt-2"
+                    onClick={() => setLabPickerOpen(true)}
                   >
-                    <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
-                    <span className="kt-ws-row-name">{l.name || "(unnamed)"}</span>
-                    <span className="kt-ws-row-meta">{l.n_machines}</span>
-                  </button>
-                ))
-              )}
-            </div>
+                    Select other labs
+                  </Button>
+                </>
+              )
+            )}
           </div>
 
           {detail && (
