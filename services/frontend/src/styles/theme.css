@@ -23,10 +23,35 @@
   --kt-domain-border: var(--bs-primary);
   --kt-domain-external-border: #b45309;
 
-  --kt-edge: #adb5bd;
+  /* #adb5bd (Bootstrap's default gray-500) reads at ~1.95:1 against --kt-surface-recessed here —
+     well under the 3:1 WCAG non-text-contrast floor for a graphical object. Darkened to clear it
+     (~3.4:1) without drifting toward --kt-edge-hi's blue hue. */
+  --kt-edge: #7c8891;
   --kt-edge-hi: var(--bs-primary);
   --kt-edge-label: #6c757d;
   --kt-edge-label-hi: var(--bs-primary);
+
+  /* Per-category node icon colors (see .n-router/.n-switch/... in TopologyGraph.css). Tuned per
+     theme, not simply duplicated: a color that clears 3:1 against the light --kt-node-bg can fail
+     it against the dark one (and vice versa), since node-bg's own lightness flips between themes. */
+  --kt-node-cat-switch: #0d9488;
+  --kt-node-cat-controller: #7c3aed;
+  --kt-node-cat-server: #4f46e5;
+  --kt-node-cat-dns: #15803d;
+  --kt-node-cat-security: #b45309;
+  --kt-node-cat-analyzer: #0284c7;
+
+  /* Faint dot grid painted inside the topology canvas's pannable/zoomable viewport (see
+     useForceLayout.ts) — a spatial reference, not a foreground element, so it stays subtle. */
+  --kt-topo-grid-dot: rgba(0, 0, 0, 0.07);
+
+  /* Small type scale for the topology canvas/side-panel (node labels, edge labels, legend, ...) so
+     related text sizes step consistently instead of each being its own magic number. */
+  --kt-topo-fs-2xs: 10px;
+  --kt-topo-fs-xs: 11px;
+  --kt-topo-fs-sm: 12px;
+  --kt-topo-fs-base: 14px;
+  --kt-topo-fs-md: 15px;
 
   --kt-selected-glow: rgba(13, 110, 253, 0.55);
 
@@ -60,6 +85,17 @@
   --kt-edge-hi: #7ab7ff;
   --kt-edge-label: #9cafc2;
   --kt-edge-label-hi: #a6ccff;
+
+  /* controller/server are lightened here (their light-theme hex falls to ~2.6-2.9:1 against the
+     dark node background); switch/dns/security/analyzer already clear 3:1 unchanged. */
+  --kt-node-cat-switch: #0d9488;
+  --kt-node-cat-controller: #a78bfa;
+  --kt-node-cat-server: #818cf8;
+  --kt-node-cat-dns: #16a34a;
+  --kt-node-cat-security: #d97706;
+  --kt-node-cat-analyzer: #0ea5e9;
+
+  --kt-topo-grid-dot: rgba(255, 255, 255, 0.06);
 
   --kt-selected-glow: rgba(122, 183, 255, 0.45);
 

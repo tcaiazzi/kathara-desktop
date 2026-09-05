@@ -14,7 +14,7 @@
   align-items: center;
   gap: 6px 12px;
   margin-bottom: 8px;
-  font-size: 12px;
+  font-size: var(--kt-topo-fs-base);
   color: var(--bs-secondary-color);
 }
 .kt-topo-hint {
@@ -24,7 +24,7 @@
 }
 .kt-topo-hint kbd {
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--kt-topo-fs-sm);
   font-weight: 600;
   color: var(--bs-body-color);
   background: var(--kt-panel-muted-bg);
@@ -35,6 +35,10 @@
   line-height: 1.4;
 }
 
+/* 460px is only a fallback default for a bare (non-dockview) mount — the real app's WorkspacePage
+   overrides both this and .kt-topo-side's height to fill their dockview panel (see
+   ".kt-ws-panel-fill .kt-topo-canvas" in WorkspacePage.css), so changing this value has no visible
+   effect there. */
 .kt-topo-canvas {
   flex: 1;
   min-width: 0;
@@ -137,18 +141,39 @@
   height: 13px;
   border-radius: 3px;
   flex: 0 0 auto;
+  position: relative;
 }
 .kt-topo-legend .swatch.cd {
   border-radius: 50%;
 }
 /* Legend swatch color classes. */
-.kt-topo-legend .swatch.running {
+.kt-topo-legend .swatch.running,
+.kt-topo-legend .swatch.stopped {
   background: var(--kt-node-bg);
+}
+.kt-topo-legend .swatch.running {
   border: 1.5px solid var(--kt-node-running);
 }
 .kt-topo-legend .swatch.stopped {
-  background: var(--kt-node-bg);
   border: 1.5px solid var(--kt-node-stopped);
+}
+/* Small corner dot mirroring the node's b-state badge, so the legend documents both signals
+   (border color + the redundant filled dot) for the running/stopped state. */
+.kt-topo-legend .swatch.running::after,
+.kt-topo-legend .swatch.stopped::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.kt-topo-legend .swatch.running::after {
+  background: var(--kt-node-running);
+}
+.kt-topo-legend .swatch.stopped::after {
+  background: var(--kt-node-stopped);
 }
 .kt-topo-legend .swatch.domain {
   background: var(--kt-domain-bg);
@@ -165,14 +190,14 @@
   border: 1px solid var(--bs-border-color);
   border-radius: 8px;
   padding: 12px;
-  font-size: 12.5px;
+  font-size: var(--kt-topo-fs-base);
   overflow-y: auto;
   height: 460px;
   color: var(--bs-body-color);
 }
 .kt-topo-side h4 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--kt-topo-fs-md);
 }
 .kt-topo-side .kv {
   display: flex;
@@ -202,7 +227,7 @@
   padding: 1px 9px;
   border-radius: 999px;
   font-weight: 600;
-  font-size: 11.5px;
+  font-size: var(--kt-topo-fs-sm);
   text-transform: capitalize;
 }
 .kt-topo-side .kt-state::before {
@@ -231,7 +256,7 @@
 .kt-topo-side pre.startup {
   margin: 6px 0 0;
   padding: 8px;
-  font-size: 11.5px;
+  font-size: var(--kt-topo-fs-sm);
   line-height: 1.35;
   background: var(--bs-tertiary-bg);
   border-radius: 6px;
@@ -254,13 +279,13 @@
 .n-dev .n-label {
   fill: var(--kt-node-text);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--kt-topo-fs-base);
   font-weight: 600;
 }
 .n-dev .n-sub {
   fill: var(--kt-node-sub-text);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 9.5px;
+  font-size: var(--kt-topo-fs-xs);
 }
 .n-cd circle {
   fill: var(--kt-domain-bg);
@@ -274,7 +299,7 @@
 .n-cd .n-label {
   fill: var(--kt-domain-border);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--kt-topo-fs-sm);
   font-weight: 600;
 }
 .kt-topo-node {
@@ -296,11 +321,12 @@
 .kt-topo-edge-label {
   fill: var(--kt-edge-label);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 9px;
+  font-size: var(--kt-topo-fs-sm);
+  font-weight: 600;
   /* Background halo so the label stays readable over edges/nodes (labels are drawn above nodes). */
   paint-order: stroke;
   stroke: var(--kt-surface-recessed);
-  stroke-width: 3px;
+  stroke-width: 3.5px;
   stroke-linejoin: round;
 }
 .kt-topo-edge-label.hi {
@@ -320,10 +346,10 @@
 .kt-topo-edge-ip {
   fill: var(--kt-node-sub-text);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 8px;
+  font-size: var(--kt-topo-fs-xs);
   paint-order: stroke;
   stroke: var(--kt-surface-recessed);
-  stroke-width: 3px;
+  stroke-width: 3.5px;
   stroke-linejoin: round;
 }
 .kt-topo-edge-ip.hi {
@@ -348,22 +374,22 @@
   color: var(--bs-primary);
 }
 .n-switch {
-  color: #0d9488;
+  color: var(--kt-node-cat-switch);
 }
 .n-controller {
-  color: #7c3aed;
+  color: var(--kt-node-cat-controller);
 }
 .n-server {
-  color: #4f46e5;
+  color: var(--kt-node-cat-server);
 }
 .n-dns {
-  color: #16a34a;
+  color: var(--kt-node-cat-dns);
 }
 .n-security {
-  color: #d97706;
+  color: var(--kt-node-cat-security);
 }
 .n-analyzer {
-  color: #0ea5e9;
+  color: var(--kt-node-cat-analyzer);
 }
 .n-host,
 .n-device {
@@ -377,7 +403,7 @@
 }
 .n-badge text {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: 9px;
+  font-size: var(--kt-topo-fs-2xs);
   font-weight: 700;
   fill: #fff;
 }
@@ -386,6 +412,14 @@
 }
 .n-badge.b-ports circle {
   fill: var(--bs-primary);
+}
+.n-badge.b-state circle {
+  /* Filled solid (no text glyph) — a shape/position signal redundant with the rect's
+     running/stopped border-stroke color, not a color-only distinction. */
+  fill: var(--kt-node-running);
+}
+.n-badge.b-state.stopped circle {
+  fill: var(--kt-node-stopped);
 }
 
 /* Hover tooltip (HTML overlay inside the canvas). */

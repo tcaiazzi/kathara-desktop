@@ -195,7 +195,10 @@ export function useForceLayout(
     const W = Math.max(canvas.clientWidth || 800, 320);
     const H = Math.max(canvas.clientHeight || 460, 300);
     const n = model.nodes.length;
-    const k = Math.min(160, Math.max(64, 0.55 * Math.sqrt((W * H) / n)));
+    // Ideal (spring rest) distance between connected nodes, also the repulsion scale between every
+    // pair — kept modest (vs. the previous 160 cap) so an auto-laid-out graph stays compact: just
+    // enough room to read a node's label, not spread to fill whatever canvas/panel size is available.
+    const k = Math.min(140, Math.max(66, 0.44 * Math.sqrt((W * H) / n)));
 
     // Seed positions: restore saved ones where available, else lay out on a jittered circle. A
     // restored node is *pinned* (`fixed`): the physics never moves it, so adding one device can no
@@ -236,12 +239,33 @@ export function useForceLayout(
 
     const svgNode = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, width: W, height: H });
     const viewport = svgEl("g");
+    // A faint dot grid, drawn first (so everything else paints over it) and living *inside*
+    // `viewport` — it inherits the same pan/zoom transform as nodes/edges (applyTransform below),
+    // so it reads as a genuine spatial reference while panning/zooming, not a static wallpaper.
+    // Sized well beyond the visible canvas so it doesn't run out under any reasonable pan.
+    const defs = svgEl("defs");
+    const gridPattern = svgEl("pattern", {
+      id: "kt-topo-grid",
+      patternUnits: "userSpaceOnUse",
+      width: 22,
+      height: 22,
+    });
+    gridPattern.append(svgEl("circle", { cx: 1, cy: 1, r: 1, fill: "var(--kt-topo-grid-dot)" }));
+    defs.append(gridPattern);
+    const gridRect = svgEl("rect", {
+      x: -2000,
+      y: -2000,
+      width: 4000,
+      height: 4000,
+      fill: "url(#kt-topo-grid)",
+      "pointer-events": "none",
+    });
     const edgesG = svgEl("g");
     const nodesG = svgEl("g");
     // Edge labels live in their own group drawn AFTER the nodes so a node never covers an interface
     // name (labels also get a background halo in CSS for contrast over lines/nodes).
     const labelsG = svgEl("g");
-    viewport.append(edgesG, nodesG, labelsG);
+    viewport.append(defs, gridRect, edgesG, nodesG, labelsG);
     svgNode.append(viewport);
     canvas.append(svgNode);
 
@@ -398,7 +422,7 @@ export function useForceLayout(
     }
 
     function tick() {
-      const { nodes, edges, byId: ids, k: kk, W: w, H: h } = engine;
+      const { nodes, edges, byId: ids, adj, k: kk, W: w, H: h } = engine;
       for (const nd of nodes) {
         nd.dx = 0;
         nd.dy = 0;
@@ -440,8 +464,15 @@ export function useForceLayout(
         b.dy += uy * f;
       }
       for (const nd of nodes) {
-        nd.dx += (w / 2 - nd.x) * 0.06;
-        nd.dy += (h / 2 - nd.y) * 0.06;
+        // Stronger than before (was 0.06) — a lightly-connected node (e.g. a single edge into a
+        // domain everything else avoids) needs more than the spring force alone to keep it pulled in
+        // near the rest of the graph instead of drifting out to whatever the repulsion sum allows.
+        // An edge-less node (no interfaces at all) has no spring pulling it in whatsoever — only
+        // repulsion from every other node pushing it away — so it needs a markedly stronger pull or
+        // it drifts out on its own, forcing fit-to-view to zoom out to include it.
+        const pull = adj[nd.id].size === 0 ? 0.32 : 0.09;
+        nd.dx += (w / 2 - nd.x) * pull;
+        nd.dy += (h / 2 - nd.y) * pull;
       }
       for (const nd of nodes) {
         if (nd === engine.dragging || nd.fixed) continue;
@@ -449,8 +480,8 @@ export function useForceLayout(
         const lim = Math.min(d, engine.temp);
         nd.x += (nd.dx / d) * lim;
         nd.y += (nd.dy / d) * lim;
-        nd.x = Math.max(34, Math.min(w - 34, nd.x));
-        nd.y = Math.max(30, Math.min(h - 30, nd.y));
+        nd.x = Math.max(40, Math.min(w - 40, nd.x));
+        nd.y = Math.max(36, Math.min(h - 36, nd.y));
       }
       engine.temp *= 0.96;
     }
@@ -469,10 +500,10 @@ export function useForceLayout(
         const my = a.y + (b.y - a.y) * 0.38;
         const lbl = engine.edgeLabelEls[i];
         lbl.setAttribute("x", String(mx));
-        lbl.setAttribute("y", String(my - 2));
+        lbl.setAttribute("y", String(my - 3));
         const ip = engine.edgeIpEls[i];
         ip.setAttribute("x", String(mx));
-        ip.setAttribute("y", String(my + 9));
+        ip.setAttribute("y", String(my + 12));
       });
       for (const nd of engine.nodes) engine.nodeEls[nd.id].setAttribute("transform", `translate(${nd.x},${nd.y})`);
     }
@@ -541,9 +572,19 @@ export function useForceLayout(
 
     function badge(cx: number, cy: number, cls: string, txt: string): SVGGElement {
       const g = svgEl("g", { class: `n-badge ${cls}`, transform: `translate(${cx},${cy})` });
-      g.append(svgEl("circle", { r: 8 }));
+      g.append(svgEl("circle", { r: 9 }));
       g.append(svgEl("text", { "text-anchor": "middle", y: 3 }, txt));
       return g;
+    }
+
+    // Cap how wide a node can grow from its label, and truncate whatever no longer fits (full name/
+    // image are still one hover away via the tooltip) — otherwise a long device name or a long
+    // registry image path grows the rect unboundedly and crowds/overlaps its neighbors.
+    const MAX_NODE_W = 260;
+    function truncate(s: string, maxChars: number): string {
+      if (maxChars < 1) return "";
+      if (s.length <= maxChars) return s;
+      return maxChars === 1 ? "…" : s.slice(0, maxChars - 1) + "…";
     }
 
     for (const nd of model.nodes) {
@@ -555,20 +596,29 @@ export function useForceLayout(
           (nd.bridged ? " bridged" : "") +
           (nd.ports.length ? " has-ports" : "");
         g = svgEl("g", { class: cls });
-        const w = Math.max(96, nd.name.length * 8 + 50);
-        g.append(svgEl("rect", { x: -w / 2, y: -18, width: w, height: 36, rx: 7 }));
-        // Leading per-image type icon (SVG line-art, 16×16), then the name + image sublabel.
-        const icon = svgEl("g", { class: "n-icon", transform: `translate(${-w / 2 + 8},-8)` });
+        const w = Math.min(MAX_NODE_W, Math.max(112, nd.name.length * 9 + 58));
+        g.append(svgEl("rect", { x: -w / 2, y: -21, width: w, height: 42, rx: 8 }));
+        // Leading per-image type icon (SVG line-art, drawn at 16×16 then scaled up a bit to match
+        // the bigger node), then the name + image sublabel.
+        const icon = svgEl("g", { class: "n-icon", transform: `translate(${-w / 2 + 10},-9) scale(1.15)` });
         for (const [tag, attrs] of CATEGORY_ICON[nd.category]) icon.append(svgEl(tag, attrs));
         g.append(icon);
-        g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", x: 12, y: nd.image ? -1 : 5 }, nd.name));
-        if (nd.image) g.append(svgEl("text", { class: "n-sub", "text-anchor": "middle", x: 12, y: 11 }, nd.image));
-        if (nd.bridged) g.append(badge(w / 2 - 2, -12, "b-bridged", "B"));
-        if (nd.ports.length) g.append(badge(w / 2 - 2, 12, "b-ports", String(nd.ports.length)));
+        // Char-width estimates match the monospace label/sub-label font sizes (14px / 11px).
+        const name = truncate(nd.name, Math.max(1, Math.floor((w - 58) / 9)));
+        g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", x: 14, y: nd.image ? -2 : 6 }, name));
+        if (nd.image) {
+          const image = truncate(nd.image, Math.max(1, Math.floor((w - 28) / 7)));
+          g.append(svgEl("text", { class: "n-sub", "text-anchor": "middle", x: 14, y: 13 }, image));
+        }
+        if (nd.bridged) g.append(badge(w / 2 - 3, -14, "b-bridged", "B"));
+        if (nd.ports.length) g.append(badge(w / 2 - 3, 14, "b-ports", String(nd.ports.length)));
+        // Small filled state dot (top-left, the one free corner) — redundant with the rect's
+        // running/stopped border-stroke color, not a color-only distinction.
+        g.append(badge(-w / 2 + 3, -14, `b-state${nd.running ? "" : " stopped"}`, ""));
       } else {
         g = svgEl("g", { class: `kt-topo-node n-cd${nd.external.length ? " external" : ""}` });
-        g.append(svgEl("circle", { r: 15 }));
-        g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", y: 4 }, nd.name));
+        g.append(svgEl("circle", { r: 18 }));
+        g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", y: 5 }, nd.name));
       }
       g.addEventListener("pointerdown", (ev) => onNodePointerDown(ev, nd));
       g.addEventListener("dblclick", (ev) => {

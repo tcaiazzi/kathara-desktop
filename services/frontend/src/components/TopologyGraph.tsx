@@ -435,7 +435,7 @@ export function TopologyGraph({
                   onClick={() => setShowIps((v) => !v)}
                   title="Show interface IPs on the graph"
                 >
-                  IPs
+                  Show interface IPs
                 </Button>
               </>
             )}

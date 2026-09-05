@@ -279,6 +279,8 @@
 .kt-ws-panel-fill .kt-topo-canvas,
 .kt-ws-panel-fill .kt-topo-side {
   height: auto;
+  /* Floor so the canvas stays usable if the user shrinks the dock group down near its own minimum. */
+  min-height: 220px;
 }
 
 /* Node info dock panel: mount point the topology portals its inspector into. Neutralize the
