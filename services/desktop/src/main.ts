@@ -24,7 +24,8 @@ import {
   startBackendElevatedNative,
   stopBackend,
   verifyCanElevate,
-  type ElevateResult,
+  toElevateOutcome,
+  type ElevateOutcome,
 } from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
 import { ensurePathEnv } from "./env";
@@ -424,7 +425,7 @@ function registerIpc(): void {
   // backend's origin, which tears down the calling renderer mid-flight — the invoking IPC call
   // typically never observes this resolution, only a failure one. That's expected; the renderer
   // must not depend on a success response here.
-  ipcMain.handle("elevation:elevate", async (_e, password?: string, resumeLab?: string): Promise<ElevateResult> => {
+  ipcMain.handle("elevation:elevate", async (_e, password?: string, resumeLab?: string): Promise<ElevateOutcome> => {
     const python = lastPreflight?.python;
     const staticDir = resolveStaticDir();
     if (!python || !staticDir) {
@@ -452,7 +453,7 @@ function registerIpc(): void {
         if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
         await win.loadURL(url.toString());
       }
-      return result;
+      return toElevateOutcome(result);
     }
 
     setStatus({ state: "ready" });
@@ -464,7 +465,7 @@ function registerIpc(): void {
       }
       await win.loadURL(url.toString());
     }
-    return result;
+    return toElevateOutcome(result);
   });
 
   // Driven from the same elevation prompt, but for a deploy that only mounts a host volume — a

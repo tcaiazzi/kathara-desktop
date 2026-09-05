@@ -57,6 +57,20 @@ export type ElevateResult =
   | { ok: true; handle: BackendHandle }
   | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
 
+/** What actually crosses the IPC boundary to the renderer for `elevation:elevate` — see
+ * main.ts's handler. Deliberately smaller than `ElevateResult` on success: the renderer never
+ * needs the new backend's `baseUrl`/`token` itself (main.ts navigates the window there directly;
+ * `auth:get-token` remains the only channel that ever hands the renderer a token), and returning
+ * `handle` here would leak the bearer token straight into a renderer that loads content this app
+ * doesn't trust (see preload.ts's own doc comment on why its surface is kept small). */
+export type ElevateOutcome =
+  | { ok: true }
+  | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
+
+export function toElevateOutcome(result: ElevateResult): ElevateOutcome {
+  return result.ok ? { ok: true } : result;
+}
+
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_POLL_MS = 250;
 const SIGTERM_GRACE_MS = 5_000;

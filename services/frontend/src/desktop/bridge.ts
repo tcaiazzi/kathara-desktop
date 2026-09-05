@@ -15,6 +15,10 @@ export type DesktopMenuAction =
   | "view:settings"
   | "help:tour";
 
+/** Mirrors ElevateFailureReason in services/desktop/src/backend.ts. Duplicated by hand, not
+ * imported — this package can't import types from services/desktop's — so keep the two in sync. */
+type DesktopElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error" | "rate-limited";
+
 export interface DesktopApi {
   isDesktop: true;
   platform: string;
@@ -59,7 +63,7 @@ export interface DesktopApi {
   elevateBackend(
     password?: string,
     resumeLab?: string,
-  ): Promise<{ ok: false; reason: string; message: string; restarted: boolean } | { ok: true }>;
+  ): Promise<{ ok: false; reason: DesktopElevateFailureReason; message: string; restarted: boolean } | { ok: true }>;
   /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
    * window) so it doesn't keep running with more privilege than whatever's deployed right now
    * actually needs. A no-op (no reload) if it wasn't elevated to begin with — call freely after
@@ -73,7 +77,7 @@ export interface DesktopApi {
    * and never reloads the window — the result always reflects this call directly. */
   verifyCanElevate(
     password?: string,
-  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }>;
+  ): Promise<{ ok: false; reason: DesktopElevateFailureReason; message: string } | { ok: true }>;
   /** Native "Import lab" picker; null when the user cancels. */
   pickLabArchive(): Promise<{ name: string; data: Uint8Array } | null>;
   /** Native folder picker for the host side of a device's [volume] bind mount; null when the user

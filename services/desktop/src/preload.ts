@@ -6,6 +6,7 @@
  * entry is attack surface for a page that renders lab content.
  */
 import { contextBridge, ipcRenderer } from "electron";
+import type { ElevateFailureReason, ElevateOutcome } from "./backend";
 
 export type MenuAction =
   | "lab:new"
@@ -66,7 +67,7 @@ const api = {
   elevateBackend: (
     password?: string,
     resumeLab?: string,
-  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }> =>
+  ): Promise<ElevateOutcome> =>
     ipcRenderer.invoke("elevation:elevate", password, resumeLab),
   /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
    * window against the new instance) so it doesn't keep running with more privilege than
@@ -81,7 +82,7 @@ const api = {
    * instead). Never restarts anything and never reloads the window, unlike elevateBackend. */
   verifyCanElevate: (
     password?: string,
-  ): Promise<{ ok: false; reason: string; message: string } | { ok: true }> =>
+  ): Promise<{ ok: false; reason: ElevateFailureReason; message: string } | { ok: true }> =>
     ipcRenderer.invoke("elevation:verify", password),
 
   // -- window / shell actions behind the app-drawn menu bar --
