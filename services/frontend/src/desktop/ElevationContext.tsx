@@ -50,6 +50,7 @@ const RETRY_MESSAGES: Record<string, ((message: string) => string) | undefined> 
   "not-permitted": () => "This account isn't allowed to use sudo.",
   timeout: () => "The backend didn't start with administrator privileges in time. Try again.",
   error: (message) => `Could not verify administrator privileges: ${message}`,
+  "rate-limited": (message) => message,
 };
 
 const TITLES: Record<Mode, string> = {

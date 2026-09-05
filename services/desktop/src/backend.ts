@@ -33,7 +33,7 @@ function authHeaders(token: string): HeadersInit {
 }
 
 /** Why an elevated (re)start of the backend didn't produce a running, root-owned backend. */
-export type ElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error";
+export type ElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error" | "rate-limited";
 
 /** `restarted` says whether the attempt got far enough to stop the backend it was replacing.
  * When false — a password rejected before anything was torn down, or a native attempt that
@@ -62,6 +62,14 @@ const SHUTDOWN_DEATH_POLL_MS = 8_000;
  * normally answers instantly — but finite, so a wedged PAM module can't hang the IPC call
  * that's holding the elevation prompt open. */
 const SUDO_VERIFY_TIMEOUT_MS = 15_000;
+/** Below this many *consecutive* failed sudo checks, a cooldown never engages — a person mistyping
+ * their own password a couple of times pays nothing extra. Past it, `sudo -S -k -v` stops being a
+ * free oracle a compromised renderer (e.g. content a lab loaded into the webview) could otherwise
+ * hammer in the background to brute-force the account's real password from the ok/wrong-password
+ * split alone. */
+const SUDO_RATE_LIMIT_FREE_ATTEMPTS = 5;
+const SUDO_RATE_LIMIT_BASE_MS = 30_000;
+const SUDO_RATE_LIMIT_MAX_MS = 5 * 60_000;
 
 let child: ChildProcess | null = null;
 let handle: BackendHandle | null = null;
@@ -86,6 +94,13 @@ let orphanedBackend: { pid: number | null; baseUrl: string; token: string } | nu
 /** Notified once, at the moment a backend is first determined to be such an orphan — not again
  * on every later retry failure, so the caller can surface it to the user without spamming. */
 let orphanListener: ((info: { pid: number | null; baseUrl: string }) => void) | null = null;
+
+/** Consecutive failed sudo checks since the last correct password, and how long from now further
+ * checks are refused without even running `sudo` — see SUDO_RATE_LIMIT_* above. Shared across both
+ * IPC channels that can trigger a check (elevation:elevate, elevation:verify): they call the same
+ * `verifySudoPassword`, so switching between them doesn't reset the count either. */
+let failedSudoAttempts = 0;
+let sudoLockedUntil = 0;
 
 export function onOrphanedBackend(cb: (info: { pid: number | null; baseUrl: string }) => void): void {
   orphanListener = cb;
@@ -465,8 +480,37 @@ function sudoEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
  *
  * Deliberately not registered with `trackChild` — it is not a backend, and treating it as one is
  * what made a typo present itself as "The Kathara API stopped unexpectedly".
+ *
+ * Gated by a lockout (see `failedSudoAttempts`/`sudoLockedUntil`): during a cooldown this returns
+ * "rate-limited" without spawning `sudo` at all, so the actual check below never doubles as the
+ * oracle described at SUDO_RATE_LIMIT_FREE_ATTEMPTS.
  */
 async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+  const now = Date.now();
+  if (now < sudoLockedUntil) {
+    const retryInSeconds = Math.ceil((sudoLockedUntil - now) / 1000);
+    return { ok: false, reason: "rate-limited", message: `too many failed attempts — try again in ${retryInSeconds}s` };
+  }
+
+  const result = await runSudoPasswordCheck(password);
+
+  if (result.ok) {
+    failedSudoAttempts = 0;
+    sudoLockedUntil = 0;
+  } else {
+    failedSudoAttempts += 1;
+    if (failedSudoAttempts > SUDO_RATE_LIMIT_FREE_ATTEMPTS) {
+      const lockoutMs = Math.min(
+        SUDO_RATE_LIMIT_MAX_MS,
+        SUDO_RATE_LIMIT_BASE_MS * 2 ** (failedSudoAttempts - SUDO_RATE_LIMIT_FREE_ATTEMPTS - 1),
+      );
+      sudoLockedUntil = Date.now() + lockoutMs;
+    }
+  }
+  return result;
+}
+
+async function runSudoPasswordCheck(password: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
   let proc: ChildProcess;
   try {
     proc = spawn("sudo", ["-S", "-k", "-v"], { env: sudoEnv(), stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
