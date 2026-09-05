@@ -411,9 +411,6 @@ async function runStartup(resumePath?: string): Promise<void> {
   try {
     const handle = await startBackend(preflight.python, staticDir);
     setStatus({ state: "ready" });
-    // The app runs fullscreen, whatever it was showing before (the boot-time splash, or a normal
-    // window from a retry/elevation/labs-dir-change). A no-op once already fullscreen.
-    win.setFullScreen(true);
     await win.loadURL(resumePath ? `${handle.baseUrl}${resumePath}` : handle.baseUrl);
     if (pendingDeepLink) {
       handleDeepLink(win, pendingDeepLink);
