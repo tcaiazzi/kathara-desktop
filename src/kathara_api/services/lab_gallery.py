@@ -330,7 +330,7 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
             )
         return path[len(base):], content
 
-    with httpx.Client(headers={"User-Agent": "kathara-ide"}) as client:
+    with httpx.Client(headers={"User-Agent": "kathara-desktop"}) as client:
         with ThreadPoolExecutor(max_workers=DOWNLOAD_CONCURRENCY) as pool:
             files = dict(pool.map(lambda path: fetch(client, path), entry.files))
 

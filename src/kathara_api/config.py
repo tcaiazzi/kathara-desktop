@@ -59,7 +59,7 @@ class ApiSettings(BaseSettings):
 
     # Upstream lab gallery (services/lab_gallery.py): the GitHub repo browsed by the frontend's
     # "Browse Kathara Labs" modal. Overridable for the same reason as examples_dir above — a course
-    # can point the IDE at its own fork without rebuilding this package.
+    # can point the app at its own fork without rebuilding this package.
     gallery_repo: str = "KatharaFramework/Kathara-Labs"
     gallery_ref: str = "main"
     # Subtree of the repo to offer. Everything outside it is ignored, so a repo that also holds

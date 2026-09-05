@@ -10,7 +10,7 @@ import { log } from "./logger";
 // The repo release.yml actually publishes to today (see its tag_name: v<package.json version>).
 // Not a setting: changing where this app is distributed from is a maintainer decision, not a
 // per-install preference.
-const REPO = "tcaiazzi/kathara-ide";
+const REPO = "tcaiazzi/kathara-desktop";
 const RELEASES_LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 const FETCH_TIMEOUT_MS = 10_000;
 

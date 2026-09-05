@@ -134,8 +134,8 @@ export function TitleBar() {
   ];
 
   const title = location.pathname.startsWith("/settings")
-    ? "Settings — Kathara IDE"
-    : decodeURIComponent(location.pathname.replace(/^\/workspace\/?/, "")) || "Kathara IDE";
+    ? "Settings — Kathara Desktop"
+    : decodeURIComponent(location.pathname.replace(/^\/workspace\/?/, "")) || "Kathara Desktop";
 
   return (
     <div
@@ -147,7 +147,7 @@ export function TitleBar() {
       <Link
         to="/workspace"
         className="kt-titlebar-brand kt-titlebar-nodrag"
-        title="Kathara IDE"
+        title="Kathara Desktop"
       >
         <img src={dark ? katharaLogoDark : katharaLogo} alt="Kathara" />
       </Link>

@@ -1,4 +1,4 @@
-// Light/dark CodeMirror themes + syntax highlight styles for the IDE code editor. The editor follows
+// Light/dark CodeMirror themes + syntax highlight styles for the code editor. The editor follows
 // the app theme (<html data-kt-theme>); CodeEditor picks the matching pair. Base colors reuse the
 // app's Bootstrap/--kt-* tokens so the editor blends with its pane; token colors are GitHub-ish.
 

@@ -156,7 +156,7 @@ export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string
     return { ok: false, message: `refusing to kill a suspicious process id: ${String(orphan.pid)}` };
   }
   return new Promise((resolve) => {
-    sudoPrompt.exec(`kill -9 ${orphan.pid}`, { name: "Kathara IDE" }, (error) => {
+    sudoPrompt.exec(`kill -9 ${orphan.pid}`, { name: "Kathara Desktop" }, (error) => {
       if (error) {
         resolve({ ok: false, message: error.message });
         return;
@@ -238,7 +238,7 @@ export async function reclaimLabsDirOwnershipWithPrompt(labsPath: string): Promi
 
   const cmd = `chown -R ${uid}:${gid} ${quoteForShellString(labsPath)}`;
   return new Promise((resolve) => {
-    sudoPrompt.exec(cmd, { name: "Kathara IDE" }, (error) => {
+    sudoPrompt.exec(cmd, { name: "Kathara Desktop" }, (error) => {
       if (error) {
         log(`failed to reclaim ownership of ${labsPath}: ${error.message}`);
         resolve({ ok: false, message: error.message });
@@ -767,7 +767,7 @@ export async function verifyCanElevate(password?: string): Promise<{ ok: true } 
   }
   return new Promise((resolve) => {
     const cmd = process.platform === "win32" ? "cmd /c exit /b 0" : "/usr/bin/true";
-    sudoPrompt.exec(cmd, { name: "Kathara IDE" }, (error) => {
+    sudoPrompt.exec(cmd, { name: "Kathara Desktop" }, (error) => {
       resolve(error ? { ok: false, reason: "cancelled", message: error.message } : { ok: true });
     });
   });
@@ -923,7 +923,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   // POSIX-only variable-name rules and rejects the whole call on the first violation (a single
   // oddly-named inherited variable, e.g. Windows's `ProgramFiles(x86)`, would abort elevation
   // outright) — `appEnv` is already just this app's own known-safe overrides.
-  sudoPrompt.exec(cmd, { name: "Kathara IDE", env: appEnv }, (error) => {
+  sudoPrompt.exec(cmd, { name: "Kathara Desktop", env: appEnv }, (error) => {
     if (!error) return;
     if (!started) {
       // Still starting (or the prompt was dismissed/auth failed) — record it for the catch

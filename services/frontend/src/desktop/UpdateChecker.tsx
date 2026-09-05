@@ -20,7 +20,7 @@ export function UpdateChecker() {
     checked.current = true;
     void shell.checkForUpdate().then((info) => {
       if (!info) return;
-      toast.show(`Kathara IDE ${info.version} is available.`, "info", "Update available", {
+      toast.show(`Kathara Desktop ${info.version} is available.`, "info", "Update available", {
         label: "Download",
         run: () => void shell.openExternal(info.url),
       });

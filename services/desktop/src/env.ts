@@ -22,7 +22,7 @@ import { log } from "./logger";
 
 const execFileAsync = promisify(execFile);
 
-const MARKER = "___KATHARA_IDE_PATH___";
+const MARKER = "___KATHARA_DESKTOP_PATH___";
 
 /**
  * Resolved once per process: the login shell is expensive and its PATH won't change under us,

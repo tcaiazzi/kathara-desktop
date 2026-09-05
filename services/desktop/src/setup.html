@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Kathara IDE</title>
+    <title>Kathara Desktop</title>
     <style>
       /* Follows the OS scheme rather than being dark-only. This page is the first thing the app
          paints, and the SPA it hands over to defaults to the OS preference too (see
@@ -180,9 +180,9 @@
         const elapsedSec = Math.max(0, Math.round((Date.now() - status.startedAt) / 1000));
         const hint = PATIENCE_HINTS.find((h) => h.phase === status.phase && elapsedSec >= h.afterSec);
 
-        const heading = status.firstRun ? "Welcome to Kathara IDE" : "Starting Kathara IDE";
+        const heading = status.firstRun ? "Welcome to Kathara Desktop" : "Starting Kathara Desktop";
         const lead = status.firstRun
-          ? "Kathara IDE doesn't bundle its own network emulator — it drives Docker, which must " +
+          ? "Kathara Desktop doesn't bundle its own network emulator — it drives Docker, which must " +
             "already be installed and running on this computer. The Kathara Python packages it " +
             "needs are installed automatically, into a Python environment bundled with the app. " +
             "Checking that everything is in place…"
@@ -217,9 +217,9 @@
           nonDocker.some((c) => !c.ok) && nonDocker.every((c) => c.ok || installable.includes(c.id));
 
         app.innerHTML = `
-          <h1>${failed ? "A few things are missing" : "Kathara IDE couldn't start its local API"}</h1>
+          <h1>${failed ? "A few things are missing" : "Kathara Desktop couldn't start its local API"}</h1>
           <p class="sub">${failed
-            ? "Kathara IDE installs the Python packages it needs by itself, but it can't install " +
+            ? "Kathara Desktop installs the Python packages it needs by itself, but it can't install " +
               "or start Docker for you — that has to already be installed and running on this " +
               "computer. Sort out anything marked ✕ below, then choose “Check again”."
             : "Everything it needs is installed, but the API process didn't come up. The " +

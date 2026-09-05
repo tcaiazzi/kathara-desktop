@@ -56,7 +56,7 @@ def update_settings(
 
 @router.post("/system/wipe", response_model=Message)
 def wipe(service: KatharaService = Depends(get_service)) -> Message:
-    """Undeploy every lab kathara-ide has deployed (scenarios started by other tools are left alone)."""
+    """Undeploy every lab kathara-desktop has deployed (scenarios started by other tools are left alone)."""
     service.wipe()
     return Message(detail="All network scenarios wiped.")
 

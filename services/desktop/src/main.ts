@@ -65,19 +65,19 @@ import {
 app.commandLine.appendSwitch("disable-features", "OverscrollHistoryNavigation");
 
 // Electron derives userData's folder name from app.name, which defaults to package.json's
-// productName ("Kathara IDE") — a folder with a space and mixed case. Override it to this
+// productName ("Kathara Desktop") — a folder with a space and mixed case. Override it to this
 // repo's own lowercase-hyphenated convention instead, using a fresh path built from the
 // platform-correct base ('appData': %APPDATA% / ~/Library/Application Support / ~/.config)
 // so this stays correct on every platform, not just Linux.
 //
-// Deliberately app.setPath('userData', ...) rather than app.setName('kathara-ide'): setName
+// Deliberately app.setPath('userData', ...) rather than app.setName('kathara-desktop'): setName
 // would also rename the macOS menu-bar app label and Dock name, which is not what was asked.
 // Must run before requestSingleInstanceLock() below — the single-instance lock file is
 // itself written under userData, so calling this any later would leave it in the old folder.
 // Existing data already at the old path (labs, preferences.json) is left there untouched,
 // not moved — same "leave old data behind, don't migrate silently" choice already made for
 // the labs-directory setting itself.
-app.setPath("userData", path.join(app.getPath("appData"), "kathara-ide"));
+app.setPath("userData", path.join(app.getPath("appData"), "kathara-desktop"));
 
 // Bounds every ad-hoc query this file makes against an already-healthy backend (list labs, look
 // up a lab's directory) — deliberately more generous than backend.ts's SHUTDOWN_HTTP_TIMEOUT_MS,
@@ -377,7 +377,7 @@ async function runStartup(resumePath?: string): Promise<void> {
       setStatus({
         state: "prereq-failed",
         checks: preflight.checks,
-        notice: `Kathara IDE tried to install the missing packages by itself and couldn't: ${result.error ?? "unknown error"}. Open the log for the full output, then try again.`,
+        notice: `Kathara Desktop tried to install the missing packages by itself and couldn't: ${result.error ?? "unknown error"}. Open the log for the full output, then try again.`,
       });
       return;
     }
@@ -918,7 +918,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.whenReady().then(async () => {
-    log(`Kathara IDE ${app.getVersion()} starting (packaged=${app.isPackaged})`);
+    log(`Kathara Desktop ${app.getVersion()} starting (packaged=${app.isPackaged})`);
 
     // Everything before the window is pure in-memory registration — ipcMain.handle,
     // app.on("web-contents-created"), Menu.setApplicationMenu — so nothing here can delay the

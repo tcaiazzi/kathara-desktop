@@ -81,7 +81,7 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
   return (
     <div className="kt-welcome">
       <img src={dark ? katharaLogoDark : katharaLogo} alt="Kathara" height={40} />
-      <h4>Welcome to Kathara IDE</h4>
+      <h4>Welcome to Kathara Desktop</h4>
       <p className="kt-welcome-lead">
         Build, deploy and inspect network scenarios on your own machine — each device is a
         container, each link a virtual collision domain.

@@ -1,4 +1,4 @@
-# Kathara IDE — Desktop app internals
+# Kathara Desktop — App internals
 
 Implementation notes for the Electron shell (`services/desktop`). See the [README](../README.md)
 for how to run and build it; this document covers the "why" behind its behaviour.

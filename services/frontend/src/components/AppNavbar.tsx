@@ -20,7 +20,7 @@ export function AppNavbar() {
   return (
     <Navbar bg={theme} variant={theme} expand="sm" className="mb-3">
       <Container fluid>
-        <Navbar.Brand as={Link} to="/workspace" className="kt-navbar-brand" title="Kathara IDE">
+        <Navbar.Brand as={Link} to="/workspace" className="kt-navbar-brand" title="Kathara Desktop">
           {/* Dark theme uses the white-wordmark logo so it reads on the dark navbar without a chip. */}
           <img src={dark ? katharaLogoDark : katharaLogo} alt="Kathara" height={30} />
         </Navbar.Brand>

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Installs the runtime prerequisites Kathara IDE's desktop app checks for at startup
+Installs the runtime prerequisites Kathara Desktop checks for at startup
 (services/desktop/src/prereqs.ts): Docker Desktop, Python 3.10+, Kathara, and this project's own
 backend (kathara-api-rest, not published anywhere — installed from this checkout).
 
@@ -69,7 +69,7 @@ if (PythonOk) {
 }
 
 # ---- Kathara + this project, into <repo>\.venv ----
-Say "Kathara IDE backend (into $Venv)"
+Say "Kathara Desktop backend (into $Venv)"
 if (PythonOk) {
     if (-not (Test-Path (Join-Path $Venv "Scripts\python.exe"))) {
         python -m venv $Venv

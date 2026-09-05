@@ -274,7 +274,7 @@ class KatharaService:
         return images
 
     def wipe(self) -> None:
-        """Undeploy every lab kathara-ide itself has registered and deployed.
+        """Undeploy every lab kathara-desktop itself has registered and deployed.
 
         Unlike the Kathara CLI's own ``wipe(all_users=False)``, which force-undeploys *every*
         running scenario for the OS user regardless of who deployed it, this only touches labs

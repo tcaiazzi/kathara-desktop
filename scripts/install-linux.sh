@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the runtime prerequisites Kathara IDE's desktop app checks for at startup
+# Installs the runtime prerequisites Kathara Desktop checks for at startup
 # (services/desktop/src/prereqs.ts): Docker, Python 3.10+, Kathara, and this project's own
 # backend (kathara-api-rest, not published anywhere — installed from this checkout).
 #
@@ -87,7 +87,7 @@ else
 fi
 
 # ---- Kathara + this project, into <repo>/.venv ----
-say "Kathara IDE backend (into $VENV)"
+say "Kathara Desktop backend (into $VENV)"
 if py_ok; then
   [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
   "$VENV/bin/pip" install --upgrade pip -q

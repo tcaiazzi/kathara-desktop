@@ -184,14 +184,14 @@ export function useLabLifecycleActions() {
     [prompt, runBusy, toast],
   );
 
-  // Force-undeploys every lab kathara-ide has deployed, not just `openLab`'s — but unlike the
+  // Force-undeploys every lab kathara-desktop has deployed, not just `openLab`'s — but unlike the
   // Kathara CLI's own `kathara wipe`, it leaves scenarios started by other tools alone. `openLab`
   // (the lab currently open, if any) is only used to land a privilege-drop reload back on it.
   const wipeAll = useCallback(
     async (openLab: string | undefined, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
       const ok = await confirm({
         title: "Wipe all labs?",
-        message: "This force-undeploys every lab running in kathara-ide, not just the one open here.",
+        message: "This force-undeploys every lab running in kathara-desktop, not just the one open here.",
         okLabel: "Wipe all",
       });
       if (!ok) return;

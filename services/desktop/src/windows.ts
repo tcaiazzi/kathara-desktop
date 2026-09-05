@@ -147,7 +147,7 @@ export function createMainWindow(): BrowserWindow {
     center: true,
     backgroundColor: windowBackground(),
     show: false,
-    title: "Kathara IDE",
+    title: "Kathara Desktop",
     icon: iconPath(),
     // No native title bar: the app draws its own strip (frontend desktop/TitleBar.tsx) carrying
     // the menu, the title and the drag region, so there is one bar instead of the stacked

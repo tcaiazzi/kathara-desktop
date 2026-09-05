@@ -18,7 +18,7 @@ services:
     # every recreate, so a backend restart makes Kathara "forget" every device it deployed before
     # that restart — they keep running (still holding their ports) but are no longer recognized as
     # already deployed, so the next deploy tries to create a duplicate and collides on static ports.
-    hostname: kathara-ide-backend
+    hostname: kathara-desktop-backend
     volumes:
       - ./src:/app/src
       - /var/run/docker.sock:/var/run/docker.sock

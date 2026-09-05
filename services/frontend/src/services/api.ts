@@ -136,7 +136,7 @@ export const api = {
   systemInfo: () => request<SystemInfo>("GET", "/system"),
   getSettings: () => request<SettingsView>("GET", "/settings"),
   updateSettings: (payload: SettingsUpdate) => request<SettingsView>("PUT", "/settings", payload),
-  // Force-undeploys every lab kathara-ide has deployed, not just the currently open one — scopes
+  // Force-undeploys every lab kathara-desktop has deployed, not just the currently open one — scopes
   // to labs this backend manages, unlike the Kathara CLI's own `kathara wipe`.
   wipeAll: () => request<Message>("POST", "/system/wipe", {}),
   // Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara accepts.

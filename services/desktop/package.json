@@ -1,9 +1,9 @@
 {
-  "name": "kathara-ide-desktop",
-  "productName": "Kathara IDE",
+  "name": "kathara-desktop",
+  "productName": "Kathara Desktop",
   "version": "0.1.4",
   "private": true,
-  "description": "Desktop shell for the Kathara IDE: supervises a local Kathara REST API and renders its UI.",
+  "description": "A native desktop app for Kathara.",
   "license": "GPL-3.0",
   "author": {
     "name": "Kathara Framework",

@@ -1,6 +1,6 @@
-# Kathara IDE
+# Kathara Desktop
 
-A desktop IDE for the [Kathara](https://www.kathara.org) network-emulation framework. Design
+A desktop app for the [Kathara](https://www.kathara.org) network-emulation framework. Design
 lab topologies, edit device configs and files, deploy them as containers, and attach to
 interactive shells — from a native app, with no browser tab or server to manage.
 
@@ -52,7 +52,7 @@ shows the progress while it does. Docker and Kathara are **not** bundled — tho
 what is installed on the machine. On startup it runs a preflight (Docker, Python 3.10+,
 `kathara-api-rest`, Kathara, uvicorn, its dependency closure, the bundled UI); anything it can
 install it installs, and anything it can't it explains instead of showing a blank window. The lab
-storage is per user (`~/.config/kathara-ide/labs` on Linux).
+storage is per user (`~/.config/kathara-desktop/labs` on Linux).
 
 ### Running from a checkout
 
@@ -65,7 +65,7 @@ npm --prefix services/desktop start
 The shell starts a local backend and loads its UI once the backend is healthy. In a dev
 checkout it prefers the repo's `.venv`; otherwise it uses `python3` from `PATH`, or an
 interpreter chosen through **Choose Python interpreter…** on the setup screen (remembered in
-`~/.config/kathara-ide/preferences.json`). See [docs/DESKTOP.md](docs/DESKTOP.md) for the
+`~/.config/kathara-desktop/preferences.json`). See [docs/DESKTOP.md](docs/DESKTOP.md) for the
 startup sequence in detail, including the pairing token mentioned under
 [Security](#security), and a VS Code launch quirk to be aware of.
 
@@ -94,7 +94,7 @@ Installers are **unsigned**, so first launch needs a manual override:
 | Platform | What the user sees | Workaround |
 |---|---|---|
 | Windows | SmartScreen warning | *More info* → *Run anyway* |
-| macOS | Gatekeeper refuses to open it | Right-click → *Open*, or `xattr -dr com.apple.quarantine "/Applications/Kathara IDE.app"` |
+| macOS | Gatekeeper refuses to open it | Right-click → *Open*, or `xattr -dr com.apple.quarantine "/Applications/Kathara-Desktop.app"` |
 | Linux | nothing | — |
 
 There is no auto-update: releases are installed manually.

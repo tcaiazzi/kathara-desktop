@@ -1,5 +1,5 @@
-appId: org.kathara.ide
-productName: Kathara-IDE
+appId: org.kathara.desktop
+productName: Kathara-Desktop
 copyright: Kathara Framework
 
 directories:
@@ -33,7 +33,7 @@ extraResources:
 
 # kathara://lab/<name> — the runtime side is in src/deeplink.ts.
 protocols:
-  - name: Kathara-IDE
+  - name: Kathara-Desktop
     schemes: [kathara]
 
 # See scripts/sign-mac-arm64.js: ad-hoc signs the arm64 .app before packaging. Only macOS/arm64
@@ -53,7 +53,7 @@ linux:
     - target: rpm
       arch: [x64, arm64]
   category: Development
-  synopsis: IDE for the Kathara network emulation framework
+  synopsis: Desktop app for the Kathara network emulation framework
   icon: resources/icon.png
   # The interpreter bundled for *this* build's arch only (fetched by scripts/fetch-python.mjs into
   # vendor/python-linux-<arch>/ — see paths.ts's bundledPythonPath()). ${arch} is expanded by
@@ -86,7 +86,7 @@ mac:
   # applies that ad-hoc signature separately for the arm64 build, afterPack — including, now, the
   # bundled Python interpreter below, which needs the same per-binary ad-hoc signature to exec at
   # all on Apple Silicon. First run still needs
-  # `xattr -dr com.apple.quarantine "/Applications/Kathara IDE.app"` (or right-click → Open) either
+  # `xattr -dr com.apple.quarantine "/Applications/Kathara-Desktop.app"` (or right-click → Open) either
   # way, since none of this is a real Developer ID signature.
   hardenedRuntime: false
   identity: null
@@ -109,6 +109,11 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  # electron-builder's own NSIS default is "${productName} Setup ${version}.${ext}" — a literal
+  # space before "Setup" regardless of productName's own formatting. Override it so every OS
+  # produces a space-free artifact filename, matching the hyphenated default template
+  # ("${productName}-${version}-${arch}.${ext}") every other target already uses.
+  artifactName: "${productName}-Setup-${version}.${ext}"
 
 # No autoUpdater: it is unreliable on unsigned Windows and macOS builds. Releases are published
 # and installed manually.
