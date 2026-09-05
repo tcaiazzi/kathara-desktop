@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { FolderOpen } from "lucide-react";
-import { Button, Form } from "react-bootstrap";
+import { useEffect, useId, useState } from "react";
+import { FolderOpen, Info } from "lucide-react";
+import { Button, Form, OverlayTrigger, Tooltip } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
 import { desktop } from "../desktop/bridge";
 import { useAvailableImages } from "../hooks/useAvailableImages";
@@ -125,6 +125,15 @@ const KV_COLUMNS: import("./RowListEditor").RowColumn<KeyValueRow>[] = [
   { key: "value", label: "Value" },
 ];
 
+function InfoTip({ text }: { text: string }) {
+  const id = useId();
+  return (
+    <OverlayTrigger placement="top" overlay={<Tooltip id={`option-tip-${id}`}>{text}</Tooltip>}>
+      <Info size={12} className="text-muted ms-1" tabIndex={0} aria-label={text} />
+    </OverlayTrigger>
+  );
+}
+
 interface MachineOptionsFieldsProps {
   form: OptionsFormState;
   disabled: boolean;
@@ -154,21 +163,36 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
       <div className="d-flex gap-4 flex-wrap mb-3">
         <Form.Check
           type="checkbox"
-          label="Bridged"
+          label={
+            <>
+              Bridged
+              <InfoTip text="Connect the device to the host network by adding an additional network interface. This interface will be connected to the host network through a NAT connection." />
+            </>
+          }
           checked={form.bridged}
           disabled={disabled}
           onChange={(e) => set("bridged", e.target.checked)}
         />
         <Form.Check
           type="checkbox"
-          label="Privileged"
+          label={
+            <>
+              Privileged
+              <InfoTip text="Start the device in privileged mode." />
+            </>
+          }
           checked={form.privileged}
           disabled={disabled}
           onChange={(e) => set("privileged", e.target.checked)}
         />
         <Form.Check
           type="checkbox"
-          label="IPv6"
+          label={
+            <>
+              IPv6
+              <InfoTip text="Enable or disable IPv6 on this device." />
+            </>
+          }
           checked={form.ipv6}
           disabled={disabled}
           onChange={(e) => set("ipv6", e.target.checked)}
@@ -177,7 +201,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
 
       <div className="row g-2 mb-3">
         <div className="col-6">
-          <Form.Label className="small mb-1">Image</Form.Label>
+          <Form.Label className="small mb-1">
+            Image
+            <InfoTip text="Docker image used for this device." />
+          </Form.Label>
           <AutocompleteInput
             size="sm"
             value={form.image}
@@ -188,7 +215,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">Mem</Form.Label>
+          <Form.Label className="small mb-1">
+            Mem
+            <InfoTip text="Amount of RAM available to the device (minimum 4m). Positive integer with a b/k/m/g suffix for bytes/kilobytes/megabytes/gigabytes." />
+          </Form.Label>
           <Form.Control
             size="sm"
             value={form.mem}
@@ -198,7 +228,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">CPUs</Form.Label>
+          <Form.Label className="small mb-1">
+            CPUs
+            <InfoTip text="Limit the amount of CPU available for this device. This option takes a positive float, ranging from 0 to max number of host logical CPUs." />
+          </Form.Label>
           <Form.Control
             size="sm"
             type="number"
@@ -210,7 +243,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-4">
-          <Form.Label className="small mb-1">Shell</Form.Label>
+          <Form.Label className="small mb-1">
+            Shell
+            <InfoTip text="Use the specified shell to connect to the device, e.g., when kathara connect is called." />
+          </Form.Label>
           <Form.Control
             size="sm"
             value={form.shell}
@@ -220,7 +256,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-2">
-          <Form.Label className="small mb-1">Num Terms</Form.Label>
+          <Form.Label className="small mb-1">
+            Num Terms
+            <InfoTip text="Choose the number of terminals to open for this device." />
+          </Form.Label>
           <Form.Control
             size="sm"
             type="number"
@@ -231,7 +270,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">Entrypoint</Form.Label>
+          <Form.Label className="small mb-1">
+            Entrypoint
+            <InfoTip text="Allows to specify the entrypoint command of the device." />
+          </Form.Label>
           <Form.Control
             size="sm"
             value={form.entrypoint}
@@ -240,7 +282,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           />
         </div>
         <div className="col-3">
-          <Form.Label className="small mb-1">Args</Form.Label>
+          <Form.Label className="small mb-1">
+            Args
+            <InfoTip text="Allows to specify extra arguments for the entrypoint command." />
+          </Form.Label>
           <Form.Control
             size="sm"
             value={form.args}
@@ -250,7 +295,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         </div>
       </div>
 
-      <h6>Environment variables</h6>
+      <h6>
+        Environment variables
+        <InfoTip text="Set an environment variable for the device. Can be set multiple times per device, each will add a new entry (unless the same variable is used again). The format is: ENV_NAME=ENV_VALUE." />
+      </h6>
       <RowListEditor
         columns={KV_COLUMNS}
         rows={form.envs}
@@ -259,7 +307,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         emptyRow={() => ({ key: "", value: "" })}
       />
 
-      <h6>Sysctls</h6>
+      <h6>
+        Sysctls
+        <InfoTip text="Set a sysctl option for this device. Only the net. namespace is allowed to be set. Can be set multiple times per device, each will add a new entry (unless the same config item is used again)." />
+      </h6>
       <RowListEditor<KeyValueRow>
         columns={[
           { key: "key", label: "Name", placeholder: "net.ipv4.ip_forward", options: netSysctls },
@@ -272,7 +323,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         emptyRow={() => ({ key: "", value: "" })}
       />
 
-      <h6>Ulimits</h6>
+      <h6>
+        Ulimits
+        <InfoTip text="Allows change of both soft and hard limits. The syntax is ULIMIT=SOFT:HARD. Use -1 for unlimited. If only a parameter is given e.g. ULIMIT=VALUE both soft and hard limit will have same value." />
+      </h6>
       <RowListEditor<Ulimit>
         columns={[
           { key: "name", label: "Name", placeholder: "nofile" },
@@ -285,7 +339,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         emptyRow={() => ({ name: "", soft: -1, hard: null })}
       />
 
-      <h6>Exec commands</h6>
+      <h6>
+        Exec commands
+        <InfoTip text="Run a specific shell command inside the device during the startup phase." />
+      </h6>
       <RowListEditor<ExecRow>
         columns={[{ key: "value", label: "Command", placeholder: "e.g. ip route add ..." }]}
         rows={form.execCommands}
@@ -295,7 +352,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         emptyRow={() => ({ value: "" })}
       />
 
-      <h6>Ports</h6>
+      <h6>
+        Ports
+        <InfoTip text="Map localhost port HOST to the internal port GUEST of the device for the specified PROTOCOL. The syntax is [HOST:]GUEST[/PROTOCOL]. If HOST port is not specified, default is 3000. If PROTOCOL is not specified, default is tcp. Supported PROTOCOL values are: tcp, udp, or sctp." />
+      </h6>
       <RowListEditor<PortMapping>
         columns={[
           { key: "host_port", label: "Host port", type: "number", min: 1, max: 65535 },
@@ -308,7 +368,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
         emptyRow={() => ({ host_port: 3000, guest_port: 80, protocol: "tcp" })}
       />
 
-      <h6>Volumes</h6>
+      <h6>
+        Volumes
+        <InfoTip text="Specifies an additional volume to mount on the device. The syntax is HOST|GUEST|[MODE]. Mode can be: ro (read-only), rw (read-write), or rx. The user must have appropriate permissions on the HOST directory; otherwise, an exception will be raised. NOTE: On Megalos, the volume is mounted on the worker node where the device is running, not on the user's local machine." />
+      </h6>
       <RowListEditor<VolumeMount>
         columns={[
           {
