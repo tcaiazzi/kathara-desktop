@@ -290,14 +290,35 @@ async function runInstall(systemPython: string): Promise<{ ok: boolean; error?: 
   return result;
 }
 
+/** Set for the duration of a `runStartup()` call, so a second trigger arriving while one is
+ * already in flight (e.g. two rapid "Check again" clicks, or a retry racing an elevation) waits
+ * for and reuses it instead of calling `startBackend()` again — `startBackend()`'s own "already
+ * running" check only starts protecting once a *previous* start's health check has finished
+ * (backend.ts's `handle` is assigned no earlier than that), so two concurrent callers would
+ * otherwise both pass it and each spawn a backend, with the second's `trackChild()` silently
+ * overwriting the module-level reference to the first — which then outlives app quit untracked. */
+let startupInFlight: Promise<void> | null = null;
+
 /**
  * Run preflight, start the backend, and load the UI. Safe to call again on "Retry".
  *
  * `resumePath`, if given, is appended to the loaded URL (e.g. `/workspace/<lab>` from
  * elevation:drop below) so a backend restart triggered *from inside* an already-open lab lands
  * back there instead of the bare root every other caller of startup() wants.
+ *
+ * Serializes concurrent callers (see `startupInFlight`) — the actual work is in `runStartup`,
+ * called directly (not through this gate) by the auto-install retry below, which is a sequential
+ * continuation of the same attempt, not a second concurrent one.
  */
 async function startup(resumePath?: string): Promise<void> {
+  if (startupInFlight) return startupInFlight;
+  startupInFlight = runStartup(resumePath).finally(() => {
+    startupInFlight = null;
+  });
+  return startupInFlight;
+}
+
+async function runStartup(resumePath?: string): Promise<void> {
   if (!win) return;
   bootStartedAt = Date.now();
   bootChecks = [];
@@ -343,8 +364,11 @@ async function startup(resumePath?: string): Promise<void> {
       showSetup(win);
       const result = await runInstall(preflight.systemPython);
       if (result.ok) {
-        // Guarded by autoInstallAttempted, so this recursion is one level deep at most.
-        await startup(resumePath);
+        // Guarded by autoInstallAttempted, so this recursion is one level deep at most. Calls
+        // runStartup directly, not startup(): this is a sequential continuation of the attempt
+        // already in flight, not a second concurrent one, and startup() would just hand back this
+        // same not-yet-settled call's own promise.
+        await runStartup(resumePath);
         return;
       }
       setStatus({
@@ -372,7 +396,9 @@ async function startup(resumePath?: string): Promise<void> {
     showSetup(win);
     const result = await runInstall(preflight.systemPython);
     if (result.ok) {
-      await startup(resumePath);
+      // Same reasoning as the auto-install branch above: a sequential continuation, not a new
+      // concurrent caller, so this bypasses the startup() gate on purpose.
+      await runStartup(resumePath);
       return;
     }
     log("continuing with the environment already present");
@@ -410,6 +436,14 @@ function registerIpc(): void {
   ipcMain.handle("notifications:load", () => carriedNotifications);
 
   ipcMain.handle("status:retry", async () => {
+    if (startupInFlight) {
+      // A previous "Check again" (or any other startup trigger) hasn't finished yet. Join it
+      // instead of calling stopBackend() here, which — unlike startup() itself — has no gate of
+      // its own and would race the in-flight attempt's own startBackend(), quite possibly killing
+      // the very process it just spawned.
+      await startupInFlight;
+      return;
+    }
     await stopBackend();
     await startup();
   });
