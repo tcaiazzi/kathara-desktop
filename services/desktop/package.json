@@ -19,7 +19,8 @@
     "dist": "npm run build:frontend && npm run build && electron-builder --config electron-builder.yml",
     "dist:linux": "npm run dist -- --linux",
     "dist:mac": "npm run dist -- --mac",
-    "dist:win": "npm run dist -- --win"
+    "dist:win": "npm run dist -- --win",
+    "dist:linux:appimage": "npm run dist -- --linux AppImage"
   },
   "devDependencies": {
     "@types/node": "^20.14.15",

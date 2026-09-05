@@ -86,10 +86,21 @@ async function fetchTarget(os, { arch, triple, sha256 }) {
 
 async function main() {
   const os = process.argv[2];
-  const targets = TARGETS[os];
+  // Optional third arg restricts the fetch to a single arch (e.g. a host-only build that only
+  // needs its own arch's interpreter, not every arch this OS ships). Omit it to fetch all of
+  // them, as CI does.
+  const archFilter = process.argv[3];
+  let targets = TARGETS[os];
   if (!targets) {
-    console.error(`usage: node fetch-python.mjs <${Object.keys(TARGETS).join("|")}>`);
+    console.error(`usage: node fetch-python.mjs <${Object.keys(TARGETS).join("|")}> [arch]`);
     process.exit(1);
+  }
+  if (archFilter) {
+    targets = targets.filter((t) => t.arch === archFilter);
+    if (targets.length === 0) {
+      console.error(`no target for ${os}/${archFilter} (known archs: ${TARGETS[os].map((t) => t.arch).join(", ")})`);
+      process.exit(1);
+    }
   }
   mkdirSync(vendorDir, { recursive: true });
   for (const target of targets) await fetchTarget(os, target);
