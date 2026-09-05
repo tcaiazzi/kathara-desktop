@@ -32,6 +32,19 @@ function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
+/** Env var names whose value must never reach a log line (they still reach the actual command
+ * unchanged — this only redacts what gets logged). */
+const SENSITIVE_ENV_KEYS = new Set(["KATHARA_API_AUTH_TOKEN"]);
+
+/** For logging an `env KEY=value ...` argv list without leaking a secret into the log file — which
+ * the app then invites the user to open and share (Help menu, the setup/error page's log tail). */
+function redactEnvArgsForLog(envArgs: string[]): string[] {
+  return envArgs.map((entry) => {
+    const key = entry.slice(0, entry.indexOf("="));
+    return SENSITIVE_ENV_KEYS.has(key) ? `${key}=***` : entry;
+  });
+}
+
 /** Why an elevated (re)start of the backend didn't produce a running, root-owned backend. */
 export type ElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error" | "rate-limited";
 
@@ -625,7 +638,7 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
   // fall back to defaults. Force them through explicitly via a coreutils `env` prefix, which sets
   // them directly on the command `sudo` elevates, independent of the system's sudoers env policy.
   const envArgs = Object.entries(appEnv).map(([k, v]) => `${k}=${v}`);
-  log(`starting elevated backend: sudo env ${envArgs.join(" ")} ${python} ${args.join(" ")}`);
+  log(`starting elevated backend: sudo env ${redactEnvArgsForLog(envArgs).join(" ")} ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
