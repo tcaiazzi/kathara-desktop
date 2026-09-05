@@ -103,7 +103,7 @@ export function buildMenu(): void {
     {
       role: "help",
       submenu: [
-        { label: "Kathara Documentation", click: () => void shell.openExternal(DOCS_URL) },
+        { label: "Kathará Website", click: () => void shell.openExternal(DOCS_URL) },
         { label: "Show Backend Log", click: () => void shell.openPath(backendLogPath()) },
         item("Show Onboarding Tour", "help:tour"),
         { label: `Version ${app.getVersion()}`, enabled: false },
