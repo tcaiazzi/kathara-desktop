@@ -109,12 +109,24 @@ jobs:
         working-directory: services/frontend
       - run: npm ci
         working-directory: services/desktop
+      # electron-builder 26's 7-Zip applies the ARM64 branch filter to arm64 executables, and the
+      # nsis7z extractor bundled in the installer can't decode it: every filtered file (the app
+      # exe, every DLL, python.exe) is dropped silently at install time on Windows on ARM, leaving
+      # an installed app with no executable. BCJ2 is what electron-builder 25 produced.
       - run: npm run dist:win
         working-directory: services/desktop
+        env:
+          ELECTRON_BUILDER_7Z_FILTER: BCJ2
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-exe
-          path: services/desktop/release/*.exe
+          name: windows-exe-x64
+          path: |
+            services/desktop/release/*.exe
+            !services/desktop/release/*-arm64.exe
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-exe-arm64
+          path: services/desktop/release/*-arm64.exe
 
   check-version:
     needs: test

@@ -112,8 +112,13 @@ nsis:
   # electron-builder's own NSIS default is "${productName} Setup ${version}.${ext}" — a literal
   # space before "Setup" regardless of productName's own formatting. Override it so every OS
   # produces a space-free artifact filename, matching the hyphenated default template
-  # ("${productName}-${version}-${arch}.${ext}") every other target already uses.
-  artifactName: "${productName}-Setup-${version}.${ext}"
+  # ("${productName}-${version}-${arch}.${ext}") every other target already uses. ${arch} is
+  # load-bearing rather than cosmetic here: buildUniversalInstaller below emits one installer per
+  # architecture, and without it both would be written to the same filename.
+  artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
+  # One installer per architecture instead of a single combined one carrying both payloads: an
+  # arm64 machine downloads ~120 MB rather than 242 MB, half of which it can't run.
+  buildUniversalInstaller: false
 
 # No autoUpdater: it is unreliable on unsigned Windows and macOS builds. Releases are published
 # and installed manually.

@@ -82,8 +82,10 @@ dist-linux:
 dist-mac:
 	$(MAKE) dist PLATFORM=mac
 
+# ELECTRON_BUILDER_7Z_FILTER: see the same override in .github/workflows/build-desktop.yml —
+# without it the arm64 payload is compressed with a filter the installer can't extract.
 dist-win:
-	$(MAKE) dist PLATFORM=win
+	ELECTRON_BUILDER_7Z_FILTER=BCJ2 $(MAKE) dist PLATFORM=win
 
 # AppImage only, for the host's own arch only (no deb/rpm, no cross-arch). Quick local package,
 # not what CI produces (that's `dist-linux`, all Linux targets x both arches).
