@@ -992,13 +992,31 @@ export function WorkspacePage() {
               </button>
             </div>
             <div className="d-flex gap-1 mb-2" data-tour="import-row">
-              <Button size="sm" variant="primary" className="flex-fill" onClick={() => setShowNew(true)}>
+              <Button
+                size="sm"
+                variant="primary"
+                className="flex-fill"
+                onClick={() => setShowNew(true)}
+                title="Create a new empty lab from scratch"
+              >
                 + New
               </Button>
-              <Button size="sm" variant="outline-secondary" className="flex-fill" onClick={() => setShowUpload(true)}>
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="flex-fill"
+                onClick={() => setShowUpload(true)}
+                title="Upload a lab from a .zip archive or folder on your computer"
+              >
                 Upload
               </Button>
-              <Button size="sm" variant="outline-secondary" className="flex-fill" onClick={() => setShowGallery(true)}>
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                className="flex-fill"
+                onClick={() => setShowGallery(true)}
+                title="Browse and import a ready-made lab from the Kathara-Labs gallery"
+              >
                 <Globe size={14} className="me-1" />
                 Browse
               </Button>
