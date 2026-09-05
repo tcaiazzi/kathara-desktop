@@ -73,6 +73,10 @@ export function toElevateOutcome(result: ElevateResult): ElevateOutcome {
 
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_POLL_MS = 250;
+/** Bounds a single health-check request, independent of HEALTH_TIMEOUT_MS above (the budget for
+ * the whole polling loop): without this, one request that connects but never answers would block
+ * the loop from ever re-checking `deadline`, so the overall timeout would never actually fire. */
+const HEALTH_REQUEST_TIMEOUT_MS = 3_000;
 const SIGTERM_GRACE_MS = 5_000;
 const SHUTDOWN_HTTP_TIMEOUT_MS = 2_000;
 /** Passed to uvicorn as `--timeout-graceful-shutdown` (see `buildBackendCommand`): bounds how
@@ -336,7 +340,10 @@ export async function waitForHealth(
       throw new Error(`backend exited during startup (code ${child?.exitCode ?? "unknown"})`);
     }
     try {
-      const res = await fetch(`${baseUrl}/api/health`, { headers: authHeaders(token) });
+      const res = await fetch(`${baseUrl}/api/health`, {
+        headers: authHeaders(token),
+        signal: AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS),
+      });
       if (res.ok) return;
       lastError = `HTTP ${res.status}`;
     } catch (err) {
