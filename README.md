@@ -23,6 +23,8 @@ It's built from three parts:
 - [Docker](https://docs.docker.com/get-docker/) (Kathara deploys each device as a container
   via the host Docker socket)
 - Python 3.10+ and Node 20+ — only for running outside Docker
+  (`services/desktop` needs Node 22.12+ specifically: Electron's own install/build tooling
+  requires it)
 
 To install Docker, Python and Kathara in one step (into this checkout's own `.venv`, which
 both the backend and the desktop app already look for first), run the script for your OS:
