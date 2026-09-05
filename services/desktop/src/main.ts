@@ -807,9 +807,14 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
     for (const name of deployed) {
       try {
         log(`undeploying ${name}`);
+        // Bounded for the same reason as the GET above: an unresponsive-but-alive backend (or a
+        // wedged Docker daemon behind it) must not be able to block quit forever. The catch below
+        // already treats a failed undeploy as best-effort, not fatal — a timeout is just another
+        // way for this to fail.
         await fetch(`${base}/api/labs/${encodeURIComponent(name)}/undeploy`, {
           method: "POST",
           headers: authHeaders(),
+          signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
         });
       } catch (err) {
         log(`undeploy of ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
