@@ -10,7 +10,23 @@ import {
   type IDockviewPanelHeaderProps,
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
-import { Globe, Loader2, MoreHorizontal, ShieldAlert, SquareTerminal } from "lucide-react";
+import {
+  Download,
+  Globe,
+  LayoutGrid,
+  List,
+  Loader2,
+  MoreHorizontal,
+  Play,
+  Plus,
+  ShieldAlert,
+  Square,
+  SquareTerminal,
+  SquareX,
+  Trash2,
+  Upload,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -1004,7 +1020,8 @@ export function WorkspacePage() {
                 onClick={() => setShowNew(true)}
                 title="Create a new empty lab from scratch"
               >
-                + New
+                <Plus size={14} className="me-1" />
+                New
               </Button>
               <Button
                 size="sm"
@@ -1013,6 +1030,7 @@ export function WorkspacePage() {
                 onClick={() => setShowUpload(true)}
                 title="Upload a lab from a .zip archive or folder on your computer"
               >
+                <Upload size={14} className="me-1" />
                 Upload
               </Button>
               <Button
@@ -1040,6 +1058,7 @@ export function WorkspacePage() {
                 onClick={handleWipeAll}
                 title="Force-undeploys every lab running in kathara-ide, not just this one"
               >
+                <Trash2 size={14} className="me-1" />
                 Wipe All Labs
               </Button>
             )}
@@ -1103,6 +1122,7 @@ export function WorkspacePage() {
                     className="w-100 mt-2"
                     onClick={() => setLabPickerOpen(true)}
                   >
+                    <List size={14} className="me-1" />
                     Select other labs
                   </Button>
                 </>
@@ -1285,7 +1305,12 @@ export function WorkspacePage() {
                       <DropdownButton
                         size="sm"
                         variant="outline-secondary"
-                        title="+ Terminal"
+                        title={
+                          <>
+                            <SquareTerminal size={14} className="me-1" />
+                            Terminal
+                          </>
+                        }
                         disabled={!runningMachines.length}
                       >
                         {runningMachines.map((m) => (
@@ -1296,10 +1321,20 @@ export function WorkspacePage() {
                       </DropdownButton>
                     </span>
                     <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
+                      <SquareX size={14} className="me-1" />
                       Close All Terminals
                     </Button>
                     <span data-tour="layout-btn" className="d-inline-flex">
-                      <DropdownButton size="sm" variant="outline-secondary" title="Layout">
+                      <DropdownButton
+                        size="sm"
+                        variant="outline-secondary"
+                        title={
+                          <>
+                            <LayoutGrid size={14} className="me-1" />
+                            Layout
+                          </>
+                        }
+                      >
                         <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
                         <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
                         <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
@@ -1309,12 +1344,18 @@ export function WorkspacePage() {
                     <span data-tour="deploy-btn" className="d-inline-flex">
                       <Button
                         size="sm"
-                        variant={detail.deployed ? "outline-warning" : "primary"}
+                        variant={detail.deployed ? "warning" : "primary"}
                         disabled={busy}
                         onClick={handleDeployToggle}
                         className="d-flex align-items-center gap-1"
                       >
-                        {deployAction && <Loader2 size={14} className="kt-explorer-spin" />}
+                        {deployAction ? (
+                          <Loader2 size={14} className="kt-explorer-spin" />
+                        ) : detail.deployed ? (
+                          <Square size={14} />
+                        ) : (
+                          <Play size={14} />
+                        )}
                         {deployAction === "deploy"
                           ? "Deploying…"
                           : deployAction === "undeploy"
@@ -1331,11 +1372,13 @@ export function WorkspacePage() {
                         disabled={busy}
                         onClick={() => void handleDownload()}
                       >
+                        <Download size={14} className="me-1" />
                         Download
                       </Button>
                     </span>
                     <span data-tour="delete-btn" className="d-inline-flex">
                       <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
+                        <Trash2 size={14} className="me-1" />
                         Delete
                       </Button>
                     </span>
@@ -1368,6 +1411,7 @@ export function WorkspacePage() {
                 Lab <code>{name}</code> was not found.
               </p>
               <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
+                <X size={14} className="me-1" />
                 Clear Selection
               </Button>
             </div>

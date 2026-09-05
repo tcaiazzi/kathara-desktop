@@ -90,3 +90,51 @@
 .kt-navbar-brand img {
   display: block;
 }
+
+/* Buttons: a rounder, softer default look for every Bootstrap Button variant/size (solid, outline,
+   link) plus a quick hover/press response, done entirely through Bootstrap 5.3's per-component
+   --bs-btn-* variables so no variant-specific color rule needs to be fought or duplicated. This
+   file loads after bootstrap.min.css (see main.tsx), so plain .btn/.btn-sm selectors here already
+   win the cascade without extra specificity. */
+.btn {
+  --bs-btn-border-radius: 8px;
+  --bs-btn-box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --bs-btn-hover-box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  --bs-btn-active-box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --bs-btn-focus-box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);
+  font-weight: 500;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.1s ease;
+}
+.btn-sm {
+  --bs-btn-border-radius: 6px;
+}
+.btn:hover:not(:disabled) {
+  box-shadow: var(--bs-btn-hover-box-shadow);
+  transform: translateY(-1px);
+}
+.btn:active:not(:disabled) {
+  box-shadow: var(--bs-btn-active-box-shadow);
+  transform: translateY(0);
+}
+/* variant="link" buttons are meant to read as plain links — no lift/shadow chrome. */
+.btn-link {
+  box-shadow: none !important;
+}
+.btn-link:hover:not(:disabled),
+.btn-link:active:not(:disabled) {
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn {
+    transition: none;
+  }
+  .btn:hover:not(:disabled),
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+}
