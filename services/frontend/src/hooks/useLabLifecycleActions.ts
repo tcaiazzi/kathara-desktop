@@ -4,6 +4,7 @@ import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
 import { desktop } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
+import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
 import type { VolumeMount } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
@@ -18,9 +19,23 @@ const VOLUME_CANCELLED_MESSAGE =
 // stopBackend/startBackend for why an elevated backend can't just have its privileges "turned
 // off" in place. `openLab`, if given, is where the reload (if the backend was actually elevated
 // and this triggers one) should land back on, instead of losing the current lab selection.
-async function dropElevationIfAny(openLab?: string): Promise<void> {
+//
+// `requestReclaimAuth`, from ReclaimLabsDirContext.tsx, is only ever invoked on Linux (dropElevation
+// only ever asks for it there — macOS/Windows resolve any reclaim themselves via their own native
+// prompt): a first call can come back with `needsReclaimPassword`, meaning the backend hasn't
+// actually been stopped yet and files an elevated session left root-owned still need a password
+// to fix — that modal is awaited here, then a second call (`skipReclaimCheck: true`) actually
+// drops the elevation regardless of what the user chose in it.
+async function dropElevationIfAny(
+  openLab: string | undefined,
+  requestReclaimAuth: () => Promise<"reclaimed" | "skipped">,
+): Promise<void> {
   try {
-    await desktop()?.dropElevation(openLab);
+    const result = await desktop()?.dropElevation(openLab);
+    if (result?.needsReclaimPassword) {
+      await requestReclaimAuth();
+      await desktop()?.dropElevation(openLab, true);
+    }
   } catch {
     /* best-effort */
   }
@@ -34,6 +49,7 @@ export function useLabLifecycleActions() {
   const prompt = usePrompt();
   const runBusy = useBusyAction();
   const requestDeployAuth = useDeployAuthorization();
+  const requestReclaimAuth = useReclaimLabsDirAuth();
 
   const deployToggle = useCallback(
     async (
@@ -58,7 +74,7 @@ export function useLabLifecycleActions() {
           toast.show(`Lab "${lab.name}" undeployed.`, "success");
           // Least-privilege: don't leave the backend running as root once nothing it's doing
           // needs that. A no-op if it wasn't elevated (the common case) or outside the desktop app.
-          await dropElevationIfAny(lab.name);
+          await dropElevationIfAny(lab.name, requestReclaimAuth);
           await onDone();
           return;
         }
@@ -126,7 +142,7 @@ export function useLabLifecycleActions() {
         await onDone();
       });
     },
-    [requestDeployAuth, runBusy, toast],
+    [requestDeployAuth, requestReclaimAuth, runBusy, toast],
   );
 
   const deleteLab = useCallback(
@@ -182,11 +198,11 @@ export function useLabLifecycleActions() {
       await runBusy(setBusy, "Wipe all", async () => {
         await api.wipeAll();
         toast.show("All labs wiped.", "success");
-        await dropElevationIfAny(openLab);
+        await dropElevationIfAny(openLab, requestReclaimAuth);
         await onDone();
       });
     },
-    [confirm, runBusy, toast],
+    [confirm, requestReclaimAuth, runBusy, toast],
   );
 
   return { deployToggle, deleteLab, renameLab, wipeAll };

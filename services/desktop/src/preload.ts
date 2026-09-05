@@ -73,9 +73,24 @@ const api = {
    * window against the new instance) so it doesn't keep running with more privilege than
    * whatever's deployed right now actually needs. A no-op (resolves `{ dropped: false }`,
    * no reload) if it wasn't elevated to begin with. `openLab`, if given, is reflected into the
-   * post-reload URL so the reload lands back on the lab that was open instead of the bare root. */
-  dropElevation: (openLab?: string): Promise<{ dropped: boolean }> =>
-    ipcRenderer.invoke("elevation:drop", openLab),
+   * post-reload URL so the reload lands back on the lab that was open instead of the bare root.
+   * `needsReclaimPassword: true` (Linux only) means files the elevated session left root-owned
+   * need a password to reclaim, collected via ReclaimLabsDirContext.tsx's modal and sent through
+   * `reclaimLabsDirOwnership` below — the backend hasn't been touched yet in that case, so the
+   * caller must call this again with `skipReclaimCheck: true` once that's resolved one way or
+   * another, to actually drop the elevation. */
+  dropElevation: (
+    openLab?: string,
+    skipReclaimCheck?: boolean,
+  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> =>
+    ipcRenderer.invoke("elevation:drop", openLab, skipReclaimCheck),
+  /** Linux companion to a `dropElevation` that came back with `needsReclaimPassword: true`: runs
+   * the actual `chown` with this password (fed straight to `sudo -S`, never stored). Shares its
+   * rate limit with elevateBackend/verifyCanElevate — see backend.ts's withSudoRateLimit. */
+  reclaimLabsDirOwnership: (
+    password: string,
+  ): Promise<{ ok: false; reason: ElevateFailureReason; message: string } | { ok: true }> =>
+    ipcRenderer.invoke("elevation:reclaim-labs-dir", password),
   /** Verifies the user could elevate, without touching the backend — used for a deploy that only
    * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
    * be root. `password` is required on Linux, ignored on macOS/Windows (native OS prompt

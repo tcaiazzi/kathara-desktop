@@ -68,8 +68,19 @@ export interface DesktopApi {
    * window) so it doesn't keep running with more privilege than whatever's deployed right now
    * actually needs. A no-op (no reload) if it wasn't elevated to begin with — call freely after
    * any undeploy, not just ones you know were privileged. `openLab`, if given, is reflected into
-   * the post-reload URL so the reload lands back on the lab that was open instead of bare root. */
-  dropElevation(openLab?: string): Promise<{ dropped: boolean }>;
+   * the post-reload URL so the reload lands back on the lab that was open instead of bare root.
+   * `needsReclaimPassword: true` (Linux only) means files the elevated session left root-owned
+   * need a password to reclaim — see ReclaimLabsDirContext.tsx, and pass `skipReclaimCheck: true`
+   * on the follow-up call once that's resolved, to actually drop the elevation. */
+  dropElevation(
+    openLab?: string,
+    skipReclaimCheck?: boolean,
+  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }>;
+  /** Linux companion to a `dropElevation` that came back with `needsReclaimPassword: true`: runs
+   * the reclaim `chown` with this password (never stored, fed straight to `sudo -S`). */
+  reclaimLabsDirOwnership(
+    password: string,
+  ): Promise<{ ok: false; reason: DesktopElevateFailureReason; message: string } | { ok: true }>;
   /** Verifies the user could elevate, without touching the backend — used for a deploy that only
    * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
    * be root, only proof the user could authorize it. `password` is required on Linux, ignored on

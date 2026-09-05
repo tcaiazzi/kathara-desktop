@@ -17,8 +17,11 @@ import {
   backendToken,
   backendUrl,
   forceKillOrphan,
+  hasForeignOwnedFiles,
   onBackendExit,
   onOrphanedBackend,
+  reclaimLabsDirOwnershipWithPassword,
+  reclaimLabsDirOwnershipWithPrompt,
   startBackend,
   startBackendElevatedLinux,
   startBackendElevatedNative,
@@ -518,20 +521,79 @@ function registerIpc(): void {
   // startBackend + loadURL + status) rather than duplicating it, same as status:retry above. A
   // cheap no-op — no restart, no reload — when the backend isn't currently elevated at all,
   // which is the common case (most undeploys aren't for a privileged-device lab).
-  ipcMain.handle("elevation:drop", async (_e, openLab?: string): Promise<{ dropped: boolean }> => {
-    const baseUrl = backendUrl();
-    if (!baseUrl) return { dropped: false };
-    try {
-      const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders() }).then((r) => r.json());
-      if (!info.is_admin) return { dropped: false };
-    } catch {
-      return { dropped: false };
-    }
-    log("dropping elevated privileges (lab undeployed)");
-    await stopBackend();
-    await startup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
-    return { dropped: true };
-  });
+  ipcMain.handle(
+    "elevation:drop",
+    async (
+      _e,
+      openLab?: string,
+      skipReclaimCheck?: boolean,
+    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> => {
+      const baseUrl = backendUrl();
+      if (!baseUrl) return { dropped: false };
+      try {
+        const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders() }).then((r) => r.json());
+        if (!info.is_admin) return { dropped: false };
+      } catch {
+        return { dropped: false };
+      }
+
+      // Checked (and asked about, if needed) *before* stopBackend(): this page — and, on Linux,
+      // its own password modal — is still the live one the user can see a prompt on; after the
+      // reload below there is no page left to show one on. `skipReclaimCheck` is set on the
+      // second call the renderer makes once it has already resolved this one way or another (see
+      // bridge.ts's dropElevation and ReclaimLabsDirContext.tsx).
+      const labsPath = labsDir();
+      if (!skipReclaimCheck && hasForeignOwnedFiles(labsPath)) {
+        if (process.platform === "linux") {
+          // No native dialog can collect a password on Linux (see
+          // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
+          // either) — tell the renderer to ask instead.
+          return { dropped: false, needsReclaimPassword: true };
+        }
+        // macOS: sudo-prompt's native dialog is reliable here, so a plain confirm first (this
+        // isn't a deploy the user just asked for — they only undeployed) is enough.
+        const parent = win;
+        const messageBox = parent
+          ? (o: Electron.MessageBoxOptions) => dialog.showMessageBox(parent, o)
+          : (o: Electron.MessageBoxOptions) => dialog.showMessageBox(o);
+        const { response } = await messageBox({
+          type: "warning",
+          buttons: ["Reclaim now", "Leave as is"],
+          defaultId: 0,
+          cancelId: 1,
+          message: "Some lab files are still owned by the administrator account",
+          detail:
+            "The privileged session that just ended left some files in your labs folder owned " +
+            "by the administrator account. Reclaiming them needs one more authorization prompt " +
+            "— the app never stores your password, so being asked again here is expected, not a " +
+            "bug. If you leave them as is, further edits to the affected lab (or undeploying it) " +
+            "may fail until this is fixed, which you can also do yourself later.",
+        });
+        if (response === 0) {
+          const reclaimed = await reclaimLabsDirOwnershipWithPrompt(labsPath);
+          if (!reclaimed.ok) log(`could not reclaim ownership of the labs directory: ${reclaimed.message}`);
+        } else {
+          log("user chose to leave root-owned files in the labs directory as is");
+        }
+      }
+
+      log("dropping elevated privileges (lab undeployed)");
+      await stopBackend();
+      await startup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
+      return { dropped: true };
+    },
+  );
+
+  // Linux-only companion to elevation:drop above: collects the password its own in-app modal
+  // asks for when a quiet/native reclaim isn't available, and runs the actual chown with it. Not
+  // gated on is_admin/hasForeignOwnedFiles again — elevation:drop already established both right
+  // before returning needsReclaimPassword, and by the time the renderer calls this the backend
+  // hasn't been touched since, so nothing here has changed.
+  ipcMain.handle(
+    "elevation:reclaim-labs-dir",
+    (_e, password: string): ReturnType<typeof reclaimLabsDirOwnershipWithPassword> =>
+      reclaimLabsDirOwnershipWithPassword(password, labsDir()),
+  );
 
   ipcMain.handle("status:pick-python", async () => {
     const chosen = await pickPythonInterpreter(win);

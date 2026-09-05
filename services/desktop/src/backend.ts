@@ -167,6 +167,111 @@ export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string
   });
 }
 
+/**
+ * Whether anything under `dirPath` is owned by someone other than the current user — the signal
+ * that an elevated session left root-owned files behind in the labs directory. Recurses, but
+ * stops at the first mismatch: this only ever needs a yes/no answer, never a full listing.
+ *
+ * Best-effort in the safe direction: a subtree this user can't even list (typically because a
+ * root-owned *directory* blocks read access to its own contents) counts as "yes" rather than
+ * being silently skipped — the whole reason to check in the first place is exactly that failure
+ * mode. Windows always answers "no": there is no ownership concept to fix up there, where an
+ * elevated process runs as the same account, just with a different token.
+ */
+export function hasForeignOwnedFiles(dirPath: string): boolean {
+  if (process.platform === "win32") return false;
+  const uid = process.getuid?.();
+  if (uid === undefined) return false;
+
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return true;
+  }
+  for (const entry of entries) {
+    const full = path.join(dirPath, entry.name);
+    let stat: fs.Stats;
+    try {
+      stat = fs.lstatSync(full);
+    } catch {
+      return true;
+    }
+    if (stat.uid !== uid) return true;
+    if (entry.isDirectory() && hasForeignOwnedFiles(full)) return true;
+  }
+  return false;
+}
+
+/** Resolves and validates what every reclaim attempt below needs, so neither has to repeat it. */
+function resolveReclaimTarget(labsPath: string): { ok: true; uid: number; gid: number } | { ok: false; message: string } {
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  if (uid === undefined || gid === undefined) {
+    return { ok: false, message: "could not determine the current user's id" };
+  }
+  // Belt-and-braces like the interpreter path check in runElevatedNative below: labsDir() is
+  // already validated on the way in (see paths.ts/setLabsDir), but this is the last point before
+  // a string reaches a privileged command, so it's checked again here regardless of the caller.
+  if (!isPlainAbsolutePath(labsPath)) {
+    return { ok: false, message: `refusing to reclaim ownership of a suspicious path: ${JSON.stringify(labsPath)}` };
+  }
+  return { ok: true, uid, gid };
+}
+
+/**
+ * macOS: an explicit admin prompt via `sudo-prompt`'s native dialog — the same one already used to
+ * elevate the backend in the first place, and by `forceKillOrphan` above. Reliable there (a native
+ * OS-level dialog, not dependent on anything like Linux's polkit agent), so it's the only
+ * mechanism this platform needs — see main.ts's `elevation:drop`, which asks the user first via a
+ * plain confirm dialog, then calls this. A no-op on Windows: see `hasForeignOwnedFiles` on why
+ * nothing there needs it. Linux uses `reclaimLabsDirOwnershipWithPassword` below instead — tried
+ * and found unreliable here: `sudo-prompt` shells out to `pkexec`, which needs a running polkit
+ * authentication agent that plenty of real setups (headless, minimal window managers, WSL) don't
+ * have, where it fails outright instead of prompting.
+ */
+export async function reclaimLabsDirOwnershipWithPrompt(labsPath: string): Promise<{ ok: boolean; message?: string }> {
+  if (process.platform === "win32") return { ok: true };
+  const target = resolveReclaimTarget(labsPath);
+  if (!target.ok) return target;
+  const { uid, gid } = target;
+
+  const cmd = `chown -R ${uid}:${gid} ${quoteForShellString(labsPath)}`;
+  return new Promise((resolve) => {
+    sudoPrompt.exec(cmd, { name: "Kathara IDE" }, (error) => {
+      if (error) {
+        log(`failed to reclaim ownership of ${labsPath}: ${error.message}`);
+        resolve({ ok: false, message: error.message });
+        return;
+      }
+      resolve({ ok: true });
+    });
+  });
+}
+
+/**
+ * Linux: the only mechanism this platform needs (see `reclaimLabsDirOwnershipWithPrompt`'s doc
+ * comment on why `sudo-prompt` isn't it here). Runs `sudo -S -k chown -R uid:gid labsPath`
+ * directly, feeding `password` on stdin — authenticating and running the command in the exact
+ * same invocation, so unlike a `sudo -n`/cached-ticket approach it doesn't depend on this headless
+ * spawn sharing any session/tty state with a previous one. Shares `runSudoWithPassword` and the
+ * rate limiter with `verifySudoPassword`, so this doesn't open a second password oracle alongside
+ * the one Step 1 (SUDO_RATE_LIMIT_FREE_ATTEMPTS) already closed.
+ */
+export async function reclaimLabsDirOwnershipWithPassword(
+  password: string,
+  labsPath: string,
+): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+  if (process.platform !== "linux") return { ok: false, reason: "error", message: "not applicable on this platform" };
+  const target = resolveReclaimTarget(labsPath);
+  if (!target.ok) return { ok: false, reason: "error", message: target.message };
+  const { uid, gid } = target;
+
+  return withSudoRateLimit(() =>
+    runSudoWithPassword(["chown", "-R", `${uid}:${gid}`, labsPath], password, "reclaim labs dir ownership"),
+  );
+}
+
 /** Records a backend `stopBackend()` couldn't stop, if there's a URL to retry shutting it down
  * against later (an unsignalable process we never even confirmed a URL for isn't worth tracking —
  * there's nothing left to do with it). Always notifies, since even an unrecoverable orphan is
@@ -520,18 +625,34 @@ function sudoEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
  * oracle described at SUDO_RATE_LIMIT_FREE_ATTEMPTS.
  */
 async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+  return withSudoRateLimit(() => runSudoWithPassword(["-v"], password, "sudo password check", { verifyOnly: true }));
+}
+
+/**
+ * Shared gate for *every* "test a password against sudo" entry point — today `verifySudoPassword`
+ * above and `reclaimLabsDirOwnershipWithPassword` below — so adding a new one never opens a second
+ * password oracle alongside the one this already closes: they all count against, and are locked
+ * out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
+ */
+async function withSudoRateLimit(
+  attempt: () => Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }>,
+): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
   const now = Date.now();
   if (now < sudoLockedUntil) {
     const retryInSeconds = Math.ceil((sudoLockedUntil - now) / 1000);
     return { ok: false, reason: "rate-limited", message: `too many failed attempts — try again in ${retryInSeconds}s` };
   }
 
-  const result = await runSudoPasswordCheck(password);
+  const result = await attempt();
 
   if (result.ok) {
     failedSudoAttempts = 0;
     sudoLockedUntil = 0;
-  } else {
+  } else if (result.reason === "wrong-password") {
+    // Only an actual wrong guess counts here — "not-permitted"/"timeout"/"error" aren't a signal
+    // about the password at all (the last of those now also covers a real command, like chown,
+    // failing for its own reasons after a *correct* password), so counting them would rate-limit
+    // a user for something that was never a guessing attempt in the first place.
     failedSudoAttempts += 1;
     if (failedSudoAttempts > SUDO_RATE_LIMIT_FREE_ATTEMPTS) {
       const lockoutMs = Math.min(
@@ -544,57 +665,88 @@ async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok
   return result;
 }
 
-async function runSudoPasswordCheck(password: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
-  let proc: ChildProcess;
-  try {
-    proc = spawn("sudo", ["-S", "-k", "-v"], { env: sudoEnv(), stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
-  } catch (err) {
-    return { ok: false, reason: "error", message: `could not run sudo: ${err instanceof Error ? err.message : String(err)}` };
-  }
+/** `sudo`'s own login-failure text, in the C locale `sudoEnv()` forces — distinct from
+ * SUDO_NOT_PERMITTED_MARKERS above (that's "this account can never sudo at all", this is "that
+ * password was wrong"). Only consulted for a real command below (`verifyOnly: false`): `-v` runs
+ * nothing at all, so for it any remaining non-zero exit is unambiguously an auth failure without
+ * needing to match specific text. A real command like `chown` can *also* exit non-zero after a
+ * successful login (a bad path, a permissions quirk) — these markers are what tells that apart
+ * from a wrong password, so it isn't misreported as one (and, via the shared rate limiter, doesn't
+ * even count against the lockout the way an actual wrong password does). */
+const SUDO_WRONG_PASSWORD_MARKERS = ["Sorry, try again", "incorrect password attempt", "no password was provided"];
 
-  let stderrBuf = "";
-  proc.stderr?.on("data", (c: Buffer) => {
-    stderrBuf += c.toString();
-  });
-  proc.stdin?.on("error", () => {
-    /* sudo can exit before the write lands (e.g. not in sudoers) — EPIPE here is not the error
-     * worth reporting, the exit status below is. */
-  });
-  proc.stdin?.write(`${password}\n`);
-  proc.stdin?.end();
+/** Runs `sudo -S -k <argv>`, feeding `password` on stdin. `logLabel` only names the attempt in the
+ * log lines below, not a behavior difference; `verifyOnly` says whether `argv` runs no command at
+ * all (`-v`) — see SUDO_WRONG_PASSWORD_MARKERS above for why that changes how a non-zero exit is
+ * classified. */
+function runSudoWithPassword(
+  argv: string[],
+  password: string,
+  logLabel: string,
+  { verifyOnly = false }: { verifyOnly?: boolean } = {},
+): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+  return new Promise((resolve) => {
+    let proc: ChildProcess;
+    try {
+      proc = spawn("sudo", ["-S", "-k", ...argv], { env: sudoEnv(), stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+    } catch (err) {
+      resolve({ ok: false, reason: "error", message: `could not run sudo: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
 
-  // "close", not "exit": stderr must be drained before it's classified, otherwise a genuine
-  // refusal can be read while `stderrBuf` is still empty and get misfiled as a generic error.
-  const code = await new Promise<number | null>((resolve) => {
+    let stderrBuf = "";
+    proc.stderr?.on("data", (c: Buffer) => {
+      stderrBuf += c.toString();
+    });
+    proc.stdin?.on("error", () => {
+      /* sudo can exit before the write lands (e.g. not in sudoers) — EPIPE here is not the error
+       * worth reporting, the exit status below is. */
+    });
+    proc.stdin?.write(`${password}\n`);
+    proc.stdin?.end();
+
+    // "close", not "exit": stderr must be drained before it's classified, otherwise a genuine
+    // refusal can be read while `stderrBuf` is still empty and get misfiled as a generic error.
     const timer = setTimeout(() => {
       proc.kill("SIGKILL");
-      resolve(null);
+      finish(null);
     }, SUDO_VERIFY_TIMEOUT_MS);
-    proc.once("close", (c) => {
+    proc.once("close", (code) => {
       clearTimeout(timer);
-      resolve(c);
+      finish(code);
     });
     proc.once("error", () => {
       clearTimeout(timer);
-      resolve(null);
+      finish(null);
     });
+
+    function finish(code: number | null): void {
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      const detail = stderrBuf.trim();
+      if (SUDO_NOT_PERMITTED_MARKERS.some((m) => stderrBuf.includes(m))) {
+        log(`${logLabel} refused: account may not use sudo${detail ? ` — ${detail}` : ""}`);
+        resolve({ ok: false, reason: "not-permitted", message: detail || "this account is not allowed to use sudo" });
+        return;
+      }
+      if (code === null) {
+        log(`${logLabel} did not finish in time`);
+        resolve({ ok: false, reason: "timeout", message: `sudo did not respond within ${SUDO_VERIFY_TIMEOUT_MS}ms` });
+        return;
+      }
+      if (verifyOnly || SUDO_WRONG_PASSWORD_MARKERS.some((m) => stderrBuf.includes(m))) {
+        log(`${logLabel} failed (exit ${code})${detail ? ` — ${detail}` : ""}`);
+        resolve({ ok: false, reason: "wrong-password", message: detail || "incorrect password" });
+        return;
+      }
+      // Authenticated fine, but the command itself failed (bad path, permissions quirk, …) — not
+      // a password problem, so it must not be reported or rate-limited as one.
+      log(`${logLabel} failed (exit ${code})${detail ? ` — ${detail}` : ""}`);
+      resolve({ ok: false, reason: "error", message: detail || `exited with code ${code}` });
+    }
   });
-
-  if (code === 0) return { ok: true };
-
-  const detail = stderrBuf.trim();
-  if (SUDO_NOT_PERMITTED_MARKERS.some((m) => stderrBuf.includes(m))) {
-    log(`sudo password check refused: account may not use sudo${detail ? ` — ${detail}` : ""}`);
-    return { ok: false, reason: "not-permitted", message: detail || "this account is not allowed to use sudo" };
-  }
-  if (code === null) {
-    log("sudo password check did not finish in time");
-    return { ok: false, reason: "timeout", message: `sudo did not respond within ${SUDO_VERIFY_TIMEOUT_MS}ms` };
-  }
-  // Any other non-zero exit from `sudo -v` is an authentication failure: it runs no command, so
-  // there is nothing else that could have failed.
-  log(`sudo password check failed (exit ${code})${detail ? ` — ${detail}` : ""}`);
-  return { ok: false, reason: "wrong-password", message: detail || "incorrect password" };
 }
 
 /**
