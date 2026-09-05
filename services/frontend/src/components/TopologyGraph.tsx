@@ -394,11 +394,31 @@ export function TopologyGraph({
           )}
           <div className="kt-topo-toolbar">
             {compactToolbar ? (
-              <DropdownButton size="sm" variant="outline-secondary" title={<MoreHorizontal size={16} />} align="end">
+              <DropdownButton
+                size="sm"
+                variant="outline-secondary"
+                title={
+                  <span
+                    title="Add a device or collision domain, or toggle interface IP labels"
+                    className="d-inline-flex align-items-center gap-1"
+                  >
+                    <MoreHorizontal size={16} aria-label="Topology actions" />
+                    Edit
+                  </span>
+                }
+                align="end"
+              >
+                <Dropdown.Header>Add elements to the topology</Dropdown.Header>
                 <Dropdown.Item onClick={() => openAddDevice()}>+ Device</Dropdown.Item>
                 <Dropdown.Item onClick={openAddDomain}>+ Domain</Dropdown.Item>
-                <Dropdown.Item active={showIps} onClick={() => setShowIps((v) => !v)}>
-                  IPs
+                <Dropdown.Divider />
+                <Dropdown.Header>Display</Dropdown.Header>
+                <Dropdown.Item
+                  active={showIps}
+                  onClick={() => setShowIps((v) => !v)}
+                  title="Show interface IPs on the graph"
+                >
+                  Show interface IPs
                 </Dropdown.Item>
               </DropdownButton>
             ) : (
@@ -422,16 +442,53 @@ export function TopologyGraph({
           </div>
           <div className="kt-topo-layout-toolbar">
             {compactToolbar ? (
-              <DropdownButton size="sm" variant="outline-secondary" title={<MoreHorizontal size={16} />} align="end">
+              <DropdownButton
+                size="sm"
+                variant="outline-secondary"
+                title={
+                  <span
+                    title="Zoom, fit, re-layout, or save/fix the graph layout"
+                    className="d-inline-flex align-items-center gap-1"
+                  >
+                    <MoreHorizontal size={16} aria-label="Layout actions" />
+                    Layout
+                  </span>
+                }
+                align="end"
+              >
+                <Dropdown.Header>View</Dropdown.Header>
                 <Dropdown.Item onClick={() => zoom(1.2)}>Zoom In</Dropdown.Item>
                 <Dropdown.Item onClick={() => zoom(1 / 1.2)}>Zoom Out</Dropdown.Item>
-                <Dropdown.Item onClick={handleFit}>Fit</Dropdown.Item>
-                <Dropdown.Item onClick={handleRelayout}>Re-layout</Dropdown.Item>
-                <Dropdown.Item onClick={handleSaveLayout} disabled={savingLayout || isEmpty}>
+                <Dropdown.Item onClick={handleFit}>Fit to screen</Dropdown.Item>
+                <Dropdown.Divider />
+                <Dropdown.Header>Layout</Dropdown.Header>
+                <Dropdown.Item
+                  onClick={handleRelayout}
+                  title={
+                    hasFixedLayout
+                      ? "Restore the lab's fixed layout, discarding unsaved moves"
+                      : "Lay the graph out again from scratch"
+                  }
+                >
+                  Re-layout
+                </Dropdown.Item>
+                <Dropdown.Item
+                  onClick={handleSaveLayout}
+                  disabled={savingLayout || isEmpty}
+                  title={
+                    hasFixedLayout
+                      ? "Update the lab's fixed layout (lab.layout in the lab directory)"
+                      : "Fix this layout for the lab — stores it as lab.layout in the lab directory"
+                  }
+                >
                   {hasFixedLayout ? (dirty ? "Save Layout •" : "Save Layout") : "Fix Layout"}
                 </Dropdown.Item>
                 {hasFixedLayout && (
-                  <Dropdown.Item onClick={handleClearLayout} disabled={savingLayout}>
+                  <Dropdown.Item
+                    onClick={handleClearLayout}
+                    disabled={savingLayout}
+                    title="Remove the lab's fixed layout (lab.layout) and lay the graph out automatically"
+                  >
                     Unfix
                   </Dropdown.Item>
                 )}
@@ -555,20 +612,27 @@ export function TopologyGraph({
                     Open Terminal
                   </Button>
                 )}
-                <DropdownButton size="sm" variant="outline-secondary" title="Actions" data-tour="node-actions-btn">
+                <DropdownButton
+                  size="sm"
+                  variant="outline-secondary"
+                  title={<span title="Terminal, filesystem, interface and configuration actions for this device">Actions</span>}
+                  data-tour="node-actions-btn"
+                >
                   {selectedNode.running && (
-                    <Dropdown.Item onClick={() => openTerminalPopup(selectedNode)}>
-                      <AppWindow size={14} className="me-2" />
-                      Open Terminal Popup
-                    </Dropdown.Item>
+                    <>
+                      <Dropdown.Header>Access the running device</Dropdown.Header>
+                      <Dropdown.Item onClick={() => openTerminalPopup(selectedNode)}>
+                        <AppWindow size={14} className="me-2" />
+                        Open Terminal Popup
+                      </Dropdown.Item>
+                      <Dropdown.Item onClick={() => openRuntimeFs(selectedNode)}>
+                        <FolderOpen size={14} className="me-2" />
+                        Show runtime FS
+                      </Dropdown.Item>
+                      <Dropdown.Divider />
+                    </>
                   )}
-                  {selectedNode.running && (
-                    <Dropdown.Item onClick={() => openRuntimeFs(selectedNode)}>
-                      <FolderOpen size={14} className="me-2" />
-                      Show runtime FS
-                    </Dropdown.Item>
-                  )}
-                  {selectedNode.running && <Dropdown.Divider />}
+                  <Dropdown.Header>Network interfaces</Dropdown.Header>
                   <Dropdown.Item onClick={() => openAddInterface(selectedNode)}>
                     <Plug size={14} className="me-2" />
                     {selectedNode.running ? "Add Interface (Runtime)" : "Add Interface (lab.conf)"}
@@ -578,6 +642,7 @@ export function TopologyGraph({
                     {selectedNode.running ? "Disconnect Interface (Runtime)" : "Remove Interface (lab.conf)"}
                   </Dropdown.Item>
                   <Dropdown.Divider />
+                  <Dropdown.Header>Configuration</Dropdown.Header>
                   <Dropdown.Item onClick={() => openOptions(selectedNode)}>
                     <SlidersHorizontal size={14} className="me-2" />
                     {detail.deployed ? "View Options" : "Edit Options"}

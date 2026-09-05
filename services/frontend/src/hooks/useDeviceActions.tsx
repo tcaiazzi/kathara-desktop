@@ -140,6 +140,7 @@ export function useDeviceActions({
           label: "Collision Domain",
           options: domains.map((v) => ({ value: v, label: v })),
           value: domains.includes(prefillLink) ? prefillLink : domains[0],
+          hint: "The existing collision domain this new interface will connect to.",
         }
       : { name: "link", label: "Collision Domain", required: true, placeholder: "A", hint: "No domains found — create one first." };
     const macField: TopoActionField = { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01" };
@@ -187,7 +188,13 @@ export function useDeviceActions({
       hint: "Mode follows the chosen device's state: a stopped device edits lab.conf (uses the interface number); a running device is a runtime change (auto-numbered, not saved to lab.conf).",
       submitLabel: "Add Interface",
       fields: [
-        { name: "machine", label: "Device", options: names.map((v) => ({ value: v, label: v })), value: names[0] },
+        {
+          name: "machine",
+          label: "Device",
+          options: names.map((v) => ({ value: v, label: v })),
+          value: names[0],
+          hint: `The device to attach to ${domainNode.name}.`,
+        },
         // Deliberately left empty rather than pre-filled with the first device's next free
         // number: this modal's device is a dropdown, and a pre-filled number would go stale the
         // moment the user picks a different device — submitting a number that device already
@@ -238,7 +245,15 @@ export function useDeviceActions({
         ? "Live change on the running device — not saved to lab.conf."
         : "Static edit — saved to lab.conf and applied on the next deploy.",
       submitLabel: running ? "Disconnect" : "Remove Interface",
-      fields: [{ name: "link", label: "Domain", options: links.map((v) => ({ value: v, label: v })), value: links[0] }],
+      fields: [
+        {
+          name: "link",
+          label: "Domain",
+          options: links.map((v) => ({ value: v, label: v })),
+          value: links[0],
+          hint: `The collision domain to ${running ? "disconnect" : "remove"} ${deviceNode.name}'s interface from.`,
+        },
+      ],
       onSubmit: async ({ link }) => {
         const clean = link.trim();
         if (!clean) return false;
