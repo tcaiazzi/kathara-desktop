@@ -23,7 +23,7 @@
     "dist:linux:appimage": "npm run dist -- --linux AppImage"
   },
   "devDependencies": {
-    "@types/node": "^20.14.15",
+    "@types/node": "^24.0.0",
     "electron": "^44.0.0",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.28.0",
