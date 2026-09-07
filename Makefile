@@ -29,6 +29,17 @@ else
   HOST_ARCH := $(UNAME_M)
 endif
 
+# Pin local npm/node invocations to the same Node version CI uses (see .github/workflows/*.yml).
+# Only applies when nvm is installed; on CI (no nvm, Node already on PATH via actions/setup-node)
+# RUN_NODE is empty and recipes behave exactly as before.
+NODE_VERSION := 24
+NVM_SH := $(HOME)/.nvm/nvm.sh
+ifneq (,$(wildcard $(NVM_SH)))
+  RUN_NODE := . $(NVM_SH) && nvm install $(NODE_VERSION) >/dev/null && nvm use $(NODE_VERSION) >/dev/null &&
+else
+  RUN_NODE :=
+endif
+
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
         wheel fetch-python fetch-python-host frontend shell \
@@ -41,10 +52,10 @@ all: build
 install: install-frontend install-desktop
 
 install-frontend:
-	npm ci --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm ci --prefix $(FRONTEND_DIR)
 
 install-desktop:
-	npm ci --prefix $(DESKTOP_DIR)
+	$(RUN_NODE) npm ci --prefix $(DESKTOP_DIR)
 
 ## ---- packaging inputs (wheel + bundled Python interpreter) ----------------
 ## Only needed for `dist`; skip these for plain dev builds.
@@ -54,27 +65,27 @@ wheel:
 	python3 -m build --wheel --outdir $(DESKTOP_DIR)/vendor .
 
 fetch-python:
-	cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM)
+	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM)
 
 # Only the host's own arch, for host-only targets like `make appimage` (skips the other arch's
 # download entirely instead of fetching both, as `fetch-python` does for full multi-arch dist).
 fetch-python-host:
-	cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM) $(HOST_ARCH)
+	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM) $(HOST_ARCH)
 
 ## ---- dev builds (no packaging) --------------------------------------------
 
 frontend: install-frontend
-	npm run build --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run build --prefix $(FRONTEND_DIR)
 
 shell: install-desktop
-	npm run build --prefix $(DESKTOP_DIR)
+	$(RUN_NODE) npm run build --prefix $(DESKTOP_DIR)
 
 build: frontend shell
 
 ## ---- installer packaging ---------------------------------------------------
 
 dist: install wheel fetch-python
-	cd $(DESKTOP_DIR) && npm run dist:$(PLATFORM)
+	$(RUN_NODE) cd $(DESKTOP_DIR) && npm run dist:$(PLATFORM)
 
 dist-linux:
 	$(MAKE) dist PLATFORM=linux
@@ -90,7 +101,7 @@ dist-win:
 # AppImage only, for the host's own arch only (no deb/rpm, no cross-arch). Quick local package,
 # not what CI produces (that's `dist-linux`, all Linux targets x both arches).
 appimage: install wheel fetch-python-host
-	cd $(DESKTOP_DIR) && npm run dist:linux:appimage
+	$(RUN_NODE) cd $(DESKTOP_DIR) && npm run dist:linux:appimage
 
 ## ---- clean -----------------------------------------------------------------
 
