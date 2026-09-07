@@ -181,10 +181,19 @@ export function createMainWindow(): BrowserWindow {
 
   // Keeps the custom maximize/restore button in sync with every way the window can actually
   // change state — our own button, a double-click on the drag region, Aero Snap, dragging to a
-  // screen edge — not just the one path the button itself drives.
-  const pushState = () => win.webContents.send("window:state", { maximized: win.isMaximized() });
+  // screen edge — not just the one path the button itself drives. `fullscreen` rides along for
+  // macOS, where the strip's reserved traffic-light inset has to go away once the system hides
+  // those buttons (TitleBar.css); it too can be entered from outside our own menu item — the
+  // native green button, Ctrl+Cmd+F, Mission Control — so it hangs off the same events.
+  const pushState = () =>
+    win.webContents.send("window:state", {
+      maximized: win.isMaximized(),
+      fullscreen: win.isFullScreen(),
+    });
   win.on("maximize", pushState);
   win.on("unmaximize", pushState);
+  win.on("enter-full-screen", pushState);
+  win.on("leave-full-screen", pushState);
 
   win.once("ready-to-show", () => win.show());
   return win;

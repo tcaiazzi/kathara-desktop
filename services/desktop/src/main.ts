@@ -687,6 +687,9 @@ function registerIpc(): void {
   ipcMain.handle("window:unmaximize", () => win?.unmaximize());
   ipcMain.handle("window:close", () => win?.close());
   ipcMain.handle("window:is-maximized", () => win?.isMaximized() ?? false);
+  // Read once on mount by TitleBar.tsx, which can come up against an already-fullscreen window
+  // (a reload, a restart after a labs-dir change) and would otherwise miss the state entirely.
+  ipcMain.handle("window:is-fullscreen", () => win?.isFullScreen() ?? false);
 
   ipcMain.handle("fs:pick-lab-archive", () => pickLabArchive(win));
   // The host side of a device's [volume] bind mount — see MachineOptionsFields.tsx's Volumes rows.

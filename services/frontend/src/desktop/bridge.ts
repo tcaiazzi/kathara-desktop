@@ -29,12 +29,14 @@ export interface DesktopApi {
   toggleDevTools(): Promise<void>;
   quit(): Promise<void>;
   /** Custom caption buttons TitleBar.tsx draws on Windows/Linux (macOS keeps native traffic
-   * lights and never calls these). */
+   * lights and never calls these) — except `isWindowFullScreen`, which macOS *does* need: the
+   * strip reserves space for those traffic lights, and the system hides them in fullscreen. */
   minimizeWindow(): Promise<void>;
   maximizeWindow(): Promise<void>;
   unmaximizeWindow(): Promise<void>;
   closeWindow(): Promise<void>;
   isWindowMaximized(): Promise<boolean>;
+  isWindowFullScreen(): Promise<boolean>;
   showBackendLog(): Promise<void>;
   openExternal(url: string): Promise<void>;
   /** The newer release GitHub has, or null if this build is already current. Cheap to call more
@@ -111,7 +113,7 @@ export interface DesktopApi {
   /** All three return an unsubscribe function. */
   onMenuAction(cb: (action: DesktopMenuAction) => void): () => void;
   onDeepLink(cb: (route: string) => void): () => void;
-  onWindowStateChange(cb: (state: { maximized: boolean }) => void): () => void;
+  onWindowStateChange(cb: (state: { maximized: boolean; fullscreen: boolean }) => void): () => void;
 }
 
 declare global {

@@ -4,7 +4,8 @@
 // buttons at the far right (see the caption-buttons cluster below) — Chromium's own Window
 // Controls Overlay only lets a page tint those buttons' background, not restyle their icons,
 // which is exactly what looked out of place; on macOS the native traffic lights are left alone
-// (inset via CSS, see TitleBar.css) since there is nothing to improve there.
+// (inset via CSS, see TitleBar.css) since there is nothing to improve there — bar fullscreen,
+// where the system hides them and the inset goes with them.
 //
 // The menu labels and accelerators mirror the native Menu in services/desktop/src/menu.ts, which
 // stays registered but hidden — that Menu is what binds the keyboard accelerators. Keep the two
@@ -47,6 +48,7 @@ export function TitleBar() {
   const [open, setOpen] = useState<string | null>(null);
   const [version, setVersion] = useState<string | null>(null);
   const [maximized, setMaximized] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
   // Where focus was before a menu opened. Commands like Save act on whichever editor panel has
   // focus (useSaveShortcut), so focus has to be put back before the command runs — a native menu
@@ -59,12 +61,18 @@ export function TitleBar() {
 
   // The maximize/restore button's icon has to track every way the window can change state, not
   // just clicks on the button itself: double-clicking the drag region, Aero Snap, dragging to a
-  // screen edge. The shell pushes the real state after any of those (windows.ts's
-  // createMainWindow), so this only needs to read the initial value and then listen.
+  // screen edge. Same for fullscreen, which macOS's strip reads to drop its traffic-light inset
+  // (TitleBar.css) and which the native green button can toggle behind our back. The shell pushes
+  // the real state after any of those (windows.ts's createMainWindow), so this only needs to read
+  // the initial values and then listen.
   useEffect(() => {
     if (!shell) return;
     void shell.isWindowMaximized().then(setMaximized);
-    return shell.onWindowStateChange((state) => setMaximized(state.maximized));
+    void shell.isWindowFullScreen().then(setFullscreen);
+    return shell.onWindowStateChange((state) => {
+      setMaximized(state.maximized);
+      setFullscreen(state.fullscreen);
+    });
   }, [shell]);
 
   // Click-outside and Escape close the menu, as a native menu would.
@@ -141,6 +149,7 @@ export function TitleBar() {
     <div
       className="kt-titlebar"
       data-platform={platform}
+      data-fullscreen={fullscreen ? "true" : undefined}
       data-bs-theme={theme}
       ref={barRef}
     >

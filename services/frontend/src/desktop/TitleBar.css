@@ -21,11 +21,17 @@
   box-sizing: border-box;
 }
 
-/* macOS keeps its native traffic lights, always at the top left at a fixed size — reserve that
-   space by hand. Windows/Linux need no equivalent padding on the right: the captions cluster is
-   a real flex child there, not something drawn over the strip, so it just takes its own space. */
+/* macOS keeps its native traffic lights, at the top left at a fixed size — reserve that space by
+   hand. Windows/Linux need no equivalent padding on the right: the captions cluster is a real
+   flex child there, not something drawn over the strip, so it just takes its own space. */
 .kt-titlebar[data-platform="darwin"] {
   padding-left: 78px;
+}
+
+/* In native fullscreen macOS hides the traffic lights entirely, so that reserved space would be
+   nothing but a hole on the left — the brand sits flush instead, as on Windows/Linux. */
+.kt-titlebar[data-platform="darwin"][data-fullscreen="true"] {
+  padding-left: 0;
 }
 
 .kt-titlebar-nodrag {

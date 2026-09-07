@@ -114,6 +114,7 @@ const api = {
   unmaximizeWindow: () => ipcRenderer.invoke("window:unmaximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
   isWindowMaximized: (): Promise<boolean> => ipcRenderer.invoke("window:is-maximized"),
+  isWindowFullScreen: (): Promise<boolean> => ipcRenderer.invoke("window:is-fullscreen"),
 
   // -- native filesystem --
   pickLabArchive: (): Promise<{ name: string; data: Uint8Array } | null> =>
@@ -144,8 +145,8 @@ const api = {
   // -- events pushed from the shell --
   onMenuAction: (cb: (action: MenuAction) => void) => subscribe<MenuAction>("menu:action", cb),
   onDeepLink: (cb: (route: string) => void) => subscribe<string>("deeplink", cb),
-  onWindowStateChange: (cb: (state: { maximized: boolean }) => void) =>
-    subscribe<{ maximized: boolean }>("window:state", cb),
+  onWindowStateChange: (cb: (state: { maximized: boolean; fullscreen: boolean }) => void) =>
+    subscribe<{ maximized: boolean; fullscreen: boolean }>("window:state", cb),
 };
 
 export type KatharaDesktopApi = typeof api;
