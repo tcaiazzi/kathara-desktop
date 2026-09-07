@@ -175,7 +175,13 @@
       // The checks list grows incrementally as runPreflight decides each one (see prereqs.ts's
       // onProgress) — this is the same rendering used later on the failure screens, so a check
       // that appears while still "starting" looks exactly like it will if the run ends up failing.
-      function checksHtml(checks) {
+      //
+      // showRemedy is false while still "starting": a check that's still failing at this point
+      // (e.g. kathara_api, before the automatic install below has run) can carry a remedy like
+      // "Choose “Install missing packages” below" that only makes sense once the run has actually
+      // failed and that button exists — renderChecks() is the only place it does. Showing that text
+      // on the progress screen, with nothing to click, is exactly the confusing state this avoids.
+      function checksHtml(checks, showRemedy = true) {
         if (!checks || checks.length === 0) return "";
         const items = checks.map((c) => {
           // Three states, not two: a failed check with severity "advisory" (only ever a stopped
@@ -192,7 +198,7 @@
             <div>
               <div class="name">${esc(c.label)}</div>
               <div class="detail">${esc(c.detail)}</div>
-              ${c.remedy ? `<div class="remedy">${esc(c.remedy)}${esc(advisoryNote)}${
+              ${c.remedy && showRemedy ? `<div class="remedy">${esc(c.remedy)}${esc(advisoryNote)}${
                 c.docsUrl ? ` <a href="#" data-url="${esc(c.docsUrl)}">Learn more</a>` : ""
               }</div>` : ""}
             </div>
@@ -243,7 +249,7 @@
           ${ladderHtml(status.phase)}
           ${elapsedSec >= 5 ? `<p class="sub">Working on it — ${elapsedSec}s</p>` : ""}
           ${hint ? `<p class="sub">${esc(hint.text)}</p>` : ""}
-          ${checksHtml(status.checks)}
+          ${checksHtml(status.checks, false)}
           ${status.output ? `<pre>${esc(status.output)}</pre>` : ""}`;
 
         app.querySelectorAll("a[data-url]").forEach((a) => {
