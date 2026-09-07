@@ -6,6 +6,7 @@ import { ImageDownloadProvider } from "./context/ImageDownloadContext";
 import { OnboardingTourProvider } from "./context/OnboardingTourContext";
 import { isDesktop } from "./desktop/bridge";
 import { DesktopCommandsProvider } from "./desktop/DesktopCommands";
+import { DockerStatusBanner, DockerStatusProvider } from "./desktop/DockerStatusContext";
 import { ElevationProvider } from "./desktop/ElevationContext";
 import { ReclaimLabsDirProvider } from "./desktop/ReclaimLabsDirContext";
 import { TitleBar } from "./desktop/TitleBar";
@@ -27,6 +28,7 @@ function AppLayout() {
   return (
     <>
       <TopBar />
+      <DockerStatusBanner />
       {/* pb-5: without it, page content stops dead at the last element with no bottom
           breathing room — applied once here instead of on every page. */}
       <main className="pb-5">
@@ -42,6 +44,7 @@ function AppLayoutFull() {
   return (
     <div className="kt-shell">
       <TopBar />
+      <DockerStatusBanner />
       <main className="kt-shell-main">
         <Outlet />
       </main>
@@ -70,24 +73,26 @@ export function App() {
                     commands. Inert in the browser build. */}
                 <OnboardingTourProvider>
                   <DesktopCommandsProvider>
-                    <UpdateChecker />
-                    {/* Owns the driver.js instance for the first-use tour (Help menu / navbar can
-                        replay it); renders nothing itself. */}
-                    <OnboardingTour />
-                    <Routes>
-                      {/* The Workspace is the app; "/" redirects into it. */}
-                      <Route path="/" element={<Navigate to="/workspace" replace />} />
-                      <Route element={<AppLayout />}>
-                        <Route path="/settings" element={<SettingsPage />} />
-                      </Route>
-                      <Route element={<AppLayoutFull />}>
-                        <Route path="/workspace" element={<WorkspacePage />} />
-                        <Route path="/workspace/:name" element={<WorkspacePage />} />
-                      </Route>
-                      {/* No AppLayout: opened as its own bare browser window/tab (see
-                          services/terminalWindow.ts), not navigated to within the app shell. */}
-                      <Route path="/labs/:name/terminal/:machine" element={<TerminalWindowPage />} />
-                    </Routes>
+                    <DockerStatusProvider>
+                      <UpdateChecker />
+                      {/* Owns the driver.js instance for the first-use tour (Help menu / navbar can
+                          replay it); renders nothing itself. */}
+                      <OnboardingTour />
+                      <Routes>
+                        {/* The Workspace is the app; "/" redirects into it. */}
+                        <Route path="/" element={<Navigate to="/workspace" replace />} />
+                        <Route element={<AppLayout />}>
+                          <Route path="/settings" element={<SettingsPage />} />
+                        </Route>
+                        <Route element={<AppLayoutFull />}>
+                          <Route path="/workspace" element={<WorkspacePage />} />
+                          <Route path="/workspace/:name" element={<WorkspacePage />} />
+                        </Route>
+                        {/* No AppLayout: opened as its own bare browser window/tab (see
+                            services/terminalWindow.ts), not navigated to within the app shell. */}
+                        <Route path="/labs/:name/terminal/:machine" element={<TerminalWindowPage />} />
+                      </Routes>
+                    </DockerStatusProvider>
                   </DesktopCommandsProvider>
                 </OnboardingTourProvider>
               </ReclaimLabsDirProvider>

@@ -24,6 +24,7 @@ import { useTheme } from "../hooks/useTheme";
 import { DOCS_URL } from "../services/constants";
 import { desktop, type DesktopMenuAction } from "./bridge";
 import { useDesktopDispatch } from "./DesktopCommands";
+import { useDockerStatus } from "./DockerStatusContext";
 import "./TitleBar.css";
 
 interface Item {
@@ -41,6 +42,7 @@ function isSeparator(entry: Entry): entry is "separator" {
 export function TitleBar() {
   const { theme, dark } = useTheme();
   const health = useHealth();
+  const docker = useDockerStatus();
   const isAdmin = useIsAdmin();
   const dispatch = useDesktopDispatch();
   const location = useLocation();
@@ -218,6 +220,11 @@ export function TitleBar() {
         {isAdmin && (
           <Badge bg="warning" title="The local Kathara API is running with administrator privileges">
             privileged
+          </Badge>
+        )}
+        {docker && docker.state !== "ok" && (
+          <Badge bg="warning" title={docker.remedy ?? docker.detail}>
+            docker {docker.state === "missing" ? "missing" : "stopped"}
           </Badge>
         )}
         <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>

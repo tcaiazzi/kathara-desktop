@@ -26,6 +26,14 @@ export interface Check {
   /** Shown only when !ok: what the user should do about it. */
   remedy?: string;
   docsUrl?: string;
+  /**
+   * Only meaningful when `!ok`. Absent (equivalent to `"blocking"`) for every check except a
+   * Docker daemon that is installed but not answering: the app can't fix that for the user, but
+   * it also doesn't need Docker to boot — see Preflight.canStart. Everything else that can fail
+   * here (Python, the backend's own packages, the bundled UI) really does need to be fixed before
+   * there's an app to show.
+   */
+  severity?: "blocking" | "advisory";
 }
 
 /** Reported incrementally as runPreflight proceeds, so the setup page can show something more
@@ -40,7 +48,18 @@ export interface PreflightProgress {
 export interface Preflight {
   ok: boolean;
   checks: Check[];
-  /** The interpreter that satisfied the Python checks, to launch the backend with. */
+  /**
+   * Every *blocking* check passed — the app can boot, even if `advisories` below is non-empty
+   * (today, only ever a Docker daemon that's installed but not running). main.ts gates startup on
+   * this, not on `ok`: `ok` still means "every check, no exceptions" for callers (isStale, the
+   * setup page) that care about the literal all-green state.
+   */
+  canStart: boolean;
+  /** The checks that failed but didn't block startup (severity: "advisory"), for the renderer to
+   * warn about once the app is up. Always a subset of `checks`. */
+  advisories: Check[];
+  /** The interpreter that satisfied the Python checks, to launch the backend with. Set once
+   * `canStart`, not only once `ok` — see above. */
   python?: string;
   /**
    * The Python 3.10+ interpreter found, if any — set even when kathara_api/kathara/uvicorn are
@@ -101,15 +120,27 @@ const KATHARA_URL = "https://www.kathara.org/download.html";
 const DOCKER_PRODUCT_NAME =
   process.platform === "darwin" || process.platform === "win32" ? "Docker Desktop" : "Docker Engine";
 
-async function checkDocker(): Promise<Check> {
+/** The three-way answer `docker info` can give — "ok" isn't in `Check`'s vocabulary, so this is
+ * the shape the renderer's on-demand recheck (main.ts's "docker:check") hands back too, letting
+ * it reuse the exact same remedy copy without re-deriving it from a `Check`. */
+export type DockerState = "ok" | "stopped" | "missing";
+
+export interface DockerStatus {
+  state: DockerState;
+  /** A version when ok; the daemon's/CLI's own first error line otherwise. */
+  detail: string;
+  /** Set unless state === "ok". */
+  remedy?: string;
+  docsUrl?: string;
+}
+
+export async function checkDockerStatus(): Promise<DockerStatus> {
   // `docker info` (not `docker --version`) because it round-trips to the daemon: the CLI being
   // installed says nothing about whether anything can actually be deployed.
   const res = await run("docker", ["info", "--format", "{{.ServerVersion}}"]);
   if (res.missing) {
     return {
-      id: "docker",
-      label: "Docker",
-      ok: false,
+      state: "missing",
       detail: "The docker command was not found on PATH.",
       remedy: `Install ${DOCKER_PRODUCT_NAME}, start it, then choose “Check again”.`,
       docsUrl: DOCKER_URL,
@@ -118,20 +149,39 @@ async function checkDocker(): Promise<Check> {
   if (res.code !== 0) {
     // Installed but unreachable — a different remedy from "not installed", so say which.
     return {
-      id: "docker",
-      label: "Docker",
-      ok: false,
+      state: "stopped",
       detail: (res.stderr.trim() || "docker info failed").split("\n")[0],
+      // No "then choose Check again" here — unlike "missing" below, this state never strands the
+      // user on a page with only a manual retry button: it's advisory (Preflight.canStart treats
+      // it as non-blocking), so the app is already open, and DockerStatusContext.tsx polls this
+      // same check in the background and clears the warning on its own once Docker answers.
       remedy:
         process.platform === "darwin" || process.platform === "win32"
           ? `Docker is installed but not running. Open ${DOCKER_PRODUCT_NAME} and wait for it to ` +
-            "finish starting, then choose “Check again”."
+            "finish starting — Kathara Desktop will notice automatically."
           : "Docker is installed but not answering. Start it — “sudo systemctl start docker” — " +
-            "and make sure your user is in the “docker” group. Then choose “Check again”.",
+            "and make sure your user is in the “docker” group. Kathara Desktop will notice " +
+            "automatically once it does.",
       docsUrl: DOCKER_URL,
     };
   }
-  return { id: "docker", label: "Docker", ok: true, detail: `daemon ${res.stdout.trim()}` };
+  return { state: "ok", detail: `daemon ${res.stdout.trim()}` };
+}
+
+/** Maps the raw probe onto a `Check` for the preflight ladder. Only `"stopped"` is `"advisory"`:
+ * the app can't start Docker for the user either way, but a daemon that's merely not running yet
+ * doesn't need to keep the app off-screen the way a genuinely missing install still should (the
+ * setup page's install link and docs are the whole value in that case). */
+function dockerCheck(status: DockerStatus): Check {
+  return {
+    id: "docker",
+    label: "Docker",
+    ok: status.state === "ok",
+    detail: status.detail,
+    remedy: status.remedy,
+    docsUrl: status.docsUrl,
+    severity: status.state === "stopped" ? "advisory" : undefined,
+  };
 }
 
 /**
@@ -232,7 +282,7 @@ export async function runPreflight(
   onProgress?: (p: PreflightProgress) => void,
 ): Promise<Preflight> {
   onProgress?.({ phase: "docker", checks: [] });
-  const docker = await checkDocker();
+  const docker = dockerCheck(await checkDockerStatus());
   onProgress?.({ phase: "python", checks: [docker] });
 
   // Four tiers, best first: an interpreter the backend actually imports in *and* whose backend is
@@ -365,15 +415,22 @@ export async function runPreflight(
   });
 
   const ok = checks.every((c) => c.ok);
-  const isStale = ok && !chosen && found !== null && found === stale;
+  const advisories = checks.filter((c) => !c.ok && c.severity === "advisory");
+  const canStart = checks.every((c) => c.ok || c.severity === "advisory");
+  const isStale = canStart && !chosen && found !== null && found === stale;
   if (isStale) {
     log(`preflight: ${found?.interpreter} carries kathara-api-rest ${found?.result.kathara_api}, this build ships ${shipped}`);
   }
-  log(`preflight ${ok ? "passed" : "failed"}: ${checks.map((c) => `${c.id}=${c.ok}`).join(" ")}`);
+  log(
+    `preflight ${canStart ? "passed" : "failed"}${advisories.length ? ` (${advisories.length} advisory)` : ""}: ` +
+      checks.map((c) => `${c.id}=${c.ok}`).join(" "),
+  );
   return {
     ok,
+    canStart,
+    advisories,
     checks,
-    python: ok ? found?.interpreter : undefined,
+    python: canStart ? found?.interpreter : undefined,
     systemPython: found?.interpreter,
     stale: isStale,
   };

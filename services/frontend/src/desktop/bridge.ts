@@ -19,6 +19,15 @@ export type DesktopMenuAction =
  * imported — this package can't import types from services/desktop's — so keep the two in sync. */
 type DesktopElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error" | "rate-limited";
 
+/** Mirrors DockerStatus in services/desktop/src/prereqs.ts. Duplicated by hand for the same
+ * reason as DesktopElevateFailureReason above — keep the two in sync. */
+export interface DesktopDockerStatus {
+  state: "ok" | "stopped" | "missing";
+  detail: string;
+  remedy?: string;
+  docsUrl?: string;
+}
+
 export interface DesktopApi {
   isDesktop: true;
   platform: string;
@@ -42,6 +51,10 @@ export interface DesktopApi {
   /** The newer release GitHub has, or null if this build is already current. Cheap to call more
    * than once (see updateCheck.ts) — safe to call again after opening an editor unrelated to it. */
   checkForUpdate(): Promise<{ version: string; url: string } | null>;
+  /** Re-runs the same `docker info` probe preflight uses, on demand — how
+   * DockerStatusContext.tsx notices a stopped daemon coming back (or going down mid-session)
+   * without a restart. Cheap to poll: the shell de-dupes concurrent calls and caches briefly. */
+  checkDocker(): Promise<DesktopDockerStatus>;
   /** The per-launch pairing token backend.ts generated for the currently running backend, or
    * null between backends (e.g. mid-elevation) — see services/api.ts, which attaches it to
    * every request so the backend's require_auth_token dependency accepts them. */

@@ -7,6 +7,7 @@
  */
 import { contextBridge, ipcRenderer } from "electron";
 import type { ElevateFailureReason, ElevateOutcome } from "./backend";
+import type { DockerStatus } from "./prereqs";
 
 export type MenuAction =
   | "lab:new"
@@ -43,6 +44,11 @@ const api = {
   // out whatever's left of it — see main.ts's "update:check" handler for why not a push.
   checkForUpdate: (): Promise<{ version: string; url: string } | null> =>
     ipcRenderer.invoke("update:check"),
+
+  // Re-runs the `docker info` probe preflight uses, on demand — how DockerStatusContext.tsx
+  // notices a stopped daemon coming back (or going down mid-session) without a restart. Cheap to
+  // poll: main.ts's dockerStatus() de-dupes concurrent calls and caches briefly.
+  checkDocker: (): Promise<DockerStatus> => ipcRenderer.invoke("docker:check"),
 
   // The pairing token backend.ts generated for the currently running backend (or null between
   // backends), so the renderer's api.ts can attach it to every request instead of an arbitrary

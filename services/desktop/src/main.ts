@@ -48,7 +48,14 @@ import { buildMenu } from "./menu";
 import { defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
 import { isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
-import { runPreflight, type Check, type Preflight, type PreflightProgress } from "./prereqs";
+import {
+  checkDockerStatus,
+  runPreflight,
+  type Check,
+  type DockerStatus,
+  type Preflight,
+  type PreflightProgress,
+} from "./prereqs";
 import { checkForUpdate } from "./updateCheck";
 import {
   createMainWindow,
@@ -125,7 +132,10 @@ type Status =
     }
   | { state: "prereq-failed"; checks: Check[]; notice?: string }
   | { state: "backend-failed"; checks: Check[]; error: string; logTail: string }
-  | { state: "ready" };
+  // `advisories` carries forward whichever checks didn't block this boot (today, only ever a
+  // stopped Docker daemon) — see prereqs.ts's Preflight.advisories — so the renderer can warn
+  // about it without waiting on its own first "docker:check" round trip.
+  | { state: "ready"; advisories: Check[] };
 
 let win: BrowserWindow | null = null;
 let status: Status = { state: "starting", phase: "environment", message: "Starting…", startedAt: Date.now(), checks: [], firstRun: isFirstRun() };
@@ -133,6 +143,31 @@ let status: Status = { state: "starting", phase: "environment", message: "Starti
 let pendingDeepLink: string | null = null;
 /** The most recent preflight result, so status:install knows which system Python to use. */
 let lastPreflight: Preflight | null = null;
+
+/**
+ * The renderer's on-demand Docker recheck (docker:check below) is meant to be pollable — a
+ * DockerStatusContext in the SPA calls it every few seconds while Docker is down, so it notices
+ * the daemon coming back without the user having to do anything. A short cache plus in-flight
+ * join keeps that cheap and keeps concurrent callers (several windows, or a poll firing before
+ * the previous one's `docker info` round trip returned) from spawning a pile of subprocesses.
+ */
+let dockerCheckInFlight: Promise<DockerStatus> | null = null;
+let lastDockerCheck: { at: number; value: DockerStatus } | null = null;
+const DOCKER_CHECK_MIN_INTERVAL_MS = 2_000;
+
+function dockerStatus(): Promise<DockerStatus> {
+  if (dockerCheckInFlight) return dockerCheckInFlight;
+  if (lastDockerCheck && Date.now() - lastDockerCheck.at < DOCKER_CHECK_MIN_INTERVAL_MS) {
+    return Promise.resolve(lastDockerCheck.value);
+  }
+  dockerCheckInFlight = checkDockerStatus().finally(() => {
+    dockerCheckInFlight = null;
+  });
+  dockerCheckInFlight.then((value) => {
+    lastDockerCheck = { at: Date.now(), value };
+  });
+  return dockerCheckInFlight;
+}
 /**
  * Directories the *user* actually chose in the native folder dialog during this run, realpath'd.
  * `labs:set-dir` will only apply one of these (or the app's own default), because the renderer is
@@ -339,18 +374,21 @@ async function runStartup(resumePath?: string): Promise<void> {
   const preflight = await runPreflight(staticDir !== null, (p: PreflightProgress) =>
     setPhase(p.phase, PREFLIGHT_PHASE_MESSAGE[p.phase], { checks: p.checks }));
   lastPreflight = preflight;
-  if (!preflight.ok || !preflight.python || !staticDir) {
+  if (!preflight.canStart || !preflight.python || !staticDir) {
     // Nothing is missing except packages this app ships a wheel for, so install them instead of
     // parking on the setup page waiting for a click. That click used to be the only thing between
     // a fresh machine and a working app, and — now that the packages live inside the bundled
     // interpreter, which an app update replaces wholesale (install.ts) — it would also come back
     // after every update, asking the user to authorise the one thing the app can do by itself.
     //
-    // Docker is excluded from this check on purpose: installing the bundled wheel is a plain `pip
-    // install` into the app's own Python and needs nothing from Docker, so a missing or stopped
-    // Docker daemon must not block it — a user on a fresh machine with neither Docker nor the
-    // Python packages yet should still get the packages installed automatically, and land on a
-    // failure screen naming only the one thing the app truly can't do for them.
+    // Docker is excluded from this check on purpose, and by id rather than by severity: a
+    // *stopped* daemon is already advisory (preflight.canStart is true, so this branch isn't even
+    // reached for it — see the docker:check IPC below for how the SPA warns about it instead), but
+    // a *missing* one is still blocking, and installing the bundled wheel is a plain `pip install`
+    // into the app's own Python that needs nothing from Docker either way — a user on a fresh
+    // machine with neither Docker nor the Python packages yet should still get the packages
+    // installed automatically, and land on a failure screen naming only the one thing (an absent
+    // Docker) the app truly can't do for them.
     const nonDocker = preflight.checks.filter((c) => c.id !== "docker");
     if (
       app.isPackaged &&
@@ -410,7 +448,7 @@ async function runStartup(resumePath?: string): Promise<void> {
   setPhase("backend", "Starting the local Kathara API…", { checks: preflight.checks });
   try {
     const handle = await startBackend(preflight.python, staticDir);
-    setStatus({ state: "ready" });
+    setStatus({ state: "ready", advisories: preflight.advisories });
     await win.loadURL(resumePath ? `${handle.baseUrl}${resumePath}` : handle.baseUrl);
     if (pendingDeepLink) {
       handleDeepLink(win, pendingDeepLink);
@@ -482,7 +520,7 @@ function registerIpc(): void {
       // `resumeDeploy`, since the deploy must not silently retry after a failed elevation.
       const recovered = backendUrl();
       if (result.restarted && win && recovered) {
-        setStatus({ state: "ready" });
+        setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
         const url = new URL(recovered);
         if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
         await win.loadURL(url.toString());
@@ -490,7 +528,7 @@ function registerIpc(): void {
       return toElevateOutcome(result);
     }
 
-    setStatus({ state: "ready" });
+    setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
     if (win) {
       const url = new URL(result.handle.baseUrl);
       if (resumeLab) {
@@ -660,6 +698,11 @@ function registerIpc(): void {
   // before win.loadURL(handle.baseUrl) ever happens, and a message sent to a page that hasn't
   // registered a listener yet is simply lost, not queued.
   ipcMain.handle("update:check", () => checkForUpdate());
+
+  // Re-runs the same `docker info` probe preflight uses, on demand — this is how
+  // DockerStatusContext.tsx notices a stopped daemon coming back (or going down mid-session)
+  // without a restart. See dockerStatus() above for the cache/dedupe that keeps a poll cheap.
+  ipcMain.handle("docker:check", () => dockerStatus());
 
   ipcMain.handle("window:zoom", (_e, direction: "in" | "out" | "reset") => {
     const contents = win?.webContents;
