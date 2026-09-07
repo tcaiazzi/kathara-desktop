@@ -1,5 +1,7 @@
+import { ArrowLeft } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Form } from "react-bootstrap";
+import { Link } from "react-router-dom";
 import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
@@ -126,6 +128,26 @@ const SHARED_CDS_OPTIONS = [
 // in MB since that's the unit an operator actually thinks in.
 const BYTES_PER_MB = 1024 * 1024;
 
+// Settings is a full-page detour from the Workspace (no tab strip to click back through, and in
+// the Electron shell no navbar "Workspace" link either), so the way back is spelled out — once at
+// the top and again past the end of the form, which is long enough that the top one is scrolled
+// well out of view by the time the user is done.
+//
+// Plain "/workspace" rather than history.back(): the Workspace restores the last-open lab on its
+// own, so this lands where the user left off even when Settings was opened from the native menu or
+// a kathara:// deep link, with nothing to go back to.
+function BackToWorkspace({ className = "" }: { className?: string }) {
+  return (
+    <Link
+      to="/workspace"
+      className={`btn btn-sm btn-outline-secondary rounded-pill ps-2 pe-3 d-inline-flex align-items-center gap-2 ${className}`}
+    >
+      <ArrowLeft size={16} />
+      Back to Workspace
+    </Link>
+  );
+}
+
 // Kathara framework settings (GET/PUT /settings), not this app's own config. Most settings can
 // be changed at any time — the one exception is `manager_type`, which Kathara's own
 // Kathara.get_instance() picks once and can't swap out afterward for this backend process's
@@ -226,7 +248,10 @@ export function SettingsPage() {
   const managers = system?.available_managers ?? {};
 
   return (
-    <div className="container">
+    /* pt-4: the top bar sits flush against the page, so without it the first element here reads as
+       part of the bar rather than of the page. */
+    <div className="container pt-4">
+      <BackToWorkspace className="mb-4" />
       <h2>Settings</h2>
       <p className="text-muted">Kathara framework settings for this backend session.</p>
 
@@ -470,6 +495,10 @@ export function SettingsPage() {
           {busy ? "Saving..." : "Save Settings"}
         </Button>
       </Form>
+
+      <div className="border-top mt-4 pt-4">
+        <BackToWorkspace />
+      </div>
     </div>
   );
 }
