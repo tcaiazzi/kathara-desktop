@@ -9,7 +9,11 @@ class SystemInfo(BaseModel):
     """Environment information about the running Kathara manager."""
 
     manager: str
-    version: str
+    # None when the Docker daemon can't be reached: this is the *daemon's* version
+    # (`client.version()["Version"]`), the only field here that needs it. Every other field stays
+    # accurate with Docker stopped, which is why this endpoint answers instead of 503-ing — see
+    # `KatharaService.system_info`.
+    version: Optional[str] = None
     available_managers: dict[str, str]
     # Whether this process's real UID is 0 — Kathara's own gate for privileged devices
     # (DockerMachine.create -> Kathara.utils.is_admin()) checks the process's real UID, not

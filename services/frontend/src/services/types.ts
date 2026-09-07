@@ -11,7 +11,9 @@ export interface ErrorResponse {
 
 export interface SystemInfo {
   manager: string;
-  version: string;
+  // null when the backend can't reach the Docker daemon: this is the daemon's own version, the
+  // only field here that needs it. The rest stays accurate with Docker stopped.
+  version: string | null;
   available_managers: Record<string, string>;
   // Whether the backend process's real UID is 0 — Kathara's own gate for privileged devices
   // checks this, not Docker socket access. See ElevationContext.tsx.

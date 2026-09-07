@@ -31,6 +31,7 @@ from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 import fs.copy
 import fs.path
 from Kathara.exceptions import (
+    DockerDaemonConnectionError,
     InvocationError,
     LabNotFoundError,
     MachineNotFoundError,
@@ -74,6 +75,11 @@ logger = logging.getLogger("kathara_api")
 # names are validated against MACHINE_NAME_PATTERN (schemas/machine.py), which is lowercase-only.
 ROOT_MACHINE = "ROOT"
 
+# What Kathara's Docker manager calls itself — a `@staticmethod` returning this literal, so it holds
+# whether or not a daemon is reachable. Named here because `system_info` reports it from two places
+# (the active manager and the available-managers map) and they must not drift apart.
+_DOCKER_MANAGER_LABEL = "Docker (Kathara)"
+
 
 def _check_import_size(files: dict[str, str]) -> None:
     """Enforce the same file-count/size caps a gallery install already has (ApiSettings, config.py)
@@ -112,6 +118,13 @@ class KatharaService:
     # and too chatty to redo on every "Add device"/options-editor open in a long-lived UI session.
     _IMAGES_CACHE_TTL = 300
 
+    # How long a failed `Kathara.get_instance()` is remembered before the next call retries the
+    # connection. Deliberately short: it exists so that opening the app costs *one* connection
+    # attempt instead of one per read (nothing cached a failure before — see `_facade`), not to
+    # latch the process into an offline mode. Anything longer would keep reporting a lab as
+    # not-running for that long after the user starts Docker.
+    _FACADE_FAILURE_TTL = 3.0
+
     def __init__(self, store: Optional[LabStore] = None) -> None:
         self._instance: Optional[Kathara] = None
         self._mutate_lock = threading.RLock()
@@ -119,6 +132,11 @@ class KatharaService:
         self._images_cache: Optional[list[str]] = None
         self._images_cache_at: float = 0.0
         self._images_cache_lock = threading.Lock()
+        # The last `Kathara.get_instance()` failure and when it happened, so N reads during one app
+        # open cost one connection attempt rather than N — see `_facade`. Guarded by `_init_lock`,
+        # the same lock that serializes construction itself.
+        self._facade_error: Optional[DockerDaemonConnectionError] = None
+        self._facade_error_at: float = 0.0
         # Names of labs currently inside deploy_lab/undeploy_lab — see _check_not_transitioning.
         # A separate, always-uncontended lock, deliberately not `_mutate_lock`: deploy_lab holds
         # that one for the whole (potentially slow) facade call, so checking membership through it
@@ -189,8 +207,59 @@ class KatharaService:
         if self._instance is None:
             with self._init_lock:
                 if self._instance is None:
-                    self._instance = Kathara.get_instance()
+                    # Re-raise a recent failure instead of reconnecting. Kathara builds its Docker
+                    # client with `timeout=None` (DockerManager.__init__), so a daemon that accepts
+                    # the connection but never answers — Docker Desktop mid-start, or systemd
+                    # socket activation with docker.service stopped — makes this call hang with no
+                    # bound. Caching only success meant every single read paid that again; the TTL
+                    # is what still lets a recovered daemon be picked up.
+                    cached = self._facade_error
+                    if cached is not None:
+                        if time.monotonic() - self._facade_error_at < self._FACADE_FAILURE_TTL:
+                            raise cached
+                        self._facade_error = None
+                    try:
+                        self._instance = Kathara.get_instance()
+                    except DockerDaemonConnectionError as exc:
+                        self._facade_error = exc
+                        self._facade_error_at = time.monotonic()
+                        # Logged here rather than in `_facade_or_offline` so it fires once per
+                        # `_FACADE_FAILURE_TTL` window instead of once per request — this file is
+                        # what the desktop app invites users to share when reporting a problem.
+                        logger.info("Docker daemon unreachable (%s); serving lab state from disk.", exc)
+                        raise
         return self._instance
+
+    def _facade_or_offline(self) -> Optional[Kathara]:
+        """The facade, or ``None`` when the Docker daemon can't be reached. **Reads only.**
+
+        A lab's configuration lives on disk and needs no daemon to be described, so a stopped
+        Docker should cost the live "what is running?" overlay — not the whole response. Before
+        this, the three read paths turned a stopped daemon into a 503 that left the UI with nothing
+        at all: the frontend's whole dock area only mounts once a lab detail loads, so `lab.conf`,
+        the file editor and the topology — none of which involve Docker — were unreachable too.
+
+        Everything that genuinely needs Docker (deploy/undeploy, exec, stats, the runtime
+        filesystem, image pulls) keeps calling `_facade` directly and keeps failing loudly with
+        the 503 that `errors.py` maps `DockerDaemonConnectionError` to.
+        """
+        try:
+            return self._facade()
+        except DockerDaemonConnectionError:
+            return None
+
+    def _offline_lab_state(self, lab: Lab) -> Lab:
+        """Present ``lab`` as "nothing is running", for when the daemon can't be asked.
+
+        Necessary rather than a no-op: Kathara never clears ``api_object`` itself, and both
+        ``deployed`` and ``running`` are derived from it (``serializers._is_deployed`` /
+        ``machine_to_detail``) — so a lab that was up before the daemon went away would keep
+        claiming to be up. ``_clear_undeployed_state`` is the routine undeploy already uses for
+        exactly this reason. On a freshly started process it changes nothing, because
+        ``_reload_from_disk`` builds machines with no ``api_object`` to begin with.
+        """
+        self._clear_undeployed_state(lab, set(lab.machines))
+        return lab
 
     def apply_startup_settings(self, settings: dict[str, Any]) -> None:
         """Apply settings before the facade is created (used at app startup)."""
@@ -245,15 +314,22 @@ class KatharaService:
         return view
 
     def system_info(self) -> dict[str, Any]:
-        facade = self._facade()
+        facade = self._facade_or_offline()
         return {
-            "manager": facade.get_formatted_manager_name(),
-            "version": facade.get_release_version(),
+            # A `@staticmethod` in Kathara's Docker manager returning exactly this string, so it
+            # stays correct with the daemon down — hence the same constant either way.
+            "manager": facade.get_formatted_manager_name() if facade is not None else _DOCKER_MANAGER_LABEL,
+            # The one field here that genuinely needs Docker: it is `client.version()["Version"]`,
+            # i.e. the *daemon's* version, not Kathara's. None when the daemon can't be asked —
+            # see `SystemInfo.version`.
+            "version": facade.get_release_version() if facade is not None else None,
             # Hardcoded rather than `Kathara.get_available_managers_name()`: that call eagerly
             # imports Kathara's Kubernetes manager (and the 80MB+ `kubernetes` package) even
-            # though this app only ever drives Docker. Keep the label identical to what Kathara
-            # itself reports for "docker" so the UI is unaffected for the one manager we support.
-            "available_managers": {"docker": "Docker (Kathara)"},
+            # though this app only ever drives Docker.
+            "available_managers": {"docker": _DOCKER_MANAGER_LABEL},
+            # A plain real-UID check (Kathara.utils.is_admin), no daemon involved — which is why
+            # this endpoint degrading matters: it is the field the frontend actually consumes
+            # (hooks/useIsAdmin.ts), and it used to be lost with the rest of the 503.
             "is_admin": is_admin(),
         }
 
@@ -1216,8 +1292,13 @@ class KatharaService:
         """
         lab = self.registry.get(name)
         if lab is not None:
+            facade = self._facade_or_offline()
+            if facade is None:
+                # Docker is unreachable: the registered model came from disk and is the whole
+                # answer, minus the live overlay. See _facade_or_offline/_offline_lab_state.
+                return self._offline_lab_state(lab)
             try:
-                self._facade().update_lab_from_api(lab)
+                facade.update_lab_from_api(lab)
             except LabNotFoundError:
                 # Some managers raise when nothing is running under this name; the Docker manager
                 # instead enriches with whatever containers exist (none) and never raises. Either
@@ -1225,9 +1306,14 @@ class KatharaService:
                 pass
             return lab
 
-        # Not registered: try to rebuild from the running backend state.
+        # Not registered: try to rebuild from the running backend state. Nothing to fall back on
+        # here — an unregistered lab exists only as running containers, so with no daemon to ask
+        # there is genuinely no such lab, which is the same 404 as "nothing is running under it".
+        facade = self._facade_or_offline()
+        if facade is None:
+            raise LabNotFoundError(f"Lab `{name}` not found.")
         try:
-            reconstructed = self._facade().get_lab_from_api(lab_name=name)
+            reconstructed = facade.get_lab_from_api(lab_name=name)
         except LabNotFoundError as exc:
             raise LabNotFoundError(f"Lab `{name}` not found.") from exc
 
@@ -1238,9 +1324,13 @@ class KatharaService:
 
     def list_labs(self) -> list[Lab]:
         labs = self.registry.all()
+        facade = self._facade_or_offline()
+        if facade is None:
+            # Docker unreachable: still list every lab on disk, just with nothing marked running.
+            return [self._offline_lab_state(lab) for lab in labs]
         for lab in labs:
             try:
-                self._facade().update_lab_from_api(lab)
+                facade.update_lab_from_api(lab)
             except LabNotFoundError:
                 pass
         return labs

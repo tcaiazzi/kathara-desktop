@@ -596,12 +596,14 @@ export function WorkspacePage() {
     reloadLabs();
   }, [reloadLabs]);
 
-  // Docker being installed-but-stopped when the app first fetches labs/lab-detail makes those
-  // requests 500 (they reach into the Docker-backed Kathara facade) and leaves `labs`/`detail`
-  // stuck at their initial `null` forever — the health badge only proves the FastAPI process is
-  // alive, not that Docker answers, so it never signals this. useDockerStatus() is the one thing
-  // that actually polls real Docker readiness; retry the failed loads the moment it recovers
-  // instead of leaving the workspace waiting on a manual reload. Only a genuine
+  // Docker being installed-but-stopped no longer makes those fetches fail: the backend now answers
+  // them from the on-disk model with nothing marked running (KatharaService._facade_or_offline), so
+  // the workspace opens and everything that doesn't need a daemon still works. What it *can't*
+  // report is live state, so a lab that comes up while the app is open would keep showing as
+  // stopped. The health badge only proves the FastAPI process is alive, not that Docker answers, so
+  // it never signals this; useDockerStatus() is the one thing that polls real Docker readiness, so
+  // reload on recovery to pick up the live state (and to recover the genuinely failed loads from a
+  // backend older than that change, or any other error). Only a genuine
   // "stopped"/"missing" -> "ok" transition qualifies — the initial `null` -> "ok" resolution on a
   // normal startup would just duplicate the mount-time fetch above.
   const prevDockerState = useRef<DesktopDockerStatus["state"] | null>(null);
