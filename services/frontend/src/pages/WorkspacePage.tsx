@@ -249,7 +249,9 @@ const LS_LAST_LAB = "kt-ws-last-lab";
 // Left explorer (rail) resize bounds.
 const RAIL_MIN_W = 180;
 const RAIL_MAX_W = 560;
-const RAIL_DEFAULT_W = 264;
+// Comfortably above IMPORT_ROW_COMPACT_WIDTH (plus the rail's own 10px side padding) so a fresh
+// install never shows the import row's compact dropdown at startup — only a manually narrowed rail.
+const RAIL_DEFAULT_W = 300;
 
 // The manual per-group "Collapse panel" toggle shrinks a group to (about) its header height;
 // clicking it again (or its header strip) restores it to a usable height.
@@ -261,6 +263,11 @@ const COLLAPSE_THRESHOLD = 60;
 // Below this width, the lab header's action row (Terminal/Layout/Deploy/Download/Delete) collapses
 // into a single dropdown — see the `compactActions` header ref below.
 const HEADER_ACTIONS_COMPACT_WIDTH = 900;
+
+// Below this width, the rail's import row (New/Upload/Browse) collapses into a single "Add Lab"
+// dropdown instead of squeezing/deforming — same pattern as compactActions above. ~242px is the
+// row's natural unsquished width (3 sm buttons, icon+label); padded for font-rendering variance.
+const IMPORT_ROW_COMPACT_WIDTH = 260;
 
 // Fraction of the total width the topology column gets when it's first split off from the left
 // tab group — matches the shipped default screenshot (topology noticeably wider than the tabs).
@@ -512,6 +519,8 @@ export function WorkspacePage() {
   // since this reacts to the sidebar being resized too, not just the browser window.
   const { ref: headerRef, width: headerWidth } = useElementSize<HTMLElement>();
   const compactActions = headerWidth > 0 && headerWidth < HEADER_ACTIONS_COMPACT_WIDTH;
+  const { ref: importRowRef, width: importRowWidth } = useElementSize<HTMLDivElement>();
+  const compactImportRow = importRowWidth > 0 && importRowWidth < IMPORT_ROW_COMPACT_WIDTH;
   const didRedirect = useRef(false);
   const setTourReady = useOnboardingTourReady();
   const { requestTour } = useOnboardingTour();
@@ -1021,37 +1030,69 @@ export function WorkspacePage() {
                 </svg>
               </button>
             </div>
-            <div className="d-flex gap-1 mb-2" data-tour="import-row">
-              <Button
-                size="sm"
-                variant="primary"
-                className="flex-fill"
-                onClick={() => setShowNew(true)}
-                title="Create a new empty lab from scratch"
-              >
-                <Plus size={14} className="me-1" />
-                New
-              </Button>
-              <Button
-                size="sm"
-                variant="outline-secondary"
-                className="flex-fill"
-                onClick={() => setShowUpload(true)}
-                title="Upload a lab from a .zip archive or folder on your computer"
-              >
-                <Upload size={14} className="me-1" />
-                Upload
-              </Button>
-              <Button
-                size="sm"
-                variant="outline-secondary"
-                className="flex-fill"
-                onClick={() => setShowGallery(true)}
-                title="Browse and import a ready-made lab from the Kathara-Labs gallery"
-              >
-                <Globe size={14} className="me-1" />
-                Browse
-              </Button>
+            <div className="d-flex gap-1 mb-2" data-tour="import-row" ref={importRowRef}>
+              {compactImportRow ? (
+                // DropdownButton's own `className` only reaches its outer wrapper, not the visible
+                // toggle button (see react-bootstrap's DropdownButton source), so a plain w-100
+                // there leaves the button itself content-sized — build it from Dropdown +
+                // Dropdown.Toggle instead so the toggle can be widened directly, matching the
+                // full-width "Wipe All Labs" button below it.
+                <Dropdown className="w-100">
+                  <Dropdown.Toggle size="sm" variant="primary" className="w-100">
+                    <span className="d-inline-flex align-items-center gap-1">
+                      <Plus size={14} />
+                      Add Lab
+                    </span>
+                  </Dropdown.Toggle>
+                  <Dropdown.Menu className="w-100">
+                    <Dropdown.Item onClick={() => setShowNew(true)}>
+                      <Plus size={14} className="me-2" />
+                      New lab
+                    </Dropdown.Item>
+                    <Dropdown.Item onClick={() => setShowUpload(true)}>
+                      <Upload size={14} className="me-2" />
+                      Upload lab
+                    </Dropdown.Item>
+                    <Dropdown.Item onClick={() => setShowGallery(true)}>
+                      <Globe size={14} className="me-2" />
+                      Browse Kathara-Labs
+                    </Dropdown.Item>
+                  </Dropdown.Menu>
+                </Dropdown>
+              ) : (
+                <>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    className="flex-fill"
+                    onClick={() => setShowNew(true)}
+                    title="Create a new empty lab from scratch"
+                  >
+                    <Plus size={14} className="me-1" />
+                    New
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    className="flex-fill"
+                    onClick={() => setShowUpload(true)}
+                    title="Upload a lab from a .zip archive or folder on your computer"
+                  >
+                    <Upload size={14} className="me-1" />
+                    Upload
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    className="flex-fill"
+                    onClick={() => setShowGallery(true)}
+                    title="Browse and import a ready-made lab from the Kathara-Labs gallery"
+                  >
+                    <Globe size={14} className="me-1" />
+                    Browse
+                  </Button>
+                </>
+              )}
             </div>
             {/* Hidden with no labs: on a first run this red, destructive button was the most
                 prominent control on an otherwise empty screen. Deliberately gated on "has labs"
