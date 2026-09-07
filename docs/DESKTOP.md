@@ -115,12 +115,17 @@ hand.
 
 - **Custom title bar.** The window has no native title bar (`titleBarStyle: "hidden"`): the app
   draws a single strip carrying the brand, the menu, the window title and the status badge, the
-  way VS Code does — instead of a native title bar with a native menu bar stacked under it. The
-  window controls come back as the overlay Chromium paints over that strip on Windows and Linux,
-  and as the inset traffic lights on macOS. The strip measures the overlay at runtime
-  (`navigator.windowControlsOverlay`, re-measured on `geometrychange`) so its height and its
-  right-hand inset always match the real buttons, and it re-colours the overlay when the theme is
-  flipped. The whole strip drags the window; interactive parts opt out with `.kt-titlebar-nodrag`.
+  way VS Code does — instead of a native title bar with a native menu bar stacked under it. On
+  macOS that leaves the native traffic lights inset over the strip, and nothing more to do. On
+  Windows and Linux it leaves *no* native window controls at all, and no `titleBarOverlay` is
+  requested either: Chromium's overlay buttons take only a background and a symbol colour, not a
+  different icon style, which is exactly what looked out of place. `desktop/TitleBar.tsx` draws its
+  own minimize/maximize/close buttons there instead (again VS Code's approach), driven by the
+  `window:minimize`/`maximize`/`unmaximize`/`close` IPC; the maximize/restore icon follows the real
+  window through the `window:state` push, so it stays right however the state changed — including a
+  double-click on the strip or a keyboard shortcut. `build/setup.html` and `build/splash.html`, which
+  load before the SPA exists, prepend their own minimize/close pair for the same reason. The whole
+  strip drags the window; interactive parts opt out with `.kt-titlebar-nodrag`.
 - **The menu (File / Lab / View / Help) is rendered in HTML** (`desktop/TitleBar.tsx`) and
   dispatches through the same command registry the native menu uses, so both paths run one
   implementation. The native `Menu` stays registered but its bar is hidden, because that `Menu`

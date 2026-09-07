@@ -16,7 +16,7 @@
     "build:frontend": "npm --prefix ../frontend run build",
     "build": "npm run typecheck && npm run build:shell",
     "start": "npm run build:shell && node scripts/start.mjs",
-    "dist": "npm run build:frontend && npm run build && electron-builder --config electron-builder.yml",
+    "dist": "npm run build:frontend && npm run build && node scripts/dist.mjs",
     "dist:linux": "npm run dist -- --linux",
     "dist:mac": "npm run dist -- --mac",
     "dist:win": "npm run dist -- --win",

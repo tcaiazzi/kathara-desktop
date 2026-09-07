@@ -85,6 +85,11 @@ npm --prefix services/desktop run dist:win     # NSIS installer
 Artifacts land in `services/desktop/release/`. Each target must be built on its own platform
 (`.dmg` requires macOS, `.deb` an x86_64 host) — see [docs/DESKTOP.md](docs/DESKTOP.md) for why.
 
+`make dist-linux` / `dist-mac` / `dist-win` does the whole sequence above in one step — installing
+the npm dependencies, building the backend wheel and fetching the interpreter before packaging —
+mirroring what the release workflow runs. Use it unless you specifically want to repackage without
+rebuilding the wheel.
+
 `services/desktop/resources/icon.png` is generated from the frontend's Kathara logo by
 `services/desktop/scripts/make-icon.py` (standard library only — no Pillow or ImageMagick
 needed); re-run it from `services/desktop` if the logo changes.
