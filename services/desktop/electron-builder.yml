@@ -55,6 +55,33 @@ linux:
   category: Development
   synopsis: Desktop app for the Kathara network emulation framework
   icon: resources/icon.png
+  # Ties the installed .desktop filename to package.json's `desktopName`
+  # ("kathara-desktop.desktop"), which is also what Electron passes to app.setDesktopName() and
+  # therefore what the window's app_id/WM_CLASS becomes. All three have to agree for a desktop
+  # environment to group a running window under this launcher instead of showing it as a separate,
+  # icon-less entry — and without `desktopName` they did not: the file was named after
+  # `executableName` ("kathara-desktop", from package.json's `name`), StartupWMClass after this
+  # file's productName ("Kathara-Desktop"), and the runtime app_id after package.json's productName
+  # ("Kathara Desktop"). `desktopName` is what fixes the Linux window identity without calling
+  # app.setName(), which src/main.ts deliberately avoids because it would also rename the macOS
+  # menu-bar and Dock label.
+  #
+  # This key is a no-op today — `desktopName` and `executableName` resolve to the same
+  # "kathara-desktop", so the filename is unchanged (and the kathara:// scheme handler, registered
+  # by desktop-file id, keeps working). It is set anyway so the two are *held* equal rather than
+  # coincidentally equal if `name`/`productName` ever diverge, and because electron-builder v27
+  # makes `true` the default.
+  syncDesktopName: true
+  # The launcher label the user actually reads. It otherwise defaults to productName, which is
+  # hyphenated on purpose so every artifact filename comes out space-free (see nsis.artifactName
+  # below) — a good reason for a filename and a bad one for a menu entry, which was showing
+  # "Kathara-Desktop". Overriding just this key keeps both: the label reads naturally while the
+  # .deb/.rpm/AppImage filenames stay hyphenated. `entry` is deep-assigned over the computed
+  # values, so nothing else in the file changes; note that Exec cannot be set here (electron-builder
+  # rejects it — use linux.executableName instead).
+  desktop:
+    entry:
+      Name: Kathara Desktop
   # The interpreter bundled for *this* build's arch only (fetched by scripts/fetch-python.mjs into
   # vendor/python-linux-<arch>/ — see paths.ts's bundledPythonPath()). ${arch} is expanded by
   # electron-builder per packaged target, so an x64 install never carries the arm64 interpreter
@@ -109,6 +136,12 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  # Visible labels, not filenames — the Start-menu/desktop shortcut and the "Installed apps" entry.
+  # Both default to productName, hyphenated for the filename reason below, which read as
+  # "Kathara-Desktop" and "Kathara-Desktop 0.1.4". Same override as linux.desktop.entry.Name above:
+  # the labels read naturally, the artifact filenames stay space-free.
+  shortcutName: Kathara Desktop
+  uninstallDisplayName: Kathara Desktop ${version}
   # electron-builder's own NSIS default is "${productName} Setup ${version}.${ext}" — a literal
   # space before "Setup" regardless of productName's own formatting. Override it so every OS
   # produces a space-free artifact filename, matching the hyphenated default template
