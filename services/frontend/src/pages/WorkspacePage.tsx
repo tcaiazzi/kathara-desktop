@@ -11,6 +11,7 @@ import {
 } from "dockview-react";
 import "dockview-react/dist/styles/dockview.css";
 import {
+  AlertTriangle,
   Download,
   Globe,
   LayoutGrid,
@@ -19,6 +20,7 @@ import {
   MoreHorizontal,
   Play,
   Plus,
+  RefreshCw,
   ShieldAlert,
   Square,
   SquareTerminal,
@@ -1156,14 +1158,16 @@ export function WorkspacePage() {
                 />
                 <div className="kt-ws-list">
                   {labs == null && labsError ? (
-                    <div className="kt-ws-muted">
-                      {labsError}
+                    <div className="kt-ws-error">
+                      <AlertTriangle size={15} className="kt-ws-error-icon" />
+                      <p className="kt-ws-error-text">{labsError}</p>
                       <Button
-                        variant="outline-secondary"
+                        variant="outline-danger"
                         size="sm"
-                        className="ms-2"
+                        className="kt-ws-error-retry"
                         onClick={() => void reloadLabs()}
                       >
+                        <RefreshCw size={13} className="me-1" />
                         Retry
                       </Button>
                     </div>

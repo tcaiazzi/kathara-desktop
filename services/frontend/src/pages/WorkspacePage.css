@@ -212,6 +212,32 @@
   padding: 4px 2px;
 }
 
+/* Sidebar error card (e.g. lab-list load failure) — distinct from the plain .kt-ws-muted rows so
+   it reads as "something went wrong", not just an empty/loading state. */
+.kt-ws-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--bs-danger) 35%, var(--bs-border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bs-danger) 8%, transparent);
+}
+.kt-ws-error-icon {
+  color: var(--bs-danger);
+  flex: 0 0 auto;
+}
+.kt-ws-error-text {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--bs-body-color);
+}
+.kt-ws-error-retry {
+  align-self: stretch;
+}
+
 /* ---- Main column ---- */
 .kt-ws-main {
   flex: 1;
