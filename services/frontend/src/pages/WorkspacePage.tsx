@@ -46,7 +46,8 @@ import { TopologyGraph } from "../components/TopologyGraph";
 import { UploadLabModal } from "../components/UploadLabModal";
 import { WelcomeScreen } from "../components/WelcomeScreen";
 import { useDesktopCommand } from "../desktop/DesktopCommands";
-import { desktop, isDesktop } from "../desktop/bridge";
+import { desktop, isDesktop, type DesktopDockerStatus } from "../desktop/bridge";
+import { useDockerStatus } from "../desktop/DockerStatusContext";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import {
@@ -487,9 +488,11 @@ export function WorkspacePage() {
   const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
+  const [labsError, setLabsError] = useState<string | null>(null);
   const [labFilter, setLabFilter] = useState("");
   const [labPickerOpen, setLabPickerOpen] = useState(false);
   const [detail, setDetail] = useState<LabDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   // Mirrors `detail` for onDockReady (stable `useCallback([])`, so it can't read fresh state from
   // its own closure) to prune restored terminals against, without changing onDockReady's identity.
   const detailRef = useRef(detail);
@@ -547,10 +550,12 @@ export function WorkspacePage() {
   }, []);
 
   const reloadLabs = useCallback(async () => {
+    setLabsError(null);
     try {
       setLabs(await api.listLabs());
     } catch (e) {
       toast.reportError("List labs", e);
+      setLabsError(e instanceof ApiError ? e.message : "Couldn't load labs.");
     }
   }, [toast]);
 
@@ -564,8 +569,10 @@ export function WorkspacePage() {
     if (!name) {
       setDetail(null);
       setNotFound(false);
+      setDetailError(null);
       return;
     }
+    setDetailError(null);
     try {
       const nextDetail = await api.getLab(name);
       if (loadGenRef.current !== gen) return;
@@ -579,12 +586,33 @@ export function WorkspacePage() {
         return;
       }
       toast.reportError("Load lab", e);
+      setDetailError(e instanceof ApiError ? e.message : "Couldn't load this lab.");
     }
   }, [name, toast]);
 
   useEffect(() => {
     reloadLabs();
   }, [reloadLabs]);
+
+  // Docker being installed-but-stopped when the app first fetches labs/lab-detail makes those
+  // requests 500 (they reach into the Docker-backed Kathara facade) and leaves `labs`/`detail`
+  // stuck at their initial `null` forever — the health badge only proves the FastAPI process is
+  // alive, not that Docker answers, so it never signals this. useDockerStatus() is the one thing
+  // that actually polls real Docker readiness; retry the failed loads the moment it recovers
+  // instead of leaving the workspace waiting on a manual reload. Only a genuine
+  // "stopped"/"missing" -> "ok" transition qualifies — the initial `null` -> "ok" resolution on a
+  // normal startup would just duplicate the mount-time fetch above.
+  const prevDockerState = useRef<DesktopDockerStatus["state"] | null>(null);
+  const dockerStatus = useDockerStatus();
+  useEffect(() => {
+    const prev = prevDockerState.current;
+    const next = dockerStatus?.state ?? null;
+    if (prev && prev !== "ok" && next === "ok") {
+      void reloadLabs();
+      if (name) void load();
+    }
+    prevDockerState.current = next;
+  }, [dockerStatus?.state, reloadLabs, load, name]);
 
   useEffect(() => {
     setDetail(null);
@@ -1123,7 +1151,19 @@ export function WorkspacePage() {
                   className="mb-2"
                 />
                 <div className="kt-ws-list">
-                  {labs == null ? (
+                  {labs == null && labsError ? (
+                    <div className="kt-ws-muted">
+                      {labsError}
+                      <Button
+                        variant="outline-secondary"
+                        size="sm"
+                        className="ms-2"
+                        onClick={() => void reloadLabs()}
+                      >
+                        Retry
+                      </Button>
+                    </div>
+                  ) : labs == null ? (
                     <div className="kt-ws-muted">Loading…</div>
                   ) : filteredLabs && filteredLabs.length === 0 ? (
                     <div className="kt-ws-muted">{labs.length === 0 ? "No labs yet." : "No matches."}</div>
@@ -1431,7 +1471,9 @@ export function WorkspacePage() {
               </div>
             </>
           ) : (
-            <h5 className="mb-0 kt-ws-muted">{notFound ? `Lab "${name}" not found` : "No lab selected"}</h5>
+            <h5 className="mb-0 kt-ws-muted">
+              {notFound ? `Lab "${name}" not found` : name && detailError ? `Couldn't load "${name}"` : "No lab selected"}
+            </h5>
           )}
         </header>
 
@@ -1457,6 +1499,13 @@ export function WorkspacePage() {
               <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
                 <X size={14} className="me-1" />
                 Clear Selection
+              </Button>
+            </div>
+          ) : name && detailError ? (
+            <div className="kt-ws-empty">
+              <p className="kt-ws-muted">{detailError}</p>
+              <Button size="sm" variant="outline-secondary" onClick={() => void load()}>
+                Retry
               </Button>
             </div>
           ) : showWelcome ? (
