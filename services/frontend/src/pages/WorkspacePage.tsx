@@ -1264,9 +1264,13 @@ export function WorkspacePage() {
           {detail ? (
             <>
               <h5
-                className="mb-0 me-1"
-                style={{ cursor: "pointer" }}
-                title={detail.deployed ? "Undeploy the lab to rename it" : "Click to rename"}
+                className="mb-0 me-1 text-truncate"
+                style={{ cursor: "pointer", minWidth: 0 }}
+                title={
+                  detail.deployed
+                    ? "Undeploy the lab to rename it"
+                    : `${detail.name || "(unnamed)"} — click to rename`
+                }
                 onClick={() => {
                   if (detail.deployed) {
                     toast.show("Undeploy the lab to rename it.", "info");
@@ -1277,19 +1281,21 @@ export function WorkspacePage() {
               >
                 {detail.name || "(unnamed)"}
               </h5>
-              <Badge bg={detail.deployed ? "success" : "secondary"}>{detail.deployed ? "deployed" : "undeployed"}</Badge>
+              <Badge bg={detail.deployed ? "success" : "secondary"} className="flex-shrink-0">
+                {detail.deployed ? "deployed" : "undeployed"}
+              </Badge>
               {detail.machines.some((m) => m.privileged) && (
                 <Badge
                   bg="warning"
                   text="dark"
-                  className="d-flex align-items-center gap-1"
+                  className="d-flex align-items-center gap-1 flex-shrink-0"
                   title="This lab has privileged devices — deploying it requires administrator privileges."
                 >
                   <ShieldAlert size={12} />
                   privileged
                 </Badge>
               )}
-              <div className="ms-auto d-flex gap-2">
+              <div className="ms-auto d-flex gap-2 flex-shrink-0">
                 {compactActions ? (
                   <>
                     <DropdownButton
