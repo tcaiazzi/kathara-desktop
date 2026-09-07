@@ -74,11 +74,11 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 | Situation | HTTP |
 |---|---|
 | `LabNotFoundError`, `MachineNotFoundError`, `LinkNotFoundError`, `DockerImageNotFoundError`, `InterfaceNotFoundError` | 404 |
-| `*AlreadyExistsError`, `MachineNotRunningError`, `MachineNotReadyError`, `EmptyLabError`, settings/lab.conf locked | 409 |
+| `*AlreadyExistsError`, `MachineNotRunningError`, `MachineNotReadyError`, `EmptyLabError`, `ImagePullBusyError`, settings/lab.conf locked | 409 |
 | `InvocationError`, `MachineOptionError`, `MachineCollisionDomainError`, `NotSupportedError`, … | 400 |
 | `SyntaxError` (invalid device name / lab.conf value) | 422 |
 | `DockerDaemonConnectionError`, builtin `ConnectionError` (registry unreachable) | 503 |
-| `HTTPConnectionError`, `DockerPluginError` | 502 |
+| `HTTPConnectionError`, `DockerPluginError`, `ImagePullError` (a pull stream reported a failure) | 502 |
 | anything else | 500 |
 
 Errors return `{"detail": str, "error_type": str}`.
@@ -97,6 +97,8 @@ Errors return `{"detail": str, "error_type": str}`.
 | POST | `/api/system/shutdown` | Gracefully stop this process (SIGTERM). The desktop shell's only way to stop a `sudo`-elevated backend, which it can no longer signal across the privilege boundary | — | `Message` |
 | GET | `/api/system/sysctls` | Every `net.*` sysctl key this host's kernel exposes (the only namespace Kathara accepts) | — | `string[]` |
 | GET | `/api/system/images` | Official Kathara images on Docker Hub, as suggestions (502 if Docker Hub is unreachable — callers should treat that as non-fatal) | — | `string[]` |
+| POST | `/api/images/pull` | Download the given images, then return (409 if a download is already running). Synchronous by design: clients fire it *without* awaiting and poll the progress endpoint below, using this request's own completion as the authoritative "done" | `ImagePullRequest {images}` | `ImagePullResult {pulled}` |
+| GET | `/api/images/pull/progress` | Snapshot of the single in-flight download, or an idle one (`active` false). Never 404s, and takes no `KatharaService` dependency so it can always answer while a download or deploy holds the service | — | `ImagePullProgress` |
 
 ## Labs — `/api/labs`
 
@@ -128,6 +130,7 @@ Errors return `{"detail": str, "error_type": str}`.
 | POST | `/api/labs/{lab}/fs/upload` | Upload a file (binary-safe; `lab.conf` routes to the same validating apply as `PUT lab-conf`, and must be UTF-8) | multipart: `path`, `file` | `FsUploadResponse` |
 | GET | `/api/labs/{lab}/fs/download` | Download a file (octet-stream) | `?path=` | binary |
 | GET | `/api/labs/{lab}/fs/startups` | Each device's real `<name>.startup` content (`""` if absent) — backs the topology node-info preview | — | `{machine: string}` |
+| GET | `/api/labs/{lab}/images` | Which of this lab's device images are missing locally and which have a newer version upstream — call it immediately before a deploy so the download is its own consented step instead of a silent pull inside `POST .../deploy`. Callers must treat *any* failure as "deploy anyway". Costs one registry round-trip per present image (bounded, parallel) unless `image_update_policy` is `Never` | — | `LabImagesStatus` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
 | POST | `/api/labs/{lab}/rename` | Rename the lab directory (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` |

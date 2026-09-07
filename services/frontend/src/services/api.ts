@@ -5,9 +5,12 @@ import type {
   FsListResponse,
   FsReadTextResponse,
   FsUploadResponse,
+  ImagePullProgress,
+  ImagePullResult,
   LabConfView,
   LabCreate,
   LabDetail,
+  LabImagesStatus,
   LabImportResult,
   LabLayout,
   LabSummary,
@@ -297,6 +300,19 @@ export const api = {
       "GET",
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/startup-status`,
     ),
+
+  // -- Docker images: the pre-deploy check and the explicit download ---------------------------
+  // Called immediately before a deploy so the download can be its own visible, consented step
+  // instead of happening silently inside POST /deploy. Callers must treat any failure here as
+  // "carry on and deploy anyway" (see getLabImagesOrNull in useLabLifecycleActions).
+  getLabImages: (labName: string) =>
+    request<LabImagesStatus>("GET", `/labs/${encodeURIComponent(labName)}/images`),
+  // Fire-and-poll: this resolves only when the whole download is done, so callers start it
+  // without awaiting and poll getImagePullProgress for the bar, using this promise as the
+  // authoritative completion signal.
+  pullImages: (images: string[]) =>
+    request<ImagePullResult>("POST", "/images/pull", { images }),
+  getImagePullProgress: () => request<ImagePullProgress>("GET", "/images/pull/progress"),
 
   // Shells actually available in a running device (for the live-terminal picker).
   listShells: (labName: string, machineName: string) =>

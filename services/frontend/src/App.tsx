@@ -2,6 +2,7 @@ import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AppNavbar } from "./components/AppNavbar";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { ConfirmProvider } from "./context/ConfirmContext";
+import { ImageDownloadProvider } from "./context/ImageDownloadContext";
 import { OnboardingTourProvider } from "./context/OnboardingTourContext";
 import { isDesktop } from "./desktop/bridge";
 import { DesktopCommandsProvider } from "./desktop/DesktopCommands";
@@ -53,39 +54,45 @@ export function App() {
     <ToastProvider>
       <ConfirmProvider>
         <PromptProvider>
-          {/* Inert in the browser build (no backend process for the page to elevate) — see
-              ElevationContext.tsx. */}
-          <ElevationProvider>
-            {/* A second, unrelated Linux-only prompt (see ReclaimLabsDirContext.tsx) — kept as
-                its own provider rather than folded into ElevationProvider above, since it isn't
-                gating a deploy the way that one is. Inert in the browser build too. */}
-            <ReclaimLabsDirProvider>
-              {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
-                  commands. Inert in the browser build. */}
-              <OnboardingTourProvider>
-                <DesktopCommandsProvider>
-                  <UpdateChecker />
-                  {/* Owns the driver.js instance for the first-use tour (Help menu / navbar can
-                      replay it); renders nothing itself. */}
-                  <OnboardingTour />
-                  <Routes>
-                    {/* The Workspace is the app; "/" redirects into it. */}
-                    <Route path="/" element={<Navigate to="/workspace" replace />} />
-                    <Route element={<AppLayout />}>
-                      <Route path="/settings" element={<SettingsPage />} />
-                    </Route>
-                    <Route element={<AppLayoutFull />}>
-                      <Route path="/workspace" element={<WorkspacePage />} />
-                      <Route path="/workspace/:name" element={<WorkspacePage />} />
-                    </Route>
-                    {/* No AppLayout: opened as its own bare browser window/tab (see
-                        services/terminalWindow.ts), not navigated to within the app shell. */}
-                    <Route path="/labs/:name/terminal/:machine" element={<TerminalWindowPage />} />
-                  </Routes>
-                </DesktopCommandsProvider>
-              </OnboardingTourProvider>
-            </ReclaimLabsDirProvider>
-          </ElevationProvider>
+          {/* Owns the pre-deploy Docker image flow: the confirmation, the download progress,
+              and the "ready to deploy" message. `deployToggle` awaits it before the privilege
+              prompt below — there is no point elevating the backend and then spending minutes
+              downloading. */}
+          <ImageDownloadProvider>
+            {/* Inert in the browser build (no backend process for the page to elevate) — see
+                ElevationContext.tsx. */}
+            <ElevationProvider>
+              {/* A second, unrelated Linux-only prompt (see ReclaimLabsDirContext.tsx) — kept as
+                  its own provider rather than folded into ElevationProvider above, since it isn't
+                  gating a deploy the way that one is. Inert in the browser build too. */}
+              <ReclaimLabsDirProvider>
+                {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
+                    commands. Inert in the browser build. */}
+                <OnboardingTourProvider>
+                  <DesktopCommandsProvider>
+                    <UpdateChecker />
+                    {/* Owns the driver.js instance for the first-use tour (Help menu / navbar can
+                        replay it); renders nothing itself. */}
+                    <OnboardingTour />
+                    <Routes>
+                      {/* The Workspace is the app; "/" redirects into it. */}
+                      <Route path="/" element={<Navigate to="/workspace" replace />} />
+                      <Route element={<AppLayout />}>
+                        <Route path="/settings" element={<SettingsPage />} />
+                      </Route>
+                      <Route element={<AppLayoutFull />}>
+                        <Route path="/workspace" element={<WorkspacePage />} />
+                        <Route path="/workspace/:name" element={<WorkspacePage />} />
+                      </Route>
+                      {/* No AppLayout: opened as its own bare browser window/tab (see
+                          services/terminalWindow.ts), not navigated to within the app shell. */}
+                      <Route path="/labs/:name/terminal/:machine" element={<TerminalWindowPage />} />
+                    </Routes>
+                  </DesktopCommandsProvider>
+                </OnboardingTourProvider>
+              </ReclaimLabsDirProvider>
+            </ElevationProvider>
+          </ImageDownloadProvider>
         </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>

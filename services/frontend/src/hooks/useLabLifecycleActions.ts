@@ -1,18 +1,37 @@
 import { useCallback } from "react";
 import { useConfirm } from "../context/ConfirmContext";
+import { useImageDownload } from "../context/ImageDownloadContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
 import { desktop } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
-import type { VolumeMount } from "../services/types";
+import type { LabImagesStatus, VolumeMount } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
 
 const PRIVILEGE_CANCELLED_MESSAGE =
   "Deploy cancelled — this lab has privileged devices and needs administrator privileges.";
 const VOLUME_CANCELLED_MESSAGE =
   "Deploy cancelled — this lab mounts host directories and needs confirmation.";
+
+/**
+ * The image pre-check, with every failure turned into `null`.
+ *
+ * The catch is deliberately total. This check exists purely to *inform* — to offer the image
+ * download as its own consented step rather than letting Kathara pull silently inside
+ * `POST /deploy` — so it must never be able to block a deploy that would otherwise work. A dead
+ * Docker daemon, a 503, an unexpected manager, a timed-out registry: all of them mean "carry on",
+ * and the deploy itself then reports whatever the real problem is, with the right message.
+ * This is the single point where that guarantee lives.
+ */
+async function labImagesOrNull(labName: string): Promise<LabImagesStatus | null> {
+  try {
+    return await api.getLabImages(labName);
+  } catch {
+    return null;
+  }
+}
 
 // Best-effort, never lets a failure here read as the undeploy/wipe itself having failed (which
 // already succeeded by the time this runs) — see ElevationContext.tsx and backend.ts's
@@ -50,6 +69,7 @@ export function useLabLifecycleActions() {
   const runBusy = useBusyAction();
   const requestDeployAuth = useDeployAuthorization();
   const requestReclaimAuth = useReclaimLabsDirAuth();
+  const requestImageDownload = useImageDownload();
 
   const deployToggle = useCallback(
     async (
@@ -60,6 +80,10 @@ export function useLabLifecycleActions() {
       },
       setBusy: (busy: boolean) => void,
       onDone: () => Promise<void>,
+      // Lets the caller relabel its button as the deploy moves out of the (possibly
+      // multi-second) image pre-check and into the deploy proper — without it, a slow registry
+      // looks like a frozen "Deploying…".
+      onPhase?: (phase: "checking" | "deploy") => void,
     ) => {
       await runBusy(setBusy, lab.deployed ? "Undeploy" : "Deploy", async () => {
         if (lab.deployed) {
@@ -77,6 +101,27 @@ export function useLabLifecycleActions() {
           await dropElevationIfAny(lab.name, requestReclaimAuth);
           await onDone();
           return;
+        }
+
+        // Kathara pulls a missing device image *inside* deploy_lab, reporting progress only
+        // through its own EventDispatcher — so from here it is indistinguishable from a hang.
+        // Ask about it first instead: the download becomes its own visible, consented step, and
+        // by the time the deploy runs there is nothing left to fetch. An available *update* is
+        // offered the same way Kathara's CLI offers it (see ImageDownloadContext), honouring the
+        // `image_update_policy` setting that until now had no effect in this app at all.
+        //
+        // Before the elevation prompt below on purpose: there is no point asking for
+        // administrator privileges and then spending three minutes downloading.
+        onPhase?.("checking");
+        const images = await labImagesOrNull(lab.name);
+        onPhase?.("deploy");
+        if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
+          const outcome = await requestImageDownload(images);
+          // "cancelled" — a required image was declined, or the download failed. "downloaded" —
+          // the user has been told the lab is ready and presses Deploy themselves, as designed.
+          // "skipped" — an optional update was declined and nothing was missing, so fall through
+          // and deploy with what is on disk rather than making them click again for nothing.
+          if (outcome !== "skipped") return;
         }
 
         // Kathara's own privileged-device gate needs the whole backend process's real UID to be
@@ -142,7 +187,7 @@ export function useLabLifecycleActions() {
         await onDone();
       });
     },
-    [requestDeployAuth, requestReclaimAuth, runBusy, toast],
+    [requestDeployAuth, requestImageDownload, requestReclaimAuth, runBusy, toast],
   );
 
   const deleteLab = useCallback(

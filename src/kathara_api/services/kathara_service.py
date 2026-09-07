@@ -59,9 +59,10 @@ from ..errors import (
 from ..schemas.filesystem import FsEntry
 from ..schemas.examples import ExampleSummary
 from ..schemas.gallery import GalleryCatalog, GalleryLabSummary
+from ..schemas.images import LabImageStatus, LabImagesStatus
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.machine import MachineCreate, MachineUpdate
-from . import examples, lab_builder, lab_conf_edit, lab_gallery, lab_import, lab_store
+from . import examples, image_pull, lab_builder, lab_conf_edit, lab_gallery, lab_import, lab_store
 from .docker_tty import SHELL_PATHS
 from .lab_store import LabStore
 from .registry import LabRegistry
@@ -272,6 +273,49 @@ class KatharaService:
             self._images_cache = images
             self._images_cache_at = time.monotonic()
         return images
+
+    # -- Docker images (pre-deploy check + explicit download) -----------------
+
+    def _docker_manager(self) -> Any:
+        """Kathara's own Docker manager, for the image work the facade doesn't expose.
+
+        Deliberately the manager's client and not a `docker.from_env()` of our own: Kathara builds
+        that client from the user's settings (`docker.DockerClient(base_url=remote_url, ...)` when
+        `remote_url` is set — DockerManager.py:62-73), so a client we made ourselves would talk to
+        a different daemon than the one the deploy uses. This reaches past the facade contract
+        (`manager.client` / `manager.docker_image` are internals), which is why every use goes
+        through this one accessor: an upstream refactor then breaks in one legible place instead of
+        as scattered AttributeErrors.
+
+        No non-Docker branch: this app only drives Docker (see `system_info`), and every caller of
+        the image pre-check treats *any* failure as "carry on with the deploy" anyway.
+        """
+        return self._facade().manager
+
+    def check_lab_images(self, lab_name: str) -> LabImagesStatus:
+        """Classify a lab's device images so the UI can offer the download before deploying.
+
+        Read-only, and deliberately outside `_mutate_lock` — same as every other read path on this
+        router (see `routers/labs.get_lab`). Kathara resolves a device's image through
+        `Machine.get_image()` (lab metadata -> device meta -> the global default), so that is what
+        decides which images this reports.
+        """
+        lab = self.get_lab_or_reconstruct(lab_name)
+        names = sorted({machine.get_image() for machine in lab.machines.values()})
+        policy = getattr(Setting.get_instance(), "image_update_policy", "Prompt") or "Prompt"
+        states = image_pull.classify_images(
+            self._docker_manager().docker_image, names, check_updates=policy != "Never"
+        )
+        return LabImagesStatus(
+            update_policy=policy,
+            images=[LabImageStatus(name=name, state=state) for name, state in states.items()],
+            missing=[name for name, state in states.items() if state == "missing"],
+            outdated=[name for name, state in states.items() if state == "outdated"],
+        )
+
+    def pull_images(self, images: list[str]) -> list[str]:
+        """Download exactly `images`, one at a time, publishing progress for the poll endpoint."""
+        return image_pull.pull_images(self._docker_manager(), images)
 
     def wipe(self) -> None:
         """Undeploy every lab kathara-desktop itself has registered and deployed.

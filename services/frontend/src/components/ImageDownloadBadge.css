@@ -1,0 +1,7 @@
+/* Badge is rendered `as="button"` (for real keyboard/click semantics), which otherwise brings its
+   own browser button chrome (border, background) on top of Bootstrap's badge styling. */
+.kt-image-dl-badge {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+}

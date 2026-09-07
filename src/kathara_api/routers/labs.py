@@ -34,6 +34,7 @@ from ..schemas.lab import (
 )
 from ..schemas.examples import ExampleCreate, ExampleSummary
 from ..schemas.gallery import GalleryCatalog, GalleryInstall
+from ..schemas.images import LabImagesStatus
 from ..schemas.lab_import import LabImportRequest, LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService
@@ -316,6 +317,21 @@ def get_startup_scripts(lab_name: str, service: KatharaService = Depends(get_ser
     """Each device's real ``<machine>.startup`` content (``""`` if it doesn't exist) — backs the
     topology node-info panel's boot-time IP preview."""
     return service.get_startup_scripts(lab_name)
+
+
+@router.get("/{lab_name}/images", response_model=LabImagesStatus)
+def check_lab_images(lab_name: str, service: KatharaService = Depends(get_service)) -> LabImagesStatus:
+    """Which of this lab's device images are missing locally, and which have a newer version.
+
+    Meant to be called immediately before a deploy, so the app can offer the download as its own
+    visible step instead of letting Kathara pull silently inside `POST .../deploy`. Callers must
+    treat *any* failure here as "carry on and deploy anyway": this check exists to inform, and
+    must never be able to block a deploy that would otherwise work.
+
+    Costs one registry round-trip per locally-present image (bounded, in parallel) unless Kathara's
+    `image_update_policy` is `Never`, in which case only the local presence check runs.
+    """
+    return service.check_lab_images(lab_name)
 
 
 @router.post("/{lab_name}/deploy", response_model=LabDetail)

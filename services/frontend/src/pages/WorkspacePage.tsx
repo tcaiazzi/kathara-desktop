@@ -65,6 +65,7 @@ import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
+import { deployButtonLabel } from "../services/imagePull";
 import type { LabDetail, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
 
@@ -493,7 +494,10 @@ export function WorkspacePage() {
   // Fixed at the action's start rather than read live off `detail.deployed`: the toggle's onDone
   // callback refreshes `detail` (so it already flips to the new state) before this clears, and
   // recomputing the label from live state would flash "Undeploying…" right after a deploy finishes.
-  const [deployAction, setDeployAction] = useState<"deploy" | "undeploy" | null>(null);
+  // "checking" is the image pre-check that runs before a deploy: it can take a couple of seconds
+  // (a registry round-trip per image, unless image_update_policy is Never), and labelling it as
+  // "Deploying…" would make a slow network look like a stuck deploy.
+  const [deployAction, setDeployAction] = useState<"checking" | "deploy" | "undeploy" | null>(null);
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem(LS_RAIL) !== "false");
   const [railWidth, setRailWidth] = useState(() => {
     const saved = Number(localStorage.getItem(LS_RAIL_W));
@@ -823,10 +827,15 @@ export function WorkspacePage() {
     if (!detail) return;
     setDeployAction(detail.deployed ? "undeploy" : "deploy");
     try {
-      await deployToggle({ name, deployed: detail.deployed, machines: detail.machines }, setBusy, async () => {
-        await load();
-        await reloadLabs();
-      });
+      await deployToggle(
+        { name, deployed: detail.deployed, machines: detail.machines },
+        setBusy,
+        async () => {
+          await load();
+          await reloadLabs();
+        },
+        setDeployAction,
+      );
     } finally {
       setDeployAction(null);
     }
@@ -1273,13 +1282,7 @@ export function WorkspacePage() {
                       <Dropdown.Divider />
                       <Dropdown.Header>Lab</Dropdown.Header>
                       <Dropdown.Item disabled={busy} onClick={handleDeployToggle}>
-                        {deployAction === "deploy"
-                          ? "Deploying…"
-                          : deployAction === "undeploy"
-                            ? "Undeploying…"
-                            : detail.deployed
-                              ? "Undeploy"
-                              : "Deploy"}
+                        {deployButtonLabel(deployAction, detail.deployed)}
                       </Dropdown.Item>
                       <Dropdown.Item disabled={busy} onClick={() => void handleDownload()}>
                         Download
@@ -1356,13 +1359,7 @@ export function WorkspacePage() {
                         ) : (
                           <Play size={14} />
                         )}
-                        {deployAction === "deploy"
-                          ? "Deploying…"
-                          : deployAction === "undeploy"
-                            ? "Undeploying…"
-                            : detail.deployed
-                              ? "Undeploy"
-                              : "Deploy"}
+                        {deployButtonLabel(deployAction, detail.deployed)}
                       </Button>
                     </span>
                     <span data-tour="download-btn" className="d-inline-flex">

@@ -7,6 +7,7 @@ import { useOnboardingTour } from "../context/OnboardingTourContext";
 import { useHealth } from "../hooks/useHealth";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
+import { ImageDownloadBadge } from "./ImageDownloadBadge";
 import { NotificationsPanel } from "./NotificationsPanel";
 
 // The browser top bar. In the Electron shell it is replaced by desktop/TitleBar.tsx, which folds
@@ -50,6 +51,7 @@ export function AppNavbar() {
           >
             <HelpCircle size={16} />
           </button>
+          <ImageDownloadBadge />
           <NotificationsPanel />
         </Navbar.Text>
       </Container>

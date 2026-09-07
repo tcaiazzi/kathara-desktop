@@ -109,6 +109,31 @@ class LabTransitioningError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class ImagePullBusyError(ApiError):
+    """Raised when an image download is requested while another one is already running.
+
+    Only one download runs at a time — not because concurrent pulls would corrupt anything (the
+    Docker daemon coalesces pulls of the same reference, and layer writes are content-addressed),
+    but because a second one would compete for bandwidth while a synchronous handler already holds
+    an anyio threadpool worker for the duration. Unlike LabTransitioningError's guard, this one
+    has no race window: services/image_pull.track() checks and claims the slot inside the same
+    critical section.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
+class ImagePullError(ApiError):
+    """Raised when a Docker pull stream reports a failure mid-download.
+
+    `client.api.pull(stream=True)` doesn't raise for an in-stream error — it yields a line with an
+    `error` key and ends — so services/image_pull.pull_images has to detect that itself and turn
+    it into something the frontend can show.
+    """
+
+    status_code = status.HTTP_502_BAD_GATEWAY
+
+
 class PathNotFoundError(ApiError):
     """Raised when an offline lab filesystem path doesn't exist."""
 

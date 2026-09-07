@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends
 
 from ..dependencies import get_service
 from ..schemas.common import Message
+from ..schemas.images import ImagePullProgress, ImagePullRequest, ImagePullResult
 from ..schemas.settings import SettingsUpdate, SettingsView, SystemInfo
+from ..services import image_pull
 from ..services.kathara_service import KatharaService
 
 router = APIRouter(tags=["system"])
@@ -74,3 +76,35 @@ def list_available_images(service: KatharaService = Depends(get_service)) -> lis
     not a restriction (any valid Docker image is still accepted). 502s if Docker Hub is
     unreachable; callers should treat that as non-fatal and fall back to plain manual entry."""
     return service.list_available_images()
+
+
+# Images are a host-wide resource, not a lab's, so these two are global rather than nested under
+# /labs/{name} — the caller already knows which images it asked about (GET /labs/{name}/images).
+
+
+@router.post("/images/pull", response_model=ImagePullResult)
+def pull_images(
+    payload: ImagePullRequest, service: KatharaService = Depends(get_service)
+) -> ImagePullResult:
+    """Download the given Docker images, then return. 409 if a download is already running.
+
+    Synchronous on purpose: the frontend fires this *without awaiting it* and polls
+    `/images/pull/progress` for the bar (the same fire-and-poll shape the desktop shell's setup
+    page uses), then uses this request's own completion as the authoritative "done". A background
+    thread would buy nothing here — a sync handler occupies one anyio threadpool worker for the
+    duration, exactly as a deploy already does — and this module would be the only place in the
+    backend spawning threads.
+    """
+    return ImagePullResult(pulled=service.pull_images(payload.images))
+
+
+@router.get("/images/pull/progress", response_model=ImagePullProgress)
+def image_pull_progress() -> ImagePullProgress:
+    """Snapshot of the in-flight image download, or an idle one (`active` false).
+
+    Takes no `KatharaService` dependency at all, so this handler is *incapable* of touching
+    `_mutate_lock` and can always answer while a download (or a deploy) is running. Never 404s:
+    with nothing in flight it returns an idle snapshot, so the poller needs no error branch and
+    can't turn a transient miss into a toast.
+    """
+    return ImagePullProgress.model_validate(image_pull.snapshot())

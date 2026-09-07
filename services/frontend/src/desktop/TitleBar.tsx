@@ -16,6 +16,7 @@ import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
+import { ImageDownloadBadge } from "../components/ImageDownloadBadge";
 import { NotificationsPanel } from "../components/NotificationsPanel";
 import { useHealth } from "../hooks/useHealth";
 import { useIsAdmin } from "../hooks/useIsAdmin";
@@ -222,6 +223,7 @@ export function TitleBar() {
         <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
           {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
         </Badge>
+        <ImageDownloadBadge />
         <NotificationsPanel />
         <Link
           to="/settings"

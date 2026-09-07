@@ -248,6 +248,48 @@ export interface StartupStatus {
   finished: boolean;
 }
 
+// Docker image state for a lab, ahead of a deploy. Only `missing` (mandatory) and `outdated`
+// (optional) are actionable; `unknown` means the registry couldn't be consulted (offline, or
+// slower than the backend's time budget) and is deliberately not reported as `ok`.
+export type ImageState = "ok" | "missing" | "outdated" | "unknown";
+
+export interface LabImageStatus {
+  name: string;
+  state: ImageState;
+}
+
+export interface LabImagesStatus {
+  // Kathara's own image_update_policy: Prompt | Always | Never. Passed through so the client
+  // decides whether to *ask* about an update or just take it, matching the CLI's behaviour.
+  update_policy: string;
+  images: LabImageStatus[];
+  missing: string[];
+  outdated: string[];
+}
+
+export interface ImagePullResult {
+  pulled: string[];
+}
+
+// Snapshot of the single in-flight image download. `total_bytes` of 0 means *indeterminate*, not
+// empty: Docker announces layers as the stream starts, so the total is unknown at first and grows
+// as layers appear — clamp the displayed percentage rather than letting a bar run backwards.
+export interface ImagePullProgress {
+  active: boolean;
+  finished: boolean;
+  image: string | null;
+  images_total: number;
+  images_done: number;
+  downloaded_bytes: number;
+  total_bytes: number;
+  layers_total: number;
+  layers_done: number;
+  extracting: boolean;
+  elapsed_seconds: number;
+  detail: string;
+  error: string | null;
+}
+
 export interface MachineStats {
   name: string;
   container_name: string | null;
