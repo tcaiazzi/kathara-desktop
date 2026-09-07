@@ -3,7 +3,7 @@ import { useConfirm } from "../context/ConfirmContext";
 import { useImageDownload } from "../context/ImageDownloadContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
-import { desktop } from "../desktop/bridge";
+import { desktop, type DesktopApi } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
@@ -30,6 +30,21 @@ async function labImagesOrNull(labName: string): Promise<LabImagesStatus | null>
     return await api.getLabImages(labName);
   } catch {
     return null;
+  }
+}
+
+// Closes the race where Docker Desktop (macOS in particular — its daemon takes noticeably longer
+// to come up than the shell/backend do) is still finishing startup at the exact moment the user
+// hits Deploy: check_lab_images 503s, labImagesOrNull swallows it to null, and the modal below
+// never opens even though the deploy itself succeeds a moment later once Docker is actually up.
+// Bounded so a genuinely broken/uninstalled Docker doesn't hang the button forever — same cadence
+// as DockerStatusContext's own down-state poll (POLL_MS_DOWN).
+async function waitForDockerReady(shell: DesktopApi, timeoutMs = 15_000, intervalMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const status = await shell.checkDocker().catch(() => null);
+    if (status?.state === "ok") return;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 }
 
@@ -121,6 +136,8 @@ export function useLabLifecycleActions() {
         // administrator privileges and then spending three minutes downloading.
         if (!opts?.skipImageCheck) {
           onPhase?.("checking");
+          const shell = desktop();
+          if (shell) await waitForDockerReady(shell);
           const images = await labImagesOrNull(lab.name);
           onPhase?.("deploy");
           if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
