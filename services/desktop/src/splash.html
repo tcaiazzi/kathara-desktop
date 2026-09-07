@@ -17,9 +17,38 @@
       img {
         max-width: 60%; max-height: 60%;
       }
+
+      /* Same reasoning as setup.html's captions bar: no native frame, so Windows/Linux otherwise
+         get no window controls at all for as long as this page is on screen. */
+      .kt-captions {
+        position: fixed; top: 0; left: 0; right: 0; height: 2rem;
+        display: flex; justify-content: flex-end;
+        -webkit-app-region: drag;
+      }
+      .kt-caption-btn {
+        -webkit-app-region: no-drag;
+        width: 2.75rem; height: 2rem; border: none; border-radius: 0;
+        background: transparent; color: #212529;
+        display: flex; align-items: center; justify-content: center;
+        font: 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer;
+      }
+      .kt-caption-btn:hover { background: rgba(0, 0, 0, .1); }
+      .kt-caption-btn.close:hover { background: #e81123; color: #ffffff; }
     </style>
   </head>
   <body>
     <img src="splash.png" alt="" />
+    <script>
+      if (window.katharaDesktop.platform !== "darwin") {
+        const captions = document.createElement("div");
+        captions.className = "kt-captions";
+        captions.innerHTML = `
+          <button type="button" class="kt-caption-btn" aria-label="Minimize" title="Minimize">&#x2212;</button>
+          <button type="button" class="kt-caption-btn close" aria-label="Close" title="Close">&#x2715;</button>`;
+        captions.children[0].onclick = () => void window.katharaDesktop.minimizeWindow();
+        captions.children[1].onclick = () => void window.katharaDesktop.closeWindow();
+        document.body.prepend(captions);
+      }
+    </script>
   </body>
 </html>

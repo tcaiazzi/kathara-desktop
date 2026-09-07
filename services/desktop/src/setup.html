@@ -93,11 +93,46 @@
       .callout .icon { font-size: 1.6rem; line-height: 1; }
       .callout h2 { margin: 0 0 .3rem; font-size: 1.05rem; }
       .callout p { margin: 0; color: var(--fg); }
+
+      /* This page has no native window frame (windows.ts's createMainWindow uses
+         titleBarStyle: "hidden"), which on macOS still leaves the traffic lights in place but on
+         Windows/Linux leaves the window with no controls at all — the app normally draws its own
+         (TitleBar.tsx), but that component lives in the SPA, not on this static page, so it has to
+         draw a minimal version of its own instead. */
+      .kt-captions {
+        position: fixed; top: 0; left: 0; right: 0; height: 2rem;
+        display: flex; justify-content: flex-end;
+        -webkit-app-region: drag;
+      }
+      .kt-caption-btn {
+        -webkit-app-region: no-drag;
+        width: 2.75rem; height: 2rem; border: none; border-radius: 0;
+        background: transparent; color: var(--fg);
+        display: flex; align-items: center; justify-content: center;
+        font: inherit; cursor: pointer;
+      }
+      .kt-caption-btn:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+      .kt-caption-btn.close:hover { background: #e81123; color: #ffffff; }
+      body.kt-has-captions { padding-top: 2rem; }
     </style>
   </head>
   <body>
     <main id="app"><p class="sub"><span class="spinner"></span> Starting…</p></main>
     <script>
+      // macOS keeps its native traffic lights (titleBarStyle: "hidden" only hides the bar, not
+      // the buttons); everywhere else this window has none at all.
+      if (window.katharaDesktop.platform !== "darwin") {
+        document.body.classList.add("kt-has-captions");
+        const captions = document.createElement("div");
+        captions.className = "kt-captions";
+        captions.innerHTML = `
+          <button type="button" class="kt-caption-btn" aria-label="Minimize" title="Minimize">&#x2212;</button>
+          <button type="button" class="kt-caption-btn close" aria-label="Close" title="Close">&#x2715;</button>`;
+        captions.children[0].onclick = () => void window.katharaDesktop.minimizeWindow();
+        captions.children[1].onclick = () => void window.katharaDesktop.closeWindow();
+        document.body.prepend(captions);
+      }
+
       const app = document.getElementById("app");
       const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
         ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
