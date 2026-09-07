@@ -860,7 +860,7 @@ export function WorkspacePage() {
   const currentLab = useMemo(() => labs?.find((l) => l.name === name) ?? null, [labs, name]);
   const showLabList = !currentLab || labPickerOpen;
 
-  async function handleDeployToggle() {
+  async function handleDeployToggle(opts?: { skipImageCheck?: boolean }) {
     if (!detail) return;
     setDeployAction(detail.deployed ? "undeploy" : "deploy");
     try {
@@ -872,6 +872,7 @@ export function WorkspacePage() {
           await reloadLabs();
         },
         setDeployAction,
+        opts,
       );
     } finally {
       setDeployAction(null);
@@ -882,7 +883,10 @@ export function WorkspacePage() {
   // main.ts), the shell reloads straight into /workspace/<name>?resumeDeploy=1 — continue the
   // deploy the user was trying to do automatically instead of leaving them to notice the reload
   // finished and click Deploy again. Guarded by a ref, not just stripping the query param, so
-  // this can only ever fire once per page load.
+  // this can only ever fire once per page load. `skipImageCheck: true` because the image
+  // pre-check already ran (and was satisfied or explicitly skipped) before elevation was
+  // requested — re-running it here would ask about the same images again, right after the user
+  // just granted privileges.
   const resumedDeployRef = useRef(false);
   useEffect(() => {
     if (resumedDeployRef.current || !detail || searchParams.get("resumeDeploy") !== "1") return;
@@ -897,7 +901,7 @@ export function WorkspacePage() {
     );
     if (!detail.deployed) {
       toast.show("Administrator privileges granted — deploying now.", "success");
-      void handleDeployToggle();
+      void handleDeployToggle({ skipImageCheck: true });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, searchParams, setSearchParams]);
@@ -1368,7 +1372,7 @@ export function WorkspacePage() {
                       <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus Terminals</Dropdown.Item>
                       <Dropdown.Divider />
                       <Dropdown.Header>Lab</Dropdown.Header>
-                      <Dropdown.Item disabled={busy} onClick={handleDeployToggle}>
+                      <Dropdown.Item disabled={busy} onClick={() => void handleDeployToggle()}>
                         {deployButtonLabel(deployAction, detail.deployed)}
                       </Dropdown.Item>
                       <Dropdown.Item disabled={busy} onClick={() => void handleDownload()}>
@@ -1436,7 +1440,7 @@ export function WorkspacePage() {
                         size="sm"
                         variant={detail.deployed ? "warning" : "primary"}
                         disabled={busy}
-                        onClick={handleDeployToggle}
+                        onClick={() => void handleDeployToggle()}
                         className="d-flex align-items-center gap-1"
                       >
                         {deployAction ? (

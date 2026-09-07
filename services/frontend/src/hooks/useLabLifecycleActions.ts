@@ -84,6 +84,13 @@ export function useLabLifecycleActions() {
       // multi-second) image pre-check and into the deploy proper — without it, a slow registry
       // looks like a frozen "Deploying…".
       onPhase?: (phase: "checking" | "deploy") => void,
+      // `skipImageCheck` is set only when resuming a deploy right after an elevation reload
+      // (see WorkspacePage.tsx's `resumeDeploy` effect): the image pre-check below already ran,
+      // and was satisfied or explicitly skipped, earlier in the same deploy attempt, before
+      // elevation was requested. Re-running it here would ask about the same images a second
+      // time — after the user already granted privileges, which is exactly what putting this
+      // check before the elevation prompt was meant to avoid.
+      opts?: { skipImageCheck?: boolean },
     ) => {
       await runBusy(setBusy, lab.deployed ? "Undeploy" : "Deploy", async () => {
         if (lab.deployed) {
@@ -112,16 +119,18 @@ export function useLabLifecycleActions() {
         //
         // Before the elevation prompt below on purpose: there is no point asking for
         // administrator privileges and then spending three minutes downloading.
-        onPhase?.("checking");
-        const images = await labImagesOrNull(lab.name);
-        onPhase?.("deploy");
-        if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
-          const outcome = await requestImageDownload(images);
-          // "cancelled" — a required image was declined, or the download failed. "downloaded" —
-          // the user has been told the lab is ready and presses Deploy themselves, as designed.
-          // "skipped" — an optional update was declined and nothing was missing, so fall through
-          // and deploy with what is on disk rather than making them click again for nothing.
-          if (outcome !== "skipped") return;
+        if (!opts?.skipImageCheck) {
+          onPhase?.("checking");
+          const images = await labImagesOrNull(lab.name);
+          onPhase?.("deploy");
+          if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
+            const outcome = await requestImageDownload(images);
+            // "cancelled" — a required image was declined, or the download failed. "downloaded" —
+            // the user has been told the lab is ready and presses Deploy themselves, as designed.
+            // "skipped" — an optional update was declined and nothing was missing, so fall through
+            // and deploy with what is on disk rather than making them click again for nothing.
+            if (outcome !== "skipped") return;
+          }
         }
 
         // Kathara's own privileged-device gate needs the whole backend process's real UID to be
