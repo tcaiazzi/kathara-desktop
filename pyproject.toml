@@ -34,6 +34,16 @@ dev = ["pytest>=7.0"]
 [project.scripts]
 kathara-api = "kathara_api.main:run"
 
+[project.urls]
+Homepage = "https://www.kathara.org"
+"Bug Reports" = "https://github.com/KatharaFramework/kathara-desktop/issues"
+Source = "https://github.com/KatharaFramework/kathara-desktop"
+
+# Ships the GPL text in the built wheel and sdist. Declared here rather than as [project]
+# license-files, which would need setuptools>=77 instead of the >=68 required above.
+[tool.setuptools]
+license-files = ["LICENSE"]
+
 # Single source of truth for the version: src/kathara_api/__init__.py's __version__, which is
 # also what `GET /api/system` and the OpenAPI docs report (main.py imports it). Restated here as
 # a literal, it silently drifted from the shipped app's version instead.
