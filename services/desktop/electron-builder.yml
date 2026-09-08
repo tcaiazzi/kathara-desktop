@@ -98,7 +98,7 @@ deb:
   # `docker.io` isn't the only way to get it — see src/prereqs.ts's checkDocker()). Python is no
   # longer listed: the app bundles its own interpreter (paths.ts's bundledPythonPath()) and never
   # requires a system one.
-  recommends: [docker.io]
+  recommends: ["docker.io (>= 17.03.2) | docker-ce (>= 17.03.2)"]
 
 mac:
   target:
