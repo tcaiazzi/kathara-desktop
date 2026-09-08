@@ -5,8 +5,10 @@ verbatim (see ``KatharaService.import_lab``/``upload_lab``) — this module only
 that directory into the structural ``LabCreate`` (machines, interfaces, links); it no longer also
 builds a separate in-memory file/dir tracking structure (an earlier design did — see git history —
 and it repeatedly went stale relative to what was actually on disk). A top-level ``shared/`` folder
-isn't applied to any device yet; it is left alone on disk and reported as a warning (see
-``translate_lab_files``).
+needs no translation here: it isn't a per-machine concept, so there's nothing to fold into any
+``MachineCreate``. It lands on disk verbatim like every other file, and Kathara's own ``deploy()``
+(``Lab.create_shared_folder`` + a bind mount to ``/shared`` on every container) picks it up natively
+from there — see ``KatharaService.deploy_lab``.
 """
 
 import re
@@ -281,11 +283,6 @@ def parse_lab_ext(text: str) -> list[LinkCreate]:
     return list(links.values())
 
 
-def _has_folder(files: dict, prefix: str) -> bool:
-    """Whether any file sits under ``prefix`` (which must end in ``/``)."""
-    return any(path.startswith(prefix) and path != prefix for path in files)
-
-
 @dataclass
 class LabImportTranslation:
     payload: LabCreate
@@ -362,14 +359,6 @@ def translate_lab_files(
         )
         for m in parsed.machines.values()
     ]
-
-    # A `shared/` folder isn't applied to any device yet: Kathara's `Machine.pack_data` doesn't
-    # pack it. Rather than merge its contents into every machine (which would
-    # rewrite files that don't belong to the source archive, breaking verbatim import), it is left
-    # on disk untouched and simply not surfaced as pending state — with a warning so the omission is
-    # visible instead of silent.
-    if _has_folder(files, "shared/"):
-        warnings.append("shared/ folder is not applied to devices yet — left on disk, ignored")
 
     if skipped:
         shown = ", ".join(skipped[:4]) + ("…" if len(skipped) > 4 else "")
