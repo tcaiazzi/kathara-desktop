@@ -88,18 +88,14 @@ export function backendSrcDir(): string | null {
  *
  * Windows only: bind-mounting anything under `userData` (`%APPDATA%\Roaming\...`) can be denied
  * outright by Docker Desktop — AppData is a location commonly watched/locked by antivirus/EDR
- * tooling, unlike an ordinary user-created folder — so fresh installs get a plain folder under the
- * profile root instead. An install that already has labs at the old AppData default keeps using
- * it: this must never change what "default" means for an existing user out from under them, since
- * `setLabsDir()` below promises a labs-dir change "never moves anything" — silently redefining the
- * default would break that promise just as much as an explicit move would. Not Documents\...
- * either: Documents is frequently OneDrive-synced via Known Folder Move, and cloud placeholder
- * files there are at least as likely to break bind mounts as AppData is.
+ * tooling, unlike an ordinary user-created folder — so Windows gets a plain folder under the
+ * profile root instead. No legacy fallback: the app hasn't shipped yet, so there's no installed
+ * base whose existing AppData folder needs preserving. Not Documents\... either: Documents is
+ * frequently OneDrive-synced via Known Folder Move, and cloud placeholder files there are at
+ * least as likely to break bind mounts as AppData is.
  */
 export function defaultLabsDir(): string {
   if (process.platform === "win32") {
-    const legacy = path.join(app.getPath("userData"), "labs");
-    if (fs.existsSync(legacy)) return legacy;
     return path.join(app.getPath("home"), "Kathara-Desktop", "labs");
   }
   return path.join(app.getPath("userData"), "labs");
