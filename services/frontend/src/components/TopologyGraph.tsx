@@ -53,8 +53,8 @@ interface TopologyGraphProps extends DeviceActionsProps {
   // Shows/dismisses the shared context menu (rendered once by the workspace page).
   setContextMenu: (menu: ContextMenuState | null) => void;
   // Optional controlled selection (node id `dev:<name>` / `cd:<name>`). When provided, an external
-  // list (e.g. the Workspace rail) can drive/read the selected node. Omit for internal selection —
-  // the classic tabbed page passes neither and behaves exactly as before.
+  // list (e.g. the Workspace rail) can drive/read the selected node. Omit for internal selection,
+  // where the component tracks the selected node itself.
   selectedId?: string | null;
   onSelectId?: (id: string | null) => void;
   // DOM node of the "Node info" dock panel. When set, the inspector is portaled into it (so it can

@@ -40,8 +40,7 @@ class ApiSettings(BaseSettings):
     # Directory under which every lab is persisted as a real Kathara lab directory, so labs
     # survive a server restart (the in-memory registry alone does not). A plain named volume is
     # sufficient in Docker Compose: machine files/startup always travel to containers over the
-    # Docker API (Machine.pack_data), and Kathara's native `/shared` bind mount is disabled
-    # per-lab (see lab_builder.build_lab), so nothing here is ever bind-mounted into a device.
+    # Docker API (Machine.pack_data).
     labs_dir: str = "./data/labs"
 
     # Directory holding the built frontend (services/frontend/dist). Unset by default: the SPA

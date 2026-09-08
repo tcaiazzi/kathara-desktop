@@ -304,7 +304,7 @@ export const api = {
   // -- Docker images: the pre-deploy check and the explicit download ---------------------------
   // Called immediately before a deploy so the download can be its own visible, consented step
   // instead of happening silently inside POST /deploy. Callers must treat any failure here as
-  // "carry on and deploy anyway" (see getLabImagesOrNull in useLabLifecycleActions).
+  // "carry on and deploy anyway" (see labImagesOrNull in useLabLifecycleActions).
   getLabImages: (labName: string) =>
     request<LabImagesStatus>("GET", `/labs/${encodeURIComponent(labName)}/images`),
   // Fire-and-poll: this resolves only when the whole download is done, so callers start it

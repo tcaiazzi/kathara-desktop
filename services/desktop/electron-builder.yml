@@ -21,8 +21,9 @@ extraResources:
   - from: resources/icon.png
     to: icon.png
   # kathara-api-rest's own wheel (built by CI just before this — see build-desktop.yml — into
-  # this gitignored directory), so a packaged app can `pip install` it into a private venv
-  # without needing a git checkout. Pure Python, one wheel works on every OS/arch. Excludes the
+  # this gitignored directory), so a packaged app can `pip install` it into the bundled Python
+  # interpreter (or, where that's not writable, a private venv — see install.ts) without needing
+  # a git checkout. Pure Python, one wheel works on every OS/arch. Excludes the
   # python-<os>-<arch>/ subdirectories fetch-python.mjs also puts in this same gitignored vendor/
   # directory: those are picked up separately, one arch at a time, by the platform-scoped
   # extraResources below — copying them here too would ship every architecture's interpreter in

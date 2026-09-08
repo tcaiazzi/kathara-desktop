@@ -89,8 +89,9 @@ export function backendSrcDir(): string | null {
  * Windows only: bind-mounting anything under `userData` (`%APPDATA%\Roaming\...`) can be denied
  * outright by Docker Desktop — AppData is a location commonly watched/locked by antivirus/EDR
  * tooling, unlike an ordinary user-created folder — so Windows gets a plain folder under the
- * profile root instead. No legacy fallback: the app hasn't shipped yet, so there's no installed
- * base whose existing AppData folder needs preserving. Not Documents\... either: Documents is
+ * profile root instead. No legacy fallback: the app has no real installed base yet (only test
+ * releases), so there's no existing AppData folder that needs preserving. Not Documents\...
+ * either: Documents is
  * frequently OneDrive-synced via Known Folder Move, and cloud placeholder files there are at
  * least as likely to break bind mounts as AppData is.
  */
@@ -151,7 +152,7 @@ export function setupPage(): string {
   return path.join(__dirname, "setup.html");
 }
 
-/** The cold-start splash animation, copied beside the bundles (with its splash.gif) by
+/** The cold-start splash page, copied beside the bundles (with its splash.png) by
  * scripts/build.mjs. */
 export function splashPage(): string {
   return path.join(__dirname, "splash.html");

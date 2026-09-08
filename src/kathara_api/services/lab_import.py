@@ -364,8 +364,7 @@ def translate_lab_files(
     ]
 
     # A `shared/` folder isn't applied to any device yet: Kathara's `Machine.pack_data` doesn't
-    # pack it, and the CLI's `/shared` bind mount is disabled per-lab under Docker-outside-of-Docker
-    # (see lab_builder.build_lab). Rather than merge its contents into every machine (which would
+    # pack it. Rather than merge its contents into every machine (which would
     # rewrite files that don't belong to the source archive, breaking verbatim import), it is left
     # on disk untouched and simply not surfaced as pending state — with a warning so the omission is
     # visible instead of silent.

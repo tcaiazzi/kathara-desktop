@@ -43,11 +43,6 @@ export function downloadKind(status: LabImagesStatus): ImageDownloadKind {
 }
 
 /**
- * The Deploy button's label. Phase-aware so a multi-second image pre-check doesn't look like a
- * frozen "Deploying…" — shared by the toolbar button and its narrow-width dropdown twin, which
- * previously duplicated the same ternary chain.
- */
-/**
  * Toast body for one finished image download — a separate toast fires per image (see
  * ImageDownloadContext's notifyCompletions), never one combined toast for a whole batch, so this
  * only ever names a single image. `name` is omitted for an *adopted* download (one already in
@@ -57,6 +52,11 @@ export function pulledMessage(name?: string): string {
   return name ? `Downloaded Docker image ${name}.` : "The Docker image download finished.";
 }
 
+/**
+ * The Deploy button's label. Phase-aware so a multi-second image pre-check doesn't look like a
+ * frozen "Deploying…" — shared by the toolbar button and its narrow-width dropdown twin, which
+ * previously duplicated the same ternary chain.
+ */
 export function deployButtonLabel(
   action: "checking" | "deploy" | "undeploy" | null,
   deployed: boolean,

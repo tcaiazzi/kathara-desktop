@@ -69,9 +69,9 @@ export function App() {
                   its own provider rather than folded into ElevationProvider above, since it isn't
                   gating a deploy the way that one is. Inert in the browser build too. */}
               <ReclaimLabsDirProvider>
-                {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
-                    commands. Inert in the browser build. */}
                 <OnboardingTourProvider>
+                  {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
+                      commands. Inert in the browser build. */}
                   <DesktopCommandsProvider>
                     <DockerStatusProvider>
                       <UpdateChecker />
