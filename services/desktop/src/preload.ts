@@ -147,6 +147,9 @@ const api = {
   /** Resolves true if applied (a restart is now in flight), false if the user cancelled. */
   setLabsDir: (path: string): Promise<boolean> => ipcRenderer.invoke("labs:set-dir", path),
   resetLabsDir: (): Promise<boolean> => ipcRenderer.invoke("labs:reset-dir"),
+  /** Dismisses the setup page's first-run labs-directory prompt (the "keep the default" case —
+   * see promptForLabsDir() in main.ts); a no-op if that prompt isn't currently showing. */
+  confirmLabsDir: (): Promise<void> => ipcRenderer.invoke("labs:confirm-dir"),
 
   // -- events pushed from the shell --
   onMenuAction: (cb: (action: MenuAction) => void) => subscribe<MenuAction>("menu:action", cb),

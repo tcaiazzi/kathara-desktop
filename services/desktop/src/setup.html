@@ -257,6 +257,44 @@
         });
       }
 
+      // Shown once, on this machine's very first successful boot attempt, right before the
+      // backend would otherwise start (see promptForLabsDir() in main.ts). Kept polling every
+      // 500ms while this state is current, same as renderStarting() — "Continue"/"Choose a
+      // different folder…" both just fire an IPC call and let the next poll pick up wherever the
+      // boot attempt lands next, rather than each managing their own follow-up render.
+      function renderLabsDirPrompt(status) {
+        app.innerHTML = `
+          <h1>Where should Kathara Desktop store your labs?</h1>
+          <p class="sub">
+            Labs are plain folders on disk, so you can browse and edit them outside the app too.
+            You can change this later from Settings.
+          </p>
+          <p class="detail" style="margin-bottom:1.5rem">${esc(status.defaultDir)}</p>
+          <div id="labs-dir-error"></div>
+          <div class="actions">
+            <button class="primary" id="labs-dir-continue">Continue</button>
+            <button id="labs-dir-choose">Choose a different folder…</button>
+          </div>`;
+
+        document.getElementById("labs-dir-continue").onclick = () => {
+          window.katharaDesktop.confirmLabsDir();
+        };
+        document.getElementById("labs-dir-choose").onclick = async () => {
+          const picked = await window.katharaDesktop.pickLabsDir();
+          if (!picked) return; // cancelled the native folder picker — stay on this screen
+          try {
+            // Resolves only once the resulting restart has fully finished — by which point this
+            // page has already navigated away, same as SettingsPage.tsx's own handleChange(). A
+            // throw here means it never got that far (an unwritable folder, e.g.), so there's
+            // something to actually show.
+            await window.katharaDesktop.setLabsDir(picked);
+          } catch (err) {
+            document.getElementById("labs-dir-error").innerHTML =
+              `<p class="sub" style="color:var(--bad)">${esc(err && err.message ? err.message : String(err))}</p>`;
+          }
+        };
+      }
+
       function renderChecks(status) {
         const failed = status.state === "prereq-failed";
 
@@ -334,6 +372,9 @@
           renderStarting(status);
           // The shell navigates away once the backend is healthy, so polling only continues
           // while this page is still the one on screen.
+          setTimeout(refresh, 500);
+        } else if (status.state === "labs-dir-prompt") {
+          renderLabsDirPrompt(status);
           setTimeout(refresh, 500);
         } else {
           renderChecks(status);

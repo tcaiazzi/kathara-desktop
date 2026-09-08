@@ -135,7 +135,11 @@ type Status =
   // `advisories` carries forward whichever checks didn't block this boot (today, only ever a
   // stopped Docker daemon) — see prereqs.ts's Preflight.advisories — so the renderer can warn
   // about it without waiting on its own first "docker:check" round trip.
-  | { state: "ready"; advisories: Check[] };
+  | { state: "ready"; advisories: Check[] }
+  // Shown once, on this machine's very first successful boot attempt (see isFirstRun()), right
+  // before the backend would otherwise start — the one point that actually needs labsDir()
+  // resolved. Distinct from "starting": this needs an interactive control, not a progress ladder.
+  | { state: "labs-dir-prompt"; defaultDir: string };
 
 let win: BrowserWindow | null = null;
 let status: Status = { state: "starting", phase: "environment", message: "Starting…", startedAt: Date.now(), checks: [], firstRun: isFirstRun() };
@@ -187,6 +191,35 @@ function setStatus(next: Status): void {
  * install completing mid-attempt doesn't flip the copy out from under the user half-way through. */
 function isFirstRun(): boolean {
   return !(readPrefs().launchCount ?? 0);
+}
+
+/** Resolved by the "labs:confirm-dir" IPC handler once the setup page's first-run labs-directory
+ * prompt is dismissed — see promptForLabsDir() below. Module-scoped rather than local to that
+ * function because the resolver has to outlive the `await` and be reachable from a separate IPC
+ * call arriving later. */
+let labsDirPromptResolve: (() => void) | null = null;
+
+/**
+ * Shown at most once per machine: on the very first boot attempt that gets this far (preflight
+ * already passed), before the backend ever starts, so the user can confirm or change where their
+ * labs live before anything is written there. A no-op the moment either condition stops holding —
+ * `isFirstRun()` goes false forever once a backend has come up healthy, and a `labsDir` already
+ * being configured means either a previous run of this same prompt set one, or the user set one
+ * some other way (e.g. a hand-edited preferences.json) — nothing left to ask.
+ *
+ * Choosing a different folder goes through the existing `labs:pick-dir` → `labs:set-dir` (same
+ * IPC Settings' "Change…" uses), which itself calls `startup()` again once it writes the new
+ * path — so this function's own `await` below only ever needs to resolve for the "keep the
+ * default" case; the picker path replaces this whole boot attempt with a fresh one instead.
+ */
+async function promptForLabsDir(): Promise<void> {
+  if (!isFirstRun() || readPrefs().labsDir !== undefined) return;
+  if (!win) return;
+  setStatus({ state: "labs-dir-prompt", defaultDir: defaultLabsDir() });
+  showSetup(win);
+  await new Promise<void>((resolve) => {
+    labsDirPromptResolve = resolve;
+  });
 }
 
 let bootStartedAt = Date.now();
@@ -491,6 +524,8 @@ async function runStartup(resumePath?: string): Promise<void> {
     }
     log("continuing with the environment already present");
   }
+
+  await promptForLabsDir();
 
   setPhase("backend", "Starting the local Kathara API…", { checks: preflight.checks });
   try {
@@ -814,6 +849,14 @@ function registerIpc(): void {
   });
   ipcMain.handle("labs:set-dir", (_e, dir: unknown) => setLabsDir(dir));
   ipcMain.handle("labs:reset-dir", () => setLabsDir(defaultLabsDir()));
+
+  // Dismisses promptForLabsDir()'s wait — the "keep the default" path only, since choosing a
+  // different folder goes through labs:set-dir instead, which restarts startup() on its own. A
+  // stray call with nothing waiting (the prompt already resolved, or was never shown) is a no-op.
+  ipcMain.handle("labs:confirm-dir", () => {
+    labsDirPromptResolve?.();
+    labsDirPromptResolve = null;
+  });
 }
 
 /**
