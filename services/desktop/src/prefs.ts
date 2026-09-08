@@ -30,6 +30,14 @@ export interface Prefs {
   /** Times a backend has come up healthy on this machine. 0/absent means this is the first
    * launch — read by main.ts to shape the setup page's first-run copy. */
   launchCount?: number;
+  /**
+   * `paths.ts`'s `bundledWheelHash()` as of the last time a packaged build's backend was
+   * (re)installed successfully. Compared against the current build's wheel on every launch
+   * (main.ts's `isNewBackend`) so any build shipping a different wheel — even one that reuses the
+   * same kathara-api-rest version, or the same `app.getVersion()` — still forces one fresh
+   * install, instead of relying solely on Preflight.stale's version-string comparison.
+   */
+  installedBackendFingerprint?: string;
 }
 
 function prefsFile(): string {

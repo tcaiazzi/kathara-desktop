@@ -47,7 +47,8 @@ export function frontendDir(): string | null {
  * any real change to the build changes this file's bytes too — a version bump reliably causes
  * one anyway, but keying on content instead also self-invalidates a rebuild that ships under the
  * *same* version (e.g. a local dev/test cycle), which version-only keying silently kept serving
- * a stale copy for.
+ * a stale copy for. Recomputed on every launch, so unlike the backend (see bundledWheelHash()) this
+ * needs no separate "was this reinstalled" marker of its own.
  */
 export function resolveStaticDir(): string | null {
   const candidate = frontendDir();
@@ -233,4 +234,25 @@ export function bundledWheelVersion(): string | null {
   if (!wheel) return null;
   const version = path.basename(wheel).split("-")[1];
   return version || null;
+}
+
+/**
+ * A content fingerprint of the bundled wheel, for detecting "this build ships a different backend"
+ * even when `bundledWheelVersion()` doesn't: a rebuild that ships under the same kathara-api-rest
+ * version (a hotfix during development, say) still changes the wheel's own bytes. main.ts compares
+ * this against prefs.ts's `installedBackendFingerprint` on every launch — unlike Preflight.stale's
+ * version-string comparison, this also catches a same-version reinstall of a genuinely different
+ * build, at the cost of a couple of file reads at startup.
+ */
+export function bundledWheelHash(): string | null {
+  const wheel = bundledWheelPath();
+  if (!wheel) return null;
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(wheel)).digest("hex").slice(0, 16);
+  } catch {
+    // Read every packaged launch, unlike the AppImage-only readFileSync in resolveStaticDir() —
+    // a vanished/locked file here must fall back to "no fingerprint" rather than take the whole
+    // app down with an unhandled rejection off the unguarded whenReady().then() cold-boot path.
+    return null;
+  }
 }

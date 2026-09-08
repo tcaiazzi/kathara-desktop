@@ -45,7 +45,7 @@ import {
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
+import { bundledWheelHash, defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
 import { isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
 import {
@@ -307,8 +307,12 @@ function appendInstallTail(tail: string[], chunk: string): string[] {
  *
  * Shared by the two ways an install starts — startup()'s automatic attempt and the setup page's
  * button — so both report identically and both leave the caller to decide what happens next.
+ *
+ * `force` passes through to install.ts's `--force-reinstall`, for the one caller (a build shipping
+ * a different backend wheel — see `isNewBackend` below) that needs a reinstall even when the
+ * target already satisfies the wheel's declared version and would otherwise no-op.
  */
-async function runInstall(systemPython: string): Promise<{ ok: boolean; error?: string }> {
+async function runInstall(systemPython: string, force = false): Promise<{ ok: boolean; error?: string }> {
   bootStartedAt = Date.now();
   // Seeds the checks setPhase carries forward with the full list from the preflight that led
   // here — preflight's own onProgress only ever accumulated up to the docker+python checks, not
@@ -316,11 +320,22 @@ async function runInstall(systemPython: string): Promise<{ ok: boolean; error?: 
   // show the whole list (what's being fixed) alongside the install output.
   bootChecks = lastPreflight?.checks ?? [];
   let tail: string[] = [];
-  const result = await runAutoInstall(systemPython, ({ step, line }: InstallProgress) => {
-    if (line) tail = appendInstallTail(tail, line);
-    setPhase(INSTALL_PHASE[step], INSTALL_MESSAGE[step], { output: tail.join("\n") });
-  });
+  const result = await runAutoInstall(
+    systemPython,
+    ({ step, line }: InstallProgress) => {
+      if (line) tail = appendInstallTail(tail, line);
+      setPhase(INSTALL_PHASE[step], INSTALL_MESSAGE[step], { output: tail.join("\n") });
+    },
+    { force },
+  );
   if (!result.ok) log(`install failed: ${result.error}`);
+  // Records that this build's wheel is now installed, so the next launch of the same build
+  // doesn't force another reinstall — see isNewBackend below. Any successful install (missing
+  // packages, stale, a new/rebuilt wheel, or the setup page's manual button) counts.
+  else {
+    const hash = bundledWheelHash();
+    if (hash) writePrefs({ installedBackendFingerprint: hash });
+  }
   // No writePrefs of the interpreter that was just installed into: prereqs.ts's
   // pythonCandidates() already probes both possible targets (the bundled interpreter and the
   // private venv), so the next preflight finds whichever one this filled in — without an
@@ -360,6 +375,18 @@ async function runStartup(resumePath?: string): Promise<void> {
   if (!win) return;
   bootStartedAt = Date.now();
   bootChecks = [];
+
+  // True whenever this build's wheel (by content, not just declared version — see
+  // bundledWheelHash()) doesn't match the one prefs.ts's installedBackendFingerprint says was
+  // last installed — including a rebuild that reused the same kathara-api-rest version or the
+  // same app.getVersion(). The signal main.ts uses below to force a backend reinstall even when
+  // Preflight.stale's version-string comparison stays quiet. Recomputed fresh on every call,
+  // including the recursive continuation after a successful install below, so it turns false
+  // again the moment that install's writePrefs lands. Always false in a dev checkout (no bundled
+  // wheel to hash) and on the very first packaged launch's earlier checks (nothing installed yet
+  // is handled by the "missing packages" branch below regardless of this flag).
+  const wheelHash = bundledWheelHash();
+  const isNewBackend = app.isPackaged && wheelHash !== null && readPrefs().installedBackendFingerprint !== wheelHash;
 
   // Before anything that shells out (Docker/Python checks, terminal integration): a
   // double-clicked GUI app doesn't inherit the Terminal's PATH, so Homebrew/Docker Desktop
@@ -403,7 +430,13 @@ async function runStartup(resumePath?: string): Promise<void> {
       // At cold start the splash is still on screen, and this install owns the next few minutes:
       // the setup page is where its ladder and live pip output are visible.
       showSetup(win);
-      const result = await runInstall(preflight.systemPython);
+      // isNewBackend forces pip to actually touch kathara-api-rest itself here too — otherwise,
+      // when only a transitive dependency is missing (prereqs.ts's "incomplete" tier: kathara_api
+      // imports fine but something it needs doesn't), a plain `pip install` treats the top-level
+      // package as already satisfied and resolves only the missing dependency, leaving genuinely
+      // stale kathara_api source in place — while runInstall()'s success path below would still
+      // record this build's fingerprint as installed, permanently hiding the mismatch.
+      const result = await runInstall(preflight.systemPython, isNewBackend);
       if (result.ok) {
         // Guarded by autoInstallAttempted, so this recursion is one level deep at most. Calls
         // runStartup directly, not startup(): this is a sequential continuation of the attempt
@@ -427,15 +460,29 @@ async function runStartup(resumePath?: string): Promise<void> {
     return;
   }
 
-  // The app's own environment works but isn't the backend this build ships — an update replaced
-  // the bundled interpreter and left the previous release's private venv standing (see
-  // Preflight.stale). Reinstall once, then start; if the install fails, start anyway rather than
-  // stranding the user on the setup page over a mismatch they can't act on.
-  if (app.isPackaged && preflight.stale && preflight.systemPython && !autoInstallAttempted) {
+  // The app's own environment works, but either it isn't the backend this build ships (an update
+  // replaced the bundled interpreter and left the previous release's private venv standing — see
+  // Preflight.stale) or this build's wheel simply isn't the one last installed (isNewBackend
+  // above) — the case Preflight.stale's version-string comparison misses whenever a rebuild ships
+  // under the same kathara-api-rest version. Either way: reinstall once, then start; if the
+  // install fails, start anyway rather than stranding the user on the setup page over a mismatch
+  // they can't act on. Only for an app-owned environment (preflight.appOwned) — never over an
+  // interpreter the user pointed at by hand.
+  if (
+    app.isPackaged &&
+    preflight.appOwned &&
+    (preflight.stale || isNewBackend) &&
+    preflight.systemPython &&
+    !autoInstallAttempted
+  ) {
     autoInstallAttempted = true;
-    log("preflight: the environment found predates this build — installing the backend it ships");
+    log(
+      isNewBackend
+        ? "preflight: this build ships a different backend than what's installed — reinstalling it"
+        : "preflight: the environment found predates this build — installing the backend it ships",
+    );
     showSetup(win);
-    const result = await runInstall(preflight.systemPython);
+    const result = await runInstall(preflight.systemPython, isNewBackend);
     if (result.ok) {
       // Same reasoning as the auto-install branch above: a sequential continuation, not a new
       // concurrent caller, so this bypasses the startup() gate on purpose.

@@ -122,10 +122,16 @@ async function prepareTarget(
  * Safe to re-run: `venv` is idempotent on an existing directory, and pip install of the same
  * wheel is a no-op beyond re-resolving its dependencies — which is exactly what repairs an
  * environment that predates one of them.
+ *
+ * `options.force` passes `--force-reinstall` to that pip install: plain `pip install <wheel>`
+ * is a no-op once the target's *version* already matches the wheel's declared one, which is
+ * exactly the case main.ts needs to override when this build ships a rebuilt wheel under the
+ * same kathara-api-rest version — see prefs.ts's `installedBackendFingerprint`.
  */
 export async function runAutoInstall(
   systemPython: string,
   onProgress?: (p: InstallProgress) => void,
+  options?: { force?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
   const wheel = bundledWheelPath();
   if (!wheel || !fs.existsSync(wheel)) {
@@ -146,7 +152,8 @@ export async function runAutoInstall(
   // Installs kathara/uvicorn[standard]/fastapi/etc. too — they're already this wheel's own
   // pyproject.toml dependencies, resolved from PyPI as normal.
   onProgress?.({ step: "wheel" });
-  const installWheel = await run(target.python, ["-m", "pip", "install", wheel], (line) => onProgress?.({ step: "wheel", line }));
+  const wheelArgs = ["-m", "pip", "install", ...(options?.force ? ["--force-reinstall"] : []), wheel];
+  const installWheel = await run(target.python, wheelArgs, (line) => onProgress?.({ step: "wheel", line }));
   if (!installWheel.ok) return { ok: false, error: "pip install of kathara-api-rest failed" };
 
   log("install: kathara-api-rest installed successfully");

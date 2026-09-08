@@ -81,6 +81,15 @@ export interface Preflight {
    * and outranks the shipped wheel by design.
    */
   stale?: boolean;
+  /**
+   * `python`/`systemPython` names an environment this app itself manages — the bundled
+   * interpreter or its private venv — as opposed to one a user pointed at ("Choose Python
+   * interpreter…") or a dev checkout's own venv/PATH Python. main.ts only ever force-reinstalls
+   * (on `stale`, or on a rebuilt backend wheel — see prefs.ts's `installedBackendFingerprint`)
+   * when this is true: doing so over a user's own chosen interpreter would silently overwrite an
+   * environment they're actively developing against.
+   */
+  appOwned: boolean;
 }
 
 const EXEC_TIMEOUT_MS = 15_000;
@@ -301,14 +310,14 @@ export async function runPreflight(
   // The two environments this app installs into itself (install.ts) — the only ones whose version
   // is the app's business — and the version it would install into them. Both empty on a dev
   // checkout, which has neither a bundled interpreter nor a wheel, so nothing is ever stale there.
-  const appOwned = [packagedVenvPython(), bundledPythonPath()].filter((c): c is string => Boolean(c));
+  const appOwnedCandidates = [packagedVenvPython(), bundledPythonPath()].filter((c): c is string => Boolean(c));
   const shipped = bundledWheelVersion();
 
   for (const interpreter of pythonCandidates()) {
     const result = await probe(interpreter);
     if (!result || !atLeast310(result.python)) continue;
     if (result.kathara_api && result.dependencies) {
-      if (!shipped || !appOwned.includes(interpreter) || result.kathara_api === shipped) {
+      if (!shipped || !appOwnedCandidates.includes(interpreter) || result.kathara_api === shipped) {
         chosen = { interpreter, result };
         break;
       }
@@ -433,5 +442,6 @@ export async function runPreflight(
     python: canStart ? found?.interpreter : undefined,
     systemPython: found?.interpreter,
     stale: isStale,
+    appOwned: found !== null && appOwnedCandidates.includes(found.interpreter),
   };
 }
