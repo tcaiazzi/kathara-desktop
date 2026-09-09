@@ -113,6 +113,15 @@ Two consequences worth knowing:
   packages. It fails the build if a dependency has no wheel for a target, except for an explicit
   allowlist of optional accelerators (`httptools`, `uvloop`, `watchfiles`): `httptools` publishes
   no `win_arm64` wheel, and uvicorn falls back to `h11` without it.
+- **`.pth` files are not processed for a `--target` tree**, because Python runs them only for real
+  site directories and this one arrives via `PYTHONPATH`. Every vendored tree therefore ships a
+  generated `sitecustomize.py` that calls `site.addsitedir()` on itself — `site` imports that
+  module by name at startup, after `PYTHONPATH` is on `sys.path`. This is load-bearing, not
+  defensive: `pywin32` (a dependency of the `docker` SDK on Windows) ships `pywin32.pth`, which is
+  the only thing that puts its `win32/` subdirectory on `sys.path` and calls
+  `os.add_dll_directory()` for its DLLs. Without it `import win32pipe` fails and every
+  Docker-touching API call on Windows returns `ImportError` — which is exactly what happened when
+  this tree first shipped without it.
 - `--no-compile`, so `.pyc` files are built at runtime instead. A build-time `.pyc` is invalidated
   the moment electron-builder rewrites the source's mtime, and Python would then try to rewrite it
   in a read-only directory on every import. `PYTHONPYCACHEPREFIX` points at the user-data

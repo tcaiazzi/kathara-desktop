@@ -188,6 +188,14 @@ function dockerCheck(status: DockerStatus): Check {
  * chardet, httpx. Those two come apart on any environment installed before a dependency was
  * declared: the package imports, the app doesn't, and without this the app passed preflight and
  * then died with a bare ModuleNotFoundError traceback in the log.
+ *
+ * `import docker` is named explicitly in that last entry even though it is Kathara's dependency,
+ * not this app's, because Kathara's manager imports it *lazily* — so `kathara_api.main` succeeds
+ * without it and the failure surfaces later, as an ImportError on the first API call that touches
+ * Docker rather than as anything preflight can explain. That is not hypothetical: on Windows the
+ * docker SDK reaches Docker Desktop over a named pipe via pywin32, whose .pth-driven bootstrap the
+ * packaged layout initially skipped (see vendor-python-deps.mjs's SITECUSTOMIZE), and every
+ * Docker-touching call failed with a bare `ImportError` while preflight reported all-green.
  */
 const PROBE = `
 import json, sys
@@ -196,7 +204,7 @@ for key, expr in (
     ("kathara_api", "import kathara_api; v = kathara_api.__version__"),
     ("kathara", "from Kathara.version import CURRENT_VERSION as v"),
     ("uvicorn", "import uvicorn; v = uvicorn.__version__"),
-    ("dependencies", "import kathara_api.main; v = 'satisfied'"),
+    ("dependencies", "import kathara_api.main; import docker; v = 'satisfied'"),
 ):
     scope = {}
     try:

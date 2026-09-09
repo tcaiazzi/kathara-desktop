@@ -79,6 +79,42 @@ const TARGETS = {
  */
 const OPTIONAL_ACCELERATORS = new Set(["httptools", "uvloop", "watchfiles"]);
 
+/**
+ * Shipped into every vendored tree, because a `pip install --target` directory reached through
+ * PYTHONPATH is **not** a site directory: Python runs `.pth` files only for real site-packages
+ * directories, so any package that relies on one is silently half-installed here.
+ *
+ * That is not hypothetical. `pywin32` — a dependency of the `docker` SDK on Windows — ships
+ * `pywin32.pth`, and it is the only thing that puts pywin32's `win32/`, `win32/lib/` and
+ * `pythonwin/` subdirectories on sys.path *and* calls `os.add_dll_directory()` for the DLLs in
+ * `pywin32_system32/`. Without it `import win32pipe` fails outright, and on Windows the docker SDK
+ * needs exactly that module to reach Docker Desktop over its named pipe — which surfaced as every
+ * Docker-touching API call failing with `ImportError`.
+ *
+ * `site` imports a module named `sitecustomize` at interpreter startup, after PYTHONPATH is
+ * already on sys.path, so this file is found here without any further wiring.
+ */
+const SITECUSTOMIZE = `"""Run the .pth files in this directory.
+
+Written by services/desktop/scripts/vendor-python-deps.mjs. This tree is a \`pip install --target\`
+directory handed to the interpreter on PYTHONPATH, and Python only processes .pth files for real
+site directories — so without this, a package that ships one (pywin32, via the docker SDK on
+Windows) is on sys.path but not actually usable. site.addsitedir() is the documented API that
+processes them, \`import\` lines included.
+"""
+
+import os
+import site
+
+try:
+    site.addsitedir(os.path.dirname(os.path.abspath(__file__)))
+except Exception:
+    # Never let a startup hook take the backend down. A dependency that genuinely needed its .pth
+    # will still fail at its own import, with a message naming it — far easier to diagnose than an
+    # interpreter that refuses to start at all.
+    pass
+`;
+
 /** PEP 503 normalisation, so "kathara-api-rest" and "kathara_api_rest" compare equal. */
 function normalize(name) {
   return name.replace(/[-_.]+/g, "-").toLowerCase();
@@ -231,6 +267,7 @@ function vendorTarget(os, arch, wheel, packages) {
     );
   }
 
+  writeFileSync(path.join(destDir, "sitecustomize.py"), SITECUSTOMIZE);
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   console.log(
     `[vendor-deps] ${os}/${arch}: ${packages.length - skipped.length} packages vendored to ` +
