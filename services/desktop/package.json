@@ -2,7 +2,7 @@
   "name": "kathara-desktop",
   "productName": "Kathara Desktop",
   "desktopName": "kathara-desktop.desktop",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "A native desktop app for Kathara.",
   "license": "GPL-3.0",

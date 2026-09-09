@@ -22,7 +22,7 @@ body:
     attributes:
       label: Kathará Desktop Version
       description: "Please provide the Kathará Desktop version you are using (shown in the Help menu as 'Version x.y.z')."
-      placeholder: "0.1.4"
+      placeholder: "0.1.5"
     validations:
       required: true
   - type: textarea
