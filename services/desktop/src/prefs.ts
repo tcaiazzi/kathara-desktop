@@ -1,15 +1,13 @@
 /**
  * A small preferences file in userData. Deliberately not electron-store: the shell only needs
- * to remember a handful of user choices (an interpreter, a terminal override, a custom labs
- * directory), and a hand-rolled JSON read/write avoids a dependency for that.
+ * to remember a handful of user choices (a terminal override, a custom labs directory), and a
+ * hand-rolled JSON read/write avoids a dependency for that.
  */
 import { app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
 export interface Prefs {
-  /** Absolute path to a Python interpreter, set via "Choose Python interpreter…". */
-  pythonPath?: string;
   /** Terminal emulator argv template; "{cmd}" is replaced with the command to run. */
   terminalCommand?: string[];
   /**
@@ -30,14 +28,6 @@ export interface Prefs {
   /** Times a backend has come up healthy on this machine. 0/absent means this is the first
    * launch — read by main.ts to shape the setup page's first-run copy. */
   launchCount?: number;
-  /**
-   * `paths.ts`'s `bundledWheelHash()` as of the last time a packaged build's backend was
-   * (re)installed successfully. Compared against the current build's wheel on every launch
-   * (main.ts's `isNewBackend`) so any build shipping a different wheel — even one that reuses the
-   * same kathara-api-rest version, or the same `app.getVersion()` — still forces one fresh
-   * install, instead of relying solely on Preflight.stale's version-string comparison.
-   */
-  installedBackendFingerprint?: string;
 }
 
 function prefsFile(): string {

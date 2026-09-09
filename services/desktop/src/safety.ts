@@ -4,7 +4,7 @@
  * (over IPC) and `preferences.json` (a plain JSON file `readPrefs` parses without validating).
  *
  * Deliberately free of any `electron` import, unlike paths.ts/prefs.ts: these are pure functions
- * shared by main.ts, paths.ts, prereqs.ts and backend.ts, and keeping them importable on their own
+ * shared by main.ts, paths.ts and backend.ts, and keeping them importable on their own
  * is what makes them checkable in isolation (services/desktop has no test runner — see the plan's
  * verification notes).
  */

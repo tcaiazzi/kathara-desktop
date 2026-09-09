@@ -2,19 +2,21 @@
  * Startup prerequisite checks.
  *
  * The desktop app deliberately does not bundle Docker: it drives whatever is installed on the
- * machine. Python is different: a packaged build ships its own interpreter (bundledPythonPath(),
- * a python-build-standalone build carrying no packages of its own) plus kathara-api-rest's wheel,
- * and installs kathara/uvicorn/etc. into that interpreter itself (see install.ts, which main.ts
- * runs automatically the moment these checks find nothing missing but packages) — so a packaged
- * app never actually requires a system Python, only Docker. A dev checkout has neither the
- * bundled interpreter nor the wheel, so there a missing package is still the user's to install,
- * and each check reports a remedy they can act on instead of a blank window.
+ * machine. Python is the opposite — a packaged build ships a complete, ready-to-run environment:
+ * its own interpreter (bundledPythonPath()) plus the entire backend dependency closure installed
+ * for that exact platform at build time (bundledSitePackages()). So in a packaged app these
+ * checks no longer decide *which* Python to use, and never install anything: there is exactly one
+ * interpreter, it needs no network, and a failure here means the installation is damaged rather
+ * than incomplete.
+ *
+ * A dev checkout is the only place any of this is still a search: there the environment is the
+ * developer's own (<repo>/.venv, or PATH), a missing package is theirs to install, and each check
+ * reports a remedy they can act on instead of a blank window.
  */
 import { execFile } from "node:child_process";
 import { app } from "electron";
-import { bundledPythonPath, bundledWheelVersion, devVenvPython, packagedVenvPython } from "./paths";
-import { readPrefs } from "./prefs";
-import { isPlainAbsolutePath } from "./safety";
+import { pythonEnv } from "./backend";
+import { bundledPythonPath, devVenvPython } from "./paths";
 import { log } from "./logger";
 
 export interface Check {
@@ -51,8 +53,8 @@ export interface Preflight {
   /**
    * Every *blocking* check passed — the app can boot, even if `advisories` below is non-empty
    * (today, only ever a Docker daemon that's installed but not running). main.ts gates startup on
-   * this, not on `ok`: `ok` still means "every check, no exceptions" for callers (isStale, the
-   * setup page) that care about the literal all-green state.
+   * this, not on `ok`: `ok` still means "every check, no exceptions" for the setup page, which
+   * cares about the literal all-green state.
    */
   canStart: boolean;
   /** The checks that failed but didn't block startup (severity: "advisory"), for the renderer to
@@ -61,35 +63,6 @@ export interface Preflight {
   /** The interpreter that satisfied the Python checks, to launch the backend with. Set once
    * `canStart`, not only once `ok` — see above. */
   python?: string;
-  /**
-   * The Python 3.10+ interpreter found, if any — set even when kathara_api/kathara/uvicorn are
-   * missing (unlike `python` above, which requires every check to pass). This is what install.ts's
-   * runAutoInstall installs with (and, on the fallback path, creates its venv with).
-   */
-  systemPython?: string;
-  /**
-   * Every check passed, but on an environment the *app itself* owns (the bundled interpreter or
-   * its private venv) carrying a different kathara-api-rest version than this build ships.
-   *
-   * The case this exists for: an app update replaces the bundled interpreter, packages and all,
-   * while the private venv beside it survives — so the previous release's backend is sitting
-   * there, complete and importable, ready to be picked and paired with the new frontend. Nothing
-   * else notices, because "works" and "is the version this app shipped" are different questions.
-   * main.ts reinstalls once when this is set, and carries on with what's there if that fails —
-   * a version-skewed backend still beats no app. An interpreter the *user* pointed at is never
-   * reported stale: that choice is deliberate (a checkout under active development, typically)
-   * and outranks the shipped wheel by design.
-   */
-  stale?: boolean;
-  /**
-   * `python`/`systemPython` names an environment this app itself manages — the bundled
-   * interpreter or its private venv — as opposed to one a user pointed at ("Choose Python
-   * interpreter…") or a dev checkout's own venv/PATH Python. main.ts only ever force-reinstalls
-   * (on `stale`, or on a rebuilt backend wheel — see prefs.ts's `installedBackendFingerprint`)
-   * when this is true: doing so over a user's own chosen interpreter would silently overwrite an
-   * environment they're actively developing against.
-   */
-  appOwned: boolean;
 }
 
 const EXEC_TIMEOUT_MS = 15_000;
@@ -102,9 +75,14 @@ interface ExecResult {
   missing: boolean;
 }
 
-function run(file: string, args: string[]): Promise<ExecResult> {
+function run(file: string, args: string[], extraEnv?: Record<string, string>): Promise<ExecResult> {
   return new Promise((resolve) => {
-    execFile(file, args, { timeout: EXEC_TIMEOUT_MS, windowsHide: true }, (err, stdout, stderr) => {
+    const options = {
+      timeout: EXEC_TIMEOUT_MS,
+      windowsHide: true,
+      ...(extraEnv ? { env: { ...process.env, ...extraEnv } } : {}),
+    };
+    execFile(file, args, options, (err, stdout, stderr) => {
       const code = err && typeof (err as { code?: unknown }).code === "number"
         ? ((err as { code: number }).code)
         : err
@@ -119,6 +97,12 @@ function run(file: string, args: string[]): Promise<ExecResult> {
     });
   });
 }
+
+/** A packaged app ships every Python package the backend imports, installed at build time. If one
+ * of them is missing at runtime, nothing the user can do from inside the app will conjure it back
+ * — there is no install step left to re-run — so every such check points at the same fix. */
+const DAMAGED_INSTALL_REMEDY =
+  "This app's bundled Python environment is incomplete. Reinstall the app to restore it.";
 
 const DOCKER_URL = "https://docs.docker.com/get-docker/";
 const KATHARA_URL = "https://www.kathara.org/download.html";
@@ -236,7 +220,10 @@ interface Probe {
 }
 
 async function probe(interpreter: string): Promise<Probe | null> {
-  const res = await run(interpreter, ["-c", PROBE]);
+  // Under exactly the environment the backend will get — in a packaged app the modules live on
+  // PYTHONPATH (backend.ts's pythonEnv()), not in the interpreter's own site-packages, so a probe
+  // without it would report every single backend import as missing.
+  const res = await run(interpreter, ["-c", PROBE], pythonEnv());
   if (res.missing || res.code !== 0) return null;
   try {
     return JSON.parse(res.stdout.trim().split("\n").pop() ?? "") as Probe;
@@ -251,37 +238,27 @@ function atLeast310(version: string): boolean {
 }
 
 /**
- * Interpreters to try, best first: an explicit user choice always wins, then a dev checkout's
- * virtualenv, then a packaged app's own private venv, then the interpreter bundled with a
- * packaged app (so a packaged app never falls through to PATH in practice), then PATH as a last
- * resort. `py -3` is omitted because it is a launcher, not an interpreter path, and the backend
- * has to be spawned by path later anyway.
+ * Interpreters to try, best first.
  *
- * Both of the app's own install targets are here (`packagedVenvPython()`, `bundledPythonPath()`)
- * and that is now the only thing that points the app at what it installed — main.ts deliberately
- * doesn't record it in `preferences.json`, so an automatic install never overwrites an interpreter
- * the user chose by hand. Before that, the recorded preference was the *only* route to the private
- * venv, and a preference aimed anywhere else (or a reset `preferences.json`) left a perfectly good
- * `<userData>/venv` invisible while the app asked to install what it had already installed. Both
- * come after the preference, so an explicit choice still outranks them — it only has to *work*, or
- * runPreflight falls through to these.
+ * A packaged app has exactly one and no fallbacks: the interpreter shipped inside it, with the
+ * dependency closure shipped beside it. Deliberately not a list — there is nothing to fall back
+ * *to* that would be an improvement. A system Python on PATH would be missing the backend's
+ * packages; a user-nominated one would be an interpreter whose contents the app cannot vouch for,
+ * and pointing at a stale one is exactly how a packaged build ends up dying with a bare
+ * ModuleNotFoundError. If the bundled interpreter is gone, the installation is damaged and
+ * reinstalling is the honest answer.
+ *
+ * A dev checkout keeps the search, because there the environment genuinely is the developer's:
+ * the repo's own virtualenv first (what scripts/install-<os>.{sh,ps1} create), then PATH. `py -3`
+ * is omitted because it is a launcher, not an interpreter path, and the backend has to be spawned
+ * by path later anyway.
  */
 function pythonCandidates(): string[] {
-  // The recorded preference is validated, unlike the app-owned paths after it: it is the only
-  // entry a hand-edited `preferences.json` controls, it outranks every other candidate, and
-  // whatever wins ends up interpolated into the elevated command string on macOS/Windows (see
-  // backend.ts's runElevatedNative). main.ts's `status:pick-python` validates on the way in;
-  // this covers the file being written some other way.
-  const preferred = readPrefs().pythonPath;
-  if (preferred !== undefined && !isPlainAbsolutePath(preferred)) {
-    log(`ignoring unusable pythonPath in preferences.json: ${JSON.stringify(preferred)}`);
+  if (app.isPackaged) {
+    const bundled = bundledPythonPath();
+    return bundled ? [bundled] : [];
   }
-  const candidates = [
-    isPlainAbsolutePath(preferred) ? preferred : undefined,
-    devVenvPython(),
-    packagedVenvPython(),
-    bundledPythonPath(),
-  ].filter((c): c is string => Boolean(c));
+  const candidates = [devVenvPython()].filter((c): c is string => Boolean(c));
   candidates.push(...(process.platform === "win32" ? ["python.exe", "python3.exe"] : ["python3", "python"]));
   return [...new Set(candidates)];
 }
@@ -294,41 +271,30 @@ export async function runPreflight(
   const docker = dockerCheck(await checkDockerStatus());
   onProgress?.({ phase: "python", checks: [docker] });
 
-  // Four tiers, best first: an interpreter the backend actually imports in *and* whose backend is
-  // the one this build ships; one it imports in, but from an app-owned environment left behind by
-  // an earlier release (see Preflight.stale); one that has the API package but an incomplete
-  // dependency closure; and finally any usable Python at all. The last two are why this isn't a
-  // single "has kathara_api" test — an interpreter whose environment predates a declared
-  // dependency must lose to a complete one, and when it's all there is, reporting it lets the
-  // checks below name the missing module instead of the much less useful "no Python found".
+  // Three tiers, best first: an interpreter the backend actually imports in; one that has the API
+  // package but an incomplete dependency closure; and finally any usable Python at all. The last
+  // two are why this isn't a single "has kathara_api" test — an environment that predates a
+  // declared dependency must lose to a complete one, and when it's all there is, reporting it
+  // lets the checks below name the missing module instead of the much less useful "no Python
+  // found". A packaged app only ever has one candidate, so this ladder is really about a dev
+  // checkout with more than one environment lying around.
   type Found = { interpreter: string; result: Probe };
   let chosen: Found | null = null;
-  let stale: Found | null = null;
   let incomplete: Found | null = null;
   let fallback: Found | null = null;
-
-  // The two environments this app installs into itself (install.ts) — the only ones whose version
-  // is the app's business — and the version it would install into them. Both empty on a dev
-  // checkout, which has neither a bundled interpreter nor a wheel, so nothing is ever stale there.
-  const appOwnedCandidates = [packagedVenvPython(), bundledPythonPath()].filter((c): c is string => Boolean(c));
-  const shipped = bundledWheelVersion();
 
   for (const interpreter of pythonCandidates()) {
     const result = await probe(interpreter);
     if (!result || !atLeast310(result.python)) continue;
     if (result.kathara_api && result.dependencies) {
-      if (!shipped || !appOwnedCandidates.includes(interpreter) || result.kathara_api === shipped) {
-        chosen = { interpreter, result };
-        break;
-      }
-      stale ??= { interpreter, result };
-      continue;
+      chosen = { interpreter, result };
+      break;
     }
     if (result.kathara_api) incomplete ??= { interpreter, result };
     else fallback ??= { interpreter, result };
   }
 
-  const found = chosen ?? stale ?? incomplete ?? fallback;
+  const found = chosen ?? incomplete ?? fallback;
   const checks: Check[] = [docker];
 
   if (!found) {
@@ -339,12 +305,12 @@ export async function runPreflight(
       detail: `Tried: ${pythonCandidates().join(", ")}`,
       // In a packaged build this only happens if the bundled interpreter itself is missing or
       // corrupted (bundledPythonPath() didn't resolve) — a from-source/PATH Python is the fix on a
-      // dev checkout, but a packaged user should reinstall rather than go hunting for python.org.
+      // dev checkout, but a packaged user has no other interpreter to be pointed at: the backend's
+      // packages are shipped for this one specifically.
       remedy: app.isPackaged
-        ? "The bundled Python interpreter is missing or damaged. Reinstall the app, or choose " +
-          "“Choose Python interpreter…” to point at one already on this machine."
-        : "Install Python 3.10 or newer from python.org. If you already have one " +
-          "somewhere unusual, choose “Choose Python interpreter…” instead.",
+        ? "The Python environment bundled with this app is missing or damaged. Reinstall the app."
+        : "Install Python 3.10 or newer from python.org, then run this repo's " +
+          "scripts/install-<linux|macos>.sh (or install-windows.ps1).",
       docsUrl: app.isPackaged ? undefined : "https://www.python.org/downloads/",
     });
   } else {
@@ -360,15 +326,15 @@ export async function runPreflight(
       label: "kathara-api-rest",
       ok: Boolean(result.kathara_api),
       detail: result.kathara_api ?? result.kathara_api_error ?? "not importable",
-      // Not on PyPI. A packaged build ships its own wheel and can install it (plus kathara/
-      // uvicorn, its transitive deps) automatically — see the "Install automatically" button.
-      // A dev checkout has no bundled wheel, so the fix there is still the repo's install script.
+      // A packaged build ships this (and kathara/uvicorn, its transitive deps) already installed
+      // beside the interpreter, so its absence means a damaged installation rather than a missing
+      // step. A dev checkout installs from source instead.
       remedy: result.kathara_api
         ? undefined
         : app.isPackaged
-          ? "Choose “Install missing packages” below."
+          ? DAMAGED_INSTALL_REMEDY
           : "Run this repo's scripts/install-<linux|macos>.sh (or install-windows.ps1) to set up a " +
-            "venv with everything this app needs, then point the app at its python.",
+            "venv with everything this app needs.",
     });
     checks.push({
       id: "kathara",
@@ -378,7 +344,7 @@ export async function runPreflight(
       remedy: result.kathara
         ? undefined
         : app.isPackaged
-          ? "Choose “Install missing packages” below."
+          ? DAMAGED_INSTALL_REMEDY
           : "Install Kathara, then retry.",
       docsUrl: result.kathara || app.isPackaged ? undefined : KATHARA_URL,
     });
@@ -390,7 +356,7 @@ export async function runPreflight(
       remedy: result.uvicorn
         ? undefined
         : app.isPackaged
-          ? "Choose “Install missing packages” below."
+          ? DAMAGED_INSTALL_REMEDY
           : `Install it: "${interpreter} -m pip install 'uvicorn[standard]'".`,
     });
     // Only worth reporting once the three named packages are there: until then `import
@@ -406,7 +372,7 @@ export async function runPreflight(
         remedy: result.dependencies
           ? undefined
           : app.isPackaged
-            ? "Choose “Install missing packages” below."
+            ? DAMAGED_INSTALL_REMEDY
             : `This interpreter's environment is missing something the backend imports. ` +
               `Reinstall the backend with its current dependencies: ` +
               `"${interpreter} -m pip install -e ." from this checkout.`,
@@ -426,10 +392,6 @@ export async function runPreflight(
   const ok = checks.every((c) => c.ok);
   const advisories = checks.filter((c) => !c.ok && c.severity === "advisory");
   const canStart = checks.every((c) => c.ok || c.severity === "advisory");
-  const isStale = canStart && !chosen && found !== null && found === stale;
-  if (isStale) {
-    log(`preflight: ${found?.interpreter} carries kathara-api-rest ${found?.result.kathara_api}, this build ships ${shipped}`);
-  }
   log(
     `preflight ${canStart ? "passed" : "failed"}${advisories.length ? ` (${advisories.length} advisory)` : ""}: ` +
       checks.map((c) => `${c.id}=${c.ok}`).join(" "),
@@ -440,8 +402,5 @@ export async function runPreflight(
     advisories,
     checks,
     python: canStart ? found?.interpreter : undefined,
-    systemPython: found?.interpreter,
-    stale: isStale,
-    appOwned: found !== null && appOwnedCandidates.includes(found.interpreter),
   };
 }

@@ -187,15 +187,17 @@ def test_upload_lab_extracts_and_materializes_binary_and_text(tmp_path):
 
     lab, warnings = service.upload_lab("uploaded", archive)
 
-    assert any("shared/" in w for w in warnings)
+    assert warnings == []
     assert set(lab.machines.keys()) == {"r1", "pc1"}
     lab_dir = service.store.lab_dir("uploaded")
     assert (lab_dir / "r1.startup").read_text().strip() == "ip a"
     # extract_zip writes the archive verbatim regardless of what the parser does with it: the
     # shared/ folder stays exactly where the archive put it...
     assert (lab_dir / "shared" / "etc" / "motd").read_text() == "hi\n"
-    # ...and is deliberately not applied to (merged into) any device — see
-    # lab_import.translate_lab_files (shared/ is out of scope for now, warned about instead).
+    # ...and is deliberately not merged into any device's own tree: `shared/` is not a per-machine
+    # concept, so lab_import.translate_lab_files has nothing to fold into a MachineCreate. Kathara's
+    # own deploy() applies it natively from where it sits (Lab.create_shared_folder + the /shared
+    # bind mount) — see that module's header.
     assert not (lab_dir / "r1" / "etc" / "motd").exists()
     # Binary content isn't representable in the text pending model, but extract_zip preserves it
     # on disk verbatim, and Machine.__init__ auto-discovers the existing r1/ subfolder as

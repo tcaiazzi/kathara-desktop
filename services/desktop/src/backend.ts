@@ -13,7 +13,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import sudoPrompt from "@vscode/sudo-prompt";
-import { backendSrcDir, labsDir, logFile } from "./paths";
+import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir } from "./paths";
 import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
 import { isPlainAbsolutePath, quoteForShellString } from "./safety";
@@ -480,12 +480,56 @@ interface BackendCommand {
   args: string[];
 }
 
+/**
+ * Where the interpreter finds the backend's code, and where it may cache bytecode.
+ *
+ * Packaged, that's the dependency closure vendored into the app at build time
+ * (paths.ts's bundledSitePackages()); in a dev checkout it's the repo's own src/, offered as a
+ * fallback for an interpreter the API package isn't pip-installed into. The two never both apply:
+ * backendSrcDir() is null when packaged and bundledSitePackages() is null when not.
+ *
+ * Shared with prereqs.ts, which has to probe an interpreter under exactly this environment —
+ * probing a packaged app's interpreter without PYTHONPATH would report every backend import as
+ * missing.
+ *
+ * path.delimiter, not ":" — on Windows the separator is ";", so a machine that already had a
+ * PYTHONPATH set produced one unparseable entry and the repo's src/ silently dropped out.
+ *
+ * `overrides` exists for the elevated start paths, which differ on both counts. They must not
+ * write bytecode into the ordinary cache — those files would come out root-owned and every later
+ * unprivileged launch would silently fail to update them — and on an AppImage they additionally
+ * cannot use the shipped site-packages at all, because root cannot read the FUSE mount they live
+ * in (see paths.ts's appImagePythonCache()).
+ */
+export function pythonEnv(overrides?: { sitePackages?: string; pycache?: string }): Record<string, string> {
+  const roots = [overrides?.sitePackages ?? bundledSitePackages(), backendSrcDir()].filter(
+    (dir): dir is string => Boolean(dir),
+  );
+  return {
+    PYTHONPYCACHEPREFIX: overrides?.pycache ?? pycacheDir(),
+    ...(roots.length
+      ? { PYTHONPATH: [...roots, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) }
+      : {}),
+  };
+}
+
+/** Bytecode cache for a root-run backend, kept apart from the unprivileged one: __pycache__
+ * entries written by root would be root-owned, and every later ordinary launch would then fail to
+ * refresh them — silently, since Python treats an unwritable cache as merely absent. */
+function elevatedPycacheDir(): string {
+  return path.join(pycacheDir(), "elevated");
+}
+
 /** Everything about *what* to run is shared between the normal and elevated start paths — only
  * *how* it's spawned (plain vs. wrapped in `sudo`) differs. Also the one chokepoint all three
  * spawn paths (startBackend, startBackendElevatedLinux, startBackendElevatedNative) share, so
  * it's where a previously orphaned backend gets one more chance to shut down before a fresh one
  * starts alongside it. */
-async function buildBackendCommand(staticDir: string, preferredPort?: number): Promise<BackendCommand> {
+async function buildBackendCommand(
+  staticDir: string,
+  preferredPort?: number,
+  pythonOverrides?: { sitePackages?: string; pycache?: string },
+): Promise<BackendCommand> {
   if (orphanedBackend) await retryOrphanShutdown();
 
   const port = preferredPort ?? (await findFreePort());
@@ -498,7 +542,6 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
   const labs = labsDir();
   fs.mkdirSync(labs, { recursive: true });
 
-  const srcDir = backendSrcDir();
   const appEnv: Record<string, string> = {
     // The app's default is 0.0.0.0 (src/kathara_api/config.py); a desktop app must not put its
     // backend — which can execute commands in containers — on the LAN.
@@ -508,11 +551,7 @@ async function buildBackendCommand(staticDir: string, preferredPort?: number): P
     KATHARA_API_LABS_DIR: labs,
     KATHARA_API_AUTH_TOKEN: token,
     PYTHONUNBUFFERED: "1",
-    // path.delimiter, not ":" — on Windows the separator is ";", so a machine that already had
-    // a PYTHONPATH set produced one unparseable entry and the repo's src/ silently dropped out.
-    ...(srcDir
-      ? { PYTHONPATH: [srcDir, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) }
-      : {}),
+    ...pythonEnv(pythonOverrides),
   };
   const env: NodeJS.ProcessEnv = { ...process.env, ...appEnv };
 
@@ -801,9 +840,18 @@ export async function startBackendElevatedLinux(python: string, staticDir: strin
 }
 
 async function runElevatedLinux(python: string, staticDir: string, password: string): Promise<ElevateResult> {
+  // Before stopBackend(), deliberately: on an AppImage this copies ~200 MB out of the FUSE mount
+  // the first time, and if that fails the current backend is still running and still serving the
+  // renderer. Returns null (and costs nothing) on every other kind of Linux installation.
+  const rootReadable = appImagePythonCache();
+  const interpreter = rootReadable?.python ?? python;
+
   await stopBackend();
 
-  const { port, baseUrl, token, labs, env, appEnv, args } = await buildBackendCommand(staticDir);
+  const { port, baseUrl, token, labs, env, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
+    sitePackages: rootReadable?.sitePackages,
+    pycache: elevatedPycacheDir(),
+  });
 
   // `sudo` resets the environment for the command it elevates by default (env_reset) — setting
   // KATHARA_API_STATIC_DIR/LABS_DIR etc. via `options.env` above only reaches the `sudo` process
@@ -811,11 +859,11 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
   // fall back to defaults. Force them through explicitly via a coreutils `env` prefix, which sets
   // them directly on the command `sudo` elevates, independent of the system's sudoers env policy.
   const envArgs = Object.entries(appEnv).map(([k, v]) => `${k}=${v}`);
-  log(`starting elevated backend: sudo env ${redactEnvArgsForLog(envArgs).join(" ")} ${python} ${args.join(" ")}`);
+  log(`starting elevated backend: sudo env ${redactEnvArgsForLog(envArgs).join(" ")} ${interpreter} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
-  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, python, ...args], { env: sudoEnv(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, interpreter, ...args], { env: sudoEnv(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   let stderrBuf = "";
   proc.stderr?.on("data", (c: Buffer) => {
     stderrBuf += c.toString();
@@ -906,7 +954,12 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     return { ok: false, reason: "error", message, restarted: false };
   }
 
-  const { port, baseUrl, token, labs, appEnv, args } = await buildBackendCommand(staticDir);
+  // No appImagePythonCache() here: an AppImage is a Linux packaging format, so on macOS and
+  // Windows the shipped paths are already readable by root. The bytecode cache still needs
+  // separating, for the same reason as on Linux.
+  const { port, baseUrl, token, labs, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
+    pycache: elevatedPycacheDir(),
+  });
   log(`starting elevated backend (native prompt): ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);

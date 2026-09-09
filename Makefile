@@ -2,7 +2,8 @@
 # (services/frontend). Mirrors the CI pipeline in .github/workflows/build-desktop.yml so a
 # local `make dist` produces the same installers a workflow run would.
 #
-# Full pipeline for a packaged installer: wheel -> fetch-python -> install -> dist.
+# Full pipeline for a packaged installer:
+#   wheel -> fetch-python -> vendor-deps -> install -> dist.
 # For everyday dev work (no packaging) use `make build`.
 
 DESKTOP_DIR := services/desktop
@@ -42,8 +43,8 @@ endif
 
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
-        wheel fetch-python fetch-python-host frontend shell \
-        clean clean-wheel clean-python distclean
+        wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell \
+        clean clean-wheel clean-python clean-deps distclean
 
 all: build
 
@@ -57,8 +58,10 @@ install-frontend:
 install-desktop:
 	$(RUN_NODE) npm ci --prefix $(DESKTOP_DIR)
 
-## ---- packaging inputs (wheel + bundled Python interpreter) ----------------
-## Only needed for `dist`; skip these for plain dev builds.
+## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----
+## Only needed for `dist`; skip these for plain dev builds. `vendor-deps` needs `wheel` (it installs
+## it) and declares that; it is otherwise independent of `fetch-python`, which it never reads —
+## every version and ABI it resolves against is passed to pip explicitly.
 
 wheel:
 	python3 -m pip install --upgrade pip build
@@ -72,6 +75,15 @@ fetch-python:
 fetch-python-host:
 	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM) $(HOST_ARCH)
 
+# Installs the backend's whole dependency closure into vendor/site-packages-$(PLATFORM)-<arch>/, so
+# the packaged app downloads and installs nothing on first launch. Must run on the OS it targets:
+# pip reads `sys_platform` markers from this machine (see the script's header).
+vendor-deps: wheel
+	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/vendor-python-deps.mjs $(PLATFORM)
+
+vendor-deps-host: wheel
+	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/vendor-python-deps.mjs $(PLATFORM) $(HOST_ARCH)
+
 ## ---- dev builds (no packaging) --------------------------------------------
 
 frontend: install-frontend
@@ -84,7 +96,7 @@ build: frontend shell
 
 ## ---- installer packaging ---------------------------------------------------
 
-dist: install wheel fetch-python
+dist: install wheel fetch-python vendor-deps
 	$(RUN_NODE) cd $(DESKTOP_DIR) && npm run dist:$(PLATFORM)
 
 dist-linux:
@@ -98,7 +110,7 @@ dist-win:
 
 # AppImage only, for the host's own arch only (no deb/rpm, no cross-arch). Quick local package,
 # not what CI produces (that's `dist-linux`, all Linux targets x both arches).
-appimage: install wheel fetch-python-host
+appimage: install wheel fetch-python-host vendor-deps-host
 	$(RUN_NODE) cd $(DESKTOP_DIR) && npm run dist:linux:appimage
 
 ## ---- clean -----------------------------------------------------------------
@@ -118,6 +130,12 @@ clean-wheel:
 clean-python:
 	rm -rf $(DESKTOP_DIR)/vendor/python-*
 
+# Vendored dependency trees from `make vendor-deps`. Separate from clean-python on purpose: this is
+# the half that changes when a dependency does, and re-vendoring costs a pip run rather than a
+# ~100 MB interpreter download per arch.
+clean-deps:
+	rm -rf $(DESKTOP_DIR)/vendor/site-packages-*
+
 # Everything clean removes, plus node_modules. Forces the next build to reinstall/refetch.
-distclean: clean clean-wheel clean-python
+distclean: clean clean-wheel clean-python clean-deps
 	rm -rf $(FRONTEND_DIR)/node_modules $(DESKTOP_DIR)/node_modules

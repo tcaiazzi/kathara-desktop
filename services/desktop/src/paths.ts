@@ -47,8 +47,7 @@ export function frontendDir(): string | null {
  * any real change to the build changes this file's bytes too — a version bump reliably causes
  * one anyway, but keying on content instead also self-invalidates a rebuild that ships under the
  * *same* version (e.g. a local dev/test cycle), which version-only keying silently kept serving
- * a stale copy for. Recomputed on every launch, so unlike the backend (see bundledWheelHash()) this
- * needs no separate "was this reinstalled" marker of its own.
+ * a stale copy for. Recomputed on every launch.
  */
 export function resolveStaticDir(): string | null {
   const candidate = frontendDir();
@@ -169,31 +168,15 @@ export function devVenvPython(): string | null {
 }
 
 /**
- * Where a packaged app's auto-installed venv lives: under userData, not inside the installed app
- * bundle. install.ts's fallback target, for the installations where the bundled interpreter can't
- * be written into — see bundledPythonDir() for which those are, and install.ts's header for why
- * surviving a reinstall/update is a liability here rather than the feature it looks like.
- */
-export function packagedVenvDir(): string {
-  return path.join(app.getPath("userData"), "venv");
-}
-
-/** The interpreter inside that venv, once install.ts has created it. */
-export function packagedVenvPython(): string | null {
-  if (!app.isPackaged) return null;
-  const candidate =
-    process.platform === "win32"
-      ? path.join(packagedVenvDir(), "Scripts", "python.exe")
-      : path.join(packagedVenvDir(), "bin", "python");
-  return fs.existsSync(candidate) ? candidate : null;
-}
-
-/**
  * The Python interpreter shipped inside the app (a python-build-standalone `install_only_stripped`
  * build, fetched at CI build time by scripts/fetch-python.mjs and shipped as an arch-scoped
- * extraResource — see electron-builder.yml). Arrives with no packages beyond pip, and is where
- * install.ts puts the backend, so a packaged app needs no system Python at all. Packaged only: a
- * dev checkout keeps using devVenvPython()/PATH, same as before.
+ * extraResource — see electron-builder.yml).
+ *
+ * In a packaged app this is now the *only* interpreter, on every OS: prereqs.ts's
+ * pythonCandidates() offers nothing else, there is no system-Python fallback and no private venv.
+ * Its dependencies are shipped beside it (bundledSitePackages()) rather than installed at first
+ * launch, so a packaged app needs neither a system Python nor a network. Packaged only: a dev
+ * checkout keeps using devVenvPython()/PATH, same as before.
  */
 export function bundledPythonPath(): string | null {
   const root = bundledPythonDir();
@@ -203,14 +186,11 @@ export function bundledPythonPath(): string | null {
 }
 
 /**
- * The root of that bundled interpreter's tree — the directory its `site-packages` lives under.
- *
- * Separate from the interpreter path because install.ts installs *into* it (that's the whole
- * point of shipping an interpreter: the packages land in the app, not in a second environment
- * beside it) and so has to answer a question the interpreter path can't: whether this
- * installation is somewhere writable. Where it isn't — an AppImage's read-only squashfs, a
- * root-owned /opt from the .deb/.rpm, a Program Files directory chosen in the NSIS installer —
- * install.ts falls back to the private venv under `userData`.
+ * The root of that bundled interpreter's tree. Separate from the interpreter path because the
+ * whole tree is what appImagePythonCache() has to copy out, and because nothing may be written
+ * into it: the app's Python environment is read-only by design, which is what makes it work
+ * identically on an AppImage's squashfs, a root-owned /opt from the .deb/.rpm, a Program Files
+ * directory chosen in the NSIS installer, and a signed .app on macOS.
  */
 export function bundledPythonDir(): string | null {
   if (!app.isPackaged) return null;
@@ -219,53 +199,93 @@ export function bundledPythonDir(): string | null {
 }
 
 /**
- * kathara-api-rest's own wheel, built by CI and shipped as an extraResource (electron-builder.yml)
- * so install.ts can `pip install` it without a git checkout — pulls in kathara/uvicorn/etc.
- * transitively since they're already its own pyproject.toml dependencies. Packaged only: a dev
- * checkout installs from source instead (scripts/install-<os>.{sh,ps1}).
- */
-export function bundledWheelPath(): string | null {
-  if (!app.isPackaged) return null;
-  const dir = path.join(process.resourcesPath, "vendor");
-  const wheel = fs.existsSync(dir) ? fs.readdirSync(dir).find((f) => f.endsWith(".whl")) : undefined;
-  return wheel ? path.join(dir, wheel) : null;
-}
-
-/**
- * The kathara-api-rest version that wheel *is* — read out of its filename, which PEP 427 fixes as
- * `<name>-<version>-<python tag>-<abi tag>-<platform tag>.whl`.
+ * The backend's entire dependency closure — kathara-api-rest, kathara, uvicorn, fastapi and every
+ * transitive dependency — installed for this exact (os, arch) at build time by
+ * scripts/vendor-python-deps.mjs and shipped as an arch-scoped extraResource.
  *
- * This, not `app.getVersion()`, is what prereqs.ts compares an installed environment against
- * (Preflight.stale): the wheel is the thing install.ts installs, so it's the only honest answer to
- * "is this the backend this build ships". `app.getVersion()` comes from services/desktop's own
- * package.json, a second version that happens to be bumped alongside the Python package's — and
- * the one launch in which the two disagreed would have every startup reinstalling a backend that
- * was already correct.
+ * A plain `pip install --target` tree, not a venv and not the bundled interpreter's own
+ * site-packages: it goes on PYTHONPATH when the shell spawns the backend (backend.ts's
+ * buildBackendCommand()), which is the one arrangement that needs nothing writable inside the app
+ * at runtime and therefore behaves the same on every OS and every kind of installation.
  */
-export function bundledWheelVersion(): string | null {
-  const wheel = bundledWheelPath();
-  if (!wheel) return null;
-  const version = path.basename(wheel).split("-")[1];
-  return version || null;
+export function bundledSitePackages(): string | null {
+  if (!app.isPackaged) return null;
+  const dir = path.join(process.resourcesPath, "site-packages");
+  return fs.existsSync(dir) ? dir : null;
 }
 
 /**
- * A content fingerprint of the bundled wheel, for detecting "this build ships a different backend"
- * even when `bundledWheelVersion()` doesn't: a rebuild that ships under the same kathara-api-rest
- * version (a hotfix during development, say) still changes the wheel's own bytes. main.ts compares
- * this against prefs.ts's `installedBackendFingerprint` on every launch — unlike Preflight.stale's
- * version-string comparison, this also catches a same-version reinstall of a genuinely different
- * build, at the cost of a couple of file reads at startup.
+ * Where .pyc files go. vendor-python-deps.mjs installs with `--no-compile` (a .pyc compiled at
+ * build time is invalidated the moment electron-builder rewrites the source's mtime, and Python
+ * would then try to rewrite it in a read-only directory on every single import), so the cache has
+ * to be built at runtime somewhere writable. Not a correctness requirement — Python falls back to
+ * re-parsing the source — but the difference between a warm and a cold backend start.
  */
-export function bundledWheelHash(): string | null {
-  const wheel = bundledWheelPath();
-  if (!wheel) return null;
+export function pycacheDir(): string {
+  return path.join(app.getPath("userData"), "pycache");
+}
+
+/**
+ * The bundled Python environment as a *root-readable* pair of paths, for the elevated backend
+ * (backend.ts's startBackendElevatedLinux/Native). Returns null when the ordinary paths already
+ * work, which is every case except one.
+ *
+ * That case is the AppImage, and it is the same trap resolveStaticDir() documents above: the
+ * AppImage runtime FUSE-mounts itself under `/tmp/.mountXXXXXX/` as the launching user, and root
+ * does *not* bypass a FUSE mount's ownership the way it bypasses ordinary file permissions. An
+ * elevated backend started from those paths cannot exec the interpreter or read a single module.
+ *
+ * So copy both halves out to a stable, real on-disk location under `userData` and hand those back
+ * instead. Deliberately lazy — called only from the elevated start paths, never during a normal
+ * launch: elevation is an explicit user action already behind a password prompt, where a one-off
+ * copy is unnoticeable, while doing it on every launch would cost every user ~200 MB of disk for
+ * a feature most never use.
+ *
+ * Keyed on the content of the vendored dependency manifest rather than app.getVersion(), for the
+ * same reason resolveStaticDir() keys on index.html's bytes: it also self-invalidates a rebuild
+ * shipping under a version that has not been bumped.
+ */
+export function appImagePythonCache(): { python: string; sitePackages: string } | null {
+  if (!process.env.APPIMAGE) return null;
+  const pythonDir = bundledPythonDir();
+  const sitePackages = bundledSitePackages();
+  if (!pythonDir || !sitePackages) return null;
+
+  // The manifest is only cache-key material, never a correctness requirement — a build that
+  // somehow shipped without it must still be able to elevate, so fall back to the app version
+  // rather than throwing out of a path the user reached by typing their password.
+  let keyMaterial: Buffer | string;
   try {
-    return crypto.createHash("sha256").update(fs.readFileSync(wheel)).digest("hex").slice(0, 16);
+    keyMaterial = fs.readFileSync(path.join(sitePackages, "vendor-manifest.json"));
   } catch {
-    // Read every packaged launch, unlike the AppImage-only readFileSync in resolveStaticDir() —
-    // a vanished/locked file here must fall back to "no fingerprint" rather than take the whole
-    // app down with an unhandled rejection off the unguarded whenReady().then() cold-boot path.
-    return null;
+    console.warn("no vendor-manifest.json beside the bundled site-packages — keying the AppImage python cache on the app version instead");
+    keyMaterial = app.getVersion();
   }
+  const key = crypto.createHash("sha256").update(keyMaterial).digest("hex").slice(0, 16);
+
+  const cacheRoot = path.join(app.getPath("userData"), "python-cache");
+  const cached = path.join(cacheRoot, key);
+  // Written last, so a copy interrupted half-way (a crash, a kill) is never mistaken for a
+  // finished one on the next launch — unlike resolveStaticDir(), whose marker is the copied
+  // index.html itself, this tree has no single file that means "all of it arrived".
+  const complete = path.join(cached, ".complete");
+
+  if (!fs.existsSync(complete)) {
+    fs.mkdirSync(cacheRoot, { recursive: true });
+    fs.rmSync(cached, { recursive: true, force: true });
+    // verbatimSymlinks: python-build-standalone ships bin/python3 as a relative symlink to
+    // python3.12; dereferencing it would silently double the copy and break nothing visibly.
+    fs.cpSync(pythonDir, path.join(cached, "python"), { recursive: true, verbatimSymlinks: true });
+    fs.cpSync(sitePackages, path.join(cached, "site-packages"), { recursive: true, verbatimSymlinks: true });
+    fs.writeFileSync(complete, "");
+
+    for (const entry of fs.readdirSync(cacheRoot)) {
+      if (entry !== key) fs.rmSync(path.join(cacheRoot, entry), { recursive: true, force: true });
+    }
+  }
+
+  return {
+    python: path.join(cached, "python", process.platform === "win32" ? "python.exe" : "bin/python3"),
+    sitePackages: path.join(cached, "site-packages"),
+  };
 }

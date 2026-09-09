@@ -18,17 +18,22 @@ for how to run and build it; this document covers the "why" behind its behaviour
 - Sets `KATHARA_API_STATIC_DIR` to the built frontend and `KATHARA_API_LABS_DIR` to the
   per-user lab directory.
 
-Which interpreter runs it is decided by `prereqs.ts`'s `pythonCandidates()`, best first: an
-interpreter the user picked explicitly (`preferences.json`), a dev checkout's `.venv`, a
-packaged app's own private virtualenv (`packagedVenvPython()`), the one **bundled inside a
-packaged app** (`paths.ts`'s `bundledPythonPath()` → `resources/python/`, put there at build
-time by `scripts/fetch-python.mjs` — so a packaged app needs no system Python), then `PATH` as a
-last resort.
+Which interpreter runs it is decided by `prereqs.ts`'s `pythonCandidates()`, and a packaged app
+has exactly one: the interpreter **bundled inside it** (`paths.ts`'s `bundledPythonPath()` →
+`resources/python/`, put there at build time by `scripts/fetch-python.mjs`), with the backend's
+dependency closure shipped beside it at `resources/site-packages/` (`bundledSitePackages()`, put
+there by `scripts/vendor-python-deps.mjs`) and handed to the interpreter on `PYTHONPATH` —
+`backend.ts`'s `pythonEnv()`, which `prereqs.ts` probes under too, since a probe without it would
+report every backend import as missing.
 
-A candidate is only accepted if it actually satisfies the checks, so the list is a fallback
-chain, not just a priority order: an interpreter that imports `kathara_api` but not
-`kathara_api.main` (an environment installed before a dependency was declared) loses to one that
-imports both, which is how a stale explicit preference stops being a dead end.
+There is deliberately no fallback: a system Python on `PATH` would be missing the backend's
+packages, and an interpreter nominated by the user is one whose contents the app cannot vouch for.
+If the bundled one is gone, the installation is damaged and reinstalling is the honest answer.
+
+A dev checkout is the only place this is still a search — the repo's `.venv` first, then `PATH` —
+and there a candidate is only accepted if it actually satisfies the checks: an interpreter that
+imports `kathara_api` but not `kathara_api.main` (an environment installed before a dependency was
+declared) loses to one that imports both.
 
 `main.ts` then spawns `uvicorn` with that command, waits for `/api/health`, and loads
 `http://127.0.0.1:<port>/`. Because the UI is served over HTTP from the same origin as the
@@ -73,32 +78,65 @@ on Windows) is the second line, not the only one.
 > `ELECTRON_RUN_AS_NODE=1`; `services/desktop/scripts/start.mjs` strips it before launching,
 > because with it set Electron runs as plain Node and never opens a window.
 
-## Installing the backend into the app
+## The bundled Python environment
 
-On a packaged build the backend is `pip install`ed **into the bundled interpreter itself**
-(`install.ts`, from `paths.ts`'s `bundledWheelPath()` → `resources/vendor/*.whl`), so the app's
-Python environment is one thing an update replaces wholesale, packages included. The private
-virtualenv under the user-data directory is the fallback for installations where writing into the
-app is not possible — an AppImage's read-only squashfs, a root-owned `/opt` from the `.deb`/`.rpm`,
-a Program Files directory chosen in the NSIS installer, and every macOS build, where adding files
-under `Contents/Resources` invalidates the ad-hoc signature `afterPack` applies and Apple Silicon
-then refuses to launch the app at all. `install.ts` decides by probing with a real write.
+A packaged build ships the backend's environment already installed — there is no runtime install
+step at all, on any OS. Two build-time scripts produce it, both into the gitignored
+`services/desktop/vendor/`:
 
-`main.ts` runs that install **by itself**, no click, whenever preflight's only failures are
-checks the wheel can fix (`kathara_api`/`kathara`/`uvicorn`/`dependencies` — never Docker, Python
-itself or the bundled UI), and once more when the environment it found *works* but carries a
-different `kathara-api-rest` version than the wheel this build ships (`Preflight.stale`) — the
-skew an update produces when it replaces the bundled interpreter and the previous release's
-virtualenv survives beside it. Both are capped at one attempt per app run; past that, the setup
-page's "Install missing packages" button is the retry. A stale environment that fails to
-reinstall still starts: a version-skewed backend beats no app.
+| script | output | shipped as |
+|---|---|---|
+| `fetch-python.mjs` | `python-<os>-<arch>/` | `resources/python/` |
+| `vendor-python-deps.mjs` | `site-packages-<os>-<arch>/` | `resources/site-packages/` |
 
-Neither path writes the interpreter into `preferences.json` — `pythonCandidates()` probes both
-install targets already, so an automatic action never has to overwrite a choice the user made by
-hand.
+Both are scoped per `(os, arch)` by `electron-builder.yml`, so an x64 installer never carries the
+arm64 payload.
+
+The dependencies are a plain `pip install --target` tree rather than a virtualenv or an install
+into the interpreter's own `site-packages`, and that is what makes every OS behave the same: it
+needs **nothing writable inside the app at runtime**. That mattered because the alternative never
+worked everywhere — installing at first launch is impossible on an AppImage's read-only squashfs,
+on a root-owned `/opt` from the `.deb`/`.rpm`, in a Program Files directory chosen in the NSIS
+installer, and on macOS, where adding files under `Contents/Resources` invalidates the ad-hoc
+signature `afterPack` applies and Apple Silicon then refuses to launch the app at all. (That last
+one is also why `scripts/sign-mac-arm64.js` signs the Mach-O files under `site-packages/` as well
+as under `python/`.)
+
+Because the environment lives inside the app, an update replaces it wholesale. There is no
+surviving previous-release environment to skew against the new frontend, and so nothing here needs
+to detect or repair one.
+
+Two consequences worth knowing:
+
+- `vendor-python-deps.mjs` **must run on the OS it targets** — pip evaluates `sys_platform`
+  markers from the machine it runs on, which is why CI vendors in the same per-OS job that
+  packages. It fails the build if a dependency has no wheel for a target, except for an explicit
+  allowlist of optional accelerators (`httptools`, `uvloop`, `watchfiles`): `httptools` publishes
+  no `win_arm64` wheel, and uvicorn falls back to `h11` without it.
+- `--no-compile`, so `.pyc` files are built at runtime instead. A build-time `.pyc` is invalidated
+  the moment electron-builder rewrites the source's mtime, and Python would then try to rewrite it
+  in a read-only directory on every import. `PYTHONPYCACHEPREFIX` points at the user-data
+  directory instead (`paths.ts`'s `pycacheDir()`); the elevated backend gets a separate subtree, so
+  root-owned cache files can't stop later unprivileged launches from refreshing them.
+
+### The AppImage exception
+
+An AppImage FUSE-mounts itself under `/tmp/.mountXXXXXX/` **as the launching user**, and root does
+not bypass a FUSE mount's ownership the way it bypasses ordinary file permissions. So an *elevated*
+backend started from the shipped paths could neither exec the interpreter nor read a module.
+`paths.ts`'s `appImagePythonCache()` copies both trees out to the user-data directory and hands
+those paths back instead — lazily, from the elevated start paths only, since elevation is an
+explicit user action already behind a password prompt while every ordinary launch would otherwise
+pay ~200 MB of disk for a feature most users never touch. Same idiom as `resolveStaticDir()` uses
+for the frontend, and keyed on the vendored dependency manifest's content for the same reason.
 
 ## Building installers
 
+- `npm run dist:<os>` packages only. It does **not** build the backend wheel, fetch the
+  interpreter or vendor the dependencies — run `scripts/fetch-python.mjs <os>` and
+  `scripts/vendor-python-deps.mjs <os>` first, or use `make dist-<os>`, which does the whole
+  sequence. Skipping either script produces an installer that builds cleanly and ships an app that
+  cannot start.
 - Each target must be built on its own platform: `.dmg` requires macOS. `.deb` additionally
   requires an **x86_64** host — electron-builder ships `fpm` (which produces the `.deb`) only
   for `linux-x86`, so it cannot be produced on an arm64 machine even though the resulting

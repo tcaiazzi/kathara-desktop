@@ -29,12 +29,21 @@ function isMachO(filePath) {
 
 /**
  * Recursively signs every Mach-O file under `dir` (electron-builder's extraResources don't get
- * the deep-signing pass Contents/Frameworks would from a real Developer ID build). Needed for the
- * bundled Python interpreter (Contents/Resources/python/ — see electron-builder.yml, paths.ts's
- * bundledPythonPath()): its interpreter binary, libpython*.dylib, and lib-dynload/*.so extension
- * modules are all unsigned Mach-O on disk, and Apple Silicon refuses to exec any of them
- * otherwise. Symlinks (python-build-standalone ships e.g. bin/python3 -> python3.12) are skipped:
- * the real file they point to is signed anyway when readdir reaches it as its own entry.
+ * the deep-signing pass Contents/Frameworks would from a real Developer ID build). Needed for both
+ * halves of the bundled Python environment, and for the same reason: Apple Silicon refuses to exec
+ * an unsigned Mach-O at all.
+ *
+ *   Contents/Resources/python/         the interpreter binary, libpython*.dylib, lib-dynload/*.so
+ *   Contents/Resources/site-packages/  the C extensions in the vendored dependency closure —
+ *                                      pydantic_core, aiohttp, uvloop, yaml, httptools, …
+ *
+ * Signing the dependencies here, at build time, is what lets every OS run the backend straight out
+ * of the bundled interpreter. The alternative the app used to have — pip installing them at first
+ * launch — could never work on macOS, because writing into Contents/Resources invalidates the seal
+ * this signature creates and the app then refuses to launch.
+ *
+ * Symlinks (python-build-standalone ships e.g. bin/python3 -> python3.12) are skipped: the real
+ * file they point to is signed anyway when readdir reaches it as its own entry.
  */
 function signMachOTree(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -50,13 +59,15 @@ exports.default = async function (context) {
   const appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const frameworksDir = path.join(appPath, "Contents", "Frameworks");
   const pythonDir = path.join(appPath, "Contents", "Resources", "python");
-  // Nested code first — frameworks, the bundled Python interpreter, and helper .app bundles under
-  // Contents/Frameworks — then the outer bundle last, so its signature is computed over
-  // already-signed contents (avoids --deep, which Apple's own docs discourage: it can silently
-  // miss or mis-sign nested code).
+  const sitePackagesDir = path.join(appPath, "Contents", "Resources", "site-packages");
+  // Nested code first — frameworks, the bundled Python interpreter and its vendored dependencies,
+  // and helper .app bundles under Contents/Frameworks — then the outer bundle last, so its
+  // signature is computed over already-signed contents (avoids --deep, which Apple's own docs
+  // discourage: it can silently miss or mis-sign nested code).
   if (fs.existsSync(frameworksDir)) {
     for (const entry of fs.readdirSync(frameworksDir)) sign(path.join(frameworksDir, entry));
   }
   if (fs.existsSync(pythonDir)) signMachOTree(pythonDir);
+  if (fs.existsSync(sitePackagesDir)) signMachOTree(sitePackagesDir);
   sign(appPath);
 };

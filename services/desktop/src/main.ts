@@ -32,20 +32,18 @@ import {
 } from "./backend";
 import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
 import { ensurePathEnv } from "./env";
-import { runAutoInstall, type InstallProgress, type InstallStep } from "./install";
 import {
   openLabsDir,
   openSystemTerminal,
   pickHostDirectory,
   pickLabArchive,
   pickLabsDirectory,
-  pickPythonInterpreter,
   revealPath,
   saveFile,
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { bundledWheelHash, defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
+import { defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
 import { isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
 import {
@@ -109,10 +107,7 @@ export type BootPhase =
   | "frontend"        // locating (and, under AppImage, copying) the bundled SPA
   | "docker"          // `docker info` round trip to the daemon
   | "python"          // interpreter discovery + the import probe
-  | "backend"         // spawning uvicorn and waiting for /api/health
-  | "install-prepare"
-  | "install-pip"
-  | "install-wheel";
+  | "backend";        // spawning uvicorn and waiting for /api/health
 
 type Status =
   | {
@@ -124,8 +119,6 @@ type Status =
       startedAt: number;
       /** Checks decided so far this attempt, in display order. Grows as preflight proceeds. */
       checks: Check[];
-      /** A live tail of subprocess output — install phases only. */
-      output?: string;
       /** True until the first backend has ever come up healthy on this machine. Shapes the
        * setup page's first-run copy ("Welcome to…" vs. "Starting…"). */
       firstRun: boolean;
@@ -145,7 +138,8 @@ let win: BrowserWindow | null = null;
 let status: Status = { state: "starting", phase: "environment", message: "Starting…", startedAt: Date.now(), checks: [], firstRun: isFirstRun() };
 /** A deep link that arrived before the UI was ready, replayed once it is. */
 let pendingDeepLink: string | null = null;
-/** The most recent preflight result, so status:install knows which system Python to use. */
+/** The most recent preflight result, so the elevation paths know which interpreter to re-launch
+ * with and which advisories to carry into "ready" after a restart. */
 let lastPreflight: Preflight | null = null;
 
 /**
@@ -237,10 +231,10 @@ let bootChecks: Check[] = [];
  */
 let carriedNotifications: unknown[] = [];
 
-/** Sets a "starting" status, carrying forward the checks/output accumulated so far this attempt
- * unless the caller supplies fresh ones. The one place that assembles the "starting" payload, so
- * every call site only has to say what changed. */
-function setPhase(phase: BootPhase, message: string, extra?: { checks?: Check[]; output?: string }): void {
+/** Sets a "starting" status, carrying forward the checks accumulated so far this attempt unless
+ * the caller supplies fresh ones. The one place that assembles the "starting" payload, so every
+ * call site only has to say what changed. */
+function setPhase(phase: BootPhase, message: string, extra?: { checks?: Check[] }): void {
   if (extra?.checks) bootChecks = extra.checks;
   setStatus({
     state: "starting",
@@ -248,7 +242,6 @@ function setPhase(phase: BootPhase, message: string, extra?: { checks?: Check[];
     message,
     startedAt: bootStartedAt,
     checks: bootChecks,
-    output: extra?.output,
     firstRun: isFirstRun(),
   });
 }
@@ -283,99 +276,6 @@ const PREFLIGHT_PHASE_MESSAGE: Record<"docker" | "python", string> = {
   python: "Looking for Python and the Kathara packages…",
 };
 
-const INSTALL_PHASE: Record<InstallStep, BootPhase> = {
-  prepare: "install-prepare",
-  pip: "install-pip",
-  wheel: "install-wheel",
-};
-
-const INSTALL_MESSAGE: Record<InstallStep, string> = {
-  prepare: "Preparing the app's bundled Python environment…",
-  pip: "Updating pip…",
-  wheel: "Installing Kathara and the Kathara API into the app's bundled Python — this can take several minutes…",
-};
-
-/**
- * The checks a bundled-wheel install can actually fix (install.ts). A failure outside this set —
- * Python itself, the bundled UI — is something the app deliberately doesn't install its way out
- * of, and is the difference between "install this automatically" and "ask the user".
- * KEEP IN SYNC with the `installable` list in setup.html, which decides whether the button that
- * runs the same install by hand is offered.
- *
- * Docker is deliberately *not* in this set, but is still special-cased out of the gate below
- * rather than folded into it: unlike these four, the app can never install Docker for the user,
- * so a missing/stopped Docker daemon must never be treated as "installable" — only as a check
- * that's allowed to keep failing while the install proceeds anyway (see startup()).
- */
-const INSTALLABLE: ReadonlySet<Check["id"]> = new Set<Check["id"]>([
-  "kathara_api",
-  "kathara",
-  "uvicorn",
-  "dependencies",
-]);
-
-/** One automatic install per app run. A second attempt would re-download exactly what just
- * failed; past the first, "Install missing packages" on the setup page is the retry. */
-let autoInstallAttempted = false;
-
-const INSTALL_TAIL_LINES = 12;
-
-/**
- * pip draws its progress bars with a bare "\r" between redraws, not "\n" — appending each raw
- * chunk would fill the tail with dozens of half-drawn bars instead of the handful of real lines
- * that matter. Splitting on both keeps only the latest state of each redrawn line.
- */
-function appendInstallTail(tail: string[], chunk: string): string[] {
-  const lines = chunk
-    .split(/\r?\n|\r/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  return [...tail, ...lines].slice(-INSTALL_TAIL_LINES);
-}
-
-/**
- * Runs the bundled-wheel install (install.ts), threading its progress into the status the setup
- * page polls: the phase ladder plus a live tail of pip's own output, since the wheel step can run
- * for minutes on a cold PyPI download.
- *
- * Shared by the two ways an install starts — startup()'s automatic attempt and the setup page's
- * button — so both report identically and both leave the caller to decide what happens next.
- *
- * `force` passes through to install.ts's `--force-reinstall`, for the one caller (a build shipping
- * a different backend wheel — see `isNewBackend` below) that needs a reinstall even when the
- * target already satisfies the wheel's declared version and would otherwise no-op.
- */
-async function runInstall(systemPython: string, force = false): Promise<{ ok: boolean; error?: string }> {
-  bootStartedAt = Date.now();
-  // Seeds the checks setPhase carries forward with the full list from the preflight that led
-  // here — preflight's own onProgress only ever accumulated up to the docker+python checks, not
-  // the later kathara_api/kathara/uvicorn/dependencies/frontend ones, and the page still wants to
-  // show the whole list (what's being fixed) alongside the install output.
-  bootChecks = lastPreflight?.checks ?? [];
-  let tail: string[] = [];
-  const result = await runAutoInstall(
-    systemPython,
-    ({ step, line }: InstallProgress) => {
-      if (line) tail = appendInstallTail(tail, line);
-      setPhase(INSTALL_PHASE[step], INSTALL_MESSAGE[step], { output: tail.join("\n") });
-    },
-    { force },
-  );
-  if (!result.ok) log(`install failed: ${result.error}`);
-  // Records that this build's wheel is now installed, so the next launch of the same build
-  // doesn't force another reinstall — see isNewBackend below. Any successful install (missing
-  // packages, stale, a new/rebuilt wheel, or the setup page's manual button) counts.
-  else {
-    const hash = bundledWheelHash();
-    if (hash) writePrefs({ installedBackendFingerprint: hash });
-  }
-  // No writePrefs of the interpreter that was just installed into: prereqs.ts's
-  // pythonCandidates() already probes both possible targets (the bundled interpreter and the
-  // private venv), so the next preflight finds whichever one this filled in — without an
-  // automatic action quietly overwriting an interpreter the user chose by hand.
-  return result;
-}
-
 /** Set for the duration of a `runStartup()` call, so a second trigger arriving while one is
  * already in flight (e.g. two rapid "Check again" clicks, or a retry racing an elevation) waits
  * for and reuses it instead of calling `startBackend()` again — `startBackend()`'s own "already
@@ -409,22 +309,6 @@ async function runStartup(resumePath?: string): Promise<void> {
   bootStartedAt = Date.now();
   bootChecks = [];
 
-  // True whenever this build's wheel (by content, not just declared version — see
-  // bundledWheelHash()) doesn't match the one prefs.ts's installedBackendFingerprint says was
-  // last installed — including a rebuild that reused the same kathara-api-rest version or the
-  // same app.getVersion(). The signal main.ts uses below to force a backend reinstall even when
-  // Preflight.stale's version-string comparison stays quiet. Recomputed fresh on every call,
-  // including the recursive continuation after a successful install below, so it turns false
-  // again the moment that install's writePrefs lands. Always false in a dev checkout (no bundled
-  // wheel to hash) and on the very first packaged launch's earlier checks (nothing installed yet
-  // is handled by the "missing packages" branch below regardless of this flag).
-  const wheelHash = bundledWheelHash();
-  const isNewBackend = app.isPackaged && wheelHash !== null && readPrefs().installedBackendFingerprint !== wheelHash;
-
-  // Before anything that shells out (Docker/Python checks, terminal integration): a
-  // double-clicked GUI app doesn't inherit the Terminal's PATH, so Homebrew/Docker Desktop
-  // binaries would otherwise be invisible even though they work fine from a shell. Awaited here,
-  // not at whenReady(), so the window is already up reporting this instead of showing nothing.
   setPhase("environment", "Reading your shell environment…");
   await ensurePathEnv();
 
@@ -435,94 +319,12 @@ async function runStartup(resumePath?: string): Promise<void> {
     setPhase(p.phase, PREFLIGHT_PHASE_MESSAGE[p.phase], { checks: p.checks }));
   lastPreflight = preflight;
   if (!preflight.canStart || !preflight.python || !staticDir) {
-    // Nothing is missing except packages this app ships a wheel for, so install them instead of
-    // parking on the setup page waiting for a click. That click used to be the only thing between
-    // a fresh machine and a working app, and — now that the packages live inside the bundled
-    // interpreter, which an app update replaces wholesale (install.ts) — it would also come back
-    // after every update, asking the user to authorise the one thing the app can do by itself.
-    //
-    // Docker is excluded from this check on purpose, and by id rather than by severity: a
-    // *stopped* daemon is already advisory (preflight.canStart is true, so this branch isn't even
-    // reached for it — see the docker:check IPC below for how the SPA warns about it instead), but
-    // a *missing* one is still blocking, and installing the bundled wheel is a plain `pip install`
-    // into the app's own Python that needs nothing from Docker either way — a user on a fresh
-    // machine with neither Docker nor the Python packages yet should still get the packages
-    // installed automatically, and land on a failure screen naming only the one thing (an absent
-    // Docker) the app truly can't do for them.
-    const nonDocker = preflight.checks.filter((c) => c.id !== "docker");
-    if (
-      app.isPackaged &&
-      staticDir &&
-      preflight.systemPython &&
-      !autoInstallAttempted &&
-      nonDocker.some((c) => !c.ok) &&
-      nonDocker.every((c) => c.ok || INSTALLABLE.has(c.id))
-    ) {
-      autoInstallAttempted = true;
-      log("preflight: only installable packages (Docker aside) are missing — installing them automatically");
-      // At cold start the splash is still on screen, and this install owns the next few minutes:
-      // the setup page is where its ladder and live pip output are visible.
-      showSetup(win);
-      // isNewBackend forces pip to actually touch kathara-api-rest itself here too — otherwise,
-      // when only a transitive dependency is missing (prereqs.ts's "incomplete" tier: kathara_api
-      // imports fine but something it needs doesn't), a plain `pip install` treats the top-level
-      // package as already satisfied and resolves only the missing dependency, leaving genuinely
-      // stale kathara_api source in place — while runInstall()'s success path below would still
-      // record this build's fingerprint as installed, permanently hiding the mismatch.
-      const result = await runInstall(preflight.systemPython, isNewBackend);
-      if (result.ok) {
-        // Guarded by autoInstallAttempted, so this recursion is one level deep at most. Calls
-        // runStartup directly, not startup(): this is a sequential continuation of the attempt
-        // already in flight, not a second concurrent one, and startup() would just hand back this
-        // same not-yet-settled call's own promise.
-        await runStartup(resumePath);
-        return;
-      }
-      setStatus({
-        state: "prereq-failed",
-        checks: preflight.checks,
-        notice: `Kathara Desktop tried to install the missing packages by itself and couldn't: ${result.error ?? "unknown error"}. Open the log for the full output, then try again.`,
-      });
-      return;
-    }
     setStatus({ state: "prereq-failed", checks: preflight.checks });
     // Not just for the cold start (where this page is already up): status:retry, setLabsDir and
     // elevation:drop all reach here after stopBackend(), so without this the window would sit on
     // a dead http://127.0.0.1:<old port> origin with no way back.
     showSetup(win);
     return;
-  }
-
-  // The app's own environment works, but either it isn't the backend this build ships (an update
-  // replaced the bundled interpreter and left the previous release's private venv standing — see
-  // Preflight.stale) or this build's wheel simply isn't the one last installed (isNewBackend
-  // above) — the case Preflight.stale's version-string comparison misses whenever a rebuild ships
-  // under the same kathara-api-rest version. Either way: reinstall once, then start; if the
-  // install fails, start anyway rather than stranding the user on the setup page over a mismatch
-  // they can't act on. Only for an app-owned environment (preflight.appOwned) — never over an
-  // interpreter the user pointed at by hand.
-  if (
-    app.isPackaged &&
-    preflight.appOwned &&
-    (preflight.stale || isNewBackend) &&
-    preflight.systemPython &&
-    !autoInstallAttempted
-  ) {
-    autoInstallAttempted = true;
-    log(
-      isNewBackend
-        ? "preflight: this build ships a different backend than what's installed — reinstalling it"
-        : "preflight: the environment found predates this build — installing the backend it ships",
-    );
-    showSetup(win);
-    const result = await runInstall(preflight.systemPython, isNewBackend);
-    if (result.ok) {
-      // Same reasoning as the auto-install branch above: a sequential continuation, not a new
-      // concurrent caller, so this bypasses the startup() gate on purpose.
-      await runStartup(resumePath);
-      return;
-    }
-    log("continuing with the environment already present");
   }
 
   await promptForLabsDir();
@@ -711,45 +513,6 @@ function registerIpc(): void {
     (_e, password: string): ReturnType<typeof reclaimLabsDirOwnershipWithPassword> =>
       reclaimLabsDirOwnershipWithPassword(password, labsDir()),
   );
-
-  ipcMain.handle("status:pick-python", async () => {
-    const chosen = await pickPythonInterpreter(win);
-    if (!chosen) return null;
-    // Validated before it is recorded: this preference outranks every other interpreter candidate
-    // (prereqs.ts's pythonCandidates) and whatever wins is interpolated into the elevated command
-    // string on macOS/Windows (backend.ts's runElevatedNative). The dialog only ever returns a
-    // real absolute path, so this refuses the pathological rather than the ordinary.
-    if (!isPlainAbsolutePath(chosen)) {
-      log(`refused an unsafe interpreter path: ${chosen}`);
-      throw new Error(`"${chosen}" is not a usable interpreter path.`);
-    }
-    writePrefs({ pythonPath: chosen });
-    log(`python interpreter set to ${chosen}`);
-    return chosen;
-  });
-
-  // Driven from the setup page's "Install missing packages" button — the manual entry to the
-  // same install startup() runs by itself when everything missing is installable. Reachable when
-  // that automatic attempt already ran and failed, or when it was skipped because something the
-  // app can't install (Docker) was failing too and has since been fixed.
-  ipcMain.handle("status:install", async () => {
-    const systemPython = lastPreflight?.systemPython;
-    if (!systemPython) return { ok: false, error: "no usable Python interpreter found" };
-    log("running install requested from the setup page");
-    const result = await runInstall(systemPython);
-    if (result.ok) {
-      await startup();
-    } else {
-      // Previously just logged: the page's own static "Install failed: …" line (setup.html) was
-      // immediately overwritten by the next poll's refresh(), so the user saw nothing.
-      setStatus({
-        state: "prereq-failed",
-        checks: lastPreflight?.checks ?? [],
-        notice: `Installation failed: ${result.error ?? "unknown error"}. Open the log for the full output.`,
-      });
-    }
-    return result;
-  });
 
   ipcMain.handle("shell:show-log", () => shell.openPath(backendLogPath()));
 

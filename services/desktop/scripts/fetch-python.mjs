@@ -15,11 +15,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { PYTHON_VERSION } from "./python-version.mjs";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vendorDir = path.join(root, "vendor");
 
 const PBS_RELEASE = "20260901";
-const PYTHON_VERSION = "3.12.14";
 
 // One entry per (desktop-shell-os, arch) pair this app ships. `triple` is the target triple in
 // python-build-standalone's own asset names; `sha256` is that asset's checksum from this

@@ -45,14 +45,15 @@ starts it and tells you when a manual step is needed. Safe to re-run after finis
 An Electron shell in `services/desktop`. It supervises a local backend and loads its UI, so
 there is no Compose stack to start and no browser tab to keep track of.
 
-A packaged build **bundles its own Python interpreter** (fetched at build time by
-`services/desktop/scripts/fetch-python.mjs`), so the user needs no system Python: on first run it
-installs the bundled `kathara-api-rest` wheel straight into that interpreter, by itself, and
-shows the progress while it does. Docker and Kathara are **not** bundled — those it drives from
-what is installed on the machine. On startup it runs a preflight (Docker, Python 3.10+,
-`kathara-api-rest`, Kathara, uvicorn, its dependency closure, the bundled UI); anything it can
-install it installs, and anything it can't it explains instead of showing a blank window. The lab
-storage is per user (`~/.config/kathara-desktop/labs` on Linux).
+A packaged build **bundles a complete Python environment**: its own interpreter (fetched at build
+time by `services/desktop/scripts/fetch-python.mjs`) plus `kathara-api-rest`, Kathara, uvicorn and
+their whole dependency closure, installed for that exact platform at build time by
+`services/desktop/scripts/vendor-python-deps.mjs`. So first launch **downloads nothing and installs
+nothing**, needs no system Python, and works offline — on every OS identically. Docker is **not**
+bundled: that one it drives from what is installed on the machine. On startup it still runs a
+preflight (Docker, Python 3.10+, `kathara-api-rest`, Kathara, uvicorn, its dependency closure, the
+bundled UI), but now to *verify* rather than to repair — anything wrong it explains instead of
+showing a blank window. The lab storage is per user (`~/.config/kathara-desktop/labs` on Linux).
 
 ### Running from a checkout
 
@@ -63,19 +64,25 @@ npm --prefix services/desktop start
 ```
 
 The shell starts a local backend and loads its UI once the backend is healthy. In a dev
-checkout it prefers the repo's `.venv`; otherwise it uses `python3` from `PATH`, or an
-interpreter chosen through **Choose Python interpreter…** on the setup screen (remembered in
-`~/.config/kathara-desktop/preferences.json`). See [docs/DESKTOP.md](docs/DESKTOP.md) for the
+checkout it prefers the repo's `.venv` and otherwise uses `python3` from `PATH`; a packaged build
+has no such search — it always uses the environment bundled inside it. See
+[docs/DESKTOP.md](docs/DESKTOP.md) for the
 startup sequence in detail, including the pairing token mentioned under
 [Security](#security), and a VS Code launch quirk to be aware of.
 
 ### Building installers
 
 ```bash
-# Once per OS, before the first build: downloads and checksum-verifies the Python interpreter
-# the app bundles, into the gitignored services/desktop/vendor/. `npm run dist` does NOT do
-# this for you — skip it and the installer builds fine but ships without an interpreter.
-node scripts/fetch-python.mjs linux            # (run from services/desktop; or `mac` / `win`)
+# Both of these run from services/desktop, and `npm run dist` does NOT run them for you — skip
+# either and the installer builds fine but ships an app that cannot start.
+#
+# 1. Downloads and checksum-verifies the Python interpreter the app bundles, into the gitignored
+#    services/desktop/vendor/.
+node scripts/fetch-python.mjs linux            # (or `mac` / `win`)
+# 2. Installs the backend's whole dependency closure for both of that OS's architectures, so the
+#    packaged app installs nothing at runtime. Must run on the OS it targets: pip reads
+#    `sys_platform` markers from the machine it runs on. Needs the wheel from `make wheel` first.
+node scripts/vendor-python-deps.mjs linux      # (or `mac` / `win`)
 
 npm --prefix services/desktop run dist:linux   # AppImage + deb + rpm (x64 + arm64)
 npm --prefix services/desktop run dist:mac     # dmg (x64 + arm64)
@@ -86,9 +93,9 @@ Artifacts land in `services/desktop/release/`. Each target must be built on its 
 (`.dmg` requires macOS, `.deb` an x86_64 host) — see [docs/DESKTOP.md](docs/DESKTOP.md) for why.
 
 `make dist-linux` / `dist-mac` / `dist-win` does the whole sequence above in one step — installing
-the npm dependencies, building the backend wheel and fetching the interpreter before packaging —
-mirroring what the release workflow runs. Use it unless you specifically want to repackage without
-rebuilding the wheel.
+the npm dependencies, building the backend wheel, fetching the interpreter and vendoring the
+dependencies before packaging — mirroring what the release workflow runs. Use it unless you
+specifically want to repackage without rebuilding the wheel.
 
 `services/desktop/resources/icon.png` is generated from the frontend's Kathara logo by
 `services/desktop/scripts/make-icon.py` (standard library only — no Pillow or ImageMagick

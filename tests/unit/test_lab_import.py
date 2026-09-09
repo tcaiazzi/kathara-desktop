@@ -87,11 +87,12 @@ def test_translate_lab_files_builds_payload():
     assert names == {"r1", "r2", "pc1", "pc2"}
 
 
-def test_translate_lab_files_ignores_shared_folder_with_a_warning():
-    # Verbatim import: a `shared/` folder isn't applied to any device (Kathara's own pack_data
-    # doesn't pack it, and the /shared bind mount is disabled under Docker-outside-of-Docker) —
-    # it stays untouched on disk (see KatharaService.upload_lab/import_lab, which write files
-    # verbatim) and is only surfaced here as a warning.
+def test_translate_lab_files_never_makes_shared_a_machine():
+    # `shared` is a RESERVED_NAME: neither a top-level `shared/` folder nor a `shared.startup`
+    # may be mistaken for a device, which is exactly what the folder-fallback path below would
+    # otherwise do with them. Nothing to translate and nothing to complain about either — the
+    # files land on disk verbatim (KatharaService.upload_lab/import_lab) and Kathara's own
+    # deploy() picks the folder up natively, so this is silent rather than a warning.
     files = {
         **_example_files(),
         "shared/etc/motd": "hello\n",
@@ -99,7 +100,8 @@ def test_translate_lab_files_ignores_shared_folder_with_a_warning():
     }
     t = lab_import.translate_lab_files(files, "lab")
 
-    assert any("shared/" in w for w in t.warnings)
+    assert "shared" not in {m.name for m in t.payload.machines}
+    assert t.warnings == []
 
 
 def test_translate_lab_files_folder_fallback_without_lab_conf():

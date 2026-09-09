@@ -64,16 +64,6 @@ export async function saveFile(
   return result.filePath;
 }
 
-/** Let the user point the app at a specific Python interpreter (the setup screen's escape hatch). */
-export async function pickPythonInterpreter(win: BrowserWindow | null): Promise<string | null> {
-  const result = await withParent(dialog.showOpenDialog, win, {
-    title: "Choose Python interpreter",
-    properties: ["openFile", "showHiddenFiles"],
-    defaultPath: process.platform === "win32" ? undefined : "/usr",
-  });
-  return result.canceled ? null : (result.filePaths[0] ?? null);
-}
-
 /**
  * Let the user pick a new lab storage directory (Settings → "Change…"). Selection only — no
  * side effect here; main.ts's labs:set-dir handler decides whether the pick is actually applied
@@ -106,7 +96,7 @@ export async function pickHostDirectory(
     title: "Choose a host directory to mount",
     properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
     // Re-picking starts where the field already points, when that still exists. Undefined — not
-    // "/", which names nothing on Windows (same reasoning as pickPythonInterpreter above) — lets
+    // "/", which names nothing on Windows — lets
     // the OS reopen wherever the user last was.
     defaultPath: current && fs.existsSync(current) ? current : undefined,
   });

@@ -30,6 +30,13 @@ jobs:
           python -m build --wheel --outdir services/desktop/vendor .
       - run: node scripts/fetch-python.mjs linux
         working-directory: services/desktop
+      # Installs the backend's whole dependency closure for both of this OS's architectures, so
+      # the packaged app downloads and installs nothing on first launch. Must run on this runner
+      # (not cross-OS): pip evaluates `sys_platform` markers from the machine it runs on. Fails
+      # the build if a dependency has no wheel for a target — see the script's
+      # OPTIONAL_ACCELERATORS for the only exceptions.
+      - run: node scripts/vendor-python-deps.mjs linux
+        working-directory: services/desktop
       - run: npm ci
         working-directory: services/frontend
       - run: npm ci
@@ -79,6 +86,13 @@ jobs:
           python -m build --wheel --outdir services/desktop/vendor .
       - run: node scripts/fetch-python.mjs mac
         working-directory: services/desktop
+      # Installs the backend's whole dependency closure for both of this OS's architectures, so
+      # the packaged app downloads and installs nothing on first launch. Must run on this runner
+      # (not cross-OS): pip evaluates `sys_platform` markers from the machine it runs on. Fails
+      # the build if a dependency has no wheel for a target — see the script's
+      # OPTIONAL_ACCELERATORS for the only exceptions.
+      - run: node scripts/vendor-python-deps.mjs mac
+        working-directory: services/desktop
       - run: npm ci
         working-directory: services/frontend
       - run: npm ci
@@ -111,6 +125,13 @@ jobs:
           python -m pip install --upgrade pip build
           python -m build --wheel --outdir services/desktop/vendor .
       - run: node scripts/fetch-python.mjs win
+        working-directory: services/desktop
+      # Installs the backend's whole dependency closure for both of this OS's architectures, so
+      # the packaged app downloads and installs nothing on first launch. Must run on this runner
+      # (not cross-OS): pip evaluates `sys_platform` markers from the machine it runs on. Fails
+      # the build if a dependency has no wheel for a target — see the script's
+      # OPTIONAL_ACCELERATORS for the only exceptions.
+      - run: node scripts/vendor-python-deps.mjs win
         working-directory: services/desktop
       - run: npm ci
         working-directory: services/frontend

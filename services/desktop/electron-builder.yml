@@ -20,17 +20,13 @@ extraResources:
   # runtime — the icon electron-builder bakes into the installer isn't reachable from code.
   - from: resources/icon.png
     to: icon.png
-  # kathara-api-rest's own wheel (built by CI just before this — see build-desktop.yml — into
-  # this gitignored directory), so a packaged app can `pip install` it into the bundled Python
-  # interpreter (or, where that's not writable, a private venv — see install.ts) without needing
-  # a git checkout. Pure Python, one wheel works on every OS/arch. Excludes the
-  # python-<os>-<arch>/ subdirectories fetch-python.mjs also puts in this same gitignored vendor/
-  # directory: those are picked up separately, one arch at a time, by the platform-scoped
-  # extraResources below — copying them here too would ship every architecture's interpreter in
-  # every installer, exactly what that per-arch scoping exists to avoid.
-  - from: vendor
-    to: vendor
-    filter: ["**/*", "!python-*", "!python-*/**"]
+  # Nothing from vendor/ ships unscoped any more. It holds three build inputs, all of them
+  # per-(os, arch) and all picked up by the platform-scoped extraResources below: the interpreter
+  # (fetch-python.mjs), the dependency closure installed for that target (vendor-python-deps.mjs),
+  # and kathara-api-rest's own wheel — which is no longer shipped at all, because
+  # vendor-python-deps.mjs has already installed it into every site-packages-<os>-<arch>/ tree.
+  # A packaged app therefore carries a complete, ready-to-run Python environment and installs
+  # nothing on first launch.
 
 # kathara://lab/<name> — the runtime side is in src/deeplink.ts.
 protocols:
@@ -90,6 +86,11 @@ linux:
   extraResources:
     - from: vendor/python-linux-${arch}
       to: python
+    # The dependency closure pip installed for this exact target (vendor-python-deps.mjs), put on
+    # PYTHONPATH when the shell spawns uvicorn — see paths.ts's bundledSitePackages(). Scoped per
+    # arch for the same reason the interpreter is: the C extensions in it are arch-specific.
+    - from: vendor/site-packages-linux-${arch}
+      to: site-packages
 
 deb:
   # Required by fpm; taken from package.json's author, stated here so it is obvious where to
@@ -121,6 +122,11 @@ mac:
   extraResources:
     - from: vendor/python-mac-${arch}
       to: python
+    # The dependency closure pip installed for this exact target (vendor-python-deps.mjs), put on
+    # PYTHONPATH when the shell spawns uvicorn — see paths.ts's bundledSitePackages(). Scoped per
+    # arch for the same reason the interpreter is: the C extensions in it are arch-specific.
+    - from: vendor/site-packages-mac-${arch}
+      to: site-packages
 
 win:
   target:
@@ -132,6 +138,11 @@ win:
   extraResources:
     - from: vendor/python-win-${arch}
       to: python
+    # The dependency closure pip installed for this exact target (vendor-python-deps.mjs), put on
+    # PYTHONPATH when the shell spawns uvicorn — see paths.ts's bundledSitePackages(). Scoped per
+    # arch for the same reason the interpreter is: the C extensions in it are arch-specific.
+    - from: vendor/site-packages-win-${arch}
+      to: site-packages
 
 nsis:
   oneClick: false

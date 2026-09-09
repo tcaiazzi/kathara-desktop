@@ -139,16 +139,12 @@
 
       // KEEP IN SYNC with the BootPhase union in main.ts. Order matters: it's the ladder below.
       const MAIN_PHASES = ["environment", "frontend", "docker", "python", "backend"];
-      const INSTALL_PHASES = ["install-prepare", "install-pip", "install-wheel"];
       const PHASE_LABEL = {
         environment: "Reading your shell environment",
         frontend: "Preparing the interface",
         docker: "Contacting Docker",
         python: "Looking for Python and the Kathara packages",
         backend: "Starting the local Kathara API",
-        "install-prepare": "Preparing the Python environment",
-        "install-pip": "Updating pip",
-        "install-wheel": "Installing Kathara and the Kathara API",
       };
 
       // Phase-specific reassurance once a step has been running a while, so a slow step reads as
@@ -156,15 +152,13 @@
       // which is set once per boot attempt and doesn't change between polls.
       const PATIENCE_HINTS = [
         { phase: "docker", afterSec: 6, text: "Docker is taking a while to answer. If you just started Docker Desktop, it may still be warming up." },
-        { phase: "python", afterSec: 8, text: "Still checking the Python interpreters on this machine." },
+        { phase: "python", afterSec: 8, text: "Still checking the bundled Python environment." },
         { phase: "backend", afterSec: 12, text: "The first start is the slowest one — Python is loading Kathara." },
-        { phase: "install-wheel", afterSec: 30, text: "Still downloading. You can leave this running; the output below updates as it goes." },
       ];
 
       function ladderHtml(phase) {
-        const phases = INSTALL_PHASES.includes(phase) ? INSTALL_PHASES : MAIN_PHASES;
-        const currentIdx = phases.indexOf(phase);
-        const items = phases.map((id, i) => {
+        const currentIdx = MAIN_PHASES.indexOf(phase);
+        const items = MAIN_PHASES.map((id, i) => {
           const state = i < currentIdx ? "done" : i === currentIdx ? "current" : "pending";
           const mark = state === "done" ? "✓" : state === "current" ? '<span class="spinner"></span>' : "·";
           return `<li class="ladder-${state}"><span class="mark">${mark}</span> ${esc(PHASE_LABEL[id])}…</li>`;
@@ -176,11 +170,11 @@
       // onProgress) — this is the same rendering used later on the failure screens, so a check
       // that appears while still "starting" looks exactly like it will if the run ends up failing.
       //
-      // showRemedy is false while still "starting": a check that's still failing at this point
-      // (e.g. kathara_api, before the automatic install below has run) can carry a remedy like
-      // "Choose “Install missing packages” below" that only makes sense once the run has actually
-      // failed and that button exists — renderChecks() is the only place it does. Showing that text
-      // on the progress screen, with nothing to click, is exactly the confusing state this avoids.
+      // showRemedy is false while still "starting": preflight decides checks one at a time, so a
+      // check can be momentarily un-decided while the run is still perfectly on track. Telling the
+      // user to reinstall the app on the strength of a check the run hasn't finished evaluating is
+      // exactly the alarming, premature state this avoids — remedies belong on the failure screen,
+      // which is what renderChecks() is.
       function checksHtml(checks, showRemedy = true) {
         if (!checks || checks.length === 0) return "";
         const items = checks.map((c) => {
@@ -236,11 +230,11 @@
 
         const heading = status.firstRun ? "Welcome to Kathara Desktop" : "Starting Kathara Desktop";
         const lead = status.firstRun
-          ? "Kathara Desktop doesn't bundle its own network emulator — it drives Docker, which must " +
-            "already be installed on this computer (if it's installed but not running yet, that's " +
-            "fine — the app starts anyway and reminds you inside). The Kathara Python packages it " +
-            "needs are installed automatically, into a Python environment bundled with the app. " +
-            "Checking that everything is in place…"
+          ? "Kathara Desktop ships with everything it needs to run — its own Python and the Kathara " +
+            "packages — so there is nothing to install and nothing to download. The one thing it " +
+            "doesn't bundle is the network emulator itself: it drives Docker, which must already be " +
+            "installed on this computer (if it's installed but not running yet, that's fine — the " +
+            "app starts anyway and reminds you inside). Checking that everything is in place…"
           : esc(status.message) || "Getting the local Kathara API ready…";
 
         app.innerHTML = `
@@ -249,8 +243,7 @@
           ${ladderHtml(status.phase)}
           ${elapsedSec >= 5 ? `<p class="sub">Working on it — ${elapsedSec}s</p>` : ""}
           ${hint ? `<p class="sub">${esc(hint.text)}</p>` : ""}
-          ${checksHtml(status.checks, false)}
-          ${status.output ? `<pre>${esc(status.output)}</pre>` : ""}`;
+          ${checksHtml(status.checks, false)}`;
 
         app.querySelectorAll("a[data-url]").forEach((a) => {
           a.onclick = (e) => { e.preventDefault(); window.katharaDesktop.openExternal(a.dataset.url); };
@@ -298,26 +291,11 @@
       function renderChecks(status) {
         const failed = status.state === "prereq-failed";
 
-        // "Install missing packages" only helps with these, and only when Docker (which the app
-        // deliberately doesn't touch — prereqs.ts) isn't also the problem: matches main.ts's own
-        // auto-install gate, which ignores Docker for the same reason (installing the wheel needs
-        // nothing from it) but still won't run when something else it can't fix is failing too.
-        // Docker filtered by id here on purpose, same as main.ts: a page only reaches this branch
-        // for Docker being *missing* (a stopped daemon is advisory and never blocks startup), but
-        // filtering by id rather than by "already ok or advisory" keeps this in lockstep with the
-        // gate it mirrors regardless of which Docker state got it here.
-        // "dependencies" is in the list because a fresh venv built from the bundled wheel resolves
-        // whatever the current interpreter's environment is missing.
-        const installable = ["kathara_api", "kathara", "uvicorn", "dependencies"];
-        const nonDocker = status.checks.filter((c) => c.id !== "docker");
-        const canAutoInstall =
-          nonDocker.some((c) => !c.ok) && nonDocker.every((c) => c.ok || installable.includes(c.id));
-
         app.innerHTML = `
           <h1>${failed ? "A few things are missing" : "Kathara Desktop couldn't start its local API"}</h1>
           <p class="sub">${failed
-            ? "Kathara Desktop installs the Python packages it needs by itself, but it can't install " +
-              "Docker for you — that has to already be installed on this computer. (If Docker is " +
+            ? "Kathara Desktop brings its own Python environment, so the one thing it can't provide " +
+              "for you is Docker — that has to already be installed on this computer. (If Docker is " +
               "installed but not running, Kathara Desktop starts anyway and tells you inside the " +
               "app.) Sort out anything marked ✕ below, then choose “Check again”."
             : "Everything it needs is installed, but the API process didn't come up. The " +
@@ -328,37 +306,14 @@
           ${!failed && status.error ? `<p class="sub">${esc(status.error)}</p>` : ""}
           ${status.logTail ? `<details><summary>Technical details</summary><pre>${esc(status.logTail)}</pre></details>` : ""}
           <div class="actions">
-            ${canAutoInstall ? '<button class="primary" id="install">Install missing packages</button>' : ""}
-            <button class="${canAutoInstall ? "" : "primary"}" id="retry">Check again</button>
-            <button id="pick">Choose Python interpreter…</button>
+            <button class="primary" id="retry">Check again</button>
             <button id="log">Open log</button>
           </div>`;
 
-        if (canAutoInstall) {
-          // Fire-and-poll, not await-then-poll: install can take several minutes, and the whole
-          // point of threading progress through status:install (see main.ts) is to watch it live
-          // rather than stare at one static line until the awaited call finally resolves.
-          document.getElementById("install").onclick = () => {
-            const done = window.katharaDesktop.install();
-            refresh();
-            done.catch(() => {});
-          };
-        }
         document.getElementById("retry").onclick = () => {
           const done = window.katharaDesktop.retryStartup();
           refresh();
           done.catch(() => {});
-        };
-        document.getElementById("pick").onclick = async () => {
-          // Picking an interpreter is quick and has its own dialog, so awaiting just that part
-          // (not the recheck it triggers) is fine.
-          if (await window.katharaDesktop.pickPython()) {
-            const done = window.katharaDesktop.retryStartup();
-            refresh();
-            done.catch(() => {});
-          } else {
-            refresh();
-          }
         };
         document.getElementById("log").onclick = () => window.katharaDesktop.showBackendLog();
         app.querySelectorAll("a[data-url]").forEach((a) => {

@@ -32,8 +32,9 @@ def test_create_lab_writes_directory(tmp_path):
 
 def test_import_lab_materializes_onto_native_fs(tmp_path):
     """A machine's own files land under its own directory, and its `<name>.startup` is written
-    verbatim. `shared/` is out of scope for now (see lab_import.translate_lab_files): it is
-    neither merged into any device's tree nor otherwise applied, and is reported as a warning.
+    verbatim. `shared/` lands verbatim too, but is never merged into a device's own tree (see
+    lab_import.translate_lab_files): it is not a per-machine concept, and Kathara's own deploy()
+    applies it natively from where it sits.
     """
     store = LabStore(tmp_path / "labs")
     service = _service(store)
@@ -50,7 +51,8 @@ def test_import_lab_materializes_onto_native_fs(tmp_path):
     assert (lab_dir / "r1.startup").read_text().strip() == "ip a"
     assert (lab_dir / "r1" / "etc" / "frr" / "frr.conf").read_text() == "hostname r1\n"
     assert not (lab_dir / "r1" / "etc" / "motd").exists()
-    assert any("shared/" in w for w in warnings)
+    assert (lab_dir / "shared" / "etc" / "motd").read_text() == "hi\n"
+    assert warnings == []
 
 
 def test_labs_reload_from_disk_on_fresh_service(tmp_path):
