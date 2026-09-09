@@ -127,16 +127,28 @@ function hostPython() {
   return process.env.KATHARA_VENDOR_PYTHON || (process.platform === "win32" ? "python" : "python3");
 }
 
-/** The wheel `python -m build` put here (Makefile's `wheel` target, or the CI step before this). */
+/** The wheel `python -m build` put here (Makefile's `wheel` target, or the CI step before this).
+ *
+ * Exactly one, or this refuses to guess. `make wheel` clears vendor/*.whl before building for that
+ * reason, but a hand-run `python -m build` doesn't: pick "the first .whl in readdir order" and a
+ * leftover from before a version bump wins silently, and the whole installer ships the previous
+ * release's backend with nothing in the build log to say so. */
 function localWheel() {
-  const wheel = existsSync(vendorDir) ? readdirSync(vendorDir).find((f) => f.endsWith(".whl")) : undefined;
-  if (!wheel) {
+  const wheels = existsSync(vendorDir) ? readdirSync(vendorDir).filter((f) => f.endsWith(".whl")) : [];
+  if (wheels.length === 0) {
     throw new Error(
       `no kathara-api-rest wheel in ${path.relative(root, vendorDir)} — run \`make wheel\` ` +
         `(python -m build --wheel --outdir services/desktop/vendor .) first`,
     );
   }
-  return path.join(vendorDir, wheel);
+  if (wheels.length > 1) {
+    throw new Error(
+      `${wheels.length} wheels in ${path.relative(root, vendorDir)} (${wheels.sort().join(", ")}) — ` +
+        `refusing to guess which one to vendor. Delete the stale ones, or run \`make wheel\`, ` +
+        `which clears them before building.`,
+    );
+  }
+  return path.join(vendorDir, wheels[0]);
 }
 
 function pip(args, { capture = false } = {}) {

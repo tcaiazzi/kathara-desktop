@@ -63,8 +63,16 @@ install-desktop:
 ## it) and declares that; it is otherwise independent of `fetch-python`, which it never reads —
 ## every version and ABI it resolves against is passed to pip explicitly.
 
+# Both removals are load-bearing, and each covered up a different way of shipping stale code:
+#   - build/: setuptools' build_py copies changed sources into build/lib but never removes ones
+#     deleted from the source tree, so a dropped file (a retired bundled example, say) keeps being
+#     packed into every subsequent wheel.
+#   - vendor/*.whl: vendor-python-deps.mjs installs *the* wheel it finds here, so a leftover from
+#     before a version bump would be the one vendored into the installer.
 wheel:
 	python3 -m pip install --upgrade pip build
+	rm -rf build *.egg-info
+	rm -f $(DESKTOP_DIR)/vendor/*.whl
 	python3 -m build --wheel --outdir $(DESKTOP_DIR)/vendor .
 
 fetch-python:

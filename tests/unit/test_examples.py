@@ -2,9 +2,9 @@
 ``/api/labs/examples`` endpoints.
 
 Two groups: the router/service tests below drive the *real* bundled catalog under
-``src/kathara_api/examples/`` (kathara-lab_basic-ipv4/ipv6, sanitized copies of the dev fixtures
-in ``data/labs/``) into a throwaway labs directory, proving the shipped examples actually parse
-and install as deployable labs. ``TestExamplesCatalog`` below that drives a small synthetic
+``src/kathara_api/examples/`` (kathara-lab_basic-ipv4, a verbatim copy of the upstream
+Kathara-Labs scenario plus a lab.layout) into a throwaway labs directory, proving the shipped
+examples actually parse and install as deployable labs. ``TestExamplesCatalog`` below that drives a small synthetic
 catalog instead, to cover the parse-failure and traversal cases without depending on what the
 real bundled examples happen to contain.
 """
@@ -38,10 +38,10 @@ def test_list_examples_reports_the_bundled_catalog(client_and_service):
 
     assert resp.status_code == 200, resp.text
     by_id = {e["id"]: e for e in resp.json()}
-    assert set(by_id) == {"kathara-lab_basic-ipv4", "kathara-lab_basic-ipv6"}
+    assert set(by_id) == {"kathara-lab_basic-ipv4"}
     ipv4 = by_id["kathara-lab_basic-ipv4"]
     assert ipv4["description"] == "Basic IPv4 configurations, ping, traceroute, and arp"
-    assert ipv4["n_machines"] == 5
+    assert ipv4["n_machines"] == 6
     assert ipv4["installed"] is False
 
 
@@ -53,32 +53,31 @@ def test_create_example_lab_installs_a_deployable_lab(client_and_service):
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["name"] == "kathara-lab_basic-ipv4"
-    assert body["n_machines"] == 5
+    assert body["n_machines"] == 6
     assert body["warnings"] == []
     machine_names = {m["name"] for m in body["machines"]}
-    assert machine_names == {"r1", "r2", "pc1", "pc2", "pc3"}
+    assert machine_names == {"r1", "r2", "pc1", "pc2", "pc3", "wireshark"}
 
     lab_dir = service.store.lab_dir("kathara-lab_basic-ipv4")
     assert (lab_dir / "lab.conf").is_file()
     assert (lab_dir / "lab.layout").is_file()
     assert (lab_dir / "pc1.startup").is_file()
 
-    # Deployable without administrator privileges: the bundled copy must not carry the dev
-    # fixture's `pc2[privileged]=True`, nor the bridged/host-port wireshark device.
+    # Installed verbatim, wireshark sniffer included: the example is the upstream scenario, not a
+    # trimmed-down copy of it, so the bridged host-port device must survive the install.
     conf_text = (lab_dir / "lab.conf").read_text()
-    assert "privileged" not in conf_text
-    assert "wireshark" not in conf_text
+    assert 'wireshark[image]="lscr.io/linuxserver/wireshark"' in conf_text
+    assert "wireshark[bridged]=true" in conf_text
 
 
 def test_create_example_lab_defaults_installed_to_true_afterwards(client_and_service):
     client, _service = client_and_service
-    client.post("/api/labs/examples", json={"id": "kathara-lab_basic-ipv6"})
+    client.post("/api/labs/examples", json={"id": "kathara-lab_basic-ipv4"})
 
     resp = client.get("/api/labs/examples")
 
     by_id = {e["id"]: e for e in resp.json()}
-    assert by_id["kathara-lab_basic-ipv6"]["installed"] is True
-    assert by_id["kathara-lab_basic-ipv4"]["installed"] is False
+    assert by_id["kathara-lab_basic-ipv4"]["installed"] is True
 
 
 def test_create_example_lab_accepts_a_custom_name(client_and_service):
