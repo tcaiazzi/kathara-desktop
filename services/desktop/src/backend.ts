@@ -566,6 +566,15 @@ async function buildBackendCommand(
     // SSE/WebSocket connection from another open lab can't keep this process alive past
     // stopBackend()'s poll window and leave it (im)possible to reap, especially once elevated.
     "--timeout-graceful-shutdown", String(GRACEFUL_SHUTDOWN_TIMEOUT_S),
+    // The pairing token (see `token` above) travels as `?token=...` on the TTY WebSocket and the
+    // stats EventSource URLs (services/api.ts) — neither can set an Authorization header. With
+    // uvicorn's default access log on, every one of those request lines lands in backend.log
+    // verbatim, which the app then invites the user to open and share (Help menu, the setup/
+    // error page's log tail). This app is a single-user desktop backend with no operational need
+    // for an access log; not logging the URLs at all is simpler and more durable than trying to
+    // redact just the token out of them (see logRaw's own redaction below for the defence that
+    // still applies if this ever gets re-enabled or a caller logs a raw URL some other way).
+    "--no-access-log",
   ];
 
   return { port, baseUrl, token, labs, env, appEnv, args };
