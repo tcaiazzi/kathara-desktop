@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
@@ -76,6 +76,18 @@ export function useDeviceActions({
     return () => {
       live = false;
     };
+  }, [labName]);
+
+  // On-demand re-fetch for callers that just changed a device's `<name>.startup` on disk (the
+  // Lab Configuration tab) — the effect above only refetches when `labName` itself changes.
+  const refreshStartups = useCallback(async () => {
+    if (!labName) return;
+    try {
+      const s = await api.getStartupScripts(labName);
+      setStartups(s);
+    } catch {
+      // best-effort, same as the mount fetch above
+    }
   }, [labName]);
 
   const model = useMemo(() => (detail ? computeTopology(detail, startups) : EMPTY_MODEL), [detail, startups]);
@@ -391,6 +403,7 @@ export function useDeviceActions({
   return {
     model,
     startups,
+    refreshStartups,
     actionConfig,
     setActionConfig,
     findDeviceNode,

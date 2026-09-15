@@ -10,6 +10,9 @@ interface LabExplorerProps {
   labName: string;
   detail: LabDetail;
   onStructuralChange?: () => Promise<void>;
+  /** Called after a device's own `<name>.startup` is saved, so the Node Info panel's startup
+   *  preview (fed by useDeviceActions' `startups`, fetched independently of this tab) picks it up. */
+  onStartupFileSaved?: () => Promise<void>;
 }
 
 // lab.conf is the only entry that's never deletable, draggable or renamable here. Everything else
@@ -21,6 +24,13 @@ function canModify(path: string): boolean {
   return path !== LAB_CONF_PATH;
 }
 
+// A device's own startup file sits directly at the lab root (e.g. `/pc1.startup`) — this
+// deliberately excludes nested `*.startup` files (e.g. `/pc1/foo.startup`), which aren't a
+// device's exec script.
+function isStartupFilePath(path: string): boolean {
+  return /^\/[^/]+\.startup$/.test(path);
+}
+
 // Browse/edit a lab's own on-disk directory directly — lab.conf, every device's own folder, each
 // device's `<name>.startup`, and anything else sitting at the lab root.
 //
@@ -30,7 +40,7 @@ function canModify(path: string): boolean {
 // machinery is shared with the Runtime FS tab (hooks/useFsTree + FsTreePanel); what's specific to
 // this tab lives here: lab.conf is read/written through its own endpoint (it rebuilds the topology,
 // and is refused while the lab is deployed) and is watched for changes made elsewhere.
-export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorerProps) {
+export function LabExplorer({ labName, detail, onStructuralChange, onStartupFileSaved }: LabExplorerProps) {
   const toast = useToast();
 
   const [labConf, setLabConf] = useState<LabConfView | null>(null);
@@ -80,6 +90,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
           return;
         }
         await api.fsWriteTextOffline(labName, path, content);
+        if (isStartupFilePath(path)) await onStartupFileSaved?.();
       },
       mkdir: async (path) => void (await api.fsMkdirOffline(labName, path)),
       move: async (source, destination) => void (await api.fsMoveOffline(labName, source, destination)),
@@ -128,7 +139,7 @@ export function LabExplorer({ labName, detail, onStructuralChange }: LabExplorer
         uploadFallbackDir: () => (detail.machines[0] ? `/${detail.machines[0].name}` : "/"),
       },
     }),
-    [applyLabConf, detail.machines, labName],
+    [applyLabConf, detail.machines, labName, onStartupFileSaved],
   );
 
   // A token whose identity changes exactly when the tree should be re-listed: on any lab

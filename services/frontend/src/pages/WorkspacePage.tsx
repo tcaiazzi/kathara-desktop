@@ -116,7 +116,12 @@ function FilesPanel() {
   const ws = useWorkspaceCore();
   return (
     <div className="kt-ws-panel-fill">
-      <LabExplorer labName={ws.labName} detail={ws.detail} onStructuralChange={ws.onRefresh} />
+      <LabExplorer
+        labName={ws.labName}
+        detail={ws.detail}
+        onStructuralChange={ws.onRefresh}
+        onStartupFileSaved={ws.refreshStartups}
+      />
     </div>
   );
 }
@@ -1029,9 +1034,17 @@ export function WorkspacePage() {
   const coreCtxValue = useMemo(
     () =>
       detail
-        ? { labName: name, detail, onRefresh: load, runtimeFsPreferredMachine, setSelectedId, setContextMenu: setCtxMenu }
+        ? {
+            labName: name,
+            detail,
+            onRefresh: load,
+            refreshStartups: deviceActions.refreshStartups,
+            runtimeFsPreferredMachine,
+            setSelectedId,
+            setContextMenu: setCtxMenu,
+          }
         : null,
-    [name, detail, load, runtimeFsPreferredMachine],
+    [name, detail, load, deviceActions.refreshStartups, runtimeFsPreferredMachine],
   );
 
   const runningMachines = deviceMachines.filter((m) => m.running);
