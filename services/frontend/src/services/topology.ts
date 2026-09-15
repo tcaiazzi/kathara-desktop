@@ -76,10 +76,12 @@ export function deviceStateLabel(node: { running: boolean; status: string | null
   return node.running ? node.status || "running" : "stopped";
 }
 
-// Best-effort: pull "ip address add <cidr> dev ethN" out of a device's config text. Kathara's
-// startup log echoes each command (`echo "++ <command>"`), so a line can match twice — the dedupe
-// below keeps each IP once per interface.
-const IFACE_IP_RE = /ip\s+add(?:r|ress)?\s+add\s+(\S+)\s+dev\s+eth(\d+)/gi;
+// Best-effort: pull "ip address add <cidr> dev ethN" out of a device's config text — including
+// IPv6 lines, which Kathara labs commonly write with an explicit family flag
+// ("ip -6 addr add <cidr6> dev ethN"). Kathara's startup log echoes each command
+// (`echo "++ <command>"`), so a line can match twice — the dedupe below keeps each IP once per
+// interface.
+const IFACE_IP_RE = /ip\s+(?:-[46]\s+)?add(?:r|ress)?\s+add\s+(\S+)\s+dev\s+eth(\d+)/gi;
 
 function collectIps(text: string, map: Record<number, string[]>): void {
   IFACE_IP_RE.lastIndex = 0;
