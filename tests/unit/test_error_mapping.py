@@ -1,7 +1,9 @@
 """Unit tests for the exception -> HTTP status mapping (no Docker required)."""
 
+import docker.errors
 import fs.errors
-from fastapi import FastAPI
+import pytest
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, Field
 
@@ -82,6 +84,69 @@ def test_illegal_back_reference_maps_to_400_not_500():
     resp = client.get("/boom")
     assert resp.status_code == 400
     assert resp.json()["error_type"] == "IllegalBackReference"
+
+
+def test_fs_resource_not_found_maps_to_404():
+    client = _client_raising(fs.errors.ResourceNotFound("/missing"))
+    resp = client.get("/boom")
+    assert resp.status_code == 404
+    assert resp.json()["error_type"] == "ResourceNotFound"
+
+
+def test_fs_file_expected_maps_to_400():
+    client = _client_raising(fs.errors.FileExpected("/adir"))
+    assert client.get("/boom").status_code == 400
+
+
+def test_fs_directory_expected_maps_to_400():
+    client = _client_raising(fs.errors.DirectoryExpected("/afile"))
+    assert client.get("/boom").status_code == 400
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        fs.errors.DirectoryExists("/d"),
+        fs.errors.FileExists("/f"),
+        fs.errors.DestinationExists("/dst"),
+        fs.errors.DirectoryNotEmpty("/d"),
+    ],
+)
+def test_fs_already_there_errors_map_to_409(exc):
+    assert _client_raising(exc).get("/boom").status_code == 409
+
+
+def test_docker_image_not_found_maps_to_404_even_without_a_response():
+    """docker.errors.ImageNotFound built by hand (no HTTP `response` attached, as Kathara's own
+    DockerImage does) makes `APIError.status_code` — a property reading `exc.response` — return
+    None. `make_handler`'s `getattr(exc, "status_code", code)` would find that property instead of
+    falling back to `code`, and crash. The dedicated handler must decide by type instead."""
+    client = _client_raising(docker.errors.ImageNotFound("no such image: kathara/doesnotexist"))
+    resp = client.get("/boom")
+    assert resp.status_code == 404
+    assert resp.json()["error_type"] == "ImageNotFound"
+
+
+def test_docker_api_error_generic_maps_to_502():
+    client = _client_raising(docker.errors.APIError("500 Server Error"))
+    resp = client.get("/boom")
+    assert resp.status_code == 502
+    assert resp.json()["error_type"] == "APIError"
+
+
+def test_http_exception_gets_the_uniform_error_body():
+    """FastAPI's own default handler for this class already answers with the right status code —
+    it just returns `{"detail": ...}` with no `error_type`, unlike every other handler here."""
+    client = _client_raising(HTTPException(status_code=404, detail="Not Found"))
+    resp = client.get("/boom")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found", "error_type": "HTTPException"}
+
+
+def test_http_exception_is_not_logged_as_an_unexpected_error(caplog):
+    client = _client_raising(HTTPException(status_code=404, detail="Not Found"))
+    client.get("/boom")
+    assert not any(record.levelname == "ERROR" for record in caplog.records)
 
 
 class _ValidatedBody(BaseModel):

@@ -1046,13 +1046,22 @@ class KatharaService:
     # the change (deploy_lab's already-running branch, _live_push below).
 
     def get_startup_scripts(self, lab_name: str) -> dict[str, str]:
-        """Each device's real ``<machine>.startup`` content (``""`` if it doesn't exist) — a fresh
-        scan, not a cache. Backs the topology node-info panel's boot-time IP preview."""
+        """Each device's real ``<machine>.startup`` content (``""`` if it doesn't exist, or if it
+        isn't valid UTF-8) — a fresh scan, not a cache. Backs the topology node-info panel's
+        boot-time IP preview across all devices at once, so one device's corrupted/binary
+        ``.startup`` must not blank out every other device's preview.
+        """
         lab = self.get_lab_or_reconstruct(lab_name)
         result: dict[str, str] = {}
         for name in lab.machines:
             fname = f"{name}.startup"
-            result[name] = lab.fs.readtext(fname) if lab.fs.exists(fname) else ""
+            text = ""
+            if lab.fs.exists(fname):
+                try:
+                    text = lab.fs.readtext(fname)
+                except UnicodeDecodeError:
+                    text = ""
+            result[name] = text
         return result
 
     def fs_list_offline(self, lab_name: str, path: str) -> list[FsEntry]:

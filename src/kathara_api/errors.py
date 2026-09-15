@@ -2,10 +2,12 @@
 
 import logging
 
+import docker.errors
 import fs.errors
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from Kathara.exceptions import (
     DockerDaemonConnectionError,
@@ -210,6 +212,20 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # already refuses to read/write outside its root regardless, so this is purely about giving the
     # caller a clean 400 instead of a 500 logged as an unhandled server bug).
     fs.errors.IllegalBackReference: status.HTTP_400_BAD_REQUEST,
+    # pyfilesystem2 offline-fs errors reachable from fs_write_text_offline/_write_lab_root_files,
+    # fs_mkdir_offline and fs_upload_bytes_offline: a write/mkdir whose target path collides with
+    # something already on disk of the wrong kind, or that isn't there when a read expects it —
+    # a real but non-malicious input error, not a server bug. Other FSError siblings not listed
+    # here (PermissionDenied, OperationTimeout, ResourceLocked, ...) are left to the catch-all 500
+    # on purpose: nothing today reaches them without a filesystem-level fault outside the caller's
+    # control.
+    fs.errors.ResourceNotFound: status.HTTP_404_NOT_FOUND,
+    fs.errors.FileExpected: status.HTTP_400_BAD_REQUEST,
+    fs.errors.DirectoryExpected: status.HTTP_400_BAD_REQUEST,
+    fs.errors.DirectoryExists: status.HTTP_409_CONFLICT,
+    fs.errors.FileExists: status.HTTP_409_CONFLICT,
+    fs.errors.DestinationExists: status.HTTP_409_CONFLICT,
+    fs.errors.DirectoryNotEmpty: status.HTTP_409_CONFLICT,
     # 403 Forbidden
     # Raised by Kathara itself (e.g. DockerMachine.create) when a privileged device is started
     # without the whole process's real UID being 0 — distinct error_type so the frontend can
@@ -279,6 +295,35 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _validation_error_response(exc)
 
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+
+    async def _handle_docker_api_error(_: Request, exc: Exception) -> JSONResponse:
+        # docker.errors.APIError.status_code is a *property* reading exc.response, returning None
+        # when the exception was built by hand with no HTTP response attached (as Kathara's own
+        # ImageNotFound(f"no such image: {name}") is). Reusing make_handler's
+        # getattr(exc, "status_code", code) would find that property instead of falling back, get
+        # None, and crash building JSONResponse(status_code=None, ...). Decide by type instead.
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if isinstance(exc, docker.errors.NotFound)
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        return _error_response(exc, code)
+
+    app.add_exception_handler(docker.errors.APIError, _handle_docker_api_error)
+
+    async def _handle_http_exception(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        # FastAPI's own default handler for this class returns {"detail": exc.detail} with no
+        # error_type — inconsistent with every other handler here. The status code is already
+        # correct via FastAPI's pre-registered default handler; this exists only to give the body
+        # the same ErrorResponse shape, and to avoid logging an intentional 4xx (e.g. spa.py's 404
+        # for an unmatched /api/... path) as an unexpected server error.
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        if exc.status_code >= 500:
+            logger.error("HTTPException raised with a server-error status: %s", detail)
+        body = ErrorResponse(detail=detail, error_type="HTTPException")
+        return JSONResponse(status_code=exc.status_code, content=body.model_dump())
+
+    app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
 
     for exc_class, code in KATHARA_STATUS_MAP.items():
         app.add_exception_handler(exc_class, make_handler(code))

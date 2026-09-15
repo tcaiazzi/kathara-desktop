@@ -79,9 +79,22 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 | `SyntaxError` (invalid device name / lab.conf value) | 422 |
 | `DockerDaemonConnectionError`, builtin `ConnectionError` (registry unreachable) | 503 |
 | `HTTPConnectionError`, `DockerPluginError`, `ImagePullError` (a pull stream reported a failure) | 502 |
+| `fs.errors.IllegalBackReference` (offline-fs path climbs above its own root) | 400 |
+| `fs.errors.ResourceNotFound` | 404 |
+| `fs.errors.FileExpected`, `fs.errors.DirectoryExpected` | 400 |
+| `fs.errors.DirectoryExists`, `fs.errors.FileExists`, `fs.errors.DestinationExists`, `fs.errors.DirectoryNotEmpty` | 409 |
+| `docker.errors.NotFound` (incl. `ImageNotFound`) | 404 |
+| `docker.errors.APIError` (any other daemon-side failure) | 502 |
 | anything else | 500 |
 
-Errors return `{"detail": str, "error_type": str}`.
+Errors return `{"detail": str, "error_type": str}`. `HTTPException` already answers with its own
+`status_code` via FastAPI's default handler — this API registers its own handler for it only to
+give the body that same `{detail, error_type}` shape instead of FastAPI's bare `{"detail": ...}`.
+
+`docker.errors.APIError` needs a handler of its own rather than a `KATHARA_STATUS_MAP` entry: its
+`status_code` is a *property* reading `exc.response`, which is `None` for an exception built by
+hand (as Kathara's own `ImageNotFound(...)` is) — reusing the generic per-class handler would pick
+that `None` up instead of falling back to a sensible default.
 
 ---
 

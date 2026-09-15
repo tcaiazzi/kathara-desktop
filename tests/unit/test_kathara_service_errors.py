@@ -257,6 +257,21 @@ def test_is_startup_finished_requires_running_machine():
         service.is_startup_finished("lab1", "pc1")
 
 
+def test_get_startup_scripts_swallows_a_non_utf8_startup_without_failing_the_whole_panel():
+    # The node-info panel shows every device's startup preview at once — one corrupted/binary
+    # `.startup` must not blank out every other device's preview (unlike a single explicit file
+    # open, where BinaryFileError is the right call — see fs_read_text above).
+    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}, {"name": "pc2"}]})
+    lab = lab_builder.build_lab(spec)
+    lab.fs.writetext("pc1.startup", "ip addr\n")
+    lab.fs.writebytes("pc2.startup", b"\xff\xfe\x00\x01")
+
+    service = KatharaService()
+    service.registry.add(lab)
+
+    assert service.get_startup_scripts("lab1") == {"pc1": "ip addr\n", "pc2": ""}
+
+
 def test_fs_list_directory_handles_none_stdout_from_exec():
     service = _service_with_running_machine()
 

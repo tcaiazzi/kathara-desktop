@@ -397,3 +397,20 @@ def test_second_concurrent_download_is_refused_with_409(client_and_service):
 
     assert res.status_code == 409
     assert res.json()["error_type"] == "ImagePullBusyError"
+
+
+def test_pull_endpoint_returns_a_clean_404_for_a_nonexistent_reference(client_and_service):
+    """Regression for image_pull.py's own comment ("Surfaces a nonexistent reference as a clean
+    error now, rather than mid-stream") above `docker_image.get_remote(name)` — before errors.py
+    had a dedicated docker.errors.APIError handler this fell through the catch-all as a 500."""
+    client, service = client_and_service
+
+    def _raise_not_found(name):
+        raise ImageNotFound(f"no such image: {name}")
+
+    service._instance.manager.docker_image.get_remote = _raise_not_found
+
+    res = client.post("/api/images/pull", json={"images": ["kathara/doesnotexist"]})
+
+    assert res.status_code == 404
+    assert res.json()["error_type"] == "ImageNotFound"
