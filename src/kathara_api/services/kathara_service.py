@@ -611,8 +611,17 @@ class KatharaService:
         return self._build_and_register(t.payload, self.store.lab_dir(name))
 
     def create_lab(self, spec: LabCreate) -> Lab:
-        with self._claiming_name(lab_store.sanitize_lab_name(spec.name)):
-            lab_dir = self.store.ensure_lab_dir(spec.name)
+        # `sanitize_lab_name` may strip whitespace (e.g. " demo " -> "demo"), and the lab
+        # directory below is always created under that stripped form — every *import* path
+        # already passes the same clean name through to the LabCreate it builds (see
+        # lab_import.translate_lab_files' `lab_name` parameter), but this JSON path used to keep
+        # `spec.name` raw. Without this, the registered Lab carried the untrimmed name while the
+        # directory on disk used the trimmed one: GET/DELETE/etc by "demo" 404'd until the next
+        # restart re-read the directory from disk and the lab silently renamed itself.
+        clean_name = lab_store.sanitize_lab_name(spec.name)
+        with self._claiming_name(clean_name):
+            lab_dir = self.store.ensure_lab_dir(clean_name)
+            spec = spec.model_copy(update={"name": clean_name})
             lab = self._build_and_register(spec, lab_dir)
             # JSON-created labs have no source lab.conf, so one is generated from the model —
             # written directly here since the directory was just created and nothing else has

@@ -30,6 +30,30 @@ def test_create_lab_writes_directory(tmp_path):
     assert (store.lab_dir("jsonlab") / "lab.conf").exists()
 
 
+def test_create_lab_registers_under_the_sanitized_name(tmp_path):
+    """A name `sanitize_lab_name` trims (e.g. surrounding whitespace) must register the Lab under
+    the *same* trimmed name the directory is created under — every import path already gets this
+    right by passing a pre-cleaned name through to the LabCreate it builds; this JSON path used to
+    keep the raw, untrimmed name on the model while creating the directory under the trimmed one,
+    so the lab was unreachable by its own (trimmed) name until a restart re-read it from disk."""
+    store = LabStore(tmp_path / "labs")
+    service = _service(store)
+    service.create_lab(
+        LabCreate(name=" demo ", machines=[MachineCreate(name="pc1", image="kathara/base")])
+    )
+
+    assert (store.lab_dir("demo") / "lab.conf").exists()
+    lab = service.registry.get("demo")
+    assert lab is not None
+    assert lab.name == "demo"
+    assert service.registry.get(" demo ") is None
+
+    # Survives a restart too: a fresh service reloading the same on-disk store must find the lab
+    # under the same "demo" name, not rename it out from under a caller who registered it earlier.
+    restarted = _service(store)
+    assert restarted.registry.get("demo") is not None
+
+
 def test_import_lab_materializes_onto_native_fs(tmp_path):
     """A machine's own files land under its own directory, and its `<name>.startup` is written
     verbatim. `shared/` lands verbatim too, but is never merged into a device's own tree (see
