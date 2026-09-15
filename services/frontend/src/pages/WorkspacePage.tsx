@@ -523,6 +523,11 @@ export function WorkspacePage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [nodeInfoHost, setNodeInfoHost] = useState<HTMLElement | null>(null);
   const railRef = useRef<HTMLElement>(null);
+  // Set while a rail-resize drag is in flight (see startRailResize below), so the unmount effect
+  // can force-remove the drag's window listeners if this component unmounts mid-drag (a lab
+  // import unmounting WorkspacePage, an ErrorBoundary catch, a route change) — same leaked-
+  // listener shape useForceLayout.ts's activeDragCleanup guards against for the topology canvas.
+  const railDragCleanupRef = useRef<(() => void) | null>(null);
   // Below this header width, the whole lab-action row (Terminal/Layout/Deploy/Download/Delete)
   // collapses into a single "more actions" dropdown instead of squeezing/deforming — same pattern
   // as TopologyGraph's own compact toolbar, measured via ResizeObserver rather than viewport width
@@ -757,11 +762,24 @@ export function WorkspacePage() {
       window.removeEventListener("mouseup", onUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      railDragCleanupRef.current = null;
     };
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    // Let the unmount effect below remove these listeners and restore body styles if this
+    // component unmounts before onUp ever fires — onUp itself already nulls this out on the
+    // normal (mouseup) path, so this ref only matters for the abnormal one.
+    railDragCleanupRef.current = onUp;
+  }, []);
+
+  // Force-remove any still-attached rail-resize listeners left by an in-flight drag if
+  // WorkspacePage unmounts mid-drag — otherwise they keep firing against a stale railRef/
+  // setRailWidth and never restore document.body's cursor/userSelect, leaving the whole app
+  // stuck with a resize cursor and unselectable text.
+  useEffect(() => {
+    return () => railDragCleanupRef.current?.();
   }, []);
 
   // Per-machine "next instance number" so a terminal's #n stays stable for its lifetime.
