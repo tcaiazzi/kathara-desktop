@@ -496,9 +496,6 @@ export function TopologyGraph({
             ) : (
               <>
                 <div className="kt-topo-zoom">
-                  <Button size="sm" variant="outline-secondary" onClick={() => zoom(1.2)} title="Zoom in" aria-label="Zoom in">
-                    +
-                  </Button>
                   <Button
                     size="sm"
                     variant="outline-secondary"
@@ -507,6 +504,9 @@ export function TopologyGraph({
                     aria-label="Zoom out"
                   >
                     −
+                  </Button>
+                  <Button size="sm" variant="outline-secondary" onClick={() => zoom(1.2)} title="Zoom in" aria-label="Zoom in">
+                    +
                   </Button>
                 </div>
                 <Button size="sm" variant="outline-secondary" onClick={handleFit}>
