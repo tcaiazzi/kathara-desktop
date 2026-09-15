@@ -1,6 +1,17 @@
-import { Download, FilePlus, Folder, FolderPlus, Info, Loader2, RefreshCw, Trash2, Upload as UploadIcon } from "lucide-react";
+import {
+  Download,
+  FilePlus,
+  Folder,
+  FolderPlus,
+  Info,
+  Loader2,
+  RefreshCw,
+  Search,
+  Trash2,
+  Upload as UploadIcon,
+} from "lucide-react";
 import { createContext, memo, useContext, useEffect, useRef, type ReactNode } from "react";
-import { Button } from "react-bootstrap";
+import { Button, Form } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps } from "react-arborist";
 import { useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import { useElementSize } from "../hooks/useElementSize";
@@ -11,6 +22,7 @@ import { languageForPath } from "../services/editorLanguage";
 import type { FsNode } from "../services/fsTree";
 import { fileIcon } from "../services/labfs";
 import { isSubPath } from "../services/paths";
+import type { FsSearchMatch } from "../services/types";
 import { EditorPane } from "./EditorPane";
 import type { ContextMenuItem } from "./TopologyContextMenu";
 import "./LabExplorer.css";
@@ -159,6 +171,18 @@ export function FsTreePanel({
               >
                 <RefreshCw size={16} />
               </Button>
+              {tree.hasSearch && (
+                <Button
+                  size="sm"
+                  variant={tree.searchMode ? "secondary" : "outline-secondary"}
+                  className="kt-icon-btn"
+                  title="Search in files"
+                  aria-label="Search in files"
+                  onClick={tree.toggleSearchMode}
+                >
+                  <Search size={16} />
+                </Button>
+              )}
               <span className="kt-icon-btn text-muted" title={dragHint} aria-label={dragHint}>
                 <Info size={16} />
               </span>
@@ -169,66 +193,70 @@ export function FsTreePanel({
                 onChange={(e) => void tree.handleUpload(e)}
               />
             </div>
-            <div
-              ref={(el) => {
-                treeSizeRef(el);
-                treeContainerRef.current = el;
-              }}
-              className="kt-explorer-tree border rounded"
-              style={{ flex: 1, minHeight: 0 }}
-              // Right-clicking the background below/around the rows targets the tree root. A row's
-              // own handler runs first (events bubble child → parent) and has already put its menu
-              // up, so bail out when the click actually landed on one.
-              onContextMenu={(e) => {
-                if ((e.target as HTMLElement).closest(".kt-explorer-row")) return;
-                e.preventDefault();
-                setContextMenu({ x: e.clientX, y: e.clientY, items: createItems(tree, "/") });
-              }}
-            >
-              {!tree.loaded ? (
-                <p className="text-muted small p-2">Loading…</p>
-              ) : (
-                <RowActionsCtx.Provider value={tree.rowActions}>
-                  <Tree<FsNode>
-                    key={treeKey}
-                    ref={tree.treeRef}
-                    data={tree.data}
-                    idAccessor="path"
-                    childrenAccessor={(d) => (d.dir ? d.children ?? [] : null)}
-                    openByDefault={false}
-                    width={treeWidth}
-                    height={treeHeight}
-                    rowHeight={26}
-                    indent={14}
-                    disableEdit={(d) => !tree.canModify(d.path)}
-                    disableDrag={(d) => !tree.canModify(d.path)}
-                    disableDrop={({ parentNode, dragNodes }) =>
-                      dragNodes.some(
-                        (n) => isSubPath(parentNode.data.path, n.data.path) || n.data.path === parentNode.data.path,
-                      )
-                    }
-                    onToggle={tree.onTreeToggle}
-                    onSelect={tree.onTreeSelect}
-                    onRename={tree.onTreeRename}
-                    onMove={tree.onTreeMove}
-                    // react-arborist's default row wrapper already calls `node.handleClick` on
-                    // click (ctrl/cmd-click toggles, shift-click range-selects, a plain click
-                    // selects + activates) — onActivate is where a plain click's "open this
-                    // folder" behavior belongs. It must NOT be duplicated by a second onClick on
-                    // the row content below: both fire (the wrapper's click handler and ours,
-                    // via bubbling), and since each independently reacts to the same modifier
-                    // keys, they used to fight over the selection (e.g. our handler adds a
-                    // ctrl-clicked row, then the wrapper's own handler sees it as already
-                    // selected and immediately deselects it again).
-                    onActivate={(node) => {
-                      if (node.isInternal) node.toggle();
-                    }}
-                  >
-                    {Node}
-                  </Tree>
-                </RowActionsCtx.Provider>
-              )}
-            </div>
+            {tree.searchMode ? (
+              <SearchResultsView tree={tree} />
+            ) : (
+              <div
+                ref={(el) => {
+                  treeSizeRef(el);
+                  treeContainerRef.current = el;
+                }}
+                className="kt-explorer-tree border rounded"
+                style={{ flex: 1, minHeight: 0 }}
+                // Right-clicking the background below/around the rows targets the tree root. A row's
+                // own handler runs first (events bubble child → parent) and has already put its menu
+                // up, so bail out when the click actually landed on one.
+                onContextMenu={(e) => {
+                  if ((e.target as HTMLElement).closest(".kt-explorer-row")) return;
+                  e.preventDefault();
+                  setContextMenu({ x: e.clientX, y: e.clientY, items: createItems(tree, "/") });
+                }}
+              >
+                {!tree.loaded ? (
+                  <p className="text-muted small p-2">Loading…</p>
+                ) : (
+                  <RowActionsCtx.Provider value={tree.rowActions}>
+                    <Tree<FsNode>
+                      key={treeKey}
+                      ref={tree.treeRef}
+                      data={tree.data}
+                      idAccessor="path"
+                      childrenAccessor={(d) => (d.dir ? d.children ?? [] : null)}
+                      openByDefault={false}
+                      width={treeWidth}
+                      height={treeHeight}
+                      rowHeight={26}
+                      indent={14}
+                      disableEdit={(d) => !tree.canModify(d.path)}
+                      disableDrag={(d) => !tree.canModify(d.path)}
+                      disableDrop={({ parentNode, dragNodes }) =>
+                        dragNodes.some(
+                          (n) => isSubPath(parentNode.data.path, n.data.path) || n.data.path === parentNode.data.path,
+                        )
+                      }
+                      onToggle={tree.onTreeToggle}
+                      onSelect={tree.onTreeSelect}
+                      onRename={tree.onTreeRename}
+                      onMove={tree.onTreeMove}
+                      // react-arborist's default row wrapper already calls `node.handleClick` on
+                      // click (ctrl/cmd-click toggles, shift-click range-selects, a plain click
+                      // selects + activates) — onActivate is where a plain click's "open this
+                      // folder" behavior belongs. It must NOT be duplicated by a second onClick on
+                      // the row content below: both fire (the wrapper's click handler and ours,
+                      // via bubbling), and since each independently reacts to the same modifier
+                      // keys, they used to fight over the selection (e.g. our handler adds a
+                      // ctrl-clicked row, then the wrapper's own handler sees it as already
+                      // selected and immediately deselects it again).
+                      onActivate={(node) => {
+                        if (node.isInternal) node.toggle();
+                      }}
+                    >
+                      {Node}
+                    </Tree>
+                  </RowActionsCtx.Provider>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
@@ -264,7 +292,80 @@ export function FsTreePanel({
           }
           onSave={() => void tree.handleSave()}
           saveDisabled={disabled || busy}
+          scrollTarget={tree.scrollTarget}
         />
+      </div>
+    </div>
+  );
+}
+
+// Groups flat search matches by file, preserving first-seen file order (the backend already
+// walks/returns matches file-by-file, so this is stable, not a re-sort).
+function groupByFile(matches: FsSearchMatch[]): [string, FsSearchMatch[]][] {
+  const order: string[] = [];
+  const byPath = new Map<string, FsSearchMatch[]>();
+  for (const m of matches) {
+    let bucket = byPath.get(m.path);
+    if (!bucket) {
+      bucket = [];
+      byPath.set(m.path, bucket);
+      order.push(m.path);
+    }
+    bucket.push(m);
+  }
+  return order.map((path) => [path, byPath.get(path)!]);
+}
+
+// Replaces the tree with a flat, VS-Code-style "search in files" results list — search input,
+// case-sensitivity toggle, and matches grouped by file. Clicking a match opens that file in the
+// editor pane and jumps to the matching line (see useFsTree's `selectFile`/`scrollTarget`).
+function SearchResultsView({ tree }: { tree: UseFsTree }) {
+  return (
+    <div className="d-flex flex-column" style={{ flex: 1, minHeight: 0 }}>
+      <Form.Control
+        size="sm"
+        className="mb-1"
+        placeholder="Search in files…"
+        value={tree.searchQuery}
+        onChange={(e) => tree.setSearchQuery(e.target.value)}
+        autoFocus
+      />
+      <Form.Check
+        type="checkbox"
+        label="Case sensitive"
+        className="small mb-2"
+        checked={tree.searchCaseSensitive}
+        onChange={(e) => tree.setSearchCaseSensitive(e.target.checked)}
+      />
+      <div className="flex-grow-1 overflow-auto border rounded" style={{ minHeight: 0 }}>
+        {tree.searchLoading ? (
+          <p className="text-muted small p-2">Searching…</p>
+        ) : tree.searchQuery.trim().length < 2 ? (
+          <p className="text-muted small p-2">Type at least 2 characters…</p>
+        ) : tree.searchResults.length === 0 ? (
+          <p className="text-muted small p-2">No matches.</p>
+        ) : (
+          groupByFile(tree.searchResults).map(([path, hits]) => (
+            <div key={path} className="mb-1">
+              <div className="font-monospace small fw-bold px-2 pt-1">{path}</div>
+              {hits.map((hit) => (
+                <button
+                  key={hit.line_number}
+                  className="d-block w-100 text-start btn btn-sm btn-light font-monospace small px-3"
+                  onClick={() => void tree.selectFile(path, hit.line_number)}
+                >
+                  <span className="text-muted me-2">{hit.line_number}</span>
+                  {hit.line_text}
+                </button>
+              ))}
+            </div>
+          ))
+        )}
+        {tree.searchTruncated && (
+          <div className="alert alert-warning py-1 px-2 m-2 small">
+            Results truncated — refine your search for a complete list.
+          </div>
+        )}
       </div>
     </div>
   );

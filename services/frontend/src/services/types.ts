@@ -243,6 +243,18 @@ export interface FsUploadResponse {
   size: number;
 }
 
+export interface FsSearchMatch {
+  path: string;
+  line_number: number;
+  line_text: string;
+}
+
+export interface FsSearchResponse {
+  query: string;
+  matches: FsSearchMatch[];
+  truncated: boolean;
+}
+
 // A running device's boot-time startup progress — the live /var/log/startup.log tail and whether
 // its startup commands (.startup script + exec_commands) have finished executing.
 export interface StartupStatus {

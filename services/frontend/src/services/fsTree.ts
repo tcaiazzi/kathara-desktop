@@ -50,6 +50,11 @@ export interface FsTreeScopeState {
    * discard-confirmation prompt, both act on *this*, never on `selected` directly.
    */
   bufferPath: string | null;
+  /** Bumped every time a search result is clicked; makes re-clicking the same line still ask the
+   *  editor to re-scroll (a bare unchanged line number wouldn't retrigger its effect). */
+  scrollSeq: number;
+  /** Bumped by every runSearch call; invalidates a still-in-flight one, same idea as `selectGen`. */
+  searchGen: number;
 }
 
 /**
@@ -65,6 +70,8 @@ export function freshScopeState(): FsTreeScopeState {
     clipboard: null,
     selectGen: 0,
     bufferPath: null,
+    scrollSeq: 0,
+    searchGen: 0,
   };
 }
 

@@ -18,7 +18,7 @@ import {
   type FsTreeScopeState,
 } from "../services/fsTree";
 import { baseName, isSubPath, remapPath } from "../services/paths";
-import type { FsEntry } from "../services/types";
+import type { FsEntry, FsSearchMatch } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
 import { useConfirmDiscard } from "./useConfirmDiscard";
 
@@ -39,6 +39,8 @@ export interface FsTreeSource {
   upload(path: string, file: File): Promise<void>;
   /** Omit on a surface with no download endpoint — the toolbar button hides itself. */
   download?(path: string): Promise<Blob>;
+  /** Omit on a surface with no search endpoint — the toolbar button hides itself, same as `download`. */
+  search?(path: string, query: string, caseSensitive: boolean): Promise<{ matches: FsSearchMatch[]; truncated: boolean }>;
   /** Paths that can never be renamed, moved or deleted. Default: everything can. */
   canModify?(path: string): boolean;
   labels: FsTreeLabels;
@@ -115,8 +117,24 @@ export interface UseFsTree {
   bufferPath: string | null;
   /** Whether the editor buffer differs from what was last loaded/saved. */
   dirty: boolean;
+  /** Opens `path` in the editor (going through the same discard-confirmation flow as clicking it
+   *  in the tree); if `targetLine` is given, also scrolls to and selects that line — the entry
+   *  point a search result click uses. */
+  selectFile: (path: string, targetLine?: number) => Promise<void>;
   canModify: (path: string) => boolean;
   hasDownload: boolean;
+  hasSearch: boolean;
+  searchMode: boolean;
+  toggleSearchMode: () => void;
+  searchQuery: string;
+  setSearchQuery: (q: string) => void;
+  searchCaseSensitive: boolean;
+  setSearchCaseSensitive: (v: boolean) => void;
+  searchResults: FsSearchMatch[];
+  searchTruncated: boolean;
+  searchLoading: boolean;
+  /** Set once a search result asks the editor to jump to a line — see `selectFile`'s `targetLine`. */
+  scrollTarget: { line: number; seq: number } | null;
   rowActions: FsRowActions;
   onTreeToggle: (id: string) => void;
   onTreeSelect: (nodes: NodeApi<FsNode>[]) => void;
@@ -189,6 +207,13 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const [isBinary, setIsBinary] = useState(false);
   const [busy, setBusy] = useState(false);
   const [loadingPath, setLoadingPath] = useState<string | null>(null);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchCaseSensitive, setSearchCaseSensitive] = useState(false);
+  const [searchResults, setSearchResults] = useState<FsSearchMatch[]>([]);
+  const [searchTruncated, setSearchTruncated] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [scrollTarget, setScrollTarget] = useState<{ line: number; seq: number } | null>(null);
 
   const toast = useToast();
   const prompt = usePrompt();
@@ -243,6 +268,12 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setLoadedText("");
     setIsBinary(false);
     setLoadingPath(null);
+    setSearchMode(false);
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchTruncated(false);
+    setSearchLoading(false);
+    setScrollTarget(null);
   }, [scopeKey]);
 
   // Root listing: on scope change, and again whenever the caller's `refreshKey` changes (which
@@ -266,6 +297,45 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, enabled, refreshKey]);
+
+  const hasSearch = !!source.search;
+  const toggleSearchMode = useCallback(() => setSearchMode((prev) => !prev), []);
+
+  // Debounced search-as-you-type: waits for a short pause in typing (rather than firing on every
+  // keystroke) before hitting the search endpoint. Guarded by `searchGen` (in `scoped`, so it
+  // resets on scope change like `selectGen`) against an earlier, slower response landing after a
+  // faster later one.
+  useEffect(() => {
+    if (!searchMode || !sourceRef.current.search) return;
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setSearchResults([]);
+      setSearchTruncated(false);
+      setSearchLoading(false);
+      return;
+    }
+    const gen = ++scoped.current.searchGen;
+    setSearchLoading(true);
+    const timer = setTimeout(() => {
+      void sourceRef.current
+        .search!("/", query, searchCaseSensitive)
+        .then(({ matches, truncated }) => {
+          if (scoped.current.searchGen !== gen) return;
+          setSearchResults(matches);
+          setSearchTruncated(truncated);
+        })
+        .catch((e) => {
+          if (scoped.current.searchGen !== gen) return;
+          toast.reportError("Search", e);
+          setSearchResults([]);
+          setSearchTruncated(false);
+        })
+        .finally(() => {
+          if (scoped.current.searchGen === gen) setSearchLoading(false);
+        });
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchMode, searchQuery, searchCaseSensitive, toast]);
 
   const data = useMemo(() => tree, [tree]);
 
@@ -399,7 +469,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   );
 
   const selectFile = useCallback(
-    async (path: string) => {
+    async (path: string, targetLine?: number) => {
       const gen = ++scoped.current.selectGen;
       const ok = await requestFileSwitch(path);
       if (scoped.current.selectGen !== gen) return;
@@ -418,6 +488,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
             setEditorText(content);
             setLoadedText(content);
             setIsBinary(false);
+            if (targetLine != null) {
+              setScrollTarget({ line: targetLine, seq: ++scoped.current.scrollSeq });
+            }
           } catch (e) {
             if (e instanceof ApiError && e.errorType === "BinaryFileError") {
               // Not a failure from the user's point of view: select the file so download/delete/
@@ -901,8 +974,20 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setBuffer,
     bufferPath,
     dirty: !!bufferPath && editorText !== loadedText,
+    selectFile,
     canModify,
     hasDownload,
+    hasSearch,
+    searchMode,
+    toggleSearchMode,
+    searchQuery,
+    setSearchQuery,
+    searchCaseSensitive,
+    setSearchCaseSensitive,
+    searchResults,
+    searchTruncated,
+    searchLoading,
+    scrollTarget,
     rowActions,
     onTreeToggle,
     onTreeSelect,

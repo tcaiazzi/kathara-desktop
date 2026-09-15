@@ -98,6 +98,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
       remove: async (path) => void (await api.fsDeleteOffline(labName, path, true)),
       upload: async (path, file) => void (await api.fsUploadOffline(labName, path, file)),
       download: (path) => api.fsDownloadOffline(labName, path),
+      search: (path, query, caseSensitive) => api.fsSearchOffline(labName, path, query, caseSensitive),
       canModify,
       labels: {
         openFile: "Open file",

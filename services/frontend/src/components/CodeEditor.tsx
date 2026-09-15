@@ -2,7 +2,7 @@ import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { StreamLanguage } from "@codemirror/language";
 import { shell } from "@codemirror/legacy-modes/mode/shell";
 import { lintGutter, lintKeymap } from "@codemirror/lint";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
   highlightActiveLine,
@@ -26,6 +26,10 @@ interface CodeEditorProps {
   onChange: (value: string) => void;
   readOnly?: boolean;
   placeholder?: string;
+  /** Scroll to and select `line` (1-indexed). `seq` must change on every request — including a
+   *  repeat click on the same line — since an unchanged `line` value alone wouldn't re-run the
+   *  effect below. */
+  scrollTarget?: { line: number; seq: number } | null;
 }
 
 // Language extension + its companions (autocomplete/lint only for lab.conf).
@@ -45,7 +49,14 @@ function languageExtensions(language: EditorLanguage): Extension {
 // A CodeMirror 6 editor wrapping the app's plain <textarea>-shaped API (value/onChange/readOnly/
 // placeholder). Reconfigures language/theme/readOnly/placeholder via Compartments without recreating
 // the view. Deliberately binds no Mod-s so Ctrl/Cmd+S bubbles to the callers' useSaveShortcut.
-export function CodeEditor({ language, value, onChange, readOnly = false, placeholder }: CodeEditorProps) {
+export function CodeEditor({
+  language,
+  value,
+  onChange,
+  readOnly = false,
+  placeholder,
+  scrollTarget,
+}: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -127,6 +138,23 @@ export function CodeEditor({ language, value, onChange, readOnly = false, placeh
       effects: placeholderComp.current.reconfigure(placeholder ? cmPlaceholder(placeholder) : []),
     });
   }, [placeholder]);
+
+  // A search-result click asking us to jump to a specific line. `scrollTarget` depends on the
+  // whole object's identity (not `scrollTarget?.line` alone) — the caller always constructs a
+  // fresh `{ line, seq }` per request, including a repeat click on the same line, so identity is
+  // enough to retrigger this without a manual seq comparison.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !scrollTarget) return;
+    const doc = view.state.doc;
+    if (scrollTarget.line < 1 || scrollTarget.line > doc.lines) return;
+    const lineInfo = doc.line(scrollTarget.line);
+    view.dispatch({
+      selection: EditorSelection.cursor(lineInfo.from),
+      effects: EditorView.scrollIntoView(lineInfo.from, { y: "center" }),
+    });
+    view.focus();
+  }, [scrollTarget]);
 
   // flex-column so the CodeMirror editor stretches to the full width of the pane (a row flex would
   // shrink it to its content width). minHeight: 0 (not a fixed floor) lets this host shrink to

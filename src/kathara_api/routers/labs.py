@@ -3,7 +3,7 @@
 import posixpath
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -17,6 +17,7 @@ from ..schemas.filesystem import (
     FsMkdirRequest,
     FsMoveRequest,
     FsReadTextResponse,
+    FsSearchResponse,
     FsUploadResponse,
     FsWriteTextRequest,
 )
@@ -225,6 +226,19 @@ def list_lab_directory(
     one with nothing in it yet), and anything queued at the lab root."""
     entries = service.fs_list_offline(lab_name, path)
     return FsListResponse(path=service.normalize_guest_path(path), entries=entries)
+
+
+@router.get("/{lab_name}/fs/search", response_model=FsSearchResponse)
+def search_lab_files(
+    lab_name: str,
+    path: str = "/",
+    query: str = Query(..., min_length=2),
+    case_sensitive: bool = False,
+    service: KatharaService = Depends(get_service),
+) -> FsSearchResponse:
+    """Search file contents under a directory in the lab's own on-disk tree."""
+    matches, truncated = service.fs_search_offline(lab_name, path, query, case_sensitive)
+    return FsSearchResponse(query=query, matches=matches, truncated=truncated)
 
 
 @router.get("/{lab_name}/fs/text", response_model=FsReadTextResponse)

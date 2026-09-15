@@ -561,3 +561,99 @@ def test_rename_does_not_lose_root_or_device_content(tmp_path):
     names = {e.name for e in service.fs_list_offline("renamed", "/")}
     assert {"notes.txt", "pc1"} <= names
     assert service.fs_read_text_offline("renamed", "/pc1/etc/motd") == "hi\n"
+
+
+# -- fs_search_offline ------------------------------------------------------------------------
+
+
+def test_search_lines_in_text_case_insensitive_by_default():
+    from kathara_api.services.kathara_service import _search_lines_in_text
+
+    matches, capped = _search_lines_in_text("hello world\nfoo BAR\nbaz\n", "bar", False, 10)
+
+    assert matches == [(2, "foo BAR")]
+    assert capped is False
+
+
+def test_search_lines_in_text_case_sensitive():
+    from kathara_api.services.kathara_service import _search_lines_in_text
+
+    matches, _ = _search_lines_in_text("hello world\nfoo BAR\n", "bar", True, 10)
+
+    assert matches == []
+
+
+def test_search_lines_in_text_respects_max_matches():
+    from kathara_api.services.kathara_service import _search_lines_in_text
+
+    text = "\n".join(f"line {i} needle" for i in range(5))
+
+    matches, capped = _search_lines_in_text(text, "needle", False, 3)
+
+    assert matches == [(1, "line 0 needle"), (2, "line 1 needle"), (3, "line 2 needle")]
+    assert capped is True
+
+
+def test_search_lines_in_text_trims_long_lines():
+    from kathara_api.services.kathara_service import _SEARCH_MAX_LINE_LENGTH, _search_lines_in_text
+
+    long_line = "x" * (_SEARCH_MAX_LINE_LENGTH + 50) + "needle"
+
+    matches, _ = _search_lines_in_text(long_line, "needle", False, 10)
+
+    assert len(matches) == 1
+    lineno, snippet = matches[0]
+    assert lineno == 1
+    assert snippet.endswith("…")
+    assert len(snippet) == _SEARCH_MAX_LINE_LENGTH + 1  # +1 for the trailing "…"
+
+
+def test_fs_search_offline_finds_matches_at_lab_root_and_under_a_device(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "first line\nneedle here\n")
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "welcome\nneedle in motd\n")
+    service.fs_write_text_offline("testlab", "/pc2/etc/motd", "nothing interesting\n")
+
+    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+
+    by_path = {m.path: m for m in matches}
+    assert truncated is False
+    assert by_path["/notes.txt"].line_number == 2
+    assert by_path["/notes.txt"].line_text == "needle here"
+    # The owner-prefixed path must be exactly "/pc1/etc/motd" — a naive f"/{owner}{file_path}"
+    # concatenation would double the leading slash into "/pc1//etc/motd" (file_path from
+    # walk.files() already starts with "/"), which this assertion would catch.
+    assert by_path["/pc1/etc/motd"].line_number == 2
+    assert by_path["/pc1/etc/motd"].line_text == "needle in motd"
+    assert "/pc2/etc/motd" not in by_path
+
+
+def test_fs_search_offline_case_sensitivity_toggle(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "NEEDLE\n")
+
+    insensitive, _ = service.fs_search_offline("testlab", "/", "needle", case_sensitive=False)
+    sensitive, _ = service.fs_search_offline("testlab", "/", "needle", case_sensitive=True)
+
+    assert len(insensitive) == 1
+    assert sensitive == []
+
+
+def test_fs_search_offline_sets_truncated_once_total_cap_exceeded(tmp_path, monkeypatch):
+    import kathara_api.services.kathara_service as kathara_service_module
+
+    monkeypatch.setattr(kathara_service_module, "_SEARCH_MAX_TOTAL_MATCHES", 1)
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "needle one\nneedle two\n")
+
+    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+
+    assert len(matches) == 1
+    assert truncated is True
+
+
+def test_fs_search_offline_raises_on_missing_path(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+
+    with pytest.raises(PathNotFoundError):
+        service.fs_search_offline("testlab", "/does-not-exist", "needle")

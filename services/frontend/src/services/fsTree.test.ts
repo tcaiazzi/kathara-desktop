@@ -21,6 +21,8 @@ describe("freshScopeState", () => {
       clipboard: null,
       selectGen: 0,
       bufferPath: null,
+      scrollSeq: 0,
+      searchGen: 0,
     });
   });
 

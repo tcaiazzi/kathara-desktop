@@ -67,3 +67,19 @@ class FsUploadResponse(BaseModel):
 
     path: str
     size: int
+
+
+class FsSearchMatch(BaseModel):
+    """A single matching line found by a filesystem search."""
+
+    path: str
+    line_number: int
+    line_text: str
+
+
+class FsSearchResponse(BaseModel):
+    """Result of a content search under a directory in the lab's own on-disk tree."""
+
+    query: str
+    matches: list[FsSearchMatch]
+    truncated: bool

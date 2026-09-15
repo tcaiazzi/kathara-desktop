@@ -16,6 +16,8 @@ interface EditorPaneProps {
   extraActions?: ReactNode;
   // Syntax mode for the code editor. Defaults to plaintext; callers pass languageForPath(path).
   language?: EditorLanguage;
+  /** Forwarded to CodeEditor — see its own doc. */
+  scrollTarget?: { line: number; seq: number } | null;
 }
 
 // Right-hand pane shared by LabExplorer and RuntimeFilesystemEditor: a path/placeholder header
@@ -30,6 +32,7 @@ export function EditorPane({
   saveDisabled,
   extraActions,
   language = "plaintext",
+  scrollTarget,
 }: EditorPaneProps) {
   return (
     // minHeight: 0 lets this flex item shrink below its content's natural height instead of
@@ -53,6 +56,7 @@ export function EditorPane({
           onChange={onChange}
           readOnly={disabled}
           placeholder={placeholder}
+          scrollTarget={scrollTarget}
         />
       </Suspense>
     </div>

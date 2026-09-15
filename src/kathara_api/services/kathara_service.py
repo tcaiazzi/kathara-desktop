@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 
 import fs.copy
+import fs.errors
 import fs.path
 from Kathara.exceptions import (
     DockerDaemonConnectionError,
@@ -57,7 +58,7 @@ from ..errors import (
     PathNotFoundError,
     SettingsLockedError,
 )
-from ..schemas.filesystem import FsEntry
+from ..schemas.filesystem import FsEntry, FsSearchMatch
 from ..schemas.examples import ExampleSummary
 from ..schemas.gallery import GalleryCatalog, GalleryLabSummary
 from ..schemas.images import LabImageStatus, LabImagesStatus
@@ -79,6 +80,33 @@ ROOT_MACHINE = "ROOT"
 # whether or not a daemon is reachable. Named here because `system_info` reports it from two places
 # (the active manager and the available-managers map) and they must not drift apart.
 _DOCKER_MANAGER_LABEL = "Docker (Kathara)"
+
+
+# Caps for fs_search_offline — module-level (not class-level) so _search_lines_in_text, a bare
+# module-level helper, can use them without forward-referencing the class body.
+_SEARCH_MAX_FILE_SIZE = 5 * 1024 * 1024  # mirrors ApiSettings.max_bytes_per_file (config.py)
+_SEARCH_MAX_MATCHES_PER_FILE = 200
+_SEARCH_MAX_TOTAL_MATCHES = 1000
+_SEARCH_MAX_LINE_LENGTH = 300
+
+
+def _search_lines_in_text(
+    text: str, query: str, case_sensitive: bool, max_matches: int
+) -> tuple[list[tuple[int, str]], bool]:
+    """Line-by-line substring search over already-decoded text — the matching core behind
+    ``fs_search_offline``, kept dependency-free so it's directly unit-testable. Returns
+    ``(matches, capped)``; ``capped`` is True once ``max_matches`` was hit, meaning there may be
+    more matches in ``text`` after the last one returned."""
+    needle = query if case_sensitive else query.lower()
+    matches: list[tuple[int, str]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        haystack = line if case_sensitive else line.lower()
+        if needle in haystack:
+            snippet = line if len(line) <= _SEARCH_MAX_LINE_LENGTH else line[:_SEARCH_MAX_LINE_LENGTH] + "…"
+            matches.append((lineno, snippet))
+            if len(matches) >= max_matches:
+                return matches, True
+    return matches, False
 
 
 def _check_import_size(files: dict[str, str]) -> None:
@@ -1041,6 +1069,51 @@ class KatharaService:
             # guest == "/" with nothing materialized yet (a device with no machine.fs) is a
             # legitimate empty listing, not an error.
         return sorted(entries.values(), key=lambda e: (not e.is_dir, e.name.lower()))
+
+    def fs_search_offline(
+        self, lab_name: str, path: str, query: str, case_sensitive: bool = False
+    ) -> tuple[list[FsSearchMatch], bool]:
+        """Search file contents under a directory in the lab's own on-disk tree. One
+        PyFilesystem2 walk from a single resolved owner fs — when `path` resolves to the lab root
+        (ROOT_MACHINE), that walk already reaches every device's on-disk files too, since
+        `machine.fs` is just an `opendir()` view nested inside `lab.fs`'s own directory; no
+        separate fan-out over `lab.machines` is needed."""
+        path = self._clean_offline_path(path)
+        lab = self.get_lab_or_reconstruct(lab_name)
+        owner, guest = self._offline_fs_owner(lab, path)
+        target_fs = self._fs_for(lab, owner)
+
+        matches: list[FsSearchMatch] = []
+        truncated = False
+        if target_fs is not None and target_fs.exists(guest):
+            for file_path in target_fs.walk.files(path=guest):
+                if len(matches) >= _SEARCH_MAX_TOTAL_MATCHES:
+                    truncated = True
+                    break
+                try:
+                    info = target_fs.getinfo(file_path, namespaces=["details"])
+                    if info.size is not None and info.size > _SEARCH_MAX_FILE_SIZE:
+                        continue
+                    text = target_fs.readtext(file_path)
+                except UnicodeDecodeError:
+                    continue  # binary — same tolerance as every other offline text read
+                except fs.errors.ResourceError:
+                    continue  # vanished between walk() and readtext() — benign race
+
+                remaining = _SEARCH_MAX_TOTAL_MATCHES - len(matches)
+                file_matches, file_capped = _search_lines_in_text(
+                    text, query, case_sensitive, min(_SEARCH_MAX_MATCHES_PER_FILE, remaining)
+                )
+                if file_capped:
+                    truncated = True
+                display_path = file_path if owner == ROOT_MACHINE else fs.path.join(f"/{owner}", file_path)
+                matches.extend(
+                    FsSearchMatch(path=display_path, line_number=lineno, line_text=text_)
+                    for lineno, text_ in file_matches
+                )
+        elif guest != "/":
+            raise PathNotFoundError(f"Path `{path}` not found.")
+        return matches, truncated
 
     def fs_read_text_offline(self, lab_name: str, path: str) -> str:
         path = self._clean_offline_path(path)

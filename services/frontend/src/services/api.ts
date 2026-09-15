@@ -4,6 +4,7 @@ import type {
   GalleryCatalog,
   FsListResponse,
   FsReadTextResponse,
+  FsSearchResponse,
   FsUploadResponse,
   ImagePullProgress,
   ImagePullResult,
@@ -239,6 +240,11 @@ export const api = {
   },
   fsDownloadOffline: (labName: string, path: string) =>
     requestBlob(`/labs/${encodeURIComponent(labName)}/fs/download?path=${encodeURIComponent(path)}`),
+  fsSearchOffline: (labName: string, path: string, query: string, caseSensitive = false) =>
+    request<FsSearchResponse>(
+      "GET",
+      `/labs/${encodeURIComponent(labName)}/fs/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}&case_sensitive=${caseSensitive}`,
+    ),
 
   fsList: (labName: string, machineName: string, path: string) =>
     request<FsListResponse>(
