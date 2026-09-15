@@ -120,21 +120,23 @@ export function openLabsDir(): void {
 }
 
 /**
- * Build the argv that launches `command` in a terminal window, per platform.
+ * Build the argv that opens a terminal window at `cwd`, per platform, optionally running
+ * `command` in it. With no command, the emulator just opens with the user's default shell.
  *
  * On Linux there is no single answer, so the first emulator that exists on PATH wins;
  * a user whose emulator isn't listed can override it in preferences.json with
  * `terminalCommand`, where "{cmd}" is substituted with the shell command.
  */
-function linuxTerminalArgv(command: string, cwd: string): string[] | null {
+function linuxTerminalArgv(cwd: string, command?: string): string[] | null {
+  const run = (...args: string[]) => (command ? args : []);
   const candidates: string[][] = [
-    ["x-terminal-emulator", "-e", "sh", "-c", command],
-    ["gnome-terminal", `--working-directory=${cwd}`, "--", "sh", "-c", command],
-    ["konsole", "--workdir", cwd, "-e", "sh", "-c", command],
-    ["xfce4-terminal", `--working-directory=${cwd}`, "-x", "sh", "-c", command],
-    ["alacritty", "--working-directory", cwd, "-e", "sh", "-c", command],
-    ["kitty", "-d", cwd, "sh", "-c", command],
-    ["xterm", "-e", "sh", "-c", command],
+    ["x-terminal-emulator", ...run("-e", "sh", "-c", command ?? "")],
+    ["gnome-terminal", `--working-directory=${cwd}`, ...run("--", "sh", "-c", command ?? "")],
+    ["konsole", "--workdir", cwd, ...run("-e", "sh", "-c", command ?? "")],
+    ["xfce4-terminal", `--working-directory=${cwd}`, ...run("-x", "sh", "-c", command ?? "")],
+    ["alacritty", "--working-directory", cwd, ...run("-e", "sh", "-c", command ?? "")],
+    ["kitty", "-d", cwd, ...run("sh", "-c", command ?? "")],
+    ["xterm", ...run("-e", "sh", "-c", command ?? "")],
   ];
   const dirs = (process.env.PATH ?? "").split(path.delimiter);
   return (
@@ -151,21 +153,32 @@ function linuxTerminalArgv(command: string, cwd: string): string[] | null {
 export async function openSystemTerminal(labDir: string, machine: string): Promise<void> {
   const safeMachine = /^[A-Za-z0-9_.-]+$/.test(machine) ? machine : null;
   if (!safeMachine) throw new Error(`refusing to open a terminal for suspicious name: ${machine}`);
+  await spawnTerminal(labDir, `kathara connect ${safeMachine}`);
+}
+
+/** Open a plain shell in the lab's directory — no command, just `cd` there. */
+export async function openTerminalHere(labDir: string): Promise<void> {
+  await spawnTerminal(labDir);
+}
+
+async function spawnTerminal(labDir: string, command?: string): Promise<void> {
   if (!fs.existsSync(labDir)) throw new Error(`lab directory does not exist: ${labDir}`);
 
-  const command = `kathara connect ${safeMachine}`;
   const override = readPrefs().terminalCommand;
-
   if (override?.length) {
-    const argv = override.map((part) => part.replace("{cmd}", command));
+    const argv = override.map((part) => part.replace("{cmd}", command ?? ""));
     log(`system terminal (override): ${argv.join(" ")}`);
     spawn(argv[0], argv.slice(1), { cwd: labDir, detached: true, stdio: "ignore" }).unref();
     return;
   }
 
   if (process.platform === "darwin") {
+    if (!command) {
+      spawn("open", ["-a", "Terminal", labDir], { detached: true, stdio: "ignore" }).unref();
+      return;
+    }
     // Terminal.app takes a file to run, not a command, so hand it a throwaway script.
-    const script = path.join(os.tmpdir(), `kathara-${safeMachine}-${Date.now()}.command`);
+    const script = path.join(os.tmpdir(), `kathara-${Date.now()}.command`);
     await fsp.writeFile(script, `#!/bin/sh\ncd ${JSON.stringify(labDir)}\n${command}\n`, {
       mode: 0o755,
     });
@@ -175,14 +188,21 @@ export async function openSystemTerminal(labDir: string, machine: string): Promi
 
   if (process.platform === "win32") {
     // Windows Terminal when present, the legacy console otherwise.
-    const argv = fs.existsSync(path.join(process.env.LOCALAPPDATA ?? "", "Microsoft/WindowsApps/wt.exe"))
-      ? ["wt.exe", "-d", labDir, "cmd", "/k", command]
-      : ["cmd.exe", "/c", "start", "cmd", "/k", command];
+    const hasWt = fs.existsSync(
+      path.join(process.env.LOCALAPPDATA ?? "", "Microsoft/WindowsApps/wt.exe"),
+    );
+    const argv = command
+      ? hasWt
+        ? ["wt.exe", "-d", labDir, "cmd", "/k", command]
+        : ["cmd.exe", "/c", "start", "cmd", "/k", command]
+      : hasWt
+        ? ["wt.exe", "-d", labDir]
+        : ["cmd.exe", "/c", "start", "cmd"];
     spawn(argv[0], argv.slice(1), { cwd: labDir, detached: true, stdio: "ignore" }).unref();
     return;
   }
 
-  const argv = linuxTerminalArgv(`${command}; exec sh`, labDir);
+  const argv = linuxTerminalArgv(labDir, command ? `${command}; exec sh` : undefined);
   if (!argv) {
     throw new Error(
       "No supported terminal emulator was found. Set \"terminalCommand\" in preferences.json " +

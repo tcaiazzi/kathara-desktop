@@ -114,6 +114,8 @@ export interface DesktopApi {
   revealLab(labName: string): Promise<void>;
   openLabsFolder(): Promise<void>;
   openSystemTerminal(labName: string, machine: string): Promise<void>;
+  /** Open a plain shell in the lab's directory — no `kathara connect`, just `cd` there. */
+  openTerminalHere(labName: string): Promise<void>;
   /** Lab storage directory (Settings). See SettingsPage.tsx's "Desktop" panel. */
   getLabsDir(): Promise<string>;
   getDefaultLabsDir(): Promise<string>;

@@ -983,7 +983,16 @@ export function WorkspacePage() {
         },
         { label: "Download .zip", disabled: busy, action: () => void handleDownload(labName) },
         ...(isDesktop()
-          ? [{ label: "Open lab folder", action: () => void desktop()?.revealLab(labName) }]
+          ? [
+              { label: "Open lab folder", action: () => void desktop()?.revealLab(labName) },
+              {
+                label: "Open Terminal Here",
+                action: () =>
+                  void desktop()
+                    ?.openTerminalHere(labName)
+                    ?.catch((e) => toast.reportError("Open terminal", e)),
+              },
+            ]
           : []),
         { label: "Remove", danger: true, disabled: busy, action: () => void handleDelete(labName) },
       ],

@@ -35,6 +35,7 @@ import { ensurePathEnv } from "./env";
 import {
   openLabsDir,
   openSystemTerminal,
+  openTerminalHere,
   pickHostDirectory,
   pickLabArchive,
   pickLabsDirectory,
@@ -591,6 +592,10 @@ function registerIpc(): void {
 
   ipcMain.handle("terminal:open-system", async (_e, labName: string, machine: string) => {
     await openSystemTerminal(await labDirectory(labName), machine);
+  });
+
+  ipcMain.handle("terminal:open-here", async (_e, labName: string) => {
+    await openTerminalHere(await labDirectory(labName));
   });
 
   ipcMain.handle("labs:get-dir", () => labsDir());

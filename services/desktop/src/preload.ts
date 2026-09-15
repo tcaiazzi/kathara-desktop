@@ -137,6 +137,7 @@ const api = {
   // -- device terminal in the OS's own emulator --
   openSystemTerminal: (labName: string, machine: string) =>
     ipcRenderer.invoke("terminal:open-system", labName, machine),
+  openTerminalHere: (labName: string) => ipcRenderer.invoke("terminal:open-here", labName),
 
   // -- lab storage directory (Settings) --
   getLabsDir: (): Promise<string> => ipcRenderer.invoke("labs:get-dir"),
