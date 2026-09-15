@@ -47,6 +47,10 @@ export interface DesktopApi {
   isWindowMaximized(): Promise<boolean>;
   isWindowFullScreen(): Promise<boolean>;
   showBackendLog(): Promise<void>;
+  /** Best-effort trail for a renderer crash ErrorBoundary.tsx caught, appended to the same
+   * backend.log "Help -> Show backend log" opens — a packaged app's renderer console isn't
+   * normally visible, so this is otherwise a diagnostic dead end. Fire-and-forget. */
+  logRendererError(message: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   /** The newer release GitHub has, or null if this build is already current. Cheap to call more
    * than once (see updateCheck.ts) — safe to call again after opening an editor unrelated to it. */

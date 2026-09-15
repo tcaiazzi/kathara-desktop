@@ -34,6 +34,7 @@ const api = {
   getStatus: () => ipcRenderer.invoke("status:get"),
   retryStartup: () => ipcRenderer.invoke("status:retry"),
   showBackendLog: () => ipcRenderer.invoke("shell:show-log"),
+  logRendererError: (message: string) => ipcRenderer.invoke("shell:log-renderer-error", message),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 
   // Resolves to the newer release GitHub has, or null if the app is already current (or the

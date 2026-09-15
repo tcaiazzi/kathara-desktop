@@ -518,6 +518,10 @@ function registerIpc(): void {
 
   ipcMain.handle("shell:show-log", () => shell.openPath(backendLogPath()));
 
+  ipcMain.handle("shell:log-renderer-error", (_e, message: string) => {
+    log(`renderer error: ${String(message).slice(0, 4000)}`);
+  });
+
   // The renderer's only way to learn the pairing token backend.ts generated for this launch (see
   // buildBackendCommand) — it can't read it any other way, since it's never written to the page
   // the backend itself serves. Kept off the response even when null (the renderer is between
