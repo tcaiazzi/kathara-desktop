@@ -1,5 +1,6 @@
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { AppNavbar } from "./components/AppNavbar";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OnboardingTour } from "./components/OnboardingTour";
 import { ConfirmProvider } from "./context/ConfirmContext";
 import { ImageDownloadProvider } from "./context/ImageDownloadContext";
@@ -85,8 +86,22 @@ export function App() {
                           <Route path="/settings" element={<SettingsPage />} />
                         </Route>
                         <Route element={<AppLayoutFull />}>
-                          <Route path="/workspace" element={<WorkspacePage />} />
-                          <Route path="/workspace/:name" element={<WorkspacePage />} />
+                          <Route
+                            path="/workspace"
+                            element={
+                              <ErrorBoundary>
+                                <WorkspacePage />
+                              </ErrorBoundary>
+                            }
+                          />
+                          <Route
+                            path="/workspace/:name"
+                            element={
+                              <ErrorBoundary>
+                                <WorkspacePage />
+                              </ErrorBoundary>
+                            }
+                          />
                         </Route>
                         {/* No AppLayout: opened as its own bare browser window/tab (see
                             services/terminalWindow.ts), not navigated to within the app shell. */}

@@ -311,6 +311,18 @@ export function useForceLayout(
     };
     engineRef.current = engine;
 
+    // Set by this effect's cleanup below. A node/pane drag adds its `move`/`up` listeners
+    // straight onto `window` (so the drag tracks the pointer outside the SVG's bounds) and only
+    // removes them itself once the drag completes normally via `up()` — if this engine is torn
+    // down (e.g. a lab import unmounts the topology) while a drag is in flight, `up()` never
+    // fires. Without this guard the leaked closures would keep firing against this stale engine
+    // while reading `optionsRef`/`callbacksRef`, which are always kept live and would by then
+    // belong to whatever lab is mounted next — cross-contaminating its state with this engine's
+    // stale node id/position. `activeDragCleanup` lets the effect cleanup remove any
+    // still-attached listeners unconditionally, on top of this flag short-circuiting them.
+    let disposed = false;
+    let activeDragCleanup: (() => void) | null = null;
+
     for (const e of model.edges) {
       const line = svgEl("line", { class: "kt-topo-edge" });
       const lbl = svgEl("text", { class: "kt-topo-edge-label", "text-anchor": "middle" }, e.label);
@@ -520,6 +532,7 @@ export function useForceLayout(
       engine.moved = false;
       engine.svg.classList.add("dragging");
       const move = (e: PointerEvent) => {
+        if (disposed) return;
         const p = clientToSim(e.clientX, e.clientY);
         if (Math.abs(p.x - nd.x) > 2 || Math.abs(p.y - nd.y) > 2) engine.moved = true;
         nd.x = p.x;
@@ -532,6 +545,8 @@ export function useForceLayout(
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        activeDragCleanup = null;
+        if (disposed) return;
         engine.svg.classList.remove("dragging");
         engine.dragging = null;
         if (!engine.moved) selectNode(engine.selected === nd.id ? null : nd.id);
@@ -543,6 +558,10 @@ export function useForceLayout(
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+      activeDragCleanup = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
     }
 
     function onBgPointerDown(ev: PointerEvent) {
@@ -558,6 +577,7 @@ export function useForceLayout(
       const ty0 = engine.ty;
       const r = engine.svg.getBoundingClientRect();
       const move = (e: PointerEvent) => {
+        if (disposed) return;
         engine.tx = tx0 + ((e.clientX - startX) / r.width) * engine.W;
         engine.ty = ty0 + ((e.clientY - startY) / r.height) * engine.H;
         render();
@@ -565,9 +585,14 @@ export function useForceLayout(
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
+        activeDragCleanup = null;
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
+      activeDragCleanup = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
     }
 
     function badge(cx: number, cy: number, cls: string, txt: string): SVGGElement {
@@ -702,6 +727,9 @@ export function useForceLayout(
     ensureLoop();
 
     return () => {
+      disposed = true;
+      activeDragCleanup?.();
+      activeDragCleanup = null;
       if (engine.raf) cancelAnimationFrame(engine.raf);
       if (engine.ro) engine.ro.disconnect();
       lastCameraRef.current = { tx: engine.tx, ty: engine.ty, scale: engine.scale };
