@@ -42,6 +42,7 @@ interface Engine {
   edgeEls: SVGLineElement[];
   edgeLabelEls: SVGTextElement[];
   edgeIpEls: SVGTextElement[];
+  edgeMacEls: SVGTextElement[];
   nodeEls: Record<string, SVGGElement>;
   ro: ResizeObserver | null;
   autoFit: boolean;
@@ -299,6 +300,7 @@ export function useForceLayout(
       edgeEls: [],
       edgeLabelEls: [],
       edgeIpEls: [],
+      edgeMacEls: [],
       nodeEls: {},
       ro: null,
       // Fit once on settle for a genuinely fresh/relaid-out graph: a layout restored from
@@ -327,11 +329,13 @@ export function useForceLayout(
       const line = svgEl("line", { class: "kt-topo-edge" });
       const lbl = svgEl("text", { class: "kt-topo-edge-label", "text-anchor": "middle" }, e.label);
       const ipLbl = svgEl("text", { class: "kt-topo-edge-ip", "text-anchor": "middle" }, e.ips.join(", "));
+      const macLbl = svgEl("text", { class: "kt-topo-edge-mac", "text-anchor": "middle" }, e.mac ?? "");
       edgesG.append(line);
-      labelsG.append(lbl, ipLbl);
+      labelsG.append(lbl, ipLbl, macLbl);
       engine.edgeEls.push(line);
       engine.edgeLabelEls.push(lbl);
       engine.edgeIpEls.push(ipLbl);
+      engine.edgeMacEls.push(macLbl);
     }
 
     function savePositions() {
@@ -365,6 +369,7 @@ export function useForceLayout(
         engine.edgeEls[i].classList.toggle("hi", on);
         engine.edgeLabelEls[i].classList.toggle("hi", on);
         engine.edgeIpEls[i].classList.toggle("hi", on);
+        engine.edgeMacEls[i].classList.toggle("hi", on);
       });
     }
 
@@ -393,6 +398,8 @@ export function useForceLayout(
         engine.edgeLabelEls[i].classList.toggle("dim", dim);
         engine.edgeIpEls[i].classList.toggle("hi", on);
         engine.edgeIpEls[i].classList.toggle("dim", dim);
+        engine.edgeMacEls[i].classList.toggle("hi", on);
+        engine.edgeMacEls[i].classList.toggle("dim", dim);
       });
     }
     engine.applySelectionVisuals = applySelectionVisuals;
@@ -516,6 +523,9 @@ export function useForceLayout(
         const ip = engine.edgeIpEls[i];
         ip.setAttribute("x", String(mx));
         ip.setAttribute("y", String(my + 12));
+        const mac = engine.edgeMacEls[i];
+        mac.setAttribute("x", String(mx));
+        mac.setAttribute("y", String(my + 27));
       });
       for (const nd of engine.nodes) engine.nodeEls[nd.id].setAttribute("transform", `translate(${nd.x},${nd.y})`);
     }

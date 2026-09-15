@@ -121,6 +121,7 @@ export function TopologyGraph({
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelectedId;
   const setSelectedId = onSelectId ?? setInternalSelectedId;
   const [showIps, setShowIps] = useState(() => localStorage.getItem("kt-topo-ips") !== "false");
+  const [showMacs, setShowMacs] = useState(() => localStorage.getItem("kt-topo-macs") === "true");
   const [relayoutNonce, setRelayoutNonce] = useState(0);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const [compactToolbar, setCompactToolbar] = useState(false);
@@ -284,6 +285,10 @@ export function TopologyGraph({
     localStorage.setItem("kt-topo-ips", String(showIps));
   }, [showIps]);
 
+  useEffect(() => {
+    localStorage.setItem("kt-topo-macs", String(showMacs));
+  }, [showMacs]);
+
   // Collapse each toolbar into a single dropdown once the (user-resizable) canvas gets too narrow
   // to show its buttons in a row.
   useEffect(() => {
@@ -378,7 +383,10 @@ export function TopologyGraph({
       </div>
       <div className="kt-topo-wrap">
         <div className="kt-topo-canvas" ref={canvasWrapRef}>
-          <div className={`kt-topo-svg-mount${showIps ? "" : " kt-topo-hide-ips"}`} ref={canvasRef} />
+          <div
+            className={`kt-topo-svg-mount${showIps ? "" : " kt-topo-hide-ips"}${showMacs ? "" : " kt-topo-hide-macs"}`}
+            ref={canvasRef}
+          />
           {isEmpty && (
             <div className="kt-topo-empty">
               <p className="mb-2">This lab is empty.</p>
@@ -399,7 +407,7 @@ export function TopologyGraph({
                 variant="outline-secondary"
                 title={
                   <span
-                    title="Add a device or collision domain, or toggle interface IP labels"
+                    title="Add a device or collision domain, or toggle interface IP/MAC labels"
                     className="d-inline-flex align-items-center gap-1"
                   >
                     <MoreHorizontal size={16} aria-label="Topology actions" />
@@ -420,6 +428,13 @@ export function TopologyGraph({
                 >
                   Show Interface IPs
                 </Dropdown.Item>
+                <Dropdown.Item
+                  active={showMacs}
+                  onClick={() => setShowMacs((v) => !v)}
+                  title="Show interface MAC addresses on the graph"
+                >
+                  Show Interface MACs
+                </Dropdown.Item>
               </DropdownButton>
             ) : (
               <>
@@ -436,6 +451,14 @@ export function TopologyGraph({
                   title="Show interface IPs on the graph"
                 >
                   Show Interface IPs
+                </Button>
+                <Button
+                  size="sm"
+                  variant={showMacs ? "secondary" : "outline-secondary"}
+                  onClick={() => setShowMacs((v) => !v)}
+                  title="Show interface MAC addresses on the graph"
+                >
+                  Show Interface MACs
                 </Button>
               </>
             )}

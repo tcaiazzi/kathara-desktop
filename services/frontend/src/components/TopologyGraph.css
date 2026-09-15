@@ -362,6 +362,26 @@
   display: none;
 }
 
+/* Per-interface MAC shown under the IP label; hidden when the "MACs" toggle is off. */
+.kt-topo-edge-mac {
+  fill: var(--kt-node-sub-text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--kt-topo-fs-xs);
+  paint-order: stroke;
+  stroke: var(--kt-surface-recessed);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
+.kt-topo-edge-mac.hi {
+  fill: var(--kt-edge-label-hi);
+}
+.kt-topo-edge-mac.dim {
+  opacity: 0.12;
+}
+.kt-topo-hide-macs .kt-topo-edge-mac {
+  display: none;
+}
+
 /* Per-image type icon (SVG line-art) inside the node rect; colored per category via currentColor. */
 .n-icon {
   fill: none;
