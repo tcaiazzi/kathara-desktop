@@ -2183,8 +2183,22 @@ class KatharaService:
 
     # -- stats ----------------------------------------------------------------
 
+    # Kathara's own `DockerMachine.get_machines_stats` has no delay for an *empty* container
+    # list -- a bare `while True: yield dict()` -- so without a floor below, opening this stream
+    # against an undeployed (or since-undeployed) lab pins a CPU core and hammers the Docker
+    # daemon with back-to-back container listings. This restores the ~1 sample/second cadence
+    # Docker's own stats API already imposes once machines are running (DockerMachineStats reads
+    # from `container.stats(stream=True)`), so the floor is a no-op in the deployed steady state
+    # -- a real sample already takes at least that long to arrive.
+    _MIN_STATS_INTERVAL_S = 1.0
+
     def machines_stats_stream(self, lab_name: str) -> Generator[list, None, None]:
+        last_yield = 0.0
         for stats_dict in self._facade().get_machines_stats(lab_name=lab_name):
+            elapsed = time.monotonic() - last_yield
+            if elapsed < self._MIN_STATS_INTERVAL_S:
+                time.sleep(self._MIN_STATS_INTERVAL_S - elapsed)
+            last_yield = time.monotonic()
             yield list(stats_dict.values())
 
     @staticmethod
