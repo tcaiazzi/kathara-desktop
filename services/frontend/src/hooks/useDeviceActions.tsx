@@ -146,15 +146,17 @@ export function useDeviceActions({
     const nextIf = used.length ? Math.max(...used) + 1 : 0;
     const domains = domainNames();
     const running = deviceNode.running;
-    const linkField: TopoActionField = domains.length
-      ? {
-          name: "link",
-          label: "Collision Domain",
-          options: domains.map((v) => ({ value: v, label: v })),
-          value: domains.includes(prefillLink) ? prefillLink : domains[0],
-          hint: "The existing collision domain this new interface will connect to.",
-        }
-      : { name: "link", label: "Collision Domain", required: true, placeholder: "A", hint: "No domains found — create one first." };
+    const linkField: TopoActionField = {
+      name: "link",
+      label: "Collision Domain",
+      datalistOptions: domains,
+      value: domains.includes(prefillLink) ? prefillLink : "",
+      required: true,
+      placeholder: "A",
+      hint: domains.length
+        ? "Pick an existing collision domain, or type a new name to create one."
+        : "No domains exist yet — type a name to create one.",
+    };
     const macField: TopoActionField = { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01" };
     setActionConfig({
       title: running ? `Add interface on ${deviceNode.name} (runtime)` : `Add interface on ${deviceNode.name} (lab.conf)`,
