@@ -576,14 +576,32 @@ async function buildBackendCommand(
 function trackChild(proc: ChildProcess): void {
   stopping = false;
   child = proc;
+  // Guards against reporting the same failure twice: Node's docs say 'exit' may or may not
+  // follow an 'error' for a process that failed to spawn at all, so whichever of the two
+  // handlers below fires first reports it, and the other becomes a no-op.
+  let reported = false;
+  const reportExit = (code: number | null, signal: string | null) => {
+    if (reported) return;
+    reported = true;
+    if (child === proc) {
+      child = null;
+      handle = null;
+    }
+    if (!stopping && !elevating) exitListener?.({ code, signal });
+  };
   proc.stdout?.on("data", (c: Buffer) => logRaw(c.toString()));
   proc.stderr?.on("data", (c: Buffer) => logRaw(c.toString()));
   proc.on("exit", (code, signal) => {
     log(`backend exited (code=${code} signal=${signal})`);
-    const wasStopping = stopping;
-    child = null;
-    handle = null;
-    if (!wasStopping && !elevating) exitListener?.({ code, signal });
+    reportExit(code, signal);
+  });
+  // A ChildProcess with no 'error' listener throws its error as an uncaught exception on the
+  // main process (Node special-cases the "error" event on EventEmitter) — reachable in practice
+  // from a bad interpreter path (EACCES/ENOENT, or ETXTBSY on some platforms), which would
+  // otherwise crash the whole app with no dialog, no log line, no setup page.
+  proc.on("error", (err) => {
+    log(`backend process error: ${err.message}`);
+    reportExit(null, null);
   });
 }
 

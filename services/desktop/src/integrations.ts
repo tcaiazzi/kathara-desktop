@@ -6,7 +6,7 @@
  * feature check, so the browser build keeps working unchanged.
  */
 import { dialog, shell, BrowserWindow } from "electron";
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
@@ -127,6 +127,21 @@ export function openLabsDir(): void {
  * a user whose emulator isn't listed can override it in preferences.json with
  * `terminalCommand`, where "{cmd}" is substituted with the shell command.
  */
+/**
+ * spawn() for a detached, "fire and forget" process this app never tracks or waits on (an
+ * external terminal emulator). A ChildProcess with no 'error' listener throws its error as an
+ * uncaught exception on the main process — reachable here from a bad `terminalCommand` override
+ * in preferences.json, a terminal emulator binary that vanished after `linuxTerminalArgv` found
+ * it, or a bad path on Windows/macOS — which would otherwise crash the whole app over something
+ * as minor as "Open in terminal" failing. There is nothing further to report the error to (the
+ * caller has already returned by the time a spawn failure could fire), so this just logs it.
+ */
+function spawnDetached(command: string, args: string[], options: SpawnOptions = {}): void {
+  const proc = spawn(command, args, { ...options, detached: true, stdio: "ignore" });
+  proc.on("error", (err) => log(`failed to launch ${command}: ${err.message}`));
+  proc.unref();
+}
+
 function linuxTerminalArgv(cwd: string, command?: string): string[] | null {
   const run = (...args: string[]) => (command ? args : []);
   const candidates: string[][] = [
@@ -168,13 +183,13 @@ async function spawnTerminal(labDir: string, command?: string): Promise<void> {
   if (override?.length) {
     const argv = override.map((part) => part.replace("{cmd}", command ?? ""));
     log(`system terminal (override): ${argv.join(" ")}`);
-    spawn(argv[0], argv.slice(1), { cwd: labDir, detached: true, stdio: "ignore" }).unref();
+    spawnDetached(argv[0], argv.slice(1), { cwd: labDir });
     return;
   }
 
   if (process.platform === "darwin") {
     if (!command) {
-      spawn("open", ["-a", "Terminal", labDir], { detached: true, stdio: "ignore" }).unref();
+      spawnDetached("open", ["-a", "Terminal", labDir]);
       return;
     }
     // Terminal.app takes a file to run, not a command, so hand it a throwaway script.
@@ -182,7 +197,7 @@ async function spawnTerminal(labDir: string, command?: string): Promise<void> {
     await fsp.writeFile(script, `#!/bin/sh\ncd ${JSON.stringify(labDir)}\n${command}\n`, {
       mode: 0o755,
     });
-    spawn("open", ["-a", "Terminal", script], { detached: true, stdio: "ignore" }).unref();
+    spawnDetached("open", ["-a", "Terminal", script]);
     return;
   }
 
@@ -198,7 +213,7 @@ async function spawnTerminal(labDir: string, command?: string): Promise<void> {
       : hasWt
         ? ["wt.exe", "-d", labDir]
         : ["cmd.exe", "/c", "start", "cmd"];
-    spawn(argv[0], argv.slice(1), { cwd: labDir, detached: true, stdio: "ignore" }).unref();
+    spawnDetached(argv[0], argv.slice(1), { cwd: labDir });
     return;
   }
 
@@ -210,5 +225,5 @@ async function spawnTerminal(labDir: string, command?: string): Promise<void> {
     );
   }
   log(`system terminal: ${argv.join(" ")}`);
-  spawn(argv[0], argv.slice(1), { cwd: labDir, detached: true, stdio: "ignore" }).unref();
+  spawnDetached(argv[0], argv.slice(1), { cwd: labDir });
 }

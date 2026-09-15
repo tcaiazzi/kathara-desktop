@@ -24,6 +24,21 @@ function windowBackground(): string {
 /** The frontend's popup terminal route (services/frontend/src/services/terminalWindow.ts). */
 const TERMINAL_ROUTE = /^\/labs\/[^/]+\/terminal\/[^/]+$/;
 
+/**
+ * `loadURL`/`loadFile` but with their rejection actually consumed instead of merely `void`-ed —
+ * `void` only silences the "unused promise" lint, it does nothing to stop a later rejection from
+ * being an *unhandled* one, which with no `process.on("unhandledRejection")` net crashes the
+ * whole main process. `ERR_ABORTED` is the routine case here (a later navigation — a backend
+ * restart, another loadURL — superseded this one before it finished), so it's swallowed
+ * silently; anything else is logged so a genuine load failure doesn't just vanish.
+ */
+export function loadIgnoringAbort(promise: Promise<void>, label: string): void {
+  promise.catch((err) => {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!message.includes("ERR_ABORTED")) log(`${label} failed to load: ${message}`);
+  });
+}
+
 function sameOrigin(url: string, origin: string | null): boolean {
   if (!origin) return false;
   try {
@@ -91,7 +106,7 @@ function applyNavigationPolicy(contents: Electron.WebContents, origin: () => str
     });
     // The navigation policy reaches it through the app-wide web-contents-created hook.
     blockMouseNavigationCommands(popup);
-    void popup.loadURL(url);
+    loadIgnoringAbort(popup.loadURL(url), "popup");
     return { action: "deny" };
   });
 
@@ -204,12 +219,12 @@ export function createMainWindow(): BrowserWindow {
  * already running full-screen (e.g. the backend dying mid-session). */
 export function showSetupPage(win: BrowserWindow): void {
   win.setFullScreen(false);
-  void win.loadFile(setupPage());
+  loadIgnoringAbort(win.loadFile(setupPage()), "setup page");
 }
 
 /** The cold-start splash (the Kathara logo on a plain white page): shown once, for exactly as
  * long as startup() (main.ts) takes to either reach the running app or hit a problem — no fixed
  * minimum, since there's no animation to let play out. */
 export function showSplashPage(win: BrowserWindow): void {
-  void win.loadFile(splashPage());
+  loadIgnoringAbort(win.loadFile(splashPage()), "splash page");
 }

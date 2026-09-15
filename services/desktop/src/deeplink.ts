@@ -21,10 +21,18 @@ export function parseDeepLink(raw: string): string | null {
   }
   if (url.protocol !== `${PROTOCOL}:`) return null;
 
-  // "kathara://lab/foo" parses with host="lab" and pathname="/foo".
-  const segments = [url.hostname, ...url.pathname.split("/")].filter(Boolean).map(decodeURIComponent);
-  if (segments.length === 2 && segments[0] === "lab") {
-    return `/workspace/${encodeURIComponent(segments[1])}`;
+  try {
+    // "kathara://lab/foo" parses with host="lab" and pathname="/foo". decodeURIComponent throws
+    // a URIError on a malformed %-escape (e.g. a lone "%" or an invalid UTF-8 sequence) — this
+    // must not propagate past here uncaught, since a link like this is reachable from any web
+    // page's <a href="kathara://..."> and would otherwise crash the whole main process.
+    const segments = [url.hostname, ...url.pathname.split("/")].filter(Boolean).map(decodeURIComponent);
+    if (segments.length === 2 && segments[0] === "lab") {
+      return `/workspace/${encodeURIComponent(segments[1])}`;
+    }
+  } catch {
+    log(`ignoring unparsable deep link: ${raw}`);
+    return null;
   }
   log(`ignoring unrecognised deep link: ${raw}`);
   return null;

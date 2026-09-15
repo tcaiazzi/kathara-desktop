@@ -60,6 +60,7 @@ import {
   createMainWindow,
   installEditContextMenu,
   installNavigationPolicy,
+  loadIgnoringAbort,
   showSetupPage,
   showSplashPage,
 } from "./windows";
@@ -948,6 +949,27 @@ if (!app.requestSingleInstanceLock()) {
     });
   }
 
+  // A process-wide safety net: without these, an uncaught exception or unhandled promise
+  // rejection anywhere in the main process — a spawn() with no 'error' listener, a superseded
+  // loadURL(), a malformed deep link, or simply a bug this app doesn't yet guard against — takes
+  // the whole app down with no dialog, no log line, no setup page. Logging first, since a crash
+  // this deep might otherwise leave no trace at all of what happened; falling back to the setup
+  // page (when a window already exists to show it on) gives the user a "Check again" instead of
+  // an app that silently vanished.
+  function reportProcessCrash(label: string, detail: string): void {
+    log(`${label}: ${detail}`);
+    if (!win) return;
+    setStatus({ state: "backend-failed", checks: [], error: `${label}: ${detail}`, logTail: tailLog() });
+    showSetup(win);
+  }
+  process.on("uncaughtException", (err) => {
+    reportProcessCrash("Unexpected internal error", err.stack ?? err.message);
+  });
+  process.on("unhandledRejection", (reason) => {
+    const detail = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
+    reportProcessCrash("Unexpected internal error (unhandled rejection)", detail);
+  });
+
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
@@ -956,7 +978,7 @@ if (!app.requestSingleInstanceLock()) {
     if (BrowserWindow.getAllWindows().length === 0 && status.state === "ready") {
       win = createMainWindow();
       const base = backendUrl();
-      if (base) void win.loadURL(base);
+      if (base) loadIgnoringAbort(win.loadURL(base), "main window");
     }
   });
 }
