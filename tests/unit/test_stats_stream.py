@@ -7,7 +7,9 @@ long as the client keeps the connection open.
 
 import itertools
 
+from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import kathara_service as kathara_service_module
+from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
 from tests.helpers import FakeFacadeBase
 
@@ -27,6 +29,8 @@ def test_machines_stats_stream_throttles_consecutive_empty_samples(monkeypatch):
 
     service = KatharaService()
     service._instance = _EmptyStatsFacade()  # bypass Kathara.get_instance() (needs Docker)
+    spec = LabCreate.model_validate({"name": "testlab", "machines": [{"name": "pc1"}]})
+    service.registry.add(lab_builder.build_lab(spec))
 
     samples = list(itertools.islice(service.machines_stats_stream("testlab"), 5))
 

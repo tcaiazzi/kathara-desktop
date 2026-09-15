@@ -45,6 +45,8 @@ class _FacadeNoCopyOnStopped:
 def test_machine_stats_snapshot_raises_machine_not_running_on_empty_stream():
     service = KatharaService()
     service._instance = _FacadeEmptyMachineStats()
+    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
+    service.registry.add(lab_builder.build_lab(spec))
 
     with pytest.raises(MachineNotRunningError):
         service.machine_stats_snapshot("lab1", "pc1")
@@ -53,6 +55,8 @@ def test_machine_stats_snapshot_raises_machine_not_running_on_empty_stream():
 def test_machine_stats_snapshot_raises_machine_not_running_on_none_sample():
     service = KatharaService()
     service._instance = _FacadeNoneMachineStats()
+    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
+    service.registry.add(lab_builder.build_lab(spec))
 
     with pytest.raises(MachineNotRunningError):
         service.machine_stats_snapshot("lab1", "pc1")

@@ -1624,6 +1624,8 @@ class KatharaService:
         try:
             with self._mutate_lock:
                 lab = self.registry.get(name)
+                if lab is None and not self.store.lab_dir(name).is_dir():
+                    raise LabNotFoundError(f"Lab `{name}` not found.")
                 self._facade().undeploy_lab(
                     lab_name=name,
                     selected_machines=selected_machines,
@@ -1689,6 +1691,8 @@ class KatharaService:
     def delete_lab(self, name: str) -> None:
         self._check_not_transitioning(name)
         with self._mutate_lock:
+            if self.registry.get(name) is None and not self.store.lab_dir(name).is_dir():
+                raise LabNotFoundError(f"Lab `{name}` not found.")
             self._facade().undeploy_lab(lab_name=name)
         # Claimed like a create does: unregistering and removing the directory are what *release*
         # the name, and without the lock they can land in the middle of a concurrent import of the
@@ -2202,13 +2206,25 @@ class KatharaService:
     _MIN_STATS_INTERVAL_S = 1.0
 
     def machines_stats_stream(self, lab_name: str) -> Generator[list, None, None]:
-        last_yield = 0.0
-        for stats_dict in self._facade().get_machines_stats(lab_name=lab_name):
-            elapsed = time.monotonic() - last_yield
-            if elapsed < self._MIN_STATS_INTERVAL_S:
-                time.sleep(self._MIN_STATS_INTERVAL_S - elapsed)
-            last_yield = time.monotonic()
-            yield list(stats_dict.values())
+        # A plain (non-generator) function, deliberately: this must raise *synchronously*, when
+        # the caller calls it, not lazily on first iteration. `routers/stats.py` wraps the
+        # returned generator straight into an already-started `EventSourceResponse` — by the time
+        # anything iterates it, a 200 has already gone out and a raised LabNotFoundError could no
+        # longer become a 404. Checking here, before returning the inner generator, is what makes
+        # an unknown lab name a clean 404 instead of a stream that opens fine and never emits.
+        if self.registry.get(lab_name) is None and not self.store.lab_dir(lab_name).is_dir():
+            self.get_lab_or_reconstruct(lab_name)  # raises LabNotFoundError unless running under this name
+
+        def _stream():
+            last_yield = 0.0
+            for stats_dict in self._facade().get_machines_stats(lab_name=lab_name):
+                elapsed = time.monotonic() - last_yield
+                if elapsed < self._MIN_STATS_INTERVAL_S:
+                    time.sleep(self._MIN_STATS_INTERVAL_S - elapsed)
+                last_yield = time.monotonic()
+                yield list(stats_dict.values())
+
+        return _stream()
 
     @staticmethod
     def _first_sample(gen, default=None):
@@ -2222,10 +2238,16 @@ class KatharaService:
             gen.close()
 
     def machines_stats_snapshot(self, lab_name: str) -> list:
+        if self.registry.get(lab_name) is None and not self.store.lab_dir(lab_name).is_dir():
+            self.get_lab_or_reconstruct(lab_name)  # raises LabNotFoundError unless running under this name
         sample = self._first_sample(self._facade().get_machines_stats(lab_name=lab_name))
         return list(sample.values()) if sample is not None else []
 
     def machine_stats_snapshot(self, lab_name: str, machine_name: str):
+        # Checked before the not-running guard below, so an unknown *lab* is a 404, not the 409 a
+        # missing sample would otherwise produce regardless of whether the lab itself exists.
+        if self.registry.get(lab_name) is None and not self.store.lab_dir(lab_name).is_dir():
+            self.get_lab_or_reconstruct(lab_name)  # raises LabNotFoundError unless running under this name
         # get_machine_stats *yields None* (it doesn't stop) for a device that isn't running, so guard
         # the None sentinel as well as an empty generator — both mean "no live device".
         sample = self._first_sample(self._facade().get_machine_stats(machine_name, lab_name=lab_name))
