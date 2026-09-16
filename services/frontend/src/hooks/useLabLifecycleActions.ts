@@ -81,7 +81,7 @@ export function useLabLifecycleActions() {
   const toast = useToast();
   const confirm = useConfirm();
   const prompt = usePrompt();
-  const runBusy = useBusyAction();
+  const { run: runBusy } = useBusyAction();
   const requestDeployAuth = useDeployAuthorization();
   const requestReclaimAuth = useReclaimLabsDirAuth();
   const requestImageDownload = useImageDownload();

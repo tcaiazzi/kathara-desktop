@@ -107,9 +107,9 @@ async function parseJsonResponse<T>(res: Response): Promise<T> {
   }
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   await authTokenReady;
-  const init: RequestInit = { method, headers: { ...authHeaders() } };
+  const init: RequestInit = { method, headers: { ...authHeaders() }, signal };
   if (body !== undefined) {
     (init.headers as Record<string, string>)["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
@@ -119,18 +119,18 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 // Multipart POST (file upload). Unlike request<T>, this must NOT set Content-Type: the browser
 // sets multipart/form-data plus the boundary itself from the FormData body.
-async function requestForm<T>(path: string, form: FormData): Promise<T> {
+async function requestForm<T>(path: string, form: FormData, signal?: AbortSignal): Promise<T> {
   await authTokenReady;
   return parseJsonResponse<T>(
-    await fetch(`${API_BASE}${path}`, { method: "POST", headers: authHeaders(), body: form }),
+    await fetch(`${API_BASE}${path}`, { method: "POST", headers: authHeaders(), body: form, signal }),
   );
 }
 
 // GET a binary body (a .zip export, a file download), surfacing a non-2xx as an ApiError the same
 // way the JSON paths do.
-async function requestBlob(path: string): Promise<Blob> {
+async function requestBlob(path: string, signal?: AbortSignal): Promise<Blob> {
   await authTokenReady;
-  const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers: authHeaders() });
+  const res = await fetch(`${API_BASE}${path}`, { method: "GET", headers: authHeaders(), signal });
   if (!res.ok) await throwApiError(res);
   return res.blob();
 }
@@ -150,16 +150,17 @@ export const api = {
   listAvailableImages: () => request<string[]>("GET", "/system/images"),
 
   listLabs: () => request<LabSummary[]>("GET", "/labs"),
-  getLab: (name: string) => request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`),
-  createLab: (payload: LabCreate) => request<LabDetail>("POST", "/labs", payload),
+  getLab: (name: string, signal?: AbortSignal) =>
+    request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`, undefined, signal),
+  createLab: (payload: LabCreate, signal?: AbortSignal) => request<LabDetail>("POST", "/labs", payload, signal),
   // Binary-safe lab upload (a .zip of a standard Kathara lab directory) — unlike createLab's
   // JSON payload, this can carry non-text files. `name` is optional; the backend derives one
   // from the filename when omitted.
-  uploadLab: (file: File, name?: string) => {
+  uploadLab: (file: File, name?: string, signal?: AbortSignal) => {
     const form = new FormData();
     form.append("file", file);
     if (name && name.trim()) form.append("name", name.trim());
-    return requestForm<LabImportResult>("/labs/upload", form);
+    return requestForm<LabImportResult>("/labs/upload", form, signal);
   },
   // Bundled example network scenarios (backend package data — src/kathara_api/examples/) shown
   // on the welcome screen's "start from an example" list. An older backend without this route
@@ -212,8 +213,13 @@ export const api = {
   // reads/writes on every call — no separate cache, so nothing here can ever drift from disk). --
   getStartupScripts: (labName: string) =>
     request<Record<string, string>>("GET", `/labs/${encodeURIComponent(labName)}/fs/startups`),
-  fsListOffline: (labName: string, path: string) =>
-    request<FsListResponse>("GET", `/labs/${encodeURIComponent(labName)}/fs/list?path=${encodeURIComponent(path)}`),
+  fsListOffline: (labName: string, path: string, signal?: AbortSignal) =>
+    request<FsListResponse>(
+      "GET",
+      `/labs/${encodeURIComponent(labName)}/fs/list?path=${encodeURIComponent(path)}`,
+      undefined,
+      signal,
+    ),
   fsReadTextOffline: (labName: string, path: string) =>
     request<FsReadTextResponse>("GET", `/labs/${encodeURIComponent(labName)}/fs/text?path=${encodeURIComponent(path)}`),
   fsWriteTextOffline: (labName: string, path: string, content: string) =>
@@ -240,16 +246,20 @@ export const api = {
   },
   fsDownloadOffline: (labName: string, path: string) =>
     requestBlob(`/labs/${encodeURIComponent(labName)}/fs/download?path=${encodeURIComponent(path)}`),
-  fsSearchOffline: (labName: string, path: string, query: string, caseSensitive = false) =>
+  fsSearchOffline: (labName: string, path: string, query: string, caseSensitive = false, signal?: AbortSignal) =>
     request<FsSearchResponse>(
       "GET",
       `/labs/${encodeURIComponent(labName)}/fs/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}&case_sensitive=${caseSensitive}`,
+      undefined,
+      signal,
     ),
 
-  fsList: (labName: string, machineName: string, path: string) =>
+  fsList: (labName: string, machineName: string, path: string, signal?: AbortSignal) =>
     request<FsListResponse>(
       "GET",
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/list?path=${encodeURIComponent(path)}`,
+      undefined,
+      signal,
     ),
   fsReadText: (labName: string, machineName: string, path: string) =>
     request<FsReadTextResponse>(
@@ -301,10 +311,12 @@ export const api = {
     ),
   // Live boot-time startup log + finished flag for a running device — poll while a node's info
   // panel is open and startup hasn't finished yet (see TopologyGraph's node-info block).
-  getStartupStatus: (labName: string, machineName: string) =>
+  getStartupStatus: (labName: string, machineName: string, signal?: AbortSignal) =>
     request<StartupStatus>(
       "GET",
       `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/startup-status`,
+      undefined,
+      signal,
     ),
 
   // -- Docker images: the pre-deploy check and the explicit download ---------------------------
@@ -347,7 +359,8 @@ export const api = {
   addMachine: (
     labName: string,
     payload: Partial<MachineOptionsPayload> & { name: string; interfaces?: { link: string; number: number }[] },
-  ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labName)}/machines`, payload),
+    signal?: AbortSignal,
+  ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labName)}/machines`, payload, signal),
   removeMachine: (labName: string, machineName: string) =>
     request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`),
   // Full replace of a stopped device's option set (schemas/machine.py's MachineUpdate) — rejected

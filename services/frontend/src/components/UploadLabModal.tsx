@@ -27,7 +27,7 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const toast = useToast();
-  const runBusy = useBusyAction();
+  const { run: runBusy, cancel: cancelBusy } = useBusyAction();
 
   function reset() {
     setFile(null);
@@ -36,6 +36,7 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
   }
 
   function handleClose() {
+    cancelBusy();
     reset();
     onClose();
   }
@@ -50,8 +51,8 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
       toast.show("Choose a .zip archive first.", "danger", "No file");
       return;
     }
-    await runBusy(setBusy, "Upload lab", async () => {
-      const result = await api.uploadLab(file, name);
+    await runBusy(setBusy, "Upload lab", async (signal) => {
+      const result = await api.uploadLab(file, name, signal);
       toast.show(`Lab "${result.name}" uploaded.`, "success");
       if (result.warnings?.length) {
         toast.show(result.warnings.join(" · "), "info", "Import warnings");

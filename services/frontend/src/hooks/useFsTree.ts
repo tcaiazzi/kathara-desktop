@@ -27,7 +27,7 @@ import { useConfirmDiscard } from "./useConfirmDiscard";
 // needs to special-case for one path (LabExplorer's `/lab.conf`) belongs inside its own
 // `readText`/`writeText` here rather than as a flag on the hook.
 export interface FsTreeSource {
-  list(path: string): Promise<FsEntry[]>;
+  list(path: string, signal?: AbortSignal): Promise<FsEntry[]>;
   /** Throws `ApiError` with `errorType === "BinaryFileError"` for a non-UTF-8 file. */
   readText(path: string): Promise<string>;
   writeText(path: string, content: string): Promise<void>;
@@ -40,7 +40,12 @@ export interface FsTreeSource {
   /** Omit on a surface with no download endpoint — the toolbar button hides itself. */
   download?(path: string): Promise<Blob>;
   /** Omit on a surface with no search endpoint — the toolbar button hides itself, same as `download`. */
-  search?(path: string, query: string, caseSensitive: boolean): Promise<{ matches: FsSearchMatch[]; truncated: boolean }>;
+  search?(
+    path: string,
+    query: string,
+    caseSensitive: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ matches: FsSearchMatch[]; truncated: boolean }>;
   /** Paths that can never be renamed, moved or deleted. Default: everything can. */
   canModify?(path: string): boolean;
   labels: FsTreeLabels;
@@ -219,7 +224,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const prompt = usePrompt();
   const confirm = useConfirm();
   const confirmDiscard = useConfirmDiscard();
-  const runBusy = useBusyAction();
+  const { run: runBusy } = useBusyAction();
 
   // Always-current source, so the effects/callbacks below don't have to be rebuilt (and the tree
   // re-fetched) every time the caller re-creates its adapter object.
@@ -280,20 +285,19 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   // keeps the current selection — see UseFsTreeOptions).
   useEffect(() => {
     if (!enabled) return;
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
       try {
-        const entries = await sourceRef.current.list("/");
-        if (!cancelled) {
-          setTree((prev) => mergeNodeList(prev, entries.map(entryToNode)));
-          setLoaded(true);
-        }
+        const entries = await sourceRef.current.list("/", controller.signal);
+        setTree((prev) => mergeNodeList(prev, entries.map(entryToNode)));
+        setLoaded(true);
       } catch (e) {
-        if (!cancelled) toast.reportError(sourceRef.current.labels.openFile, e);
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        toast.reportError(sourceRef.current.labels.openFile, e);
       }
     })();
     return () => {
-      cancelled = true;
+      controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, enabled, refreshKey]);
@@ -316,15 +320,17 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     }
     const gen = ++scoped.current.searchGen;
     setSearchLoading(true);
+    const controller = new AbortController();
     const timer = setTimeout(() => {
       void sourceRef.current
-        .search!("/", query, searchCaseSensitive)
+        .search!("/", query, searchCaseSensitive, controller.signal)
         .then(({ matches, truncated }) => {
           if (scoped.current.searchGen !== gen) return;
           setSearchResults(matches);
           setSearchTruncated(truncated);
         })
         .catch((e) => {
+          if (e instanceof DOMException && e.name === "AbortError") return;
           if (scoped.current.searchGen !== gen) return;
           toast.reportError("Search", e);
           setSearchResults([]);
@@ -334,7 +340,10 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           if (scoped.current.searchGen === gen) setSearchLoading(false);
         });
     }, 250);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [searchMode, searchQuery, searchCaseSensitive, toast]);
 
   const data = useMemo(() => tree, [tree]);

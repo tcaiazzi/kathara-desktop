@@ -9,8 +9,9 @@ interface ModalSubmitFooterProps {
   onSubmit: () => void;
 }
 
-// Cancel + primary-submit footer shared by the create/upload lab modals: Cancel disables while
-// busy, and the submit button swaps to a busy label.
+// Cancel + primary-submit footer shared by the create/upload lab modals. Cancel stays enabled
+// even while busy — `onCancel` is expected to abort the in-flight request (see useBusyAction's
+// `cancel`), not just be blocked until it resolves — and the submit button swaps to a busy label.
 export function ModalSubmitFooter({
   onCancel,
   busy,
@@ -21,7 +22,7 @@ export function ModalSubmitFooter({
 }: ModalSubmitFooterProps) {
   return (
     <Modal.Footer>
-      <Button variant="secondary" onClick={onCancel} disabled={busy}>
+      <Button variant="secondary" onClick={onCancel}>
         Cancel
       </Button>
       <Button variant="primary" onClick={onSubmit} disabled={busy || !!submitDisabled}>

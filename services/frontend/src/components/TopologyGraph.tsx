@@ -167,7 +167,7 @@ export function TopologyGraph({
   // Latest positions reported by the engine — what "Save layout" writes to the lab directory.
   const livePositions = useRef<NodePositions>({});
   const [dirty, setDirty] = useState(false);
-  const runBusy = useBusyAction();
+  const { run: runBusy } = useBusyAction();
 
   // Fetch the lab's fixed layout. It can land after the engine's first build, so bump a nonce to
   // make the graph rebuild against it (the engine effect reads seeds through a ref).
@@ -342,24 +342,23 @@ export function TopologyGraph({
   useEffect(() => {
     setStartupStatus(null);
     if (!selectedDeviceName || !selectedDeviceRunning) return;
-    let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = () => {
       api
-        .getStartupStatus(labName, selectedDeviceName)
+        .getStartupStatus(labName, selectedDeviceName, controller.signal)
         .then((status) => {
-          if (cancelled) return;
           setStartupStatus(status);
           if (!status.finished) timer = setTimeout(poll, 1500);
         })
-        .catch(() => {
-          if (cancelled) return;
+        .catch((e) => {
+          if (e instanceof DOMException && e.name === "AbortError") return;
           timer = setTimeout(poll, 1500);
         });
     };
     poll();
     return () => {
-      cancelled = true;
+      controller.abort();
       if (timer) clearTimeout(timer);
     };
   }, [labName, selectedDeviceName, selectedDeviceRunning]);

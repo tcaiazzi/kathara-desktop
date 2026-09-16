@@ -32,8 +32,13 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
   const [options, setOptions] = useState<OptionsFormState>(defaultOptionsFormState());
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const runBusy = useBusyAction();
+  const { run: runBusy, cancel: cancelBusy } = useBusyAction();
   const requestDeployAuth = useDeployAuthorization();
+
+  function handleCancel() {
+    cancelBusy();
+    onClose();
+  }
 
   useEffect(() => {
     if (!show) return;
@@ -66,16 +71,16 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
       if (outcome !== "proceed") return;
     }
 
-    await runBusy(setBusy, "Add device", async () => {
-      await api.addMachine(labName, payload);
+    await runBusy(setBusy, "Add device", async (signal) => {
+      await api.addMachine(labName, payload, signal);
       await onAdded();
       onClose();
     });
   }
 
   return (
-    <Modal show={show} onHide={busy ? undefined : onClose} size="lg" scrollable>
-      <Modal.Header closeButton={!busy}>
+    <Modal show={show} onHide={handleCancel} size="lg" scrollable>
+      <Modal.Header closeButton>
         <Modal.Title>Add device</Modal.Title>
       </Modal.Header>
       <Modal.Body>
@@ -113,7 +118,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
         </Collapse>
       </Modal.Body>
       <ModalSubmitFooter
-        onCancel={onClose}
+        onCancel={handleCancel}
         busy={busy}
         submitLabel="Add Device"
         busyLabel="Adding…"

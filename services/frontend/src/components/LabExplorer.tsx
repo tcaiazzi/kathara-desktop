@@ -79,7 +79,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
 
   const source = useMemo<FsTreeSource>(
     () => ({
-      list: async (path) => (await api.fsListOffline(labName, path)).entries,
+      list: async (path, signal) => (await api.fsListOffline(labName, path, signal)).entries,
       readText: async (path) =>
         path === LAB_CONF_PATH
           ? labConfRef.current?.content ?? ""
@@ -98,7 +98,8 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
       remove: async (path) => void (await api.fsDeleteOffline(labName, path, true)),
       upload: async (path, file) => void (await api.fsUploadOffline(labName, path, file)),
       download: (path) => api.fsDownloadOffline(labName, path),
-      search: (path, query, caseSensitive) => api.fsSearchOffline(labName, path, query, caseSensitive),
+      search: (path, query, caseSensitive, signal) =>
+        api.fsSearchOffline(labName, path, query, caseSensitive, signal),
       canModify,
       labels: {
         openFile: "Open file",

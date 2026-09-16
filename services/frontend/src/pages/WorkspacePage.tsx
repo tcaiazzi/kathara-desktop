@@ -491,7 +491,7 @@ export function WorkspacePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
   const ktTheme = useKtTheme();
-  const runBusy = useBusyAction();
+  const { run: runBusy } = useBusyAction();
   const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
@@ -572,11 +572,16 @@ export function WorkspacePage() {
   }, [toast]);
 
   // Guards against out-of-order responses: switching lab A -> B quickly could otherwise let A's
-  // slower fetch land after B's and clobber the workspace with the wrong lab's data — `api.ts` has
-  // no request-cancellation support, so a generation counter is the fix (same pattern as
-  // useFsTree's selectGenRef). Every `return` below is really "this call is done, stale or not."
+  // slower fetch land after B's and clobber the workspace with the wrong lab's data. The
+  // generation counter alone only guarded the `setState` calls; `loadAbortRef` additionally
+  // aborts the actual in-flight fetch (superseded or the component unmounting) instead of just
+  // ignoring its result — see docs/audit_2.md I6.
   const loadGenRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
     const gen = ++loadGenRef.current;
     if (!name) {
       setDetail(null);
@@ -586,11 +591,12 @@ export function WorkspacePage() {
     }
     setDetailError(null);
     try {
-      const nextDetail = await api.getLab(name);
+      const nextDetail = await api.getLab(name, controller.signal);
       if (loadGenRef.current !== gen) return;
       setDetail(nextDetail);
       setNotFound(false);
     } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       if (loadGenRef.current !== gen) return;
       if (e instanceof ApiError && e.status === 404) {
         setDetail(null);
@@ -601,6 +607,8 @@ export function WorkspacePage() {
       setDetailError(e instanceof ApiError ? e.message : "Couldn't load this lab.");
     }
   }, [name, toast]);
+
+  useEffect(() => () => loadAbortRef.current?.abort(), []);
 
   useEffect(() => {
     reloadLabs();

@@ -57,7 +57,7 @@ export function RuntimeFilesystemEditor({
 
   const source = useMemo<FsTreeSource>(
     () => ({
-      list: async (path) => (await api.fsList(labName, machine, path)).entries,
+      list: async (path, signal) => (await api.fsList(labName, machine, path, signal)).entries,
       readText: async (path) => (await api.fsReadText(labName, machine, path)).content,
       writeText: async (path, content) => void (await api.fsWriteText(labName, machine, path, content)),
       mkdir: async (path) => void (await api.fsMkdir(labName, machine, path)),

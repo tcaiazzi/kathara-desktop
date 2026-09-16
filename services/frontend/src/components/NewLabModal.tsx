@@ -21,20 +21,21 @@ export function NewLabModal({ show, onClose, onCreated }: NewLabModalProps) {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  const runBusy = useBusyAction();
+  const { run: runBusy, cancel: cancelBusy } = useBusyAction();
 
   const trimmed = name.trim();
   const valid = LAB_NAME_RE.test(trimmed);
 
   function handleClose() {
+    cancelBusy();
     setName("");
     onClose();
   }
 
   async function handleCreate() {
     if (!valid) return;
-    await runBusy(setBusy, "Create lab", async () => {
-      const detail = await api.createLab({ name: trimmed });
+    await runBusy(setBusy, "Create lab", async (signal) => {
+      const detail = await api.createLab({ name: trimmed }, signal);
       toast.show(`Lab "${detail.name}" created.`, "success");
       onCreated(detail.name ?? trimmed);
       handleClose();

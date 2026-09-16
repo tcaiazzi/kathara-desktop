@@ -32,7 +32,7 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
   const [busy, setBusy] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
-  const runBusy = useBusyAction();
+  const { run: runBusy } = useBusyAction();
 
   useEffect(() => {
     if (machine) {
