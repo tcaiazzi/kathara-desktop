@@ -702,6 +702,12 @@ async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok
  */
 async function withSudoRateLimit(
   attempt: () => Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }>,
+  // Which failure reason counts against the lockout. Defaults to "wrong-password" — correct for
+  // every `sudo`-backed attempt, where that distinction actually exists. macOS/Windows's
+  // sudo-prompt dialog can't tell a dismissed dialog from a wrong password apart (see
+  // `verifyCanElevate` below), so its caller passes a predicate that counts "cancelled" instead —
+  // otherwise a renderer could trigger the native admin-password dialog without limit.
+  countsAsAttempt: (reason: ElevateFailureReason) => boolean = (reason) => reason === "wrong-password",
 ): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
   const now = Date.now();
   if (now < sudoLockedUntil) {
@@ -714,11 +720,12 @@ async function withSudoRateLimit(
   if (result.ok) {
     failedSudoAttempts = 0;
     sudoLockedUntil = 0;
-  } else if (result.reason === "wrong-password") {
-    // Only an actual wrong guess counts here — "not-permitted"/"timeout"/"error" aren't a signal
-    // about the password at all (the last of those now also covers a real command, like chown,
-    // failing for its own reasons after a *correct* password), so counting them would rate-limit
-    // a user for something that was never a guessing attempt in the first place.
+  } else if (countsAsAttempt(result.reason)) {
+    // Only a genuine guess counts here — an unrelated failure ("not-permitted"/"timeout"/"error"
+    // for a `sudo`-backed attempt) isn't a signal about the password at all (the last of those
+    // also covers a real command, like chown, failing for its own reasons after a *correct*
+    // password), so counting it would rate-limit a user for something that was never a guessing
+    // attempt in the first place.
     failedSudoAttempts += 1;
     if (failedSudoAttempts > SUDO_RATE_LIMIT_FREE_ATTEMPTS) {
       const lockoutMs = Math.min(
@@ -831,12 +838,20 @@ export async function verifyCanElevate(password?: string): Promise<{ ok: true } 
   if (process.platform !== "darwin" && process.platform !== "win32") {
     return verifySudoPassword(password ?? "");
   }
-  return new Promise((resolve) => {
-    const cmd = process.platform === "win32" ? "cmd /c exit /b 0" : "/usr/bin/true";
-    sudoPrompt.exec(cmd, { name: "Kathara Desktop" }, (error) => {
-      resolve(error ? { ok: false, reason: "cancelled", message: error.message } : { ok: true });
-    });
-  });
+  // Through the same rate limiter as the Linux path above — without it, a renderer could trigger
+  // this native admin-password dialog an unbounded number of times in a row. "cancelled" is what
+  // counts here, not "wrong-password": sudo-prompt can't tell a dismissed dialog from a wrong
+  // password apart (see withSudoRateLimit's doc comment), so both must count toward the lockout.
+  return withSudoRateLimit(
+    () =>
+      new Promise((resolve) => {
+        const cmd = process.platform === "win32" ? "cmd /c exit /b 0" : "/usr/bin/true";
+        sudoPrompt.exec(cmd, { name: "Kathara Desktop" }, (error) => {
+          resolve(error ? { ok: false, reason: "cancelled", message: error.message } : { ok: true });
+        });
+      }),
+    (reason) => reason === "cancelled",
+  );
 }
 
 /**

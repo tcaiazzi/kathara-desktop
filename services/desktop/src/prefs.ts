@@ -45,7 +45,14 @@ export function readPrefs(): Prefs {
 
 export function writePrefs(update: Prefs): Prefs {
   const merged = { ...readPrefs(), ...update };
-  fs.mkdirSync(path.dirname(prefsFile()), { recursive: true });
-  fs.writeFileSync(prefsFile(), JSON.stringify(merged, null, 2));
+  const file = prefsFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Write-then-rename, not a direct writeFileSync: a crash mid-write must never leave a truncated
+  // preferences.json behind — readPrefs() would then silently fall back to {} and settings like
+  // the configured labs directory would appear to vanish. The temp file lives next to the target
+  // so the rename is same-filesystem and therefore atomic on both POSIX and Windows/NTFS.
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(merged, null, 2));
+  fs.renameSync(tmp, file);
   return merged;
 }

@@ -272,6 +272,25 @@ function showSetup(target: BrowserWindow): void {
   showSetupPage(target);
 }
 
+/**
+ * Wires the two window-level listeners every window this app treats as "the" main window needs:
+ * clearing the module-level `win` reference once it closes, and resetting `onSetupPage` on
+ * navigation. Shared by the initial window (app.whenReady() below) and any window `activate`
+ * recreates after the last one was closed — both need identical wiring, or `win` can end up
+ * pointing at an already-closed window, or `onSetupPage` can go stale forever.
+ */
+function attachWindowLifecycle(target: BrowserWindow): void {
+  target.on("closed", () => {
+    win = null;
+  });
+  // Any navigation away from setup.html is the app itself being loaded (startup() and the
+  // elevation handlers are the only callers of loadURL), so this is where showSetup's guard
+  // gets reset — no bookkeeping needed at those call sites.
+  target.webContents.on("did-navigate", (_e, url) => {
+    if (!url.startsWith("file://")) onSetupPage = false;
+  });
+}
+
 /** Messages for runPreflight's two incremental phases — see prereqs.ts's PreflightProgress. */
 const PREFLIGHT_PHASE_MESSAGE: Record<"docker" | "python", string> = {
   docker: "Contacting Docker…",
@@ -287,6 +306,34 @@ const PREFLIGHT_PHASE_MESSAGE: Record<"docker" | "python", string> = {
  * overwriting the module-level reference to the first — which then outlives app quit untracked. */
 let startupInFlight: Promise<void> | null = null;
 
+/** Set for the duration of an elevation:elevate/elevation:drop call — see `runExclusiveBootOp`
+ * below. Kept separate from `startupInFlight`: that field's "if already set, join the same run"
+ * semantics (see its own comment) are specific to repeated startup() calls; an elevation call is
+ * a different operation that must never *run concurrently* with a startup(), but two of them are
+ * not "the same" run a second caller should join. */
+let bootOpInFlight: Promise<unknown> | null = null;
+
+/**
+ * Serializes elevation:elevate/elevation:drop against `startup()` and against each other — the
+ * same class of race `startupInFlight` already prevents between repeated startup() calls
+ * (two concurrent callers both spawning a backend, the second's trackChild() silently
+ * overwriting the first, untracked and outliving app quit), extended to these two other entry
+ * points that also stop/start the backend. Waits out whichever gate is currently held, then runs
+ * `fn` and holds this one until it settles.
+ */
+async function runExclusiveBootOp<T>(fn: () => Promise<T>): Promise<T> {
+  while (startupInFlight || bootOpInFlight) {
+    await (startupInFlight ?? bootOpInFlight)!.catch(() => undefined);
+  }
+  const p = fn();
+  bootOpInFlight = p.catch(() => undefined);
+  try {
+    return await p;
+  } finally {
+    bootOpInFlight = null;
+  }
+}
+
 /**
  * Run preflight, start the backend, and load the UI. Safe to call again on "Retry".
  *
@@ -300,6 +347,9 @@ let startupInFlight: Promise<void> | null = null;
  */
 async function startup(resumePath?: string): Promise<void> {
   if (startupInFlight) return startupInFlight;
+  // An elevation call may be mid-flight (see runExclusiveBootOp): wait it out before this attempt
+  // touches the backend, rather than racing its own startBackend/stopBackend calls.
+  if (bootOpInFlight) await bootOpInFlight.catch(() => undefined);
   startupInFlight = runStartup(resumePath).finally(() => {
     startupInFlight = null;
   });
@@ -368,6 +418,10 @@ function registerIpc(): void {
       await startupInFlight;
       return;
     }
+    // An elevation call (elevation:elevate/elevation:drop) may be mid-flight: its own
+    // stopBackend()/startBackend() calls are just as exposed to the race described above, since
+    // this handler's stopBackend() below has no gate of its own either.
+    if (bootOpInFlight) await bootOpInFlight.catch(() => undefined);
     await stopBackend();
     await startup();
   });
@@ -383,48 +437,54 @@ function registerIpc(): void {
   // backend's origin, which tears down the calling renderer mid-flight — the invoking IPC call
   // typically never observes this resolution, only a failure one. That's expected; the renderer
   // must not depend on a success response here.
-  ipcMain.handle("elevation:elevate", async (_e, password?: string, resumeLab?: string): Promise<ElevateOutcome> => {
-    const python = lastPreflight?.python;
-    const staticDir = resolveStaticDir();
-    if (!python || !staticDir) {
-      return { ok: false, reason: "error", message: "backend is not ready to be restarted", restarted: false };
-    }
-    log("elevation requested");
-    const result =
-      process.platform === "linux"
-        ? await startBackendElevatedLinux(python, staticDir, password ?? "")
-        : await startBackendElevatedNative(python, staticDir);
+  ipcMain.handle(
+    "elevation:elevate",
+    async (_e, password?: string, resumeLab?: string): Promise<ElevateOutcome> =>
+      // Must not run alongside an in-flight startup()/elevation:drop — both stop/start the same
+      // backend, so a concurrent pair races on which spawned process actually gets tracked.
+      runExclusiveBootOp(async () => {
+        const python = lastPreflight?.python;
+        const staticDir = resolveStaticDir();
+        if (!python || !staticDir) {
+          return { ok: false, reason: "error", message: "backend is not ready to be restarted", restarted: false };
+        }
+        log("elevation requested");
+        const result =
+          process.platform === "linux"
+            ? await startBackendElevatedLinux(python, staticDir, password ?? "")
+            : await startBackendElevatedNative(python, staticDir);
 
-    if (!result.ok) {
-      log(`elevation failed: ${result.reason} — ${result.message}`);
-      // The common failures (a mistyped password, a dismissed OS dialog) never get as far as
-      // stopping anything, so the calling page is still on a live origin: leave it alone and
-      // let its elevation prompt show the error and offer a retry in place.
-      //
-      // A failure that *did* restart the backend is the exception. It came back on a fresh
-      // port, so that page is now talking to a dead one and has to be moved — without
-      // `resumeDeploy`, since the deploy must not silently retry after a failed elevation.
-      const recovered = backendUrl();
-      if (result.restarted && win && recovered) {
+        if (!result.ok) {
+          log(`elevation failed: ${result.reason} — ${result.message}`);
+          // The common failures (a mistyped password, a dismissed OS dialog) never get as far as
+          // stopping anything, so the calling page is still on a live origin: leave it alone and
+          // let its elevation prompt show the error and offer a retry in place.
+          //
+          // A failure that *did* restart the backend is the exception. It came back on a fresh
+          // port, so that page is now talking to a dead one and has to be moved — without
+          // `resumeDeploy`, since the deploy must not silently retry after a failed elevation.
+          const recovered = backendUrl();
+          if (result.restarted && win && recovered) {
+            setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
+            const url = new URL(recovered);
+            if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
+            await win.loadURL(url.toString());
+          }
+          return toElevateOutcome(result);
+        }
+
         setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
-        const url = new URL(recovered);
-        if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
-        await win.loadURL(url.toString());
-      }
-      return toElevateOutcome(result);
-    }
-
-    setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
-    if (win) {
-      const url = new URL(result.handle.baseUrl);
-      if (resumeLab) {
-        url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
-        url.searchParams.set("resumeDeploy", "1");
-      }
-      await win.loadURL(url.toString());
-    }
-    return toElevateOutcome(result);
-  });
+        if (win) {
+          const url = new URL(result.handle.baseUrl);
+          if (resumeLab) {
+            url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
+            url.searchParams.set("resumeDeploy", "1");
+          }
+          await win.loadURL(url.toString());
+        }
+        return toElevateOutcome(result);
+      }),
+  );
 
   // Driven from the same elevation prompt, but for a deploy that only mounts a host volume — a
   // volume doesn't need this *process* to be root (unlike a privileged device), only proof the
@@ -448,61 +508,69 @@ function registerIpc(): void {
       _e,
       openLab?: string,
       skipReclaimCheck?: boolean,
-    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> => {
-      const baseUrl = backendUrl();
-      if (!baseUrl) return { dropped: false };
-      try {
-        const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders() }).then((r) => r.json());
-        if (!info.is_admin) return { dropped: false };
-      } catch {
-        return { dropped: false };
-      }
-
-      // Checked (and asked about, if needed) *before* stopBackend(): this page — and, on Linux,
-      // its own password modal — is still the live one the user can see a prompt on; after the
-      // reload below there is no page left to show one on. `skipReclaimCheck` is set on the
-      // second call the renderer makes once it has already resolved this one way or another (see
-      // bridge.ts's dropElevation and ReclaimLabsDirContext.tsx).
-      const labsPath = labsDir();
-      if (!skipReclaimCheck && hasForeignOwnedFiles(labsPath)) {
-        if (process.platform === "linux") {
-          // No native dialog can collect a password on Linux (see
-          // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
-          // either) — tell the renderer to ask instead.
-          return { dropped: false, needsReclaimPassword: true };
+    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> =>
+      // Must not run alongside an in-flight startup()/elevation:elevate — see the same comment on
+      // elevation:elevate above; this handler's own stopBackend()+startup() is exactly the kind of
+      // call that race would hit.
+      runExclusiveBootOp(async () => {
+        const baseUrl = backendUrl();
+        if (!baseUrl) return { dropped: false };
+        try {
+          const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders() }).then((r) => r.json());
+          if (!info.is_admin) return { dropped: false };
+        } catch {
+          return { dropped: false };
         }
-        // macOS: sudo-prompt's native dialog is reliable here, so a plain confirm first (this
-        // isn't a deploy the user just asked for — they only undeployed) is enough.
-        const parent = win;
-        const messageBox = parent
-          ? (o: Electron.MessageBoxOptions) => dialog.showMessageBox(parent, o)
-          : (o: Electron.MessageBoxOptions) => dialog.showMessageBox(o);
-        const { response } = await messageBox({
-          type: "warning",
-          buttons: ["Reclaim now", "Leave as is"],
-          defaultId: 0,
-          cancelId: 1,
-          message: "Some lab files are still owned by the administrator account",
-          detail:
-            "The privileged session that just ended left some files in your labs folder owned " +
-            "by the administrator account. Reclaiming them needs one more authorization prompt " +
-            "— the app never stores your password, so being asked again here is expected, not a " +
-            "bug. If you leave them as is, further edits to the affected lab (or undeploying it) " +
-            "may fail until this is fixed, which you can also do yourself later.",
-        });
-        if (response === 0) {
-          const reclaimed = await reclaimLabsDirOwnershipWithPrompt(labsPath);
-          if (!reclaimed.ok) log(`could not reclaim ownership of the labs directory: ${reclaimed.message}`);
-        } else {
-          log("user chose to leave root-owned files in the labs directory as is");
-        }
-      }
 
-      log("dropping elevated privileges (lab undeployed)");
-      await stopBackend();
-      await startup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
-      return { dropped: true };
-    },
+        // Checked (and asked about, if needed) *before* stopBackend(): this page — and, on Linux,
+        // its own password modal — is still the live one the user can see a prompt on; after the
+        // reload below there is no page left to show one on. `skipReclaimCheck` is set on the
+        // second call the renderer makes once it has already resolved this one way or another (see
+        // bridge.ts's dropElevation and ReclaimLabsDirContext.tsx).
+        const labsPath = labsDir();
+        if (!skipReclaimCheck && hasForeignOwnedFiles(labsPath)) {
+          if (process.platform === "linux") {
+            // No native dialog can collect a password on Linux (see
+            // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
+            // either) — tell the renderer to ask instead.
+            return { dropped: false, needsReclaimPassword: true };
+          }
+          // macOS: sudo-prompt's native dialog is reliable here, so a plain confirm first (this
+          // isn't a deploy the user just asked for — they only undeployed) is enough.
+          const parent = win;
+          const messageBox = parent
+            ? (o: Electron.MessageBoxOptions) => dialog.showMessageBox(parent, o)
+            : (o: Electron.MessageBoxOptions) => dialog.showMessageBox(o);
+          const { response } = await messageBox({
+            type: "warning",
+            buttons: ["Reclaim now", "Leave as is"],
+            defaultId: 0,
+            cancelId: 1,
+            message: "Some lab files are still owned by the administrator account",
+            detail:
+              "The privileged session that just ended left some files in your labs folder owned " +
+              "by the administrator account. Reclaiming them needs one more authorization prompt " +
+              "— the app never stores your password, so being asked again here is expected, not a " +
+              "bug. If you leave them as is, further edits to the affected lab (or undeploying it) " +
+              "may fail until this is fixed, which you can also do yourself later.",
+          });
+          if (response === 0) {
+            const reclaimed = await reclaimLabsDirOwnershipWithPrompt(labsPath);
+            if (!reclaimed.ok) log(`could not reclaim ownership of the labs directory: ${reclaimed.message}`);
+          } else {
+            log("user chose to leave root-owned files in the labs directory as is");
+          }
+        }
+
+        log("dropping elevated privileges (lab undeployed)");
+        await stopBackend();
+        // runStartup(), not startup(): this call is already inside runExclusiveBootOp's own gate,
+        // a sequential continuation of it rather than a second concurrent caller — going through
+        // startup() here would have it wait on bootOpInFlight, which is this very call, and
+        // deadlock forever. Same reasoning as the auto-install retry documented on runStartup().
+        await runStartup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
+        return { dropped: true };
+      }),
   );
 
   // Linux-only companion to elevation:drop above: collects the password its own in-app modal
@@ -845,15 +913,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
 
     win = createMainWindow();
-    win.on("closed", () => {
-      win = null;
-    });
-    // Any navigation away from setup.html is the app itself being loaded (startup() and the
-    // elevation handlers are the only callers of loadURL), so this is where showSetup's guard
-    // gets reset — no bookkeeping needed at those call sites.
-    win.webContents.on("did-navigate", (_e, url) => {
-      if (!url.startsWith("file://")) onSetupPage = false;
-    });
+    attachWindowLifecycle(win);
     // Shown once, this launch only, for exactly the app's actual boot duration — startup() below
     // runs immediately, with the splash still on screen; it only switches to the setup page
     // itself if something needs the user's attention (see its two showSetup(win) calls), or hands
@@ -979,10 +1039,22 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0 && status.state === "ready") {
-      win = createMainWindow();
-      const base = backendUrl();
-      if (base) loadIgnoringAbort(win.loadURL(base), "main window");
+    if (BrowserWindow.getAllWindows().length > 0) return;
+    win = createMainWindow();
+    attachWindowLifecycle(win);
+    // A fresh window hasn't loaded anything yet — reset the flag before deciding what to show,
+    // since it may still be true from whatever the just-closed window was displaying.
+    onSetupPage = false;
+    const base = status.state === "ready" ? backendUrl() : null;
+    if (base) {
+      loadIgnoringAbort(win.loadURL(base), "main window");
+    } else {
+      // Covers every non-"ready" status (backend-failed, prereq-failed, starting,
+      // labs-dir-prompt) and the ready-but-no-baseUrl edge case: setup.html polls status:get and
+      // renders whichever of those applies on its own — nothing else to decide here. Without
+      // this, closing the window while the backend is down left the Dock icon with nothing to
+      // reopen but a force-quit.
+      showSetup(win);
     }
   });
 }
