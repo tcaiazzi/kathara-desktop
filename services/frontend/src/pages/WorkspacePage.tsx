@@ -305,10 +305,16 @@ function buildDefaultLayout(api: DockviewApi) {
 }
 
 // Re-open the Node info panel if it was closed (as a tab alongside Devices/Lab Configuration/…).
-// No-op if it already exists.
+// No-op if it already exists. Doesn't foreground it when it's sharing a tab group with Topology —
+// e.g. dragged there manually — since that would hide the topology view a selection likely just
+// came from; the node-info content itself is a portal (NodeInfoPanel) that updates regardless of
+// which tab is active.
 function showNodeInfo(api: DockviewApi) {
-  if (api.getPanel("node-info")) {
-    api.getPanel("node-info")?.api.setActive();
+  const nodeInfo = api.getPanel("node-info");
+  if (nodeInfo) {
+    const topology = api.getPanel("topology");
+    const dockedWithTopology = topology && topology.api.group === nodeInfo.api.group;
+    if (!dockedWithTopology) nodeInfo.api.setActive();
     return;
   }
   const devices = api.getPanel("devices");
