@@ -110,6 +110,7 @@ export function useLiveTty(enabled: boolean, options: UseLiveTtyOptions): UseLiv
       window.removeEventListener("resize", onWindowResize);
       onDataDispose.dispose();
       onResizeDispose.dispose();
+      disconnect();
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
