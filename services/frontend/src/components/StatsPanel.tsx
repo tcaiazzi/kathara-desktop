@@ -43,8 +43,13 @@ export function StatsPanel({ labName, deployed }: StatsPanelProps) {
       }
     });
     src.onerror = () => {
-      toast.show("Live stats stream ended.", "info");
-      stop();
+      // readyState CONNECTING means the browser is already retrying on its own
+      // (transient network blip or backend restart) — only a fatal, non-recoverable
+      // failure (bad response status, or an explicit close()) reaches CLOSED.
+      if (src.readyState === EventSource.CLOSED) {
+        toast.show("Live stats stream ended.", "info");
+        stop();
+      }
     };
   }
 
