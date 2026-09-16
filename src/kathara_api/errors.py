@@ -95,6 +95,19 @@ class LabRenameLockedError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class LinkInUseError(ApiError):
+    """Raised when removing a collision domain that still has a running machine attached.
+
+    remove_link's own self._facade().undeploy_link(link) call would otherwise be a silent no-op
+    for that domain (DockerLink.undeploy filters out any network that still has containers
+    attached) — the Docker network and the container's live interface would survive even though
+    the API answers 200 and the in-memory model says the link is gone. Fail fast instead of
+    leaving that split-brain state; the caller must stop the machine (or the whole lab) first.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
 class LabTransitioningError(ApiError):
     """Raised when a lab.conf/offline-fs edit or a lab/device/link structural change is attempted
     while `deploy_lab`/`undeploy_lab` is actively running for that same lab.

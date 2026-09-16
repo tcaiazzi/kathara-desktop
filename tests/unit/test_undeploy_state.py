@@ -4,6 +4,9 @@ container/network actually goes down, so without ``KatharaService._clear_undeplo
 API would keep reporting `deployed`/`running` as True forever after an undeploy.
 """
 
+import pytest
+
+from kathara_api.errors import LinkInUseError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
@@ -88,12 +91,31 @@ def test_remove_machine_without_keep_links_tears_down_orphaned_link():
     assert lab.links["priv1"].api_object is None  # no machine left running on it
 
 
-def test_remove_link_detaches_interfaces_and_disappears_from_lab():
+def test_remove_link_refuses_when_a_running_machine_is_attached():
+    # remove_link's own undeploy_link call would otherwise be a silent no-op for a domain that
+    # still has a running machine attached (Docker refuses to remove a network with containers on
+    # it) — fail fast instead of the API claiming success while the Docker network/veth survive.
     service, lab = _service_with_lab()
     _mark_deployed(lab)
+
+    with pytest.raises(LinkInUseError):
+        service.remove_link("testlab", "shared")
+
+    # Nothing mutated: fail-fast, not a partial removal.
+    assert "shared" in lab.links
+    assert lab.machines["pc1"].interfaces[0] is not None
+    assert lab.machines["pc2"].interfaces[0] is not None
+
+
+def test_remove_link_detaches_interfaces_and_disappears_from_lab_when_stopped():
+    service, lab = _service_with_lab()
+    # Deliberately not _mark_deployed: every machine attached to "shared" is stopped.
 
     service.remove_link("testlab", "shared")
 
     assert "shared" not in lab.links
-    assert lab.machines["pc1"].interfaces[0] is None
-    assert lab.machines["pc2"].interfaces[0] is None
+    # pc1's other interface (priv1) survives, renumbered down to fill the gap "shared" left.
+    assert not any(iface is not None and iface.link.name == "shared" for iface in lab.machines["pc1"].interfaces.values())
+    assert any(iface is not None and iface.link.name == "priv1" for iface in lab.machines["pc1"].interfaces.values())
+    # pc2 had only "shared" attached: no interfaces left at all.
+    assert lab.machines["pc2"].interfaces == {}

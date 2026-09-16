@@ -74,7 +74,7 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 | Situation | HTTP |
 |---|---|
 | `LabNotFoundError`, `MachineNotFoundError`, `LinkNotFoundError`, `DockerImageNotFoundError`, `InterfaceNotFoundError` | 404 |
-| `*AlreadyExistsError`, `MachineNotRunningError`, `MachineNotReadyError`, `EmptyLabError`, `ImagePullBusyError`, settings/lab.conf locked | 409 |
+| `*AlreadyExistsError`, `MachineNotRunningError`, `MachineNotReadyError`, `EmptyLabError`, `ImagePullBusyError`, `LinkInUseError`, settings/lab.conf locked | 409 |
 | `InvocationError`, `MachineOptionError`, `MachineCollisionDomainError`, `NotSupportedError`, … | 400 |
 | `SyntaxError` (invalid device name / lab.conf value) | 422 |
 | `DockerDaemonConnectionError`, builtin `ConnectionError` (registry unreachable) | 503 |

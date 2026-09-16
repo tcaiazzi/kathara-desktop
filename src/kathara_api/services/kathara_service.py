@@ -55,6 +55,7 @@ from ..errors import (
     LabConfLockedError,
     LabRenameLockedError,
     LabTransitioningError,
+    LinkInUseError,
     PathNotFoundError,
     SettingsLockedError,
 )
@@ -2169,23 +2170,50 @@ class KatharaService:
         return link
 
     def remove_link(self, lab_name: str, link_name: str) -> None:
+        # Running-machine check decided *inside* the lock — same reasoning as add_machine/
+        # connect_machine/disconnect_machine: a read taken before the lock could see "all stopped"
+        # and then have a concurrent deploy_lab start a machine before this function's own critical
+        # section runs.
         self._check_not_transitioning(lab_name)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             link = lab.get_link(link_name)
+
+            # self._facade().undeploy_link(link) below is a silent no-op for a domain that still
+            # has a running machine attached (DockerLink.undeploy filters out any network with
+            # containers on it) — refuse up front instead of leaving the Docker network/veth alive
+            # while the API and the in-memory model both claim the link is gone.
+            running = sorted(m.name for m in link.machines.values() if m.api_object is not None)
+            if running:
+                raise LinkInUseError(
+                    f"Collision domain `{link_name}` still has running machine(s) attached "
+                    f"({', '.join(running)}); stop them (or the lab) before removing it."
+                )
+
             self._facade().undeploy_link(link)
 
-            # Keep the in-memory model consistent with the operation: drop all
-            # interfaces attached to this collision domain and remove the link
-            # from the lab map so it no longer appears in topology/list views.
-            for machine_name in list(link.machines.keys()):
+            # Every attached machine is stopped (checked above): persist the removal to lab.conf,
+            # the same way disconnect_machine's stopped branch does for a single interface.
+            machine_names = list(link.machines.keys())
+
+            def edit(text: str) -> str:
+                for machine_name in machine_names:
+                    text = lab_conf_edit.remove_interface(text, machine_name, link_name)
+                return text
+
+            self._edit_lab_conf(lab_name, edit)
+
+            # Keep the in-memory model consistent with the operation: drop all interfaces attached
+            # to this collision domain, renumbering each device's survivors (a gap is an error for
+            # both this project's parser and Kathara's own Machine.check), and remove the link from
+            # the lab map so it no longer appears in topology/list views.
+            for machine_name in machine_names:
                 machine = lab.machines.get(machine_name)
                 if machine is not None:
-                    try:
-                        machine.remove_interface(link)
-                    except Exception:
-                        # If backend state changed first, best effort to keep going.
-                        pass
+                    machine.remove_interface(link)
+                    self._renumber_interfaces(machine)
+
+            lab.links.pop(link_name, None)
 
             lab.links.pop(link_name, None)
 

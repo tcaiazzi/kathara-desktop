@@ -144,6 +144,7 @@ def test_unknown_lab_is_still_a_404(dead_daemon, service):
         pytest.param(lambda s: s.exec_command("offlinelab", "pc1", ["true"]), id="exec_command"),
         pytest.param(lambda s: s.machines_stats_snapshot("offlinelab"), id="machines_stats_snapshot"),
         pytest.param(lambda s: s.add_link("offlinelab", "newlink"), id="add_link"),
+        pytest.param(lambda s: s.remove_link("offlinelab", "shared"), id="remove_link"),
     ],
 )
 def test_docker_dependent_operations_still_raise(dead_daemon, service, operation):

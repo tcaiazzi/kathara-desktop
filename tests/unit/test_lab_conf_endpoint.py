@@ -92,6 +92,41 @@ def test_read_lab_conf_rejects_non_utf8(tmp_path):
     assert view.exists is False
 
 
+# -- remove_link persistence ----------------------------------------------------
+
+
+def test_remove_link_persists_interface_removal_to_lab_conf(tmp_path):
+    """Regression for I1's "remove" half: removing a collision domain used to only touch the
+    in-memory model, leaving each attached (stopped) machine's interface line on disk — the domain
+    and its interfaces would resurrect on a full undeploy or a backend restart."""
+    store = LabStore(tmp_path / "labs")
+    service = _service(store)
+    conf = (
+        'LAB_NAME="testlab"\n'
+        "\n"
+        'pc1[image]="kathara/base"\n'
+        'pc1[0]="shared"\n'
+        'pc1[1]="priv1"\n'
+        'pc2[image]="kathara/base"\n'
+        'pc2[0]="shared"\n'
+    )
+    store.write_lab("testlab", {"lab.conf": conf})
+    service._reload_lab_from_disk("testlab")
+
+    service.remove_link("testlab", "shared")
+
+    on_disk = (store.lab_dir("testlab") / "lab.conf").read_text()
+    assert 'pc1[0]="shared"' not in on_disk
+    assert 'pc2[0]="shared"' not in on_disk
+    # pc1's surviving interface (priv1) is renumbered down to fill the gap "shared" left, both on
+    # disk and in the live model.
+    assert 'pc1[0]="priv1"' in on_disk
+    lab = service.registry.get("testlab")
+    assert "shared" not in lab.links
+    assert lab.machines["pc2"].interfaces == {}
+    assert lab.machines["pc1"].interfaces[0].link.name == "priv1"
+
+
 # -- routes --------------------------------------------------------------------
 
 
