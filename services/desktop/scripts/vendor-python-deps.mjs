@@ -148,6 +148,17 @@ function localWheel() {
         `which clears them before building.`,
     );
   }
+  // A single wheel can still be stale — the case above only catches ambiguity, not staleness.
+  // package.json and src/kathara_api/__init__.py are bumped together (same release commit), so a
+  // mismatch here means this wheel predates the current version bump.
+  const pkg = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  const wheelVersion = wheels[0].split("-")[1];
+  if (wheelVersion !== pkg.version) {
+    throw new Error(
+      `${wheels[0]} is version ${wheelVersion}, but package.json says ${pkg.version} — stale wheel. ` +
+        `Run \`make wheel\` to rebuild it at the current version.`,
+    );
+  }
   return path.join(vendorDir, wheels[0]);
 }
 
