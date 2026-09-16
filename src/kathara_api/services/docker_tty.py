@@ -4,7 +4,55 @@ Kept separate from ``routers/exec.py`` so the router only handles the websocket/
 everything that reaches into the Docker SDK's exec API and its raw transport socket lives here.
 """
 
+import asyncio
 import io
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+from ..config import get_settings
+
+# A dedicated pool for TTY session I/O, separate from asyncio's default executor
+# (min(32, cpu+4)) that every other `asyncio.to_thread` call in the app shares — including
+# get_machine_api_object, used to open the *next* terminal. A live session holds one of these
+# threads for as long as it stays open (read() blocks in a loop), so without this isolation a
+# handful of open terminals can starve every other blocking Docker call in the process (see I4
+# in docs/audit_2.md). Sized from settings so it doubles as the session cap enforced in
+# routers/exec.py:tty_live_ws.
+#
+# Recreated lazily by `_get_tty_executor` if it has been shut down, rather than being a true
+# one-shot singleton: `create_app()` (and so this module's shutdown hook) can run more than once
+# per process — every test that builds its own app does — and a plain one-shot executor would
+# leave every app instance after the first unable to schedule any TTY work at all.
+_TTY_EXECUTOR = ThreadPoolExecutor(
+    max_workers=get_settings().tty_max_sessions, thread_name_prefix="kathara-tty"
+)
+_tty_executor_lock = threading.Lock()
+_tty_executor_shutdown = False
+
+
+def _get_tty_executor() -> ThreadPoolExecutor:
+    global _TTY_EXECUTOR, _tty_executor_shutdown
+    with _tty_executor_lock:
+        if _tty_executor_shutdown:
+            _TTY_EXECUTOR = ThreadPoolExecutor(
+                max_workers=get_settings().tty_max_sessions, thread_name_prefix="kathara-tty"
+            )
+            _tty_executor_shutdown = False
+        return _TTY_EXECUTOR
+
+
+def shutdown_tty_executor() -> None:
+    """Stop accepting new TTY work and abandon whatever is still blocked in a read/write.
+
+    Called from main.py's lifespan on shutdown. `wait=False` is deliberate: a session thread can
+    be blocked in a read for as long as its terminal stays open, and the process is exiting
+    anyway — there is nothing to gain from waiting for it.
+    """
+    global _tty_executor_shutdown
+    with _tty_executor_lock:
+        _TTY_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+        _tty_executor_shutdown = True
+
 
 SHELL_PATHS = {
     "bash": "/bin/bash",
@@ -141,3 +189,23 @@ class DockerTtySession:
         close = getattr(self._socket, "close", None)
         if callable(close):
             close()
+
+    # -- async wrappers, routed onto the dedicated TTY executor ---------------------------------
+    #
+    # Parallel to the sync methods above rather than replacing them, so a test double can still
+    # implement (or override) just the sync ones. routers/exec.py:tty_live_ws uses only these.
+
+    async def astart(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.start)
+
+    async def aread(self, size: int = 4096) -> bytes:
+        return await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.read, size)
+
+    async def awrite(self, data: bytes) -> None:
+        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.write, data)
+
+    async def aresize(self, cols: int, rows: int) -> None:
+        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.resize, cols, rows)
+
+    async def aclose(self) -> None:
+        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.close)

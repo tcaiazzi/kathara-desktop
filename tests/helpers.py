@@ -6,6 +6,7 @@ not fixtures/hooks.
 
 import io
 import stat
+import threading
 import zipfile
 from typing import Optional
 
@@ -73,3 +74,30 @@ class FakeFacadeBase:
 
     def exec(self, machine_name, command, lab_name=None, wait=False, stream=False):
         return (b"", b"", 0)
+
+
+class NeverEndingExecStream:
+    """Fake IExecStream whose `next()` blocks forever until another thread calls `close()` —
+    reproducing a command that never produces output (`sleep 10000`, a shell waiting on stdin)
+    without a real Docker daemon. See I4 in docs/audit_2.md.
+
+    `self._stream = self` mirrors the real shape routers.exec._force_close_exec_stream expects: on
+    Docker, `IExecStream._stream` is the actual closeable object (a `CancellableStream`), one level
+    below the `IExecStream` itself.
+    """
+
+    def __init__(self):
+        self._event = threading.Event()
+        self.closed = False
+        self._stream = self
+
+    def __next__(self):
+        self._event.wait()
+        raise StopIteration
+
+    def exit_code(self):
+        return 0
+
+    def close(self):
+        self.closed = True
+        self._event.set()

@@ -2,8 +2,10 @@
 
 import asyncio
 import base64
+import contextlib
 import hmac
 import json
+import logging
 
 import chardet
 from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
@@ -17,6 +19,19 @@ from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
 
 router = APIRouter(prefix="/labs/{lab_name}/machines/{machine_name}", tags=["exec"])
+logger = logging.getLogger(__name__)
+
+# How often the SSE stream below polls for a client disconnect while a chunk read is in flight
+# (see _force_close_exec_stream and event_generator).
+_DISCONNECT_POLL_INTERVAL_SECONDS = 0.5
+
+# How many tty_live_ws sessions are open right now. Mutated only from coroutines on this single
+# event loop (never from a thread), same as the `stop` flag inside tty_live_ws itself, so no lock
+# is needed. Checked against settings.tty_max_sessions, which also sizes the dedicated TTY
+# executor in services/docker_tty.py — a ThreadPoolExecutor queues work past max_workers instead
+# of rejecting it, which would otherwise make session N+1 look like a hung terminal instead of a
+# clean, immediate refusal.
+_tty_active_sessions = 0
 
 
 def _iter_exec_stream(stream):
@@ -26,6 +41,36 @@ def _iter_exec_stream(stream):
             yield next(stream)
         except StopIteration:
             return
+
+
+def _force_close_exec_stream(stream) -> None:
+    """Best-effort: unblock a `next(stream)` sitting in a threadpool worker by closing the
+    underlying Docker socket from here.
+
+    `IExecStream` (Kathara upstream) exposes no public close()/cancel() — a prior
+    `getattr(stream, "close", None)` in this module was always None and did nothing. On the only
+    manager reachable here (Docker, via KatharaService.exec_stream), the private `_stream`
+    attribute of `DockerExecStream` (Kathara.manager.docker.exec_stream) is actually a
+    `docker.types.daemon.CancellableStream`, whose own docstring documents exactly this use
+    ("cancel from another thread"): its close() shuts the exec's HTTP socket down, and its
+    `__next__` already turns the resulting `urllib3.exceptions.ProtocolError`/`OSError` into a
+    clean `StopIteration` — already handled by `_iter_exec_stream` above, so no new except clause
+    is needed anywhere in the read path for this.
+
+    No contract is being relied on beyond that: if this shape changes (a different manager, a
+    future docker-py/Kathara version, a test double), we simply do nothing — this is a
+    best-effort cleanup in a background path with no client left to report a failure to, which is
+    why a broad `except` here is scoped to this cleanup only and does not fall under I5 (mapping
+    exceptions into HTTP responses) — there is no response being built at this point.
+    """
+    inner = getattr(stream, "_stream", None)
+    close = getattr(inner, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        logger.debug("exec stream force-close failed", exc_info=True)
 
 
 def _decode(data: bytes) -> str:
@@ -108,17 +153,42 @@ async def exec_command_stream(
     )
 
     async def event_generator():
+        disconnected = False
+
+        async def watch_disconnect() -> None:
+            nonlocal disconnected
+            while True:
+                if await request.is_disconnected():
+                    disconnected = True
+                    # This is the only thing that can free a `next(stream)` stuck in the
+                    # threadpool: run_in_threadpool/iterate_in_threadpool run on
+                    # anyio.to_thread.run_sync with the default abandon_on_cancel=False, so
+                    # cancelling the task consuming the stream does NOT interrupt an in-flight
+                    # blocking read — anyio waits for the worker thread to return on its own.
+                    # Closing the socket from this independent task is what makes it return.
+                    await run_in_threadpool(_force_close_exec_stream, stream)
+                    return
+                await asyncio.sleep(_DISCONNECT_POLL_INTERVAL_SECONDS)
+
+        watcher = asyncio.create_task(watch_disconnect())
         try:
             async for chunk in iterate_in_threadpool(_iter_exec_stream(stream)):
-                if await request.is_disconnected():
+                if disconnected:
                     break
                 for stream_name, data in _output_parts(chunk):
                     yield {"event": "output", "data": _sse_json(stream_name, data)}
-            yield {"event": "exit", "data": f'{{"exit_code": {stream.exit_code()}}}'}
+            if not disconnected:
+                # No client left to read this for a disconnected stream — skip it, and the
+                # exec_inspect() call behind it.
+                exit_code = await run_in_threadpool(stream.exit_code)
+                yield {"event": "exit", "data": f'{{"exit_code": {exit_code}}}'}
         finally:
-            close = getattr(stream, "close", None)
-            if callable(close):
-                close()
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher
+            # Idempotent (CancellableStream.close() checks response.raw.closed) — covers the
+            # normal/error exit paths too, not just the disconnect one above.
+            await run_in_threadpool(_force_close_exec_stream, stream)
 
     return EventSourceResponse(event_generator())
 
@@ -178,14 +248,27 @@ async def tty_live_ws(
 
     await websocket.accept()
 
+    global _tty_active_sessions
+    if _tty_active_sessions >= get_settings().tty_max_sessions:
+        # Beyond this cap, a session would just queue on the dedicated TTY executor (see
+        # services/docker_tty.py) behind whichever session frees up first — indistinguishable
+        # from a hung terminal. Reject it outright instead. 1013 is the standard WS "Try Again
+        # Later" close code.
+        await _ws_send_error(websocket, "Too many concurrent live terminals; close one and retry.")
+        await websocket.close(code=1013)
+        return
+    _tty_active_sessions += 1
+
     session: DockerTtySession | None = None
     output_task: asyncio.Task | None = None
     stop = False
 
     try:
         # Docker API call (update_lab_from_api + a container lookup) — off the event loop like
-        # every other backend call in this function (session.start/read/write/resize below all
-        # already go through asyncio.to_thread; this was the one unwrapped exception).
+        # every other backend call in this function (session.astart/aread/awrite/aresize below all
+        # already run on a dedicated executor; this one deliberately stays on asyncio's default,
+        # since it is a one-shot lookup, not a persistent per-session thread — see I4 in
+        # docs/audit_2.md for why the two must not share an executor).
         machine_obj = await asyncio.to_thread(service.get_machine_api_object, lab_name, machine_name)
         client = getattr(getattr(machine_obj, "client", None), "api", None)
         container_id = getattr(machine_obj, "id", None)
@@ -193,12 +276,12 @@ async def tty_live_ws(
             raise RuntimeError("Live TTY requires a Docker-backed running machine.")
 
         session = DockerTtySession(client, container_id, shell)
-        await asyncio.to_thread(session.start)
+        await session.astart()
 
         async def pump_output():
             try:
                 while not stop:
-                    chunk = await asyncio.to_thread(session.read, 4096)
+                    chunk = await session.aread(4096)
                     if not chunk:
                         break
                     await websocket.send_text(json.dumps({"event": "output", "data": _b64(chunk)}))
@@ -226,7 +309,7 @@ async def tty_live_ws(
             if msg_type == "resize":
                 cols = int(msg.get("cols", 120))
                 rows = int(msg.get("rows", 35))
-                await asyncio.to_thread(session.resize, cols, rows)
+                await session.aresize(cols, rows)
                 continue
 
             if msg_type == "input":
@@ -234,7 +317,7 @@ async def tty_live_ws(
                 if not isinstance(data, str):
                     await _ws_send_error(websocket, "`data` must be a string.")
                     continue
-                await asyncio.to_thread(session.write, data.encode("utf-8", errors="ignore"))
+                await session.awrite(data.encode("utf-8", errors="ignore"))
                 continue
 
             await _ws_send_error(websocket, "Unsupported message type.")
@@ -243,6 +326,7 @@ async def tty_live_ws(
     except Exception as exc:
         await _ws_send_error(websocket, str(exc))
     finally:
+        _tty_active_sessions -= 1
         stop = True
         if output_task is not None:
             output_task.cancel()
@@ -253,7 +337,7 @@ async def tty_live_ws(
             except asyncio.CancelledError:
                 pass
         if session is not None:
-            session.close()
+            await session.aclose()
         try:
             await websocket.send_text(json.dumps({"event": "closed"}))
         except Exception:

@@ -928,10 +928,7 @@ class KatharaService:
         see services/examples.py and the frontend's welcome screen."""
         return examples.list_examples(set(self.store.lab_names()))
 
-    def list_gallery_labs(self, refresh: bool = False) -> GalleryCatalog:
-        """The upstream Kathara-Labs catalog, each entry flagged with whether it's already
-        installed — the remote twin of ``list_example_labs``. See services/lab_gallery.py."""
-        catalog = lab_gallery.fetch_catalog(refresh=refresh)
+    def _to_gallery_catalog(self, catalog: lab_gallery.Catalog) -> GalleryCatalog:
         installed = set(self.store.lab_names())
         return GalleryCatalog(
             repo=catalog.repo,
@@ -951,6 +948,19 @@ class KatharaService:
                 for entry in catalog.entries.values()
             ],
         )
+
+    def list_gallery_labs(self, refresh: bool = False) -> GalleryCatalog:
+        """The upstream Kathara-Labs catalog, each entry flagged with whether it's already
+        installed — the remote twin of ``list_example_labs``. See services/lab_gallery.py."""
+        return self._to_gallery_catalog(lab_gallery.fetch_catalog(refresh=refresh))
+
+    async def list_gallery_labs_async(self, refresh: bool = False) -> GalleryCatalog:
+        """Async twin of ``list_gallery_labs``, for the ``/gallery`` HTTP route only (see I4 in
+        docs/audit_2.md). Every other caller — ``install_gallery_lab``, internal lookups, and
+        every existing test — keeps using the synchronous ``list_gallery_labs``/``fetch_catalog``.
+        """
+        catalog = await lab_gallery.fetch_catalog_async(refresh=refresh)
+        return self._to_gallery_catalog(catalog)
 
     def install_gallery_lab(self, lab_id: str, name: Optional[str] = None) -> tuple[Lab, list[str]]:
         """Create a lab from an entry in the upstream Kathara-Labs gallery.

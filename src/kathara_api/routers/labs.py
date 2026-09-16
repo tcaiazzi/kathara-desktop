@@ -113,8 +113,12 @@ def create_example_lab(payload: ExampleCreate, service: KatharaService = Depends
 
 
 # Also declared above GET /{lab_name} for the same registration-order reason as /examples above.
+# async, unlike every other route in this file: a burst of concurrent requests must coordinate on
+# the event loop (KatharaService.list_gallery_labs_async / lab_gallery.fetch_catalog_async), not
+# by each parking a worker thread from the shared threadpool behind a lock held across a ~20s
+# upstream fetch — see I4 in docs/audit_2.md.
 @router.get("/gallery", response_model=GalleryCatalog)
-def list_gallery_labs(
+async def list_gallery_labs(
     refresh: bool = False, service: KatharaService = Depends(get_service)
 ) -> GalleryCatalog:
     """The upstream Kathara-Labs catalog browsed by the frontend's "Browse Kathara Labs" modal.
@@ -122,7 +126,7 @@ def list_gallery_labs(
     Cached server-side (see services/lab_gallery.py); ``refresh=true`` bypasses that cache, which
     is what the modal's Refresh button sends.
     """
-    return service.list_gallery_labs(refresh=refresh)
+    return await service.list_gallery_labs_async(refresh=refresh)
 
 
 @router.post("/gallery", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)

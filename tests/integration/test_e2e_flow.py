@@ -76,6 +76,30 @@ def test_exec_stream(client, deployed_lab):
         assert exit_code == 0
 
 
+def test_live_tty_websocket_smoke(client, deployed_lab):
+    """End-to-end smoke test for the live-TTY bridge (routers/exec.py:tty_live_ws) against a real
+    container, after moving its session I/O onto a dedicated executor (see I4 in docs/audit_2.md):
+    a real astart/aread/awrite/aresize/aclose round trip must still behave exactly as before.
+    """
+    with client.websocket_connect("/api/labs/apitest/machines/pc1/tty/ws") as ws:
+        assert ws.receive_json() == {"event": "ready"}
+        ws.send_json({"type": "resize", "cols": 100, "rows": 30})
+        ws.send_json({"type": "input", "data": "echo tty_smoke_marker\n"})
+
+        collected = ""
+        for _ in range(200):
+            msg = ws.receive_json()
+            if msg["event"] != "output":
+                continue
+            collected += base64.b64decode(msg["data"]).decode(errors="replace")
+            if "tty_smoke_marker" in collected:
+                break
+        assert "tty_smoke_marker" in collected
+
+        ws.send_json({"type": "close"})
+        assert ws.receive_json() == {"event": "closed"}
+
+
 def test_stats_snapshot(client, deployed_lab):
     stats = client.get("/api/labs/apitest/stats").json()
     assert len(stats) == 2

@@ -7,6 +7,12 @@ here ever makes a real network call except the one test marked ``network`` at th
 skipped by default and exists only to catch the real repo drifting out from under this feature.
 """
 
+import asyncio
+import threading
+import time
+
+import anyio.to_thread
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -107,8 +113,10 @@ def _install_fake_repo(monkeypatch, tree, files, settings=None):
 @pytest.fixture(autouse=True)
 def _clear_gallery_cache():
     lab_gallery.invalidate_cache()
+    lab_gallery._inflight = None
     yield
     lab_gallery.invalidate_cache()
+    lab_gallery._inflight = None
 
 
 # A small two-category repo used by most tests: one lab with a sibling slides PDF, one pair of
@@ -292,6 +300,124 @@ def test_catalog_is_cached_until_refresh_is_requested(monkeypatch):
 
     lab_gallery.fetch_catalog(refresh=True)
     assert len(calls) == 2
+
+
+# ---------------------------------------------------------------------------
+# Async single-flight (fetch_catalog_async) — see I4 in docs/audit_2.md
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_catalog_async_dedupes_concurrent_callers(monkeypatch):
+    """One upstream call for a burst of concurrent callers, all getting the same Catalog."""
+    settings = _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    calls = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        entered.set()
+        release.wait(timeout=5)
+        return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
+
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+
+    async def scenario():
+        leader = asyncio.create_task(lab_gallery.fetch_catalog_async())
+        await asyncio.get_running_loop().run_in_executor(None, entered.wait, 5)
+        followers = [asyncio.create_task(lab_gallery.fetch_catalog_async()) for _ in range(20)]
+        await asyncio.sleep(0.05)  # let followers reach `await future` before unblocking the fetch
+        release.set()
+        return await asyncio.wait_for(asyncio.gather(leader, *followers), timeout=5)
+
+    results = asyncio.run(scenario())
+    assert len(calls) == 1
+    assert all(r is results[0] for r in results)
+
+
+def test_fetch_catalog_async_propagates_leader_failure_to_every_follower(monkeypatch):
+    settings = _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        lab_gallery.httpx, "get", lambda *a, **kw: (_ for _ in ()).throw(httpx.ConnectError("down"))
+    )
+
+    async def scenario():
+        tasks = [asyncio.create_task(lab_gallery.fetch_catalog_async()) for _ in range(10)]
+        return await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=5)
+
+    results = asyncio.run(scenario())
+    assert len(results) == 10
+    assert all(isinstance(r, GalleryUnavailableError) for r in results)
+
+
+def test_fetch_catalog_async_followers_never_touch_the_threadpool(monkeypatch):
+    """The architectural half of the fix: even with the worker-thread pool artificially starved
+    to a single slot, N concurrent callers resolve in one fetch's worth of time, not N times
+    that — proving followers suspend on the event loop, not on a threadpool token (see I4)."""
+    settings = _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    calls = []
+    block = 0.2
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        time.sleep(block)
+        return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
+
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+
+    async def scenario():
+        limiter = anyio.to_thread.current_default_thread_limiter()
+        original = limiter.total_tokens
+        limiter.total_tokens = 1
+        try:
+            started = time.monotonic()
+            tasks = [asyncio.create_task(lab_gallery.fetch_catalog_async()) for _ in range(50)]
+            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=block * 20)
+            return time.monotonic() - started, results
+        finally:
+            limiter.total_tokens = original
+
+    elapsed, results = asyncio.run(scenario())
+    assert len(calls) == 1
+    assert elapsed < block * 5  # would be ~50*block if a follower ever grabbed its own token
+    assert all(r is results[0] for r in results)
+
+
+def test_gallery_route_deduplicates_concurrent_http_requests(client_and_service, monkeypatch):
+    client, _service = client_and_service
+    calls = []
+    entered = threading.Event()
+    release = threading.Event()
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        entered.set()
+        release.wait(timeout=5)
+        return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
+
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+
+    results = []
+
+    def do_get():
+        results.append(client.get("/api/labs/gallery"))
+
+    t1 = threading.Thread(target=do_get)
+    t1.start()
+    entered.wait(timeout=5)
+    t2 = threading.Thread(target=do_get)
+    t2.start()
+    time.sleep(0.05)
+    release.set()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert len(calls) == 1
+    assert all(r.status_code == 200 for r in results)
 
 
 # ---------------------------------------------------------------------------

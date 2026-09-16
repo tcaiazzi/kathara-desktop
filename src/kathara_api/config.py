@@ -94,6 +94,14 @@ class ApiSettings(BaseSettings):
     # dependencies.require_auth_token).
     auth_token: Optional[str] = None
 
+    # How many live TTY websockets (routers/exec.py:tty_live_ws) can be open at once. Each one
+    # holds a thread of services/docker_tty.py's dedicated executor for as long as the terminal
+    # stays open (a blocking socket read in a loop) — this is also that executor's size, so a
+    # session beyond the cap is rejected outright (WS close code 1013) instead of queueing
+    # silently behind whichever session frees up first. Overridable for hosts with more or fewer
+    # cores than the default assumes.
+    tty_max_sessions: int = 32
+
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 

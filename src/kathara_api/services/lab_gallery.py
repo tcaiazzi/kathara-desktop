@@ -27,6 +27,7 @@ than the lab directory itself, since that's upstream's actual unit of browsing: 
 folder, its slides PDF (if any), and its README (if any), all in one GitHub folder view.
 """
 
+import asyncio
 import posixpath
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import httpx
+from starlette.concurrency import run_in_threadpool
 
 from ..config import format_mb, get_settings
 from ..errors import GalleryLabNotFoundError, GalleryUnavailableError
@@ -86,9 +88,18 @@ class Catalog:
 
 # Module-level cache, mirroring the `_IMAGES_CACHE_TTL` precedent in kathara_service.py and there
 # for the same reason: a slow, rate-limited remote listing must not run once per request. The lock
-# is held across the fetch so a burst of first requests produces one upstream call, not N.
+# is held across the fetch so a burst of first requests produces one upstream call, not N. Used by
+# fetch_catalog (sync) — install_gallery_lab/get_entry and every existing test go through this one.
 _cache: Optional[Catalog] = None
 _cache_lock = Lock()
+
+# Coordination for fetch_catalog_async (the /gallery HTTP route only — see I4 in docs/audit_2.md).
+# `_async_lock` guards *only* the `_inflight` pointer, never the fetch itself: a concurrent async
+# caller that finds a fetch already in flight awaits that fetch's Future on the event loop, which
+# costs nothing, instead of blocking a worker thread from the shared threadpool for up to
+# TREE_TIMEOUT seconds the way waiting on `_cache_lock` would.
+_async_lock = asyncio.Lock()
+_inflight: "Optional[asyncio.Future[Catalog]]" = None
 
 
 def _api_base() -> str:
@@ -271,6 +282,79 @@ def fetch_catalog(refresh: bool = False) -> Catalog:
         catalog = _build_catalog()
         _cache = catalog
         return catalog
+
+
+def _fresh_cached_catalog() -> Optional[Catalog]:
+    ttl = get_settings().gallery_cache_ttl
+    with _cache_lock:
+        cached = _cache
+    if cached is not None and time.time() - cached.fetched_at < ttl:
+        return cached
+    return None
+
+
+async def fetch_catalog_async(refresh: bool = False) -> Catalog:
+    """Async twin of `fetch_catalog`, for the one caller that must never park a threadpool worker
+    while waiting on someone else's fetch: the `/gallery` HTTP route (see I4 in docs/audit_2.md).
+
+    Coordination lives entirely on the event loop: `_async_lock` only ever guards the `_inflight`
+    pointer — a handful of synchronous statements — and is released before anyone awaits the
+    network fetch itself. A burst of concurrent callers therefore produces exactly one call to
+    `_build_catalog`, and every caller but the one that actually issues it suspends on a plain
+    `asyncio.Future`, not on a thread.
+
+    `refresh=True` deliberately still joins an in-flight fetch if one exists, rather than kicking
+    off a second, independent one: an in-flight fetch is by construction not yet cached and is
+    talking to GitHub right now, so piggybacking on it already satisfies "give me fresh data", and
+    it keeps the single-flight guarantee across a burst of Refresh clicks too.
+    """
+    global _inflight
+
+    if not refresh:
+        cached = _fresh_cached_catalog()
+        if cached is not None:
+            return cached  # fast path: no asyncio.Lock needed at all
+
+    async with _async_lock:
+        if not refresh:
+            # Another leader may have just published a fresh catalog while we were getting here.
+            cached = _fresh_cached_catalog()
+            if cached is not None:
+                return cached
+
+        future = _inflight
+        if future is None or future.done():
+            # Leader. `future.done()` (not just `is None`) matters: it makes a leftover
+            # `_inflight` pointer harmless instead of a permanent trap for every later caller.
+            future = asyncio.get_running_loop().create_future()
+            _inflight = future
+            asyncio.create_task(_run_fetch(future))
+        # else: follower, joins the in-flight `future` as-is.
+
+    return await future  # outside the lock — the only real wait, costing a coroutine suspension.
+
+
+async def _run_fetch(future: "asyncio.Future[Catalog]") -> None:
+    """Runs exactly once per `_inflight` generation: the one real fetch, off the event loop."""
+    global _inflight, _cache
+    try:
+        catalog = await run_in_threadpool(_build_catalog)
+    except asyncio.CancelledError:
+        if not future.done():
+            future.cancel()
+        raise
+    except Exception as exc:
+        if not future.done():
+            future.set_exception(exc)
+    else:
+        with _cache_lock:  # the only moment this coroutine touches `_cache` — trivial, and the
+            _cache = catalog  # same lock the sync path uses, so the two worlds never race on it.
+        if not future.done():
+            future.set_result(catalog)
+    finally:
+        async with _async_lock:
+            if _inflight is future:  # someone else may already have moved `_inflight` on
+                _inflight = None
 
 
 def invalidate_cache() -> None:

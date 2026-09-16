@@ -1,6 +1,7 @@
 """FastAPI application factory and entry point."""
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +14,7 @@ from .errors import ForbiddenOriginError, register_exception_handlers
 from .routers import exec as exec_router
 from .routers import labs, links, machines, stats, system
 from .schemas.common import ErrorResponse
+from .services.docker_tty import shutdown_tty_executor
 from .spa import mount_spa
 
 logging.basicConfig(level=logging.INFO)
@@ -22,12 +24,22 @@ logging.basicConfig(level=logging.INFO)
 API_PREFIX = "/api"
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    # Stop accepting new live-TTY work on shutdown instead of relying on ThreadPoolExecutor's own
+    # atexit, which waits for every worker thread to return — a TTY read can stay blocked for as
+    # long as its terminal is open (see I4 in docs/audit_2.md).
+    shutdown_tty_executor()
+
+
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
     app = FastAPI(
         title="Kathara REST API",
         version=__version__,
         description="REST API for the Kathara network emulation framework.",
+        lifespan=_lifespan,
     )
 
     # Apply Kathara setting overrides before the backend is first used.

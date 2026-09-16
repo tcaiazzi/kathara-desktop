@@ -75,3 +75,14 @@ def test_cors_unlisted_origin_is_refused(monkeypatch):
 def test_cors_empty_default_refuses_every_origin(monkeypatch):
     allow_origin, _ = _cors_headers(monkeypatch, "")
     assert allow_origin is None
+
+
+# -- TTY session cap --------------------------------------------------------------------------
+
+def test_tty_max_sessions_default():
+    assert ApiSettings().tty_max_sessions == 32
+
+
+def test_tty_max_sessions_env_override(monkeypatch):
+    monkeypatch.setenv("KATHARA_API_TTY_MAX_SESSIONS", "4")
+    assert ApiSettings().tty_max_sessions == 4
