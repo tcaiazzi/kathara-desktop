@@ -1050,10 +1050,17 @@ export function WorkspacePage() {
   const deviceMachines = detail?.machines ?? [];
   const nonHostLinks = visibleLinks(detail?.links ?? []);
 
-  const ctxValue = detail
+  // Guards against the one-render window where the route's `name` has already changed (e.g.
+  // navigating back to /workspace after deleting the open lab) but `detail` still holds the
+  // previous lab's data — that state only gets cleared in a later effect (below). Without this
+  // check, the dock panels would briefly see a mismatched labName/detail pairing — e.g.
+  // LabExplorer firing `getLabConf("")` at `/api/labs//lab-conf`.
+  const currentDetail = detail && detail.name === name ? detail : null;
+
+  const ctxValue = currentDetail
     ? {
         labName: name,
-        detail,
+        detail: currentDetail,
         onRefresh: load,
         selectedId,
         setSelectedId: selectNode,
@@ -1074,10 +1081,10 @@ export function WorkspacePage() {
   // panels, instead of them re-rendering on every unrelated workspace interaction.
   const coreCtxValue = useMemo(
     () =>
-      detail
+      currentDetail
         ? {
             labName: name,
-            detail,
+            detail: currentDetail,
             onRefresh: load,
             refreshStartups: deviceActions.refreshStartups,
             runtimeFsPreferredMachine,
@@ -1085,7 +1092,7 @@ export function WorkspacePage() {
             setContextMenu: setCtxMenu,
           }
         : null,
-    [name, detail, load, deviceActions.refreshStartups, runtimeFsPreferredMachine],
+    [name, currentDetail, load, deviceActions.refreshStartups, runtimeFsPreferredMachine],
   );
 
   const runningMachines = deviceMachines.filter((m) => m.running);
