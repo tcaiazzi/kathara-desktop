@@ -9,6 +9,10 @@ directories:
 # Only the built shell needs to ship; src/ and the toolchain do not.
 files:
   - build/**/*
+  # Source maps point back at this machine's source tree and are of no use to a shipped
+  # installer — esbuild still emits them (build.mjs) for local debugging, but they must not ride
+  # along into app.asar.
+  - "!build/**/*.map"
   - package.json
 
 # The SPA the backend serves at runtime (KATHARA_API_STATIC_DIR points here — see

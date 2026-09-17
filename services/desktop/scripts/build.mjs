@@ -2,7 +2,7 @@
 // next to them. Electron's main process is CJS, and the preload runs sandboxed (it may only
 // require "electron"), so both are bundled with `electron` left external.
 import { build } from "esbuild";
-import { cp, mkdir } from "node:fs/promises";
+import { cp, mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,6 +10,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outdir = path.join(root, "build");
 const watch = process.argv.includes("--watch");
 
+// Every run of this script is a full rebuild (this file doesn't actually watch — see the stale
+// message below), so start from a clean directory: otherwise a file removed from src/ leaves its
+// last compiled output behind, and electron-builder's `files: build/**/*` ships it regardless.
+await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 
 await build({
