@@ -12,6 +12,7 @@ import type { DockerStatus } from "./prereqs";
 export type MenuAction =
   | "lab:new"
   | "lab:import"
+  | "lab:browse"
   | "lab:save"
   | "lab:deploy"
   | "lab:undeploy"

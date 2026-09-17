@@ -216,13 +216,6 @@ export interface LabLayout {
 // The "New lab from JSON" flow accepts a raw JSON blob rather than a full typed form.
 export type LabCreate = Record<string, unknown> & { name: string };
 
-export interface ExecResult {
-  machine: string;
-  stdout: string;
-  stderr: string;
-  exit_code: number;
-}
-
 export interface FsEntry {
   name: string;
   path: string;
