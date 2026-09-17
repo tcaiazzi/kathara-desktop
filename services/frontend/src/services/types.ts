@@ -4,6 +4,10 @@ export interface Message {
   detail: string;
 }
 
+export interface WipeResult extends Message {
+  failed: string[];
+}
+
 export interface ErrorResponse {
   detail: string;
   error_type: string;

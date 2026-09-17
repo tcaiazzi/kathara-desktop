@@ -9,6 +9,12 @@ class Message(BaseModel):
     detail: str
 
 
+class WipeResult(Message):
+    """Outcome of a wipe: which labs (if any) could not be undeployed."""
+
+    failed: list[str] = []
+
+
 class ErrorResponse(BaseModel):
     """Uniform error body returned by the exception handlers."""
 

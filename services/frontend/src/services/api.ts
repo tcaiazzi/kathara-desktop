@@ -24,6 +24,7 @@ import type {
   SettingsView,
   StartupStatus,
   SystemInfo,
+  WipeResult,
 } from "./types";
 import { desktop } from "../desktop/bridge";
 
@@ -146,7 +147,7 @@ export const api = {
   updateSettings: (payload: SettingsUpdate) => request<SettingsView>("PUT", "/settings", payload),
   // Force-undeploys every lab kathara-desktop has deployed, not just the currently open one — scopes
   // to labs this backend manages, unlike the Kathara CLI's own `kathara wipe`.
-  wipeAll: () => request<Message>("POST", "/system/wipe", {}),
+  wipeAll: () => request<WipeResult>("POST", "/system/wipe", {}),
   // Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara accepts.
   listNetSysctls: () => request<string[]>("GET", "/system/sysctls"),
   // Official Kathara device images published on Docker Hub — suggestions for an "image" field,

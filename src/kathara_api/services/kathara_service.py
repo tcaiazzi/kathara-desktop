@@ -422,7 +422,7 @@ class KatharaService:
         """Download exactly `images`, one at a time, publishing progress for the poll endpoint."""
         return image_pull.pull_images(self._docker_manager(), images)
 
-    def wipe(self) -> None:
+    def wipe(self) -> list[str]:
         """Undeploy every lab kathara-desktop itself has registered and deployed.
 
         Unlike the Kathara CLI's own ``wipe(all_users=False)``, which force-undeploys *every*
@@ -431,11 +431,26 @@ class KatharaService:
         CLI, another Kathara frontend) started. Routed through ``undeploy_lab`` per registered lab
         so the usual post-undeploy bookkeeping (cleared api_object, topology reloaded from disk)
         happens exactly as it would for a single manual undeploy.
+
+        Best-effort: one lab's undeploy failing (a stuck container, the daemon going away
+        mid-loop) must not leave every lab after it stuck deployed. Returns the names of the labs
+        that could not be undeployed, so the caller can say what actually happened instead of a
+        single all-or-nothing error.
         """
+        failed: list[str] = []
         with self._mutate_lock:
             for lab in self.registry.all():
                 if any(m.api_object is not None for m in lab.machines.values()):
-                    self.undeploy_lab(lab.name)
+                    try:
+                        self.undeploy_lab(lab.name)
+                    except Exception:
+                        logger.warning(
+                            "Failed to undeploy lab `%s` during wipe, continuing with remaining labs",
+                            lab.name,
+                            exc_info=True,
+                        )
+                        failed.append(lab.name)
+        return failed
 
     def list_net_sysctls(self) -> list[str]:
         """Every ``net.*`` sysctl key available on this host's current kernel — walks
@@ -1713,7 +1728,15 @@ class KatharaService:
         with self._mutate_lock:
             if self.registry.get(name) is None and not self.store.lab_dir(name).is_dir():
                 raise LabNotFoundError(f"Lab `{name}` not found.")
-            self._facade().undeploy_lab(lab_name=name)
+            try:
+                self._facade().undeploy_lab(lab_name=name)
+            except DockerDaemonConnectionError:
+                # A lab's directory is plain disk I/O and needs no daemon to remove — and with no
+                # daemon reachable, there is nothing that could still be running to undeploy first.
+                # Any other failure here (the daemon *is* up but the undeploy itself fails) must
+                # keep propagating: deleting the directory out from under live containers would be
+                # worse than the bug this is fixing.
+                logger.warning("Docker daemon unreachable while deleting lab `%s`; skipping undeploy", name)
         # Claimed like a create does: unregistering and removing the directory are what *release*
         # the name, and without the lock they can land in the middle of a concurrent import of the
         # same name — deleting the directory that import had just written.

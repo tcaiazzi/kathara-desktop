@@ -6,7 +6,7 @@ import signal
 from fastapi import APIRouter, Depends
 
 from ..dependencies import get_service
-from ..schemas.common import Message
+from ..schemas.common import Message, WipeResult
 from ..schemas.images import ImagePullProgress, ImagePullRequest, ImagePullResult
 from ..schemas.settings import SettingsUpdate, SettingsView, SystemInfo
 from ..services import image_pull
@@ -56,11 +56,17 @@ def update_settings(
     return SettingsView.model_validate(service.get_settings_view())
 
 
-@router.post("/system/wipe", response_model=Message)
-def wipe(service: KatharaService = Depends(get_service)) -> Message:
-    """Undeploy every lab kathara-desktop has deployed (scenarios started by other tools are left alone)."""
-    service.wipe()
-    return Message(detail="All network scenarios wiped.")
+@router.post("/system/wipe", response_model=WipeResult)
+def wipe(service: KatharaService = Depends(get_service)) -> WipeResult:
+    """Undeploy every lab kathara-desktop has deployed (scenarios started by other tools are left alone).
+
+    Best-effort: a lab whose undeploy fails does not stop the rest from being wiped. Still 200 if
+    some labs failed — the outcome for each is reported in the body, not as a request-wide error.
+    """
+    failed = service.wipe()
+    if not failed:
+        return WipeResult(detail="All network scenarios wiped.")
+    return WipeResult(detail=f"Wiped all labs except: {', '.join(failed)}.", failed=failed)
 
 
 @router.get("/system/sysctls", response_model=list[str])

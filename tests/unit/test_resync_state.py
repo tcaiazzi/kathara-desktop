@@ -68,3 +68,35 @@ def test_wipe_clears_multiple_registered_labs():
 
     assert all(m.api_object is None for m in lab1.machines.values())
     assert all(m.api_object is None for m in lab2.machines.values())
+
+
+class _FlakyWipeFacade(_WipeFacade):
+    """Fails to undeploy one specific lab, exactly like a stuck container would — every other
+    lab must still get cleaned up."""
+
+    def __init__(self, failing_lab_name):
+        self._failing_lab_name = failing_lab_name
+
+    def undeploy_lab(self, **kwargs):
+        if kwargs.get("lab_name") == self._failing_lab_name:
+            raise RuntimeError("container refused to stop")
+
+
+def test_wipe_continues_past_a_failing_lab_and_reports_it():
+    service, lab1 = _service_with_lab()
+    _mark_deployed(lab1)
+
+    spec2 = LabCreate.model_validate({"name": "otherlab", "machines": [{"name": "pc1"}]})
+    lab2 = lab_builder.build_lab(spec2)
+    _mark_deployed(lab2)
+    service.registry.add(lab2)
+
+    service._instance = _FlakyWipeFacade(failing_lab_name="testlab")
+
+    failed = service.wipe()
+
+    assert failed == ["testlab"]
+    # The lab whose undeploy failed is still deployed as far as the model is concerned...
+    assert all(m.api_object is not None for m in lab1.machines.values())
+    # ...but the other one was not left stuck behind it.
+    assert all(m.api_object is None for m in lab2.machines.values())

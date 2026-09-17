@@ -133,6 +133,31 @@ def test_unknown_lab_is_still_a_404(dead_daemon, service):
         service.get_lab_or_reconstruct("never-existed")
 
 
+# -- deleting a lab needs no daemon, only its directory ------------------------------------------
+
+
+def test_delete_lab_removes_it_even_with_a_dead_daemon(dead_daemon, service):
+    """Deleting a lab's directory is plain disk I/O; with no daemon reachable there is nothing
+    that could still be running to undeploy first, so this must not 503 like `undeploy_lab` does."""
+    lab = service.registry.get("offlinelab")
+    lab_dir = service.store.ensure_lab_dir("offlinelab")
+    service.store.write_lab_conf(lab_dir, lab)
+    assert lab_dir.is_dir()
+
+    service.delete_lab("offlinelab")
+
+    assert service.registry.get("offlinelab") is None
+    assert not lab_dir.is_dir()
+
+
+def test_wipe_reports_a_dead_daemon_as_a_failure_instead_of_raising(dead_daemon, service):
+    _mark_deployed(service.registry.get("offlinelab"))
+
+    failed = service.wipe()
+
+    assert failed == ["offlinelab"]
+
+
 # -- operations that really need Docker keep failing -------------------------------------------
 
 

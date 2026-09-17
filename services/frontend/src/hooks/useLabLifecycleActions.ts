@@ -267,8 +267,12 @@ export function useLabLifecycleActions() {
       });
       if (!ok) return;
       await runBusy(setBusy, "Wipe all", async () => {
-        await api.wipeAll();
-        toast.show("All labs wiped.", "success");
+        const result = await api.wipeAll();
+        if (result.failed.length > 0) {
+          toast.show(result.detail, "danger");
+        } else {
+          toast.show("All labs wiped.", "success");
+        }
         await dropElevationIfAny(openLab, requestReclaimAuth);
         await onDone();
       });

@@ -106,7 +106,7 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/system` | Manager name/version + available managers | — | `SystemInfo` |
 | GET | `/api/settings` | Current Kathara settings | — | `SettingsView` |
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |
-| POST | `/api/system/wipe` | Undeploy every lab this backend deployed (scenarios started by other tools are left alone) | — | `Message` |
+| POST | `/api/system/wipe` | Undeploy every lab this backend deployed, best-effort (a lab whose undeploy fails is reported in `failed`, not fatal to the rest; scenarios started by other tools are left alone) | — | `WipeResult` |
 | POST | `/api/system/shutdown` | Gracefully stop this process (SIGTERM). The desktop shell's only way to stop a `sudo`-elevated backend, which it can no longer signal across the privilege boundary | — | `Message` |
 | GET | `/api/system/sysctls` | Every `net.*` sysctl key this host's kernel exposes (the only namespace Kathara accepts) | — | `string[]` |
 | GET | `/api/system/images` | Official Kathara images on Docker Hub, as suggestions (502 if Docker Hub is unreachable — callers should treat that as non-fatal) | — | `string[]` |
