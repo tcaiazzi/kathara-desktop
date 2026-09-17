@@ -307,8 +307,12 @@ async def tty_live_ws(
                 break
 
             if msg_type == "resize":
-                cols = int(msg.get("cols", 120))
-                rows = int(msg.get("rows", 35))
+                try:
+                    cols = int(msg.get("cols", 120))
+                    rows = int(msg.get("rows", 35))
+                except (TypeError, ValueError):
+                    await _ws_send_error(websocket, "`cols`/`rows` must be numeric.")
+                    continue
                 await session.aresize(cols, rows)
                 continue
 

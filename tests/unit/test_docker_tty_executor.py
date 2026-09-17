@@ -186,3 +186,22 @@ def test_a_freed_slot_can_be_reused(_tty_app, monkeypatch):
         assert ws.receive_json() == {"event": "ready"}
         ws.send_json({"type": "close"})
         assert ws.receive_json() == {"event": "closed"}
+
+
+def test_malformed_resize_reports_an_error_without_closing_the_session(_tty_app, monkeypatch):
+    """See docs/audit_2.md minor reperti: a non-numeric cols/rows used to bubble a ValueError
+    out to the route's outer `except Exception`, which tears down the whole session."""
+    monkeypatch.setattr(exec_router, "get_settings", lambda: _FakeSettings(tty_max_sessions=32))
+
+    with _tty_app.websocket_connect("/api/labs/l/machines/m/tty/ws") as ws:
+        assert ws.receive_json() == {"event": "ready"}
+
+        ws.send_json({"type": "resize", "cols": "not-a-number", "rows": 24})
+        assert ws.receive_json() == {
+            "event": "error",
+            "detail": "`cols`/`rows` must be numeric.",
+        }
+
+        # The session is still alive: a normal close still works afterwards.
+        ws.send_json({"type": "close"})
+        assert ws.receive_json() == {"event": "closed"}
