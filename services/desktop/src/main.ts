@@ -895,8 +895,15 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", (_event, argv) => {
     const url = deepLinkFromArgv(argv);
-    if (url) handleDeepLink(win, url);
-    else win?.focus();
+    if (url) {
+      // Same buffering as open-url below: if the app isn't ready yet (e.g. still on the setup
+      // page during a cold start), handleDeepLink's `send` to a listener that doesn't exist yet
+      // would otherwise be lost silently, with no error and no retry.
+      if (status.state === "ready") handleDeepLink(win, url);
+      else pendingDeepLink = url;
+    } else {
+      win?.focus();
+    }
   });
 
   // macOS delivers deep links as an event, which can fire before the app is ready.
