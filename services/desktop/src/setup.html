@@ -147,6 +147,10 @@
         backend: "Starting the local Kathara API",
       };
 
+      // Same repo pyproject.toml lists under "Bug Reports" — the canonical upstream, not the
+      // fork updateCheck.ts polls for releases (see that file's own comment on the difference).
+      const ISSUES_URL = "https://github.com/KatharaFramework/kathara-desktop/issues/new";
+
       // Phase-specific reassurance once a step has been running a while, so a slow step reads as
       // "still working" instead of "stuck". Purely client-side: computed from status.startedAt,
       // which is set once per boot attempt and doesn't change between polls.
@@ -304,10 +308,13 @@
           ${failed ? dockerCallout(status.checks) : ""}
           ${checksHtml(status.checks)}
           ${!failed && status.error ? `<p class="sub">${esc(status.error)}</p>` : ""}
+          ${!failed && status.logTail ? `<p class="sub">If this looks like a bug, <a href="#" data-url="${ISSUES_URL}">open a GitHub issue</a> ` +
+            `describing the steps that led here, with the log below pasted in — that's what actually gets it fixed.</p>` : ""}
           ${status.logTail ? `<details><summary>Technical details</summary><pre>${esc(status.logTail)}</pre></details>` : ""}
           <div class="actions">
             <button class="primary" id="retry">Check again</button>
             <button id="log">Open log</button>
+            ${status.logTail ? '<button id="copy-log">Copy log</button>' : ""}
           </div>`;
 
         document.getElementById("retry").onclick = () => {
@@ -316,6 +323,17 @@
           done.catch(() => {});
         };
         document.getElementById("log").onclick = () => window.katharaDesktop.showBackendLog();
+        const copyBtn = document.getElementById("copy-log");
+        if (copyBtn) {
+          // Copies the same tail already shown above under "Technical details" — good enough to
+          // paste straight into a GitHub issue without a second round trip to read the full file.
+          copyBtn.onclick = () => {
+            window.katharaDesktop.copyToClipboard(status.logTail).then(() => {
+              copyBtn.textContent = "Copied!";
+              setTimeout(() => { copyBtn.textContent = "Copy log"; }, 2000);
+            });
+          };
+        }
         app.querySelectorAll("a[data-url]").forEach((a) => {
           a.onclick = (e) => { e.preventDefault(); window.katharaDesktop.openExternal(a.dataset.url); };
         });

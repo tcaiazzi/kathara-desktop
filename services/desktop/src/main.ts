@@ -8,7 +8,7 @@
  *   3. start the backend on a free loopback port, serving the bundled SPA
  *   4. load http://127.0.0.1:<port>/
  */
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -588,6 +588,21 @@ function registerIpc(): void {
 
   ipcMain.handle("shell:log-renderer-error", (_e, message: string) => {
     log(`renderer error: ${String(message).slice(0, 4000)}`);
+  });
+
+  // Backs the "view/copy log" affordance on both crash screens (setup.html's backend-failed
+  // state already gets its own tail as part of `status`; this is for the renderer's own
+  // ErrorBoundary fallback, which has no other way to see what's in backend.log). Clamped since
+  // this is reachable from a page that renders lab content.
+  ipcMain.handle("shell:get-log-tail", (_e, limit?: number) =>
+    tailLog(Math.max(1, Math.min(typeof limit === "number" ? limit : 200, 2000))),
+  );
+
+  // Routed through the main process rather than the renderer's own navigator.clipboard so both
+  // crash screens (this sandboxed setup.html and the SPA's ErrorBoundary fallback) can rely on
+  // one path that works the same in a packaged build. Capped defensively, same reasoning as above.
+  ipcMain.handle("shell:copy-text", (_e, text: string) => {
+    clipboard.writeText(String(text).slice(0, 2_000_000));
   });
 
   // The renderer's only way to learn the pairing token backend.ts generated for this launch (see

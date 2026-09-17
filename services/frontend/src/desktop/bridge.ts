@@ -51,6 +51,12 @@ export interface DesktopApi {
    * backend.log "Help -> Show backend log" opens — a packaged app's renderer console isn't
    * normally visible, so this is otherwise a diagnostic dead end. Fire-and-forget. */
   logRendererError(message: string): Promise<void>;
+  /** The last `limit` lines of backend.log (default 200, capped at 2000 shell-side) — lets
+   * ErrorBoundary's crash fallback show/copy what just happened. */
+  getLogTail(limit?: number): Promise<string>;
+  /** Writes text to the OS clipboard, so a crash screen's "Copy log" button can share the log
+   * without relying on the renderer's own clipboard permissions. */
+  copyToClipboard(text: string): Promise<void>;
   openExternal(url: string): Promise<void>;
   /** The newer release GitHub has, or null if this build is already current. Cheap to call more
    * than once (see updateCheck.ts) — safe to call again after opening an editor unrelated to it. */

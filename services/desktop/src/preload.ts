@@ -35,6 +35,13 @@ const api = {
   retryStartup: () => ipcRenderer.invoke("status:retry"),
   showBackendLog: () => ipcRenderer.invoke("shell:show-log"),
   logRendererError: (message: string) => ipcRenderer.invoke("shell:log-renderer-error", message),
+  /** The last `limit` lines of backend.log (default 200, capped at 2000) — used by the
+   * ErrorBoundary crash fallback to show/copy what just happened, since it has no other view
+   * into the log the way setup.html's backend-failed screen already does via `status`. */
+  getLogTail: (limit?: number): Promise<string> => ipcRenderer.invoke("shell:get-log-tail", limit),
+  /** Writes to the OS clipboard, so a crash screen's "Copy log" button works the same in a
+   * packaged build as it does in dev, without leaning on the renderer's own clipboard API. */
+  copyToClipboard: (text: string): Promise<void> => ipcRenderer.invoke("shell:copy-text", text),
   openExternal: (url: string) => ipcRenderer.invoke("shell:open-external", url),
 
   // Resolves to the newer release GitHub has, or null if the app is already current (or the
