@@ -9,9 +9,43 @@ import { logFile } from "./paths";
 
 let stream: fs.WriteStream | null = null;
 
+/** Above this size, the log is truncated down to its last half on the next process start
+ * (see `rotateIfOversized`) — otherwise it grows forever across restarts, and every "Show
+ * backend log"/crash-screen read of it (`tailLog` below) gets slower as it does. */
+const MAX_LOG_BYTES = 2 * 1024 * 1024;
+const TRUNCATION_MARKER = "[... earlier log truncated ...]\n";
+
+/** Keeps only the newest half of `file` once it exceeds `MAX_LOG_BYTES`. Best-effort: any
+ * failure just leaves the file as-is rather than blocking startup on a log-hygiene concern. */
+function rotateIfOversized(file: string): void {
+  let size: number;
+  try {
+    size = fs.statSync(file).size;
+  } catch {
+    return; // no file yet
+  }
+  if (size <= MAX_LOG_BYTES) {
+    return;
+  }
+  try {
+    const keep = Math.floor(MAX_LOG_BYTES / 2);
+    const buf = Buffer.alloc(keep);
+    const fd = fs.openSync(file, "r");
+    try {
+      fs.readSync(fd, buf, 0, keep, size - keep);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.writeFileSync(file, TRUNCATION_MARKER + buf.toString("utf8"));
+  } catch {
+    // Leave the oversized file alone rather than risk losing it entirely.
+  }
+}
+
 function out(): fs.WriteStream {
   if (!stream) {
     fs.mkdirSync(path.dirname(logFile()), { recursive: true });
+    rotateIfOversized(logFile());
     stream = fs.createWriteStream(logFile(), { flags: "a" });
   }
   return stream;
@@ -45,11 +79,30 @@ export function logRaw(chunk: string): void {
   out().write(redacted);
 }
 
+/** How much of the file's tail `tailLog` reads before splitting into lines — bounded so a
+ * multi-hundred-KB log doesn't mean reading the whole thing synchronously on the main thread
+ * just to keep its last `limit` lines. */
+const TAIL_READ_BYTES = 64 * 1024;
+
 /** The last `limit` lines, for the error screen — a traceback is useless if it isn't shown. */
 export function tailLog(limit = 60): string {
   try {
-    const lines = fs.readFileSync(logFile(), "utf8").split("\n");
-    return lines.slice(-limit).join("\n");
+    const file = logFile();
+    const { size } = fs.statSync(file);
+    const readSize = Math.min(size, TAIL_READ_BYTES);
+    const buf = Buffer.alloc(readSize);
+    if (readSize > 0) {
+      const fd = fs.openSync(file, "r");
+      try {
+        fs.readSync(fd, buf, 0, readSize, size - readSize);
+      } finally {
+        fs.closeSync(fd);
+      }
+    }
+    const lines = buf.toString("utf8").split("\n");
+    // A partial read starts mid-line: drop that leading fragment unless it's the whole file.
+    const usable = readSize < size ? lines.slice(1) : lines;
+    return usable.slice(-limit).join("\n");
   } catch {
     return "";
   }
