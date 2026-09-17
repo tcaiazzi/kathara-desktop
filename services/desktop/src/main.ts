@@ -528,7 +528,7 @@ function registerIpc(): void {
         // second call the renderer makes once it has already resolved this one way or another (see
         // bridge.ts's dropElevation and ReclaimLabsDirContext.tsx).
         const labsPath = labsDir();
-        if (!skipReclaimCheck && hasForeignOwnedFiles(labsPath)) {
+        if (!skipReclaimCheck && (await hasForeignOwnedFiles(labsPath))) {
           if (process.platform === "linux") {
             // No native dialog can collect a password on Linux (see
             // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here

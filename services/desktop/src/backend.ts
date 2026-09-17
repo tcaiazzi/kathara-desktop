@@ -11,6 +11,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import net from "node:net";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import sudoPrompt from "@vscode/sudo-prompt";
 import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir } from "./paths";
@@ -178,14 +179,14 @@ export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string
  * mode. Windows always answers "no": there is no ownership concept to fix up there, where an
  * elevated process runs as the same account, just with a different token.
  */
-export function hasForeignOwnedFiles(dirPath: string): boolean {
+export async function hasForeignOwnedFiles(dirPath: string): Promise<boolean> {
   if (process.platform === "win32") return false;
   const uid = process.getuid?.();
   if (uid === undefined) return false;
 
   let entries: fs.Dirent[];
   try {
-    entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    entries = await fsp.readdir(dirPath, { withFileTypes: true });
   } catch {
     return true;
   }
@@ -193,12 +194,12 @@ export function hasForeignOwnedFiles(dirPath: string): boolean {
     const full = path.join(dirPath, entry.name);
     let stat: fs.Stats;
     try {
-      stat = fs.lstatSync(full);
+      stat = await fsp.lstat(full);
     } catch {
       return true;
     }
     if (stat.uid !== uid) return true;
-    if (entry.isDirectory() && hasForeignOwnedFiles(full)) return true;
+    if (entry.isDirectory() && (await hasForeignOwnedFiles(full))) return true;
   }
   return false;
 }
