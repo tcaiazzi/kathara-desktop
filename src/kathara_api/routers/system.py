@@ -3,7 +3,7 @@
 import os
 import signal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 
 from ..dependencies import get_service
 from ..schemas.common import Message, WipeResult
@@ -28,15 +28,19 @@ def system_info(service: KatharaService = Depends(get_service)) -> SystemInfo:
 
 
 @router.post("/system/shutdown", response_model=Message)
-def shutdown() -> Message:
+def shutdown(background_tasks: BackgroundTasks) -> Message:
     """Gracefully stop this process (SIGTERM, same as an interactive Ctrl-C).
 
     The desktop shell's only way to stop a `sudo`-elevated backend: once this process is running
     as root, the shell (running unprivileged) can no longer deliver it a process signal directly
     (`kill()` across that privilege boundary fails with EPERM) — but it can still reach this
     still-listening localhost port over plain HTTP regardless of this process's UID.
+
+    The signal is sent from a `BackgroundTask`, i.e. after the response body has been handed to
+    ASGI for writing, not before: sending it inline here would race the response against the
+    process's own shutdown.
     """
-    os.kill(os.getpid(), signal.SIGTERM)
+    background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
     return Message(detail="Shutting down.")
 
 
