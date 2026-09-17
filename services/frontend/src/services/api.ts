@@ -37,7 +37,11 @@ import { desktop } from "../desktop/bridge";
 let cachedAuthToken: string | null = null;
 const authTokenReady: Promise<void> = (async () => {
   const shell = desktop();
-  cachedAuthToken = shell ? await shell.getAuthToken() : null;
+  try {
+    cachedAuthToken = shell ? await shell.getAuthToken() : null;
+  } catch {
+    cachedAuthToken = null; // fail-open: requests proceed without an Authorization header
+  }
 })();
 
 function authHeaders(): Record<string, string> {

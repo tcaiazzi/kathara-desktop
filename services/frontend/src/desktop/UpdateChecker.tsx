@@ -24,7 +24,7 @@ export function UpdateChecker() {
         label: "Download",
         run: () => void shell.openExternal(info.url),
       });
-    });
+    }).catch(() => {});
   }, [toast]);
 
   return null;

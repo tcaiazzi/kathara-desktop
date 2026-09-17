@@ -59,7 +59,14 @@ export function TitleBar() {
   const focusBeforeMenu = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    void shell?.getAppInfo().then((info) => setVersion(info.version));
+    if (!shell) return;
+    let cancelled = false;
+    void shell.getAppInfo().then((info) => {
+      if (!cancelled) setVersion(info.version);
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [shell]);
 
   // The maximize/restore button's icon has to track every way the window can change state, not
@@ -70,12 +77,21 @@ export function TitleBar() {
   // the initial values and then listen.
   useEffect(() => {
     if (!shell) return;
-    void shell.isWindowMaximized().then(setMaximized);
-    void shell.isWindowFullScreen().then(setFullscreen);
-    return shell.onWindowStateChange((state) => {
+    let cancelled = false;
+    void shell.isWindowMaximized().then((v) => {
+      if (!cancelled) setMaximized(v);
+    }).catch(() => {});
+    void shell.isWindowFullScreen().then((v) => {
+      if (!cancelled) setFullscreen(v);
+    }).catch(() => {});
+    const off = shell.onWindowStateChange((state) => {
       setMaximized(state.maximized);
       setFullscreen(state.fullscreen);
     });
+    return () => {
+      cancelled = true;
+      off();
+    };
   }, [shell]);
 
   // Click-outside and Escape close the menu, as a native menu would.
@@ -116,27 +132,27 @@ export function TitleBar() {
         "separator",
         { label: "Save", accel: `${mod}+S`, run: command("lab:save") },
         "separator",
-        { label: "Open Labs Folder", run: () => void shell?.openLabsFolder() },
+        { label: "Open Labs Folder", run: () => void shell?.openLabsFolder().catch(() => {}) },
         "separator",
-        { label: "Quit", accel: `${mod}+Q`, run: () => void shell?.quit() },
+        { label: "Quit", accel: `${mod}+Q`, run: () => void shell?.quit().catch(() => {}) },
       ],
     },
     {
       title: "View",
       items: [
-        { label: "Actual Size", accel: `${mod}+0`, run: () => void shell?.zoom("reset") },
-        { label: "Zoom In", accel: `${mod}++`, run: () => void shell?.zoom("in") },
-        { label: "Zoom Out", accel: `${mod}+-`, run: () => void shell?.zoom("out") },
+        { label: "Actual Size", accel: `${mod}+0`, run: () => void shell?.zoom("reset").catch(() => {}) },
+        { label: "Zoom In", accel: `${mod}++`, run: () => void shell?.zoom("in").catch(() => {}) },
+        { label: "Zoom Out", accel: `${mod}+-`, run: () => void shell?.zoom("out").catch(() => {}) },
         "separator",
-        { label: "Toggle Full Screen", run: () => void shell?.toggleFullScreen() },
-        { label: "Toggle Developer Tools", run: () => void shell?.toggleDevTools() },
+        { label: "Toggle Full Screen", run: () => void shell?.toggleFullScreen().catch(() => {}) },
+        { label: "Toggle Developer Tools", run: () => void shell?.toggleDevTools().catch(() => {}) },
       ],
     },
     {
       title: "Help",
       items: [
-        { label: "Kathará Website", run: () => void shell?.openExternal(DOCS_URL) },
-        { label: "Show Backend Log", run: () => void shell?.showBackendLog() },
+        { label: "Kathará Website", run: () => void shell?.openExternal(DOCS_URL).catch(() => {}) },
+        { label: "Show Backend Log", run: () => void shell?.showBackendLog().catch(() => {}) },
         { label: "Show Onboarding Tour", run: command("help:tour") },
         "separator",
         { label: version ? `Version ${version}` : "Version…", disabled: true },

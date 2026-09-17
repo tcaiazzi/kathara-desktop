@@ -49,10 +49,15 @@ function DesktopLabsDirSettings() {
   useEffect(() => {
     const shell = desktop();
     if (!shell) return;
+    let cancelled = false;
     void Promise.all([shell.getLabsDir(), shell.getDefaultLabsDir()]).then(([dir, def]) => {
+      if (cancelled) return;
       setLabsDirValue(dir);
       setDefaultDir(def);
-    });
+    }).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleChange() {

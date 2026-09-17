@@ -942,7 +942,7 @@ export function WorkspacePage() {
     );
     if (!detail.deployed) {
       toast.show("Administrator privileges granted — deploying now.", "success");
-      void handleDeployToggle({ skipImageCheck: true });
+      void handleDeployToggle({ skipImageCheck: true }).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, searchParams, setSearchParams]);
@@ -981,10 +981,10 @@ export function WorkspacePage() {
   useDesktopCommand("lab:import", () => setShowUpload(true));
   useDesktopCommand("lab:browse", () => setShowGallery(true));
   useDesktopCommand("lab:deploy", () => {
-    if (detail && !detail.deployed) void handleDeployToggle();
+    if (detail && !detail.deployed) void handleDeployToggle().catch(() => {});
   });
   useDesktopCommand("lab:undeploy", () => {
-    if (detail?.deployed) void handleDeployToggle();
+    if (detail?.deployed) void handleDeployToggle().catch(() => {});
   });
   useDesktopCommand("lab:reload", async () => {
     await load();
@@ -1439,7 +1439,7 @@ export function WorkspacePage() {
                       <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus Terminals</Dropdown.Item>
                       <Dropdown.Divider />
                       <Dropdown.Header>Lab</Dropdown.Header>
-                      <Dropdown.Item disabled={busy} onClick={() => void handleDeployToggle()}>
+                      <Dropdown.Item disabled={busy} onClick={() => void handleDeployToggle().catch(() => {})}>
                         {deployButtonLabel(deployAction, detail.deployed)}
                       </Dropdown.Item>
                       <Dropdown.Item disabled={busy} onClick={() => void handleDownload()}>
@@ -1507,7 +1507,7 @@ export function WorkspacePage() {
                         size="sm"
                         variant={detail.deployed ? "warning" : "primary"}
                         disabled={busy}
-                        onClick={() => void handleDeployToggle()}
+                        onClick={() => void handleDeployToggle().catch(() => {})}
                         className="d-flex align-items-center gap-1"
                       >
                         {deployAction ? (

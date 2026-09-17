@@ -83,7 +83,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if (!cancelled && Array.isArray(loaded) && loaded.every(isHistoryItem)) {
         setHistory(loaded);
       }
-    });
+    }).catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -96,7 +96,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const shell = desktop();
     if (!shell) return;
-    void shell.saveNotificationHistory(history.map(({ action: _action, ...rest }) => rest));
+    void shell.saveNotificationHistory(history.map(({ action: _action, ...rest }) => rest)).catch(() => {});
   }, [history]);
 
   const remove = useCallback((id: number) => {

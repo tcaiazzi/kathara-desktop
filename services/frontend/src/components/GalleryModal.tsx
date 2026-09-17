@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
@@ -52,34 +52,43 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  const loadIdRef = useRef(0);
+
+  // A request ID rather than a per-call `cancelled` flag: the Refresh/Retry buttons below call
+  // this directly too, outside the mount effect, so a single shared guard is what lets the
+  // effect's cleanup invalidate a fetch a button started, not just the one it started itself.
   function load(refresh: boolean) {
-    let cancelled = false;
+    const id = ++loadIdRef.current;
     (refresh ? setRefreshing : setLoading)(true);
     setError(null);
     api
       .listGalleryLabs(refresh)
       .then((result) => {
-        if (cancelled) return;
+        if (loadIdRef.current !== id) return;
         setCatalog(result.labs);
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (loadIdRef.current !== id) return;
         setError(e instanceof ApiError ? e.message : "Could not reach the lab gallery.");
       })
       .finally(() => {
-        if (!cancelled) {
+        if (loadIdRef.current === id) {
           setLoading(false);
           setRefreshing(false);
         }
       });
-    return () => {
-      cancelled = true;
-    };
   }
 
   useEffect(() => {
     if (!show) return;
-    return load(false);
+    load(false);
+    // loadIdRef is a request counter, not a DOM node ref — incrementing it here on
+    // purpose invalidates whatever load() (this effect's or a Refresh/Retry click's) is
+    // still in flight when the modal closes or unmounts.
+    return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      loadIdRef.current++;
+    };
   }, [show]);
 
   const groups = useMemo(() => {
