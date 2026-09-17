@@ -343,5 +343,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _handle_unexpected(_: Request, exc: Exception) -> JSONResponse:
+        # The full exception (str(exc), potentially carrying absolute host paths or other
+        # internals) goes to the log only. The client gets a generic message — every other
+        # handler in this file returns a user-facing detail on purpose, this one is the
+        # catch-all for bugs, not expected input errors.
         logger.exception("Unhandled error while processing request")
-        return _error_response(exc, status.HTTP_500_INTERNAL_SERVER_ERROR)
+        body = ErrorResponse(detail="Internal server error.", error_type=exc.__class__.__name__)
+        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=body.model_dump())

@@ -68,6 +68,24 @@ def test_unknown_error_maps_to_500():
     assert resp.json()["error_type"] == "RuntimeError"
 
 
+def test_unknown_error_body_does_not_leak_the_exception_message():
+    # See docs/audit_2.md minor reperti: str(exc) can carry absolute host paths or other
+    # internals; the full message is logged server-side (see the caplog test below) but must
+    # never reach the client body for an unmapped exception.
+    client = _client_raising(RuntimeError("/home/someuser/secret-lab-name: no such file"))
+    resp = client.get("/boom")
+    assert resp.status_code == 500
+    assert "secret-lab-name" not in resp.text
+    assert resp.json()["detail"] == "Internal server error."
+
+
+def test_unknown_error_is_still_logged_with_its_original_message(caplog):
+    client = _client_raising(RuntimeError("/home/someuser/secret-lab-name: no such file"))
+    with caplog.at_level("ERROR"):
+        client.get("/boom")
+    assert "secret-lab-name" in caplog.text
+
+
 def test_builtin_connection_error_maps_to_503():
     # Kathara's image check raises the builtin ConnectionError when the registry is unreachable.
     client = _client_raising(ConnectionError("registry unreachable"))
