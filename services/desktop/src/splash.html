@@ -14,8 +14,31 @@
       body {
         display: flex; align-items: center; justify-content: center;
       }
+      .kt-content {
+        display: flex; flex-direction: column; align-items: center; gap: 1.75rem;
+        animation: kt-fade-in .5s ease;
+      }
+      @keyframes kt-fade-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
       img {
         max-width: 60%; max-height: 60%;
+      }
+      .spinner {
+        display: inline-block; width: 2rem; height: 2rem; border-radius: 50%;
+        border: 3px solid rgba(13, 110, 253, .15); border-top-color: #0d6efd;
+        animation: spin .9s cubic-bezier(.55, 0, .45, 1) infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .loading-text {
+        margin: 0; min-height: 1.3em; min-width: 15rem; text-align: center;
+        color: #6c757d; font: italic 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+        letter-spacing: .01em;
+        opacity: 1; transition: opacity .25s ease;
+      }
+      .loading-text.fading {
+        opacity: 0;
       }
 
       /* Same reasoning as setup.html's captions bar: no native frame, so Windows/Linux otherwise
@@ -37,8 +60,41 @@
     </style>
   </head>
   <body>
-    <img src="splash.png" alt="" />
+    <div class="kt-content">
+      <img src="splash.png" alt="" />
+      <span class="spinner" aria-label="Loading"></span>
+      <p class="loading-text" id="loading-text"></p>
+    </div>
     <script>
+      // Purely decorative — no relation to the real boot phases shown later on setup.html if
+      // startup takes the slow path. Just something fun to look at while the window is blank.
+      const LOADING_MESSAGES = [
+        "Waking up the routers…",
+        "Untangling the cables…",
+        "Counting the packets…",
+        "Bribing the switches…",
+        "Asking Docker nicely…",
+        "Booting virtual routers…",
+        "Warming up the terminals…",
+        "Herding the interfaces…",
+      ];
+      const loadingText = document.getElementById("loading-text");
+      let msgIndex = Math.floor(Math.random() * LOADING_MESSAGES.length);
+      loadingText.textContent = LOADING_MESSAGES[msgIndex];
+
+      // Crossfades rather than swapping instantly — the fade duration below must match the
+      // ".loading-text" opacity transition in the stylesheet, so the text swap lands exactly
+      // when it's fully invisible.
+      function showNextMessage() {
+        msgIndex = (msgIndex + 1) % LOADING_MESSAGES.length;
+        loadingText.classList.add("fading");
+        setTimeout(() => {
+          loadingText.textContent = LOADING_MESSAGES[msgIndex];
+          loadingText.classList.remove("fading");
+        }, 250);
+      }
+      setInterval(showNextMessage, 2200);
+
       if (window.katharaDesktop.platform !== "darwin") {
         const captions = document.createElement("div");
         captions.className = "kt-captions";
