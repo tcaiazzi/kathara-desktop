@@ -318,21 +318,26 @@ class KatharaService:
         ``Setting.load_from_dict`` — which has no idea these attributes exist. This mutation is
         in-process only: it does not persist past a restart (see ``SettingsView``'s docstring).
         """
-        kathara_settings = {k: v for k, v in settings.items() if k not in self._API_SETTINGS_KEYS}
-        if self._instance is not None and "manager_type" in kathara_settings:
-            current = Setting.get_instance().manager_type
-            if kathara_settings["manager_type"] != current:
-                raise SettingsLockedError(
-                    "`manager_type` cannot be changed after the Kathara manager has been "
-                    "initialized for this backend session — restart the backend to switch "
-                    "managers. Other settings can still be updated freely."
-                )
-        if kathara_settings:
-            Setting.get_instance().load_from_dict(kathara_settings)
-        api_settings = get_settings()
-        for key in self._API_SETTINGS_KEYS:
-            if key in settings:
-                setattr(api_settings, key, settings[key])
+        # Unlike every other mutator here, this doesn't touch a Lab — it touches the process-wide
+        # Setting singleton and the ApiSettings singleton, both otherwise unguarded. Two concurrent
+        # `PUT /settings` (or one racing a read of Setting.get_instance() elsewhere) could
+        # interleave their writes without this.
+        with self._mutate_lock:
+            kathara_settings = {k: v for k, v in settings.items() if k not in self._API_SETTINGS_KEYS}
+            if self._instance is not None and "manager_type" in kathara_settings:
+                current = Setting.get_instance().manager_type
+                if kathara_settings["manager_type"] != current:
+                    raise SettingsLockedError(
+                        "`manager_type` cannot be changed after the Kathara manager has been "
+                        "initialized for this backend session — restart the backend to switch "
+                        "managers. Other settings can still be updated freely."
+                    )
+            if kathara_settings:
+                Setting.get_instance().load_from_dict(kathara_settings)
+            api_settings = get_settings()
+            for key in self._API_SETTINGS_KEYS:
+                if key in settings:
+                    setattr(api_settings, key, settings[key])
 
     def get_settings_view(self) -> dict[str, Any]:
         setting = Setting.get_instance()
@@ -372,12 +377,16 @@ class KatharaService:
         """
         with self._images_cache_lock:
             if self._images_cache is not None and time.monotonic() - self._images_cache_at < self._IMAGES_CACHE_TTL:
-                return self._images_cache
+                # A copy, not the cached list itself: a caller that mutated it in place would
+                # corrupt the cache for everyone else. Today's only caller (routers/system.py)
+                # is serialized through Pydantic before it ever reaches this list, so this only
+                # protects a future direct caller.
+                return list(self._images_cache)
         images = DockerHubApi.get_tagged_images()
         with self._images_cache_lock:
             self._images_cache = images
             self._images_cache_at = time.monotonic()
-        return images
+        return list(images)
 
     # -- Docker images (pre-deploy check + explicit download) -----------------
 

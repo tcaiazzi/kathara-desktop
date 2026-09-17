@@ -1,5 +1,7 @@
 """Unit tests for KatharaService.update_settings's manager_type-scoped lock."""
 
+import threading
+
 import pytest
 from Kathara.setting.Setting import Setting
 
@@ -70,3 +72,43 @@ def test_manager_type_change_allowed_before_facade_init():
     service.update_settings({"manager_type": other})
 
     assert Setting.get_instance().manager_type == other
+
+
+def test_update_settings_waits_for_mutate_lock_held_elsewhere():
+    """See docs/audit_2.md minor reperti: update_settings used to mutate the process-wide
+    Setting/ApiSettings singletons without acquiring `_mutate_lock` at all, unlike every other
+    mutator on this service."""
+    service = KatharaService()
+    service._instance = object()
+
+    holder_entered = threading.Event()
+    release = threading.Event()
+
+    def hold_lock():
+        with service._mutate_lock:
+            holder_entered.set()
+            release.wait(timeout=2)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert holder_entered.wait(timeout=2)
+
+    done = threading.Event()
+
+    def run_update():
+        service.update_settings({"device_shell": "/bin/sh"})
+        done.set()
+
+    updater = threading.Thread(target=run_update)
+    updater.start()
+
+    assert not done.wait(timeout=0.3), (
+        "update_settings returned while another thread held _mutate_lock — it is no longer "
+        "serialized against other mutators"
+    )
+
+    release.set()
+    holder.join(timeout=2)
+    updater.join(timeout=2)
+    assert done.is_set()
+    assert Setting.get_instance().device_shell == "/bin/sh"
