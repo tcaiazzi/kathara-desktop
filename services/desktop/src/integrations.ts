@@ -192,12 +192,24 @@ async function spawnTerminal(labDir: string, command?: string): Promise<void> {
       spawnDetached("open", ["-a", "Terminal", labDir]);
       return;
     }
-    // Terminal.app takes a file to run, not a command, so hand it a throwaway script.
-    const script = path.join(os.tmpdir(), `kathara-${Date.now()}.command`);
-    await fsp.writeFile(script, `#!/bin/sh\ncd ${JSON.stringify(labDir)}\n${command}\n`, {
-      mode: 0o755,
-    });
+    // Terminal.app takes a file to run, not a command, so hand it a throwaway script — in its
+    // own unique directory (mkdtemp, not a predictable `Date.now()` name directly under
+    // os.tmpdir()) and opened with `wx` so a pre-existing file/symlink at that path makes this
+    // fail loudly instead of writing through it.
+    const scriptDir = await fsp.mkdtemp(path.join(os.tmpdir(), "kathara-terminal-"));
+    const script = path.join(scriptDir, "run.command");
+    const handle = await fsp.open(script, "wx", 0o755);
+    try {
+      await handle.writeFile(`#!/bin/sh\ncd ${JSON.stringify(labDir)}\n${command}\n`);
+    } finally {
+      await handle.close();
+    }
     spawnDetached("open", ["-a", "Terminal", script]);
+    // Terminal.app reads the script right after opening; this process has no way to know when
+    // that's done, so best-effort cleanup happens on a generous delay rather than immediately.
+    setTimeout(() => {
+      fsp.rm(scriptDir, { recursive: true, force: true }).catch(() => {});
+    }, 30_000);
     return;
   }
 
