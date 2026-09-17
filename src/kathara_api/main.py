@@ -149,7 +149,12 @@ def create_app() -> FastAPI:
     # token or not. exec_command/exec_command_stream instead carry the dependency individually
     # (see routers/exec.py), and /tty/ws checks the same token by hand.
     app.include_router(exec_router.router, prefix=API_PREFIX)
-    app.include_router(stats.router, prefix=API_PREFIX, dependencies=auth)
+    # Not `dependencies=auth` here either: `/stats/stream` is the one route in this router that
+    # needs `?token=` accepted (native EventSource, see require_auth_token_or_query), while
+    # `/stats` and `/machines/{name}/stats` should only ever accept the header. Each route in
+    # routers/stats.py carries its own matching dependency instead of one blanket router-level
+    # choice.
+    app.include_router(stats.router, prefix=API_PREFIX)
 
     # Strictly last: mount_spa adds a catch-all route, and Starlette matches routes in
     # registration order, so anything registered after it would be unreachable.

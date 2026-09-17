@@ -18,34 +18,57 @@ def get_service() -> KatharaService:
     return _service
 
 
-def _request_token(request: Request) -> str | None:
+def _request_token(request: Request, *, allow_query: bool) -> str | None:
     """Pull a caller-supplied token from wherever this request could have put one.
 
     The `Authorization` header covers every plain fetch (see services/frontend/src/services/
-    api.ts), but a browser's native `WebSocket`/`EventSource` can't set custom headers on their
-    handshake — those instead pass ``?token=`` (ttyWsUrl/statsStreamUrl), so both are accepted
-    here rather than forcing every caller through one shape.
+    api.ts), including the POST-based ``/exec/stream``. ``allow_query=True`` additionally
+    accepts ``?token=``, needed only where a browser's native ``EventSource`` can't set custom
+    headers on its handshake — ``statsStreamUrl`` is the sole caller of that shape today
+    (``/tty/ws`` is a native ``WebSocket`` with the same constraint, but it checks its token by
+    hand rather than through this dependency — see routers/exec.py). Every other route only
+    ever needs the header, so accepting ``?token=`` there too would just widen the token's
+    exposure (query strings end up in proxy/access logs, browser history, `Referer` headers)
+    for no functional reason.
     """
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
         return auth_header[len("bearer ") :]
-    return request.query_params.get("token")
+    if allow_query:
+        return request.query_params.get("token")
+    return None
+
+
+def _check_token(request: Request, *, allow_query: bool) -> None:
+    expected = get_settings().auth_token
+    if not expected:
+        return
+    supplied = _request_token(request, allow_query=allow_query)
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise UnauthorizedError("Invalid or missing auth token.")
 
 
 def require_auth_token(request: Request) -> None:
     """Reject the request unless it carries the pairing token configured via
-    ``KATHARA_API_AUTH_TOKEN`` (see config.ApiSettings.auth_token).
+    ``KATHARA_API_AUTH_TOKEN`` (see config.ApiSettings.auth_token), via the ``Authorization``
+    header only.
 
     A no-op when no token is configured, which is the default for every deployment except the
     desktop app (services/desktop/src/backend.ts generates one per launch) — Docker Compose and
     plain dev runs keep today's no-auth behavior untouched.
     """
-    expected = get_settings().auth_token
-    if not expected:
-        return
-    supplied = _request_token(request)
-    if not supplied or not hmac.compare_digest(supplied, expected):
-        raise UnauthorizedError("Invalid or missing auth token.")
+    _check_token(request, allow_query=False)
+
+
+def require_auth_token_or_query(request: Request) -> None:
+    """Same as :func:`require_auth_token`, but also accepts ``?token=``.
+
+    Reserved for the one plain HTTP route a browser's native ``EventSource`` can't attach an
+    ``Authorization`` header to (``/stats/stream``) — every other route should keep using
+    :func:`require_auth_token` instead, so the token isn't accepted from a URL (and therefore
+    from proxy logs, browser history, `Referer`) where a header would do.
+    """
+    _check_token(request, allow_query=True)
 
 
 def is_origin_allowed(origin: str | None, host_header: str | None) -> bool:
