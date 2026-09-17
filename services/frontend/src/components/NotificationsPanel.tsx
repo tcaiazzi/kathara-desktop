@@ -1,6 +1,6 @@
 import { Bell } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNotifications } from "../context/ToastContext";
+import { openLink, useNotifications } from "../context/ToastContext";
 import "./NotificationsPanel.css";
 
 // "just now" / "Xm ago" / "Xh ago" for the last 24h, else a locale date/time string.
@@ -83,7 +83,7 @@ export function NotificationsPanel() {
                       {formatRelativeTime(h.timestamp)}
                     </div>
                     {h.action && (
-                      <button type="button" className="kt-notif-action" onClick={h.action.run}>
+                      <button type="button" className="kt-notif-action" onClick={() => openLink(h.action!.url)}>
                         {h.action.label}
                       </button>
                     )}

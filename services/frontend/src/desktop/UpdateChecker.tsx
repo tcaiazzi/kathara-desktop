@@ -22,7 +22,7 @@ export function UpdateChecker() {
       if (!info) return;
       toast.show(`Kathara Desktop ${info.version} is available.`, "info", "Update available", {
         label: "Download",
-        run: () => void shell.openExternal(info.url),
+        url: info.url,
       });
     }).catch(() => {});
   }, [toast]);

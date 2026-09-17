@@ -64,7 +64,7 @@ export function DockerStatusProvider({ children }: { children: ReactNode }) {
               next.remedy ?? next.detail,
               "danger",
               "Docker not running",
-              docsUrl ? { label: "Learn more", run: () => void shell.openExternal(docsUrl) } : undefined,
+              docsUrl ? { label: "Learn more", url: docsUrl } : undefined,
             );
           }
         }

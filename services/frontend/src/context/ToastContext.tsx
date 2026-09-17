@@ -6,12 +6,12 @@ import { ApiError } from "../services/api";
 type ToastVariant = "success" | "danger" | "info";
 
 /** An optional action button a toast/notification can offer — e.g. "Download" on an
- *  update-available notice (see App.tsx's update check). Deliberately just a label + callback,
- *  not a link href: opening it is the caller's job (usually shell.openExternal via the desktop
- *  bridge), so this works the same in the browser build too. */
+ *  update-available notice (see UpdateChecker.tsx). Deliberately a plain url string rather than a
+ *  callback: it must survive the notification history's IPC round-trip (saveNotificationHistory/
+ *  loadNotificationHistory) across a shell-triggered reload, which a closure can't. */
 export interface ToastAction {
   label: string;
-  run: () => void;
+  url: string;
 }
 
 interface ToastItem {
@@ -54,6 +54,17 @@ const NotificationsCtx = createContext<NotificationsApi | null>(null);
 
 let nextId = 1;
 
+// Opens a ToastAction's url via the desktop shell when available, else a plain new tab — keeps
+// notification links working the same in both the Electron and browser builds.
+export function openLink(url: string): void {
+  const shell = desktop();
+  if (shell) {
+    void shell.openExternal(url);
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 // Cap so a long-running session doesn't grow the history array unbounded.
 const HISTORY_LIMIT = 200;
 
@@ -75,13 +86,20 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // (elevation, retry, labs-dir change, a backend crash restart) — see main.ts's
   // carriedNotifications. A no-op in the browser build (desktop() is null there) or on a genuine
   // fresh app launch (nothing carried yet).
+  //
+  // Merged onto `prev` rather than replacing it: this IPC round-trip races against any `show()`
+  // call fired from another component's own mount-time effect (e.g. UpdateChecker's update
+  // check, whose result can already be cached in the main process and so resolve before this
+  // does) — overwriting outright would silently drop whatever that earlier call already added.
+  // `loaded` is always the older, carried-over half, so it goes after `prev` in the newest-first
+  // list.
   useEffect(() => {
     const shell = desktop();
     if (!shell) return;
     let cancelled = false;
     void shell.loadNotificationHistory().then((loaded) => {
       if (!cancelled && Array.isArray(loaded) && loaded.every(isHistoryItem)) {
-        setHistory(loaded);
+        setHistory((prev) => [...prev, ...loaded].slice(0, HISTORY_LIMIT));
       }
     }).catch(() => {});
     return () => {
@@ -91,12 +109,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   // Keeps the shell's copy current so it's ready whenever it next reloads this page — cheaper to
   // report on every change than to try to predict the one moment a reload is about to happen.
-  // `action` is dropped: it carries a `run` callback, which isn't IPC-serializable, and wouldn't
-  // mean anything after a reload anyway (the closure that defined it is gone).
+  // `action` is a plain {label, url} object, so it round-trips through this IPC call intact.
   useEffect(() => {
     const shell = desktop();
     if (!shell) return;
-    void shell.saveNotificationHistory(history.map(({ action: _action, ...rest }) => rest)).catch(() => {});
+    void shell.saveNotificationHistory(history).catch(() => {});
   }, [history]);
 
   const remove = useCallback((id: number) => {
@@ -149,7 +166,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 {t.message}
                 {t.action && (
                   <div className="mt-2">
-                    <Button size="sm" variant="light" onClick={t.action.run}>
+                    <Button size="sm" variant="light" onClick={() => openLink(t.action!.url)}>
                       {t.action.label}
                     </Button>
                   </div>
