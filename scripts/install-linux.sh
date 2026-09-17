@@ -22,6 +22,22 @@ say() { printf '\n== %s ==\n' "$1"; }
 warn() { printf '  ! %s\n' "$1"; }
 pass() { printf '  \xe2\x9c\x93 %s\n' "$1"; }
 
+# Asks before either privileged operation below (piping get.docker.com into sudo sh, or adding
+# the user to the docker group — root-equivalent, given access to the Docker socket). Not run
+# non-interactively today (see README.md), but if stdin isn't a terminal there is no one to ask,
+# so proceed rather than hang forever on a `read` that will never get input.
+confirm() {
+  if [ ! -t 0 ]; then
+    return 0
+  fi
+  printf '  ? %s [y/N] ' "$1"
+  read -r reply
+  case "$reply" in
+    [yY] | [yY][eE][sS]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Package names differ per distro, so callers pass a *role* rather than a package list:
 # `python3-venv`/`python3-pip` are Debian-only spellings (Fedora ships venv inside `python3`,
 # Arch calls the interpreter `python`), and passing them to dnf/pacman just fails.
@@ -55,23 +71,37 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
 elif command -v docker >/dev/null 2>&1; then
   warn "Docker is installed but its daemon isn't reachable."
   if ! groups "$USER" | grep -qw docker; then
-    warn "Your user isn't in the 'docker' group yet — adding it."
-    $SUDO usermod -aG docker "$USER"
-    warn "Log out and back in (or run 'newgrp docker') for that to take effect."
+    warn "Your user isn't in the 'docker' group yet."
+    if confirm "Add $USER to the 'docker' group? (grants root-equivalent access to the Docker socket)"; then
+      $SUDO usermod -aG docker "$USER"
+      warn "Log out and back in (or run 'newgrp docker') for that to take effect."
+    else
+      warn "Skipped adding $USER to the 'docker' group."
+      ok=0
+    fi
   else
     warn "Start the Docker service, e.g.: sudo systemctl start docker"
   fi
   ok=0
 else
-  # Docker's own official convenience script — see https://get.docker.com
-  curl -fsSL https://get.docker.com | $SUDO sh
-  $SUDO usermod -aG docker "$USER"
-  if $SUDO docker info >/dev/null 2>&1; then
-    pass "Docker installed"
-    warn "Log out and back in (or run 'newgrp docker') so your user can run docker without sudo."
-  else
-    warn "Docker installed but the daemon isn't up yet — check 'sudo systemctl status docker'."
+  if ! confirm "Install Docker by piping https://get.docker.com into '$SUDO sh'?"; then
+    warn "Skipped installing Docker — install it yourself, then re-run this script."
     ok=0
+  else
+    # Docker's own official convenience script — see https://get.docker.com
+    curl -fsSL https://get.docker.com | $SUDO sh
+    if confirm "Add $USER to the 'docker' group? (grants root-equivalent access to the Docker socket)"; then
+      $SUDO usermod -aG docker "$USER"
+    else
+      warn "Skipped adding $USER to the 'docker' group — you will need sudo to run docker."
+    fi
+    if $SUDO docker info >/dev/null 2>&1; then
+      pass "Docker installed"
+      warn "Log out and back in (or run 'newgrp docker') so your user can run docker without sudo."
+    else
+      warn "Docker installed but the daemon isn't up yet — check 'sudo systemctl status docker'."
+      ok=0
+    fi
   fi
 fi
 
