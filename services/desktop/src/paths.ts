@@ -225,6 +225,13 @@ export function pycacheDir(): string {
   return path.join(app.getPath("userData"), "pycache");
 }
 
+/** Where Crashpad writes minidumps for a native crash (renderer OOM, V8 crash, GPU process gone —
+ * see main.ts's crashReporter.start()). Nothing consumes these automatically today; it's pure
+ * diagnostic infrastructure for whoever investigates a crash report by hand. */
+export function crashDumpsDir(): string {
+  return path.join(app.getPath("userData"), "crashDumps");
+}
+
 /**
  * The bundled Python environment as a *root-readable* pair of paths, for the elevated backend
  * (backend.ts's startBackendElevatedLinux/Native). Returns null when the ordinary paths already

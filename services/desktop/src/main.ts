@@ -8,7 +8,7 @@
  *   3. start the backend on a free loopback port, serving the bundled SPA
  *   4. load http://127.0.0.1:<port>/
  */
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -44,7 +44,7 @@ import {
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
+import { crashDumpsDir, defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
 import { isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
 import {
@@ -85,6 +85,14 @@ app.commandLine.appendSwitch("disable-features", "OverscrollHistoryNavigation");
 // not moved — same "leave old data behind, don't migrate silently" choice already made for
 // the labs-directory setting itself.
 app.setPath("userData", path.join(app.getPath("appData"), "kathara-desktop"));
+
+// Local-only crash reporting: no uploadToServer, no submitURL, nothing consumes these dumps
+// automatically today. Pure diagnostic infrastructure for a native crash (renderer OOM, V8 crash)
+// that would otherwise leave nothing but the log line the handlers below already write. Must run
+// before app.whenReady(), same as userData above — a crash can happen before any window exists.
+app.setPath("crashDumps", crashDumpsDir());
+crashReporter.start({ uploadToServer: false, compress: true });
+log(`crash dumps (if any) go to ${crashDumpsDir()}`);
 
 // Bounds every ad-hoc query this file makes against an already-healthy backend (list labs, look
 // up a lab's directory) — deliberately more generous than backend.ts's SHUTDOWN_HTTP_TIMEOUT_MS,
@@ -288,6 +296,15 @@ function attachWindowLifecycle(target: BrowserWindow): void {
   // gets reset — no bookkeeping needed at those call sites.
   target.webContents.on("did-navigate", (_e, url) => {
     if (!url.startsWith("file://")) onSetupPage = false;
+  });
+  // Diagnostic only — deliberately does not touch `status`/showSetup. runStartup's own try/catch
+  // (around its `win.loadURL(handle.baseUrl)`) already turns a load failure *during boot* into
+  // "backend-failed"; this is just a trace for a load failure at any other time (e.g. the backend
+  // dying later, mid-session), so a real cause isn't left with only a silent blank/stale page.
+  target.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return; // noise from a subresource, not a navigation of the page itself
+    if (errorCode === -3) return; // ERR_ABORTED — a superseded navigation, already loadIgnoringAbort's job
+    log(`did-fail-load: ${errorDescription} (${errorCode}) for ${validatedURL}`);
   });
 }
 
@@ -1054,6 +1071,16 @@ if (!app.requestSingleInstanceLock()) {
   process.on("unhandledRejection", (reason) => {
     const detail = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
     reportProcessCrash("Unexpected internal error (unhandled rejection)", detail);
+  });
+
+  // Diagnostic only, same reasoning as crashReporter above: Chromium normally recovers a GPU
+  // process crash on its own (software fallback / a redrawn frame), so there is nothing to do to
+  // the UI here — just a trace in the log if it ever happens.
+  app.on("child-process-gone", (_e, details) => {
+    log(
+      `child process gone: type=${details.type} reason=${details.reason} ` +
+        `name=${details.name ?? "n/a"} exitCode=${details.exitCode}`,
+    );
   });
 
   app.on("window-all-closed", () => {
