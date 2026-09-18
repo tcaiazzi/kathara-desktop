@@ -213,8 +213,14 @@ export interface LabLayout {
   nodes: Record<string, { x: number; y: number }>;
 }
 
-// The "New lab from JSON" flow accepts a raw JSON blob rather than a full typed form.
-export type LabCreate = Record<string, unknown> & { name: string };
+// Deliberately the subset the UI actually sends, not a full mirror of the backend's `LabCreate`
+// (which also accepts metadata, machines and links): the only creation path here posts a name and
+// nothing else — everything richer arrives through import or upload. It used to be
+// `Record<string, unknown> & { name: string }` for a "new lab from JSON" flow that no longer
+// exists, which meant a typo'd key type-checked.
+export interface LabCreate {
+  name: string;
+}
 
 export interface FsEntry {
   name: string;

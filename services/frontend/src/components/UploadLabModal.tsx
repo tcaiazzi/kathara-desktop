@@ -18,9 +18,8 @@ function nameFromFile(fileName: string): string {
 }
 
 // Binary-safe lab creation from an uploaded .zip of a standard Kathara lab directory
-// (lab.conf/.startup/shared/…), hitting POST /labs/upload — a separate flow from
-// NewLabModal's JSON-description creation, since a file upload and a JSON textarea share
-// no state or submit lifecycle.
+// (lab.conf/.startup/shared/…), hitting POST /labs/upload. Separate from NewLabModal, which only
+// asks for a name and posts an empty lab: a file upload has its own state and submit lifecycle.
 export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");

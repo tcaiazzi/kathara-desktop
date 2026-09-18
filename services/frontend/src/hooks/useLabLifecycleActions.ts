@@ -76,8 +76,9 @@ async function dropElevationIfAny(
   }
 }
 
-// Deploy/undeploy toggle and delete, shared between the lab list and lab detail pages (same
-// branching, toast wording, and confirm-dialog copy on both).
+// Every whole-lab action the workspace header offers: the deploy/undeploy toggle, rename, delete
+// and wipe-all, with their image pre-check, authorization prompts, toasts and confirm copy. One
+// caller (WorkspacePage) — kept out of it because the branching is long enough to bury the page.
 export function useLabLifecycleActions() {
   const toast = useToast();
   const confirm = useConfirm();

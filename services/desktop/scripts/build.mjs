@@ -8,11 +8,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outdir = path.join(root, "build");
-const watch = process.argv.includes("--watch");
-
-// Every run of this script is a full rebuild (this file doesn't actually watch — see the stale
-// message below), so start from a clean directory: otherwise a file removed from src/ leaves its
-// last compiled output behind, and electron-builder's `files: build/**/*` ships it regardless.
+// Every run of this script is a full rebuild, so start from a clean directory: otherwise a file
+// removed from src/ leaves its last compiled output behind, and electron-builder's
+// `files: build/**/*` ships it regardless.
 await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 
@@ -35,4 +33,3 @@ await cp(path.join(root, "src", "splash.html"), path.join(outdir, "splash.html")
 // splash.html references this by its own relative path, so it must land right next to it.
 await cp(path.join(root, "resources", "splash.png"), path.join(outdir, "splash.png"));
 
-if (watch) console.log("built (watch mode is not enabled for the copy step)");

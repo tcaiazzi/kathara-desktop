@@ -191,8 +191,9 @@ function setStatus(next: Status): void {
 }
 
 /** No backend has ever come up healthy on this machine — see backend.ts's rememberPort, which is
- * the only writer of launchCount. Read once per boot attempt (startup() below), not live, so an
- * install completing mid-attempt doesn't flip the copy out from under the user half-way through. */
+ * the only writer of launchCount. Read once per boot attempt (startup() below), not live: the
+ * backend coming up *is* what increments launchCount, so a live read would flip the first-run copy
+ * out from under the user half-way through the very attempt that is showing it. */
 function isFirstRun(): boolean {
   return !(readPrefs().launchCount ?? 0);
 }
@@ -359,8 +360,9 @@ async function runExclusiveBootOp<T>(fn: () => Promise<T>): Promise<T> {
  * back there instead of the bare root every other caller of startup() wants.
  *
  * Serializes concurrent callers (see `startupInFlight`) — the actual work is in `runStartup`,
- * called directly (not through this gate) by the auto-install retry below, which is a sequential
- * continuation of the same attempt, not a second concurrent one.
+ * which one caller invokes directly, bypassing this gate: the `elevation:drop` handler below. That
+ * one is a sequential continuation of the boot op already in flight, not a second concurrent
+ * attempt, and going through this gate would deadlock it against itself.
  */
 async function startup(resumePath?: string): Promise<void> {
   if (startupInFlight) return startupInFlight;
@@ -584,7 +586,8 @@ function registerIpc(): void {
         // runStartup(), not startup(): this call is already inside runExclusiveBootOp's own gate,
         // a sequential continuation of it rather than a second concurrent caller — going through
         // startup() here would have it wait on bootOpInFlight, which is this very call, and
-        // deadlock forever. Same reasoning as the auto-install retry documented on runStartup().
+        // deadlock forever. This is the direct `runStartup` caller startup()'s own doc comment
+        // refers to.
         await runStartup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
         return { dropped: true };
       }),
@@ -957,7 +960,7 @@ if (!app.requestSingleInstanceLock()) {
     // runs immediately, with the splash still on screen; it only switches to the setup page
     // itself if something needs the user's attention (see its two showSetup(win) calls), or hands
     // off straight to the running app on success. Every later trip through startup() (retry,
-    // elevation, labs-dir change, a successful install) is already on the setup page by then, not
+    // elevation, labs-dir change) is already on the setup page by then, not
     // back through here — it's a first-impression thing, not something to show again.
     showSplashPage(win);
 
