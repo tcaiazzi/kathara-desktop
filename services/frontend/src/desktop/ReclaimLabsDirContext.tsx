@@ -8,7 +8,8 @@
 // this isn't gating a deploy, it's an optional cleanup the user can always decline, with its own
 // (much simpler) request shape — no privileged/volumes/hosthome to describe, just "authenticate or
 // don't".
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { usePromiseModal } from "../hooks/usePromiseModal";
 import { showSudoRetry, sudoRetryMessages } from "../services/sudoFailure";
 import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { desktop } from "./bridge";
@@ -29,26 +30,23 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const resolveRef = useRef<((outcome: ReclaimOutcome) => void) | null>(null);
 
-  const requestReclaimAuth = useCallback<ReclaimAuthApi>(() => {
-    // Same guard as ElevationContext/ConfirmContext/PromptContext: settle any still-pending
-    // request before taking over the single resolveRef slot.
-    resolveRef.current?.("skipped");
-    resolveRef.current = null;
-    setPassword("");
-    setError(null);
-    setShow(true);
-    return new Promise<ReclaimOutcome>((resolve) => {
-      resolveRef.current = resolve;
-    });
-  }, []);
+  const { open, settle } = usePromiseModal<ReclaimOutcome>("skipped");
+
+  const requestReclaimAuth = useCallback<ReclaimAuthApi>(
+    () =>
+      open(() => {
+        setPassword("");
+        setError(null);
+        setShow(true);
+      }),
+    [open],
+  );
 
   function close(outcome: ReclaimOutcome) {
     setShow(false);
     setBusy(false);
-    resolveRef.current?.(outcome);
-    resolveRef.current = null;
+    settle(outcome);
   }
 
   async function submit() {

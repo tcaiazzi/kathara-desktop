@@ -8,6 +8,7 @@
 // Electron-aware (talks to window.katharaDesktop through bridge.ts), unlike the pure-React
 // ConfirmContext/PromptContext this otherwise resembles — same family as DesktopCommandsProvider.
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { usePromiseModal } from "../hooks/usePromiseModal";
 import { showSudoRetry, sudoRetryMessages } from "../services/sudoFailure";
 import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { api } from "../services/api";
@@ -86,28 +87,23 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const resolveRef = useRef<((outcome: DeployAuthOutcome) => void) | null>(null);
+  const { open, settle } = usePromiseModal<DeployAuthOutcome>("cancelled");
   const resumeLabRef = useRef("");
 
   const isLinux = desktop()?.platform === "linux";
 
   const showModal = useCallback(
     (m: Mode, machines: { name: string; volumes: VolumeMount[] }[], hosthome: boolean) => {
-      // Settle any still-pending request before taking over the single resolveRef slot — same
-      // guard as ConfirmContext/PromptContext, so a second call never wedges the first caller.
-      resolveRef.current?.("cancelled");
-      resolveRef.current = null;
-      setMode(m);
-      setVolumeMachines(machines);
-      setHosthomeMount(hosthome);
-      setPassword("");
-      setError(null);
-      setShow(true);
-      return new Promise<DeployAuthOutcome>((resolve) => {
-        resolveRef.current = resolve;
+      return open(() => {
+        setMode(m);
+        setVolumeMachines(machines);
+        setHosthomeMount(hosthome);
+        setPassword("");
+        setError(null);
+        setShow(true);
       });
     },
-    [],
+    [open],
   );
 
   const requestDeployAuthorization = useCallback<DeployAuthApi>(
@@ -149,8 +145,7 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
   function close(outcome: DeployAuthOutcome) {
     setShow(false);
     setBusy(false);
-    resolveRef.current?.(outcome);
-    resolveRef.current = null;
+    settle(outcome);
   }
 
   async function submit() {
@@ -184,8 +179,8 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
       if (result.ok) {
         // A reload is already in flight (the main process just navigated the window to the
         // newly-elevated backend) — nothing left for this renderer instance to do.
-        resolveRef.current?.("elevating");
-        resolveRef.current = null;
+        // Resolved without closing: the modal is about to go with the window.
+        settle("elevating");
         return;
       }
       // Everything except a dismissed OS dialog is worth showing *in* the modal and retrying

@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
+import { usePromiseModal } from "../hooks/usePromiseModal";
 import { Button, Modal } from "react-bootstrap";
 
 interface ConfirmOptions {
@@ -15,24 +16,14 @@ const ConfirmCtx = createContext<ConfirmApi | null>(null);
 // instead of managing per-action modal state.
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [options, setOptions] = useState<ConfirmOptions | null>(null);
-  const resolveRef = useRef<((value: boolean) => void) | null>(null);
 
-  const confirm = useCallback<ConfirmApi>((opts) => {
-    // Settle whatever is still pending before taking over the single `resolveRef` slot: a second
-    // confirm() opened while the first dialog is up would otherwise leave the first caller awaiting
-    // a promise nothing can ever resolve — and with `runBusy` around it, its `busy` flag stuck on.
-    resolveRef.current?.(false);
-    resolveRef.current = null;
-    setOptions(opts);
-    return new Promise<boolean>((resolve) => {
-      resolveRef.current = resolve;
-    });
-  }, []);
+  const { open, settle } = usePromiseModal<boolean>(false);
+
+  const confirm = useCallback<ConfirmApi>((opts) => open(() => setOptions(opts)), [open]);
 
   const close = (value: boolean) => {
     setOptions(null);
-    resolveRef.current?.(value);
-    resolveRef.current = null;
+    settle(value);
   };
 
   return (
