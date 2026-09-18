@@ -36,8 +36,10 @@ export function NewLabModal({ show, onClose, onCreated }: NewLabModalProps) {
     if (!valid) return;
     await runBusy(setBusy, "Create lab", async (signal) => {
       const detail = await api.createLab({ name: trimmed }, signal);
-      toast.show(`Lab "${detail.name}" created.`, "success");
-      onCreated(detail.name ?? trimmed);
+      // LabSummary.name is nullable: resolve it once so the toast can't print `Lab "null"`.
+      const labName = detail.name ?? trimmed;
+      toast.show(`Lab "${labName}" created.`, "success");
+      onCreated(labName);
       handleClose();
     });
   }

@@ -52,11 +52,13 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
     }
     await runBusy(setBusy, "Upload lab", async (signal) => {
       const result = await api.uploadLab(file, name, signal);
-      toast.show(`Lab "${result.name}" uploaded.`, "success");
+      // LabSummary.name is nullable: resolve it once so the toast can't print `Lab "null"`.
+      const labName = result.name ?? name;
+      toast.show(`Lab "${labName}" uploaded.`, "success");
       if (result.warnings?.length) {
         toast.show(result.warnings.join(" · "), "info", "Import warnings");
       }
-      onCreated(result.name ?? name);
+      onCreated(labName);
       handleClose();
     });
   }

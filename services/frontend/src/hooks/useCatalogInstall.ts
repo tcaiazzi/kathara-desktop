@@ -49,13 +49,17 @@ export function useCatalogInstall<T extends CatalogItem>({
     setBusyId(item.id);
     try {
       const result = await install(item);
-      toast.show(`Lab "${result.name}" ${verbPast}.`, "success");
+      // The API's name is optional (LabSummary.name, Optional[str] in the Pydantic schema), so
+      // resolve it once against the catalogue entry's own name rather than letting the toast
+      // print `Lab "null"` while the caller below gets the fallback.
+      const name = result.name ?? fallbackName(item);
+      toast.show(`Lab "${name}" ${verbPast}.`, "success");
       // Non-fatal parse warnings — a lab.conf directive the API keeps but doesn't apply. Both
       // catalogues surface them; the welcome screen used to drop them silently.
       if (result.warnings?.length) {
         toast.show(result.warnings.join(" · "), "info", "Import warnings");
       }
-      onDone(result.name ?? fallbackName(item));
+      onDone(name);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         toast.show(`Lab "${fallbackName(item)}" already exists — opening it.`, "info");
