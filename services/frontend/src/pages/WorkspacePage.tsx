@@ -351,8 +351,12 @@ function mergeOthersInto(api: DockviewApi, target: DockviewGroupPanel, keep: Set
 }
 
 // Maximize a single group in place — used by the per-panel header's "Maximize panel" button.
+// mergeOthersInto activates whichever panel it moves in last, so re-assert the tab that was
+// active before the merge (same pattern as focusTopology/focusEditing/focusTerminals below).
 function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
+  const active = group.activePanel;
   mergeOthersInto(api, group, new Set([group]));
+  active?.api.setActive();
 }
 
 // --- Preset layouts (reposition existing panels via moveTo — no unmount, so terminal sessions
