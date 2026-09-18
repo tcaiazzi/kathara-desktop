@@ -1,6 +1,6 @@
 /**
- * The parts of the UI that only a desktop app can offer: native file dialogs, revealing a lab
- * in the OS file manager, and attaching to a device from a real terminal emulator.
+ * The parts of the UI that only a desktop app can offer: native folder dialogs, revealing a lab
+ * in the OS file manager, and opening a real terminal emulator in a lab's directory.
  *
  * Every one of these is exposed to the renderer through preload.ts and used behind a
  * feature check, so the browser build keeps working unchanged.
@@ -25,43 +25,6 @@ function withParent<O, R>(
   options: O,
 ): Promise<R> {
   return win ? fn(win, options) : fn(options);
-}
-
-export interface PickedFile {
-  name: string;
-  /** Bytes, so the renderer can wrap them in a File and reuse the existing upload path. */
-  data: Uint8Array;
-}
-
-/** Native "Import lab" picker. Returns null when the user cancels. */
-export async function pickLabArchive(win: BrowserWindow | null): Promise<PickedFile | null> {
-  const result = await withParent(dialog.showOpenDialog, win, {
-    title: "Import lab",
-    properties: ["openFile"],
-    filters: [
-      { name: "Lab archive", extensions: ["zip"] },
-      { name: "All files", extensions: ["*"] },
-    ],
-  });
-  const file = result.filePaths[0];
-  if (result.canceled || !file) return null;
-  return { name: path.basename(file), data: await fsp.readFile(file) };
-}
-
-/** Native "Save as…" for a download the renderer already has in memory. */
-export async function saveFile(
-  win: BrowserWindow | null,
-  suggestedName: string,
-  data: Uint8Array,
-): Promise<string | null> {
-  const result = await withParent(dialog.showSaveDialog, win, {
-    title: "Save",
-    defaultPath: path.join(os.homedir(), suggestedName),
-  });
-  if (result.canceled || !result.filePath) return null;
-  await fsp.writeFile(result.filePath, data);
-  log(`saved ${result.filePath}`);
-  return result.filePath;
 }
 
 /**
@@ -159,23 +122,16 @@ function linuxTerminalArgv(cwd: string, command?: string): string[] | null {
   );
 }
 
-/**
- * Attach to a running device in the OS's own terminal.
- *
- * `kathara connect` resolves the lab from the working directory, which is why the lab's host
- * path is needed (and why the API grew GET /api/labs/{name}/location to supply it).
- */
-export async function openSystemTerminal(labDir: string, machine: string): Promise<void> {
-  const safeMachine = /^[A-Za-z0-9_.-]+$/.test(machine) ? machine : null;
-  if (!safeMachine) throw new Error(`refusing to open a terminal for suspicious name: ${machine}`);
-  await spawnTerminal(labDir, `kathara connect ${safeMachine}`);
-}
-
 /** Open a plain shell in the lab's directory — no command, just `cd` there. */
 export async function openTerminalHere(labDir: string): Promise<void> {
   await spawnTerminal(labDir);
 }
 
+// `command` currently has no caller — the only entry point is `openTerminalHere`, which opens a
+// plain shell. It is kept, with the per-platform branches that serve it, because it is the whole
+// reason `terminalCommand`'s "{cmd}" placeholder exists and because re-deriving the macOS
+// throwaway-script path (mkdtemp + "wx" + cleanup, a deliberate fix) from scratch would be worse
+// than leaving it. The device-attaching caller that used it was removed as dead code (audit_3 Q15).
 async function spawnTerminal(labDir: string, command?: string): Promise<void> {
   if (!fs.existsSync(labDir)) throw new Error(`lab directory does not exist: ${labDir}`);
 

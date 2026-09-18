@@ -34,13 +34,10 @@ import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
 import { ensurePathEnv } from "./env";
 import {
   openLabsDir,
-  openSystemTerminal,
   openTerminalHere,
   pickHostDirectory,
-  pickLabArchive,
   pickLabsDirectory,
   revealPath,
-  saveFile,
 } from "./integrations";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
@@ -688,18 +685,12 @@ function registerIpc(): void {
   // (a reload, a restart after a labs-dir change) and would otherwise miss the state entirely.
   ipcMain.handle("window:is-fullscreen", () => win?.isFullScreen() ?? false);
 
-  ipcMain.handle("fs:pick-lab-archive", () => pickLabArchive(win));
   // The host side of a device's [volume] bind mount — see MachineOptionsFields.tsx's Volumes rows.
   ipcMain.handle("fs:pick-host-dir", (_e, current?: string) => pickHostDirectory(win, current));
-  ipcMain.handle("fs:save", (_e, name: string, data: Uint8Array) => saveFile(win, name, data));
   ipcMain.handle("fs:open-labs-folder", () => openLabsDir());
 
   ipcMain.handle("fs:reveal-lab", async (_e, labName: string) => {
     revealPath(await labDirectory(labName));
-  });
-
-  ipcMain.handle("terminal:open-system", async (_e, labName: string, machine: string) => {
-    await openSystemTerminal(await labDirectory(labName), machine);
   });
 
   ipcMain.handle("terminal:open-here", async (_e, labName: string) => {

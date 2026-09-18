@@ -114,16 +114,12 @@ export interface DesktopApi {
   verifyCanElevate(
     password?: string,
   ): Promise<{ ok: false; reason: DesktopElevateFailureReason; message: string } | { ok: true }>;
-  /** Native "Import lab" picker; null when the user cancels. */
-  pickLabArchive(): Promise<{ name: string; data: Uint8Array } | null>;
   /** Native folder picker for the host side of a device's [volume] bind mount; null when the user
    * cancels. Starts at `current` when that directory still exists. The desktop app is the only
    * place this can be offered — the browser build renders the host path as a plain text input. */
   pickHostDirectory(current?: string): Promise<string | null>;
-  saveFile(name: string, data: Uint8Array): Promise<string | null>;
   revealLab(labName: string): Promise<void>;
   openLabsFolder(): Promise<void>;
-  openSystemTerminal(labName: string, machine: string): Promise<void>;
   /** Open a plain shell in the lab's directory — no `kathara connect`, just `cd` there. */
   openTerminalHere(labName: string): Promise<void>;
   /** Lab storage directory (Settings). See SettingsPage.tsx's "Desktop" panel. */

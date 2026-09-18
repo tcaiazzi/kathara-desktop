@@ -189,16 +189,22 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   does not take focus away from the page, so clicking *Save* saves the panel the user was in.
 - Terminal pop-outs keep an ordinary framed window (titled `Terminal: <device>`): they render only
   the terminal, with no strip of their own to drag or close by.
-- **Native dialogs** for importing a lab, saving a download and choosing the host directory of a
-  device's `[volume]` bind mount, plus *Open Labs Folder* and reveal-in-file-manager. The volume
-  one is desktop-only on purpose (`integrations.ts`'s `pickHostDirectory`): the path names a
+- **Native dialogs** for choosing the host directory of a device's `[volume]` bind mount, plus
+  *Open Labs Folder* and reveal-in-file-manager. (Importing a lab and saving a download used to
+  have native pickers too; both were removed as dead code — the app has long used the in-page
+  upload modal and an ordinary browser download instead.) The volume one is desktop-only on
+  purpose (`integrations.ts`'s `pickHostDirectory`): the path names a
   directory on the machine the *backend* runs on, and only this shell — which spawned that backend
   — can know the two are the same machine. It also spares the app from reimplementing per-OS path
   browsing, which on Windows means drive letters (there is no single root), backslash separators
   and UNC shares. The browser build renders that field as a plain text input.
-- **Open in system terminal** attaches to a device with `kathara connect` in the OS terminal
-  emulator. On Linux the first supported emulator on `PATH` wins; override it with
-  `terminalCommand` in `preferences.json` (use `{cmd}` where the command goes).
+- **Open Terminal Here** opens the OS's own terminal emulator in a lab's directory — a plain
+  shell, so `kathara` commands run against the right lab without the user having to `cd`. On Linux
+  the first supported emulator on `PATH` wins; override it with `terminalCommand` in
+  `preferences.json`. That override still honours a `{cmd}` placeholder, but nothing passes a
+  command today: an "attach to this device with `kathara connect`" entry point existed, was never
+  reachable from the UI, and was removed as dead code — the `{cmd}` machinery was kept so wiring
+  one back up stays a one-liner.
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one.
 - Quitting with labs still deployed asks first, and offers to undeploy them — their containers
   would otherwise keep running.

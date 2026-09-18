@@ -130,10 +130,6 @@ const api = {
   isWindowFullScreen: (): Promise<boolean> => ipcRenderer.invoke("window:is-fullscreen"),
 
   // -- native filesystem --
-  pickLabArchive: (): Promise<{ name: string; data: Uint8Array } | null> =>
-    ipcRenderer.invoke("fs:pick-lab-archive"),
-  saveFile: (name: string, data: Uint8Array): Promise<string | null> =>
-    ipcRenderer.invoke("fs:save", name, data),
   /** Folder picker for a device volume's host path. Grants the renderer no filesystem *read*
    * capability of its own: `current` only seeds the dialog's starting directory (its existence
    * check is never reported back), and the path returned is whatever the user themselves picked
@@ -143,9 +139,7 @@ const api = {
   revealLab: (labName: string) => ipcRenderer.invoke("fs:reveal-lab", labName),
   openLabsFolder: () => ipcRenderer.invoke("fs:open-labs-folder"),
 
-  // -- device terminal in the OS's own emulator --
-  openSystemTerminal: (labName: string, machine: string) =>
-    ipcRenderer.invoke("terminal:open-system", labName, machine),
+  // -- device terminal in the lab's directory --
   openTerminalHere: (labName: string) => ipcRenderer.invoke("terminal:open-here", labName),
 
   // -- lab storage directory (Settings) --
