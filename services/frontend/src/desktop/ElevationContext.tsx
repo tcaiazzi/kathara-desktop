@@ -8,6 +8,7 @@
 // Electron-aware (talks to window.katharaDesktop through bridge.ts), unlike the pure-React
 // ConfirmContext/PromptContext this otherwise resembles — same family as DesktopCommandsProvider.
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { showSudoRetry, sudoRetryMessages } from "../services/sudoFailure";
 import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { api } from "../services/api";
 import type { VolumeMount } from "../services/types";
@@ -42,16 +43,10 @@ const DeployAuthCtx = createContext<DeployAuthApi | null>(null);
 
 type Mode = "privileged" | "volumes" | "volumes-no-shell" | "both";
 
-/** Failure reasons the modal stays open for, and what it says about each. A reason absent here
- * closes the modal instead — currently only "cancelled", i.e. the user dismissed the OS's own
- * admin dialog on macOS/Windows, where closing is exactly what they asked for. */
-const RETRY_MESSAGES: Record<string, ((message: string) => string) | undefined> = {
-  "wrong-password": () => "Incorrect password. Try again.",
-  "not-permitted": () => "This account isn't allowed to use sudo.",
-  timeout: () => "The backend didn't start with administrator privileges in time. Try again.",
-  error: (message) => `Could not verify administrator privileges: ${message}`,
-  "rate-limited": (message) => message,
-};
+const RETRY_MESSAGES = sudoRetryMessages(
+  "The backend didn't start with administrator privileges in time. Try again.",
+  (message) => `Could not verify administrator privileges: ${message}`,
+);
 
 const TITLES: Record<Mode, string> = {
   privileged: "Administrator privileges required",
@@ -179,13 +174,7 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
           close("proceed");
           return;
         }
-        const inlineError = RETRY_MESSAGES[result.reason]?.(result.message);
-        if (inlineError) {
-          setPassword("");
-          setError(inlineError);
-          setBusy(false);
-          return;
-        }
+        if (showSudoRetry(RETRY_MESSAGES, result, { setPassword, setError, setBusy })) return;
         close("cancelled");
         return;
       }
@@ -203,13 +192,7 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
       // from: the backend is still running (see bridge.ts's `restarted`), and reporting a
       // failed elevation to the caller as if the user had clicked Cancel — which is what
       // closing here does — hides the actual reason in the log where nobody looks.
-      const inlineError = RETRY_MESSAGES[result.reason]?.(result.message);
-      if (inlineError) {
-        setPassword("");
-        setError(inlineError);
-        setBusy(false);
-        return;
-      }
+      if (showSudoRetry(RETRY_MESSAGES, result, { setPassword, setError, setBusy })) return;
       close("cancelled");
     } catch {
       close("cancelled");

@@ -13,6 +13,7 @@
 import { Copy, Minus, Settings as SettingsIcon, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HealthBadge, PrivilegedBadge } from "../components/StatusBadges";
+import { useDismissOnOutside } from "../hooks/useDismissOnOutside";
 import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
@@ -92,21 +93,7 @@ export function TitleBar() {
   }, [shell]);
 
   // Click-outside and Escape close the menu, as a native menu would.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!barRef.current?.contains(e.target as Node)) setOpen(null);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(null);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  useDismissOnOutside(barRef, open !== null, () => setOpen(null));
 
   const platform = shell?.platform ?? "linux";
   const mod = platform === "darwin" ? "⌘" : "Ctrl";

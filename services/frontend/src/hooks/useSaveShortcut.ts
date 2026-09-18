@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
+import { useHasFocusWithin } from "./useHasFocusWithin";
 import { useDesktopCommand } from "../desktop/DesktopCommands";
 
 // Cmd/Ctrl+S saves, but only when focus is somewhere inside `rootRef` — so this doesn't hijack
@@ -10,10 +11,7 @@ export function useSaveShortcut(rootRef: RefObject<HTMLElement | null>, onSave: 
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
 
-  const hasFocus = useCallback(() => {
-    const active = document.activeElement;
-    return Boolean(rootRef.current && active && rootRef.current.contains(active));
-  }, [rootRef]);
+  const hasFocus = useHasFocusWithin(rootRef);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

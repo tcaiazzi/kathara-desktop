@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
+import { useHasFocusWithin } from "./useHasFocusWithin";
 
 interface Handlers {
   onCopy: () => void;
@@ -20,10 +21,7 @@ export function useFsClipboardShortcuts(rootRef: RefObject<HTMLElement | null>, 
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
 
-  const hasFocus = useCallback(() => {
-    const active = document.activeElement;
-    return Boolean(rootRef.current && active && rootRef.current.contains(active));
-  }, [rootRef]);
+  const hasFocus = useHasFocusWithin(rootRef);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

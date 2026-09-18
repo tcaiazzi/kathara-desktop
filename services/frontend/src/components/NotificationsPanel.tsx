@@ -1,5 +1,6 @@
 import { Bell } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
+import { useDismissOnOutside } from "../hooks/useDismissOnOutside";
 import { openLink, useNotifications } from "../context/ToastContext";
 import "./NotificationsPanel.css";
 
@@ -19,22 +20,7 @@ export function NotificationsPanel() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // Click-outside and Escape close the panel — same pattern as TitleBar.tsx's own menus.
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  useDismissOnOutside(ref, open, () => setOpen(false));
 
   const toggle = () => {
     setOpen((current) => {

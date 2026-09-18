@@ -9,6 +9,7 @@
 // (much simpler) request shape — no privileged/volumes/hosthome to describe, just "authenticate or
 // don't".
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from "react";
+import { showSudoRetry, sudoRetryMessages } from "../services/sudoFailure";
 import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { desktop } from "./bridge";
 
@@ -16,16 +17,12 @@ export type ReclaimOutcome = "reclaimed" | "skipped";
 type ReclaimAuthApi = () => Promise<ReclaimOutcome>;
 const ReclaimAuthCtx = createContext<ReclaimAuthApi | null>(null);
 
-/** Mirrors ElevationContext.tsx's own RETRY_MESSAGES — same reasons, same idea (a reason absent
- * here would close the modal instead, but every reason reclaimLabsDirOwnership can return has an
- * entry, so that path is never actually taken). */
-const RETRY_MESSAGES: Record<string, ((message: string) => string) | undefined> = {
-  "wrong-password": () => "Incorrect password. Try again.",
-  "not-permitted": () => "This account isn't allowed to use sudo.",
-  timeout: () => "That took too long. Try again.",
-  error: (message) => `Could not reclaim ownership: ${message}`,
-  "rate-limited": (message) => message,
-};
+// Every reason `reclaimLabsDirOwnership` can return has an entry, so unlike the elevation modal
+// this one never actually takes the "no retry message, close instead" path.
+const RETRY_MESSAGES = sudoRetryMessages(
+  "That took too long. Try again.",
+  (message) => `Could not reclaim ownership: ${message}`,
+);
 
 export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
   const [show, setShow] = useState(false);
@@ -68,13 +65,7 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
         close("reclaimed");
         return;
       }
-      const inlineError = RETRY_MESSAGES[result.reason]?.(result.message);
-      if (inlineError) {
-        setPassword("");
-        setError(inlineError);
-        setBusy(false);
-        return;
-      }
+      if (showSudoRetry(RETRY_MESSAGES, result, { setPassword, setError, setBusy })) return;
       close("skipped");
     } catch {
       close("skipped");
