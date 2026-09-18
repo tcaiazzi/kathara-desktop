@@ -31,9 +31,14 @@ _META_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # every one of these already has its own modeled field with its own validation, a `metas` entry
 # using the same name can't add any capability a request doesn't already have through that field —
 # rejecting it here just keeps the two paths from disagreeing about it.
+#
+# `cpu` earns its place for the same reason even though no field is named that: it is an *alias*
+# `_apply_conf_option` normalizes to `cpus`, so a pass-through meta using it is not pass-through at
+# all — it comes back as the real option on the next load. An alias has to be reserved as tightly
+# as the name it resolves to.
 _RESERVED_META_KEYS = frozenset(
     {
-        "image", "mem", "cpus", "shell", "ipv6", "privileged", "bridged", "bridged_iface",
+        "image", "mem", "cpus", "cpu", "shell", "ipv6", "privileged", "bridged", "bridged_iface",
         "num_terms", "entrypoint", "args",
         "exec", "exec_commands", "port", "ports", "env", "envs", "sysctl", "sysctls",
         "ulimit", "ulimits", "volume", "volumes",
