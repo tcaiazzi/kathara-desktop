@@ -46,10 +46,13 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   unparseable file simply means "no fixed layout".
 - **Authentication (`dependencies.require_auth_token`)** — opt-in, off by default
   (`ApiSettings.auth_token`, env `KATHARA_API_AUTH_TOKEN`). When set, every router except
-  `exec.py`'s WebSocket route requires it via `Depends(require_auth_token)`, either as
-  `Authorization: Bearer <token>` or `?token=` (the only option a `WebSocket`/`EventSource`
-  handshake can send); `tty_live_ws` checks the query-param token by hand instead, since a
-  websocket scope has no `Request` for FastAPI's dependency solver to inject. The desktop app
+  `exec.py`'s WebSocket route requires it via `Depends(require_auth_token)`, as
+  `Authorization: Bearer <token>` **only**. Two deliberate exceptions, and only two:
+  `GET /labs/{lab}/stats/stream` uses `require_auth_token_or_query`, which also accepts `?token=`,
+  because a browser's native `EventSource` cannot attach a header; and `tty_live_ws` checks the
+  query-param token by hand, since a websocket scope has no `Request` for FastAPI's dependency
+  solver to inject. Everywhere else the token is refused from the URL on purpose — a query string
+  ends up in proxy logs, browser history and `Referer`, where a header does not. The desktop app
   is the only caller that sets this today — a random value generated per launch
   (`services/desktop/src/backend.ts`) pairs one backend process with its own Electron instance;
   Docker Compose and plain dev runs leave it unset, unauthenticated as before.
@@ -85,6 +88,10 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 | `fs.errors.DirectoryExists`, `fs.errors.FileExists`, `fs.errors.DestinationExists`, `fs.errors.DirectoryNotEmpty` | 409 |
 | `docker.errors.NotFound` (incl. `ImageNotFound`) | 404 |
 | `docker.errors.APIError` (any other daemon-side failure) | 502 |
+| `UnauthorizedError` (auth token configured, request has none or the wrong one) | 401 |
+| `ForbiddenOriginError` (cross-origin state-changing request), `PrivilegeError` | 403 |
+| `PayloadTooLargeError` (body over `max_bytes_per_file`; raised by `main.py`'s size middleware, not `errors.py`) | 413 |
+| `RequestValidationError` (FastAPI body/query validation) | 422 |
 | anything else | 500 |
 
 Errors return `{"detail": str, "error_type": str}`. `HTTPException` already answers with its own
@@ -142,6 +149,7 @@ that `None` up instead of falling back to a sensible default.
 | DELETE | `/api/labs/{lab}/fs` | Delete a path (`lab.conf` rejected) | `FsDeleteRequest {path, recursive?}` | `Message` |
 | POST | `/api/labs/{lab}/fs/upload` | Upload a file (binary-safe; `lab.conf` routes to the same validating apply as `PUT lab-conf`, and must be UTF-8) | multipart: `path`, `file` | `FsUploadResponse` |
 | GET | `/api/labs/{lab}/fs/download` | Download a file (octet-stream) | `?path=` | binary |
+| GET | `/api/labs/{lab}/fs/search` | Search file contents under a directory in the lab's own on-disk tree. Capped per file by `ApiSettings.max_bytes_per_file` (read live, so a settings change applies immediately) and per response by module constants in `kathara_service.py`; `truncated` says a cap was hit | `?path=/` `&query=` (min 2 chars) `&case_sensitive=false` | `FsSearchResponse {query, matches[], truncated}` |
 | GET | `/api/labs/{lab}/fs/startups` | Each device's real `<name>.startup` content (`""` if absent) — backs the topology node-info preview | — | `{machine: string}` |
 | GET | `/api/labs/{lab}/images` | Which of this lab's device images are missing locally and which have a newer version upstream — call it immediately before a deploy so the download is its own consented step instead of a silent pull inside `POST .../deploy`. Callers must treat *any* failure as "deploy anyway". Costs one registry round-trip per present image (bounded, parallel) unless `image_update_policy` is `Never` | — | `LabImagesStatus` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |

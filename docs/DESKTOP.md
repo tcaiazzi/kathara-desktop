@@ -5,7 +5,13 @@ for how to run and build it; this document covers the "why" behind its behaviour
 
 ## Startup sequence
 
-`main.ts` picks a free loopback port and calls `backend.ts`'s `buildBackendCommand`, which:
+`main.ts` runs a five-phase ladder — `environment` (query the login shell for `PATH`), `frontend`
+(locate the bundled SPA), `docker`, `python`, `backend` — behind a splash page, so a slow or failing
+prerequisite check is never a blank screen. It then calls `backend.ts`'s `startBackend(python,
+staticDir)`; **port selection lives in `backend.ts`**, which prefers the port remembered in
+`preferences.json` (`rememberedPort()`, so the SPA keeps its `localStorage` across relaunches) and
+falls back to `findFreePort()`. On first run the labs-directory prompt sits between preflight and
+the backend start. `startBackend` then:
 
 - Generates a random per-launch pairing token (`crypto.randomBytes(32)`), passed to the child
   process as `KATHARA_API_AUTH_TOKEN`. Every later request this process makes to that exact
@@ -64,10 +70,11 @@ the env sudo-prompt writes alongside it as `export KEY="value"`, from outside th
   records what it offered) or it is the app's own default. `paths.ts`'s `labsDir()` re-checks the
   value it reads back, since `preferences.json` is parsed without schema validation and is the one
   route that bypasses the handler.
-- **the interpreter path**, `preferences.json`'s `pythonPath`, which outranks every other candidate
-  in `prereqs.ts`'s `pythonCandidates()`. Validated where it is recorded
-  (`status:pick-python`), where it is read (`pythonCandidates`), and once more in
-  `runElevatedNative` before the string is built.
+- **the interpreter path**, as resolved by `prereqs.ts`'s `pythonCandidates()`. There is no
+  user-chosen override any more: a packaged app has exactly one interpreter, the bundled one, and a
+  dev checkout tries the repo's `.venv` then `PATH`. (`preferences.json` once carried a `pythonPath`
+  and there was a `status:pick-python` channel to set it — both are gone.) Re-checked in
+  `runElevatedNative` before the command string is built.
 
 Both go through `safety.ts`'s `isPlainAbsolutePath`, which rejects shell metacharacters outright
 rather than trying to escape them — quoting a `.bat` line correctly is hard enough that "safe by
@@ -141,7 +148,7 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 
 ## Building installers
 
-- `npm run dist:<os>` packages only. It does **not** build the backend wheel, fetch the
+- `npm run dist:<os>` builds the frontend and the shell, then packages. What it does **not** do is produce the *Python* inputs: it does not build the backend wheel, fetch the
   interpreter or vendor the dependencies — run `scripts/fetch-python.mjs <os>` and
   `scripts/vendor-python-deps.mjs <os>` first, or use `make dist-<os>`, which does the whole
   sequence. Skipping either script produces an installer that builds cleanly and ships an app that
