@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
-import { useDeployAuthorization } from "../desktop/ElevationContext";
+import { useDeployGate } from "./useDeployGate";
 import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { openTerminalWindow } from "../services/terminalWindow";
@@ -45,7 +45,7 @@ export function useDeviceActions({
 }: UseDeviceActionsOptions) {
   const toast = useToast();
   const confirm = useConfirm();
-  const requestDeployAuth = useDeployAuthorization();
+  const ensureDeployAuthorized = useDeployGate();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
   const [startups, setStartups] = useState<Record<string, string>>({});
 
@@ -296,20 +296,9 @@ export function useDeviceActions({
     // into. A privileged device deployed from here fails with the same unhandled PrivilegeError
     // it would today — a pre-existing, narrower gap this doesn't widen.
     const machine = detail?.machines.find((m) => m.name === deviceNode.name);
-    // hosthome_mount applies to this device too, same as a full-lab deploy — see
-    // useLabLifecycleActions.ts's identical check for why it's fetched fresh rather than cached.
-    const hosthomeMount = await api
-      .getSettings()
-      .then((s) => !!s.hosthome_mount)
-      .catch(() => false);
-    if ((machine && machine.volumes.length > 0) || hosthomeMount) {
-      const outcome = await requestDeployAuth({
-        privileged: false,
-        volumeMachines: machine ? [machine] : [],
-        hosthomeMount,
-      });
-      if (outcome !== "proceed") return;
-    }
+    // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
+    const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });
+    if (outcome !== "proceed") return;
     await withRefresh(() => api.deployDevice(labName, deviceNode.name), `Device ${deviceNode.name} deployed.`);
   }
 

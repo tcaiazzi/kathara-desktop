@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
-import { useDeployAuthorization } from "../desktop/ElevationContext";
+import { useDeployGate } from "../hooks/useDeployGate";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
 import {
@@ -33,7 +33,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const { run: runBusy, cancel: cancelBusy } = useBusyAction();
-  const requestDeployAuth = useDeployAuthorization();
+  const ensureDeployAuthorized = useDeployGate();
 
   function handleCancel() {
     cancelBusy();
@@ -60,16 +60,17 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
     const cleanLink = link.trim();
     if (cleanLink) payload.interfaces = [{ link: cleanLink, number: 0 }];
 
-    // Same "volumes" case as a single-device redeploy (useDeviceActions.deployDevice) — never
-    // "both" even if the Advanced options' privileged checkbox is also set, for the same reason:
-    // no resume-after-reload path exists for this modal's form state across a full page reload.
-    if (payload.volumes && payload.volumes.length > 0) {
-      const outcome = await requestDeployAuth({
-        privileged: false,
-        volumeMachines: [{ name: cleanName, volumes: payload.volumes }],
-      });
-      if (outcome !== "proceed") return;
-    }
+    // Adding a device to a lab that is already running deploys it right away (see
+    // KatharaService.add_machine), so this needs the same gate the two deploy paths use — volumes
+    // *and* the global hosthome_mount, which this call site used to skip (audit_3 Q5).
+    //
+    // Never asks for "both" even if the Advanced options' privileged checkbox is also set, for the
+    // same reason as a single-device redeploy: no resume-after-reload path exists for this modal's
+    // form state across a full page reload.
+    const outcome = await ensureDeployAuthorized({
+      volumeMachines: payload.volumes ? [{ name: cleanName, volumes: payload.volumes }] : [],
+    });
+    if (outcome !== "proceed") return;
 
     await runBusy(setBusy, "Add device", async (signal) => {
       await api.addMachine(labName, payload, signal);

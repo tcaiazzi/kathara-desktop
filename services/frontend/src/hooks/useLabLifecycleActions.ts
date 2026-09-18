@@ -5,6 +5,7 @@ import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
 import { desktop, type DesktopApi } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
+import { useDeployGate } from "./useDeployGate";
 import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
 import type { LabImagesStatus, VolumeMount } from "../services/types";
@@ -82,7 +83,10 @@ export function useLabLifecycleActions() {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const { run: runBusy } = useBusyAction();
+  // `requestDeployAuth` is kept alongside the gate for the reactive PrivilegeError fallback
+  // below: that is a bare privileged re-ask after a failed attempt, not a precheck.
   const requestDeployAuth = useDeployAuthorization();
+  const ensureDeployAuthorized = useDeployGate();
   const requestReclaimAuth = useReclaimLabsDirAuth();
   const requestImageDownload = useImageDownload();
 
@@ -158,22 +162,15 @@ export function useLabLifecycleActions() {
         // lab that is both never shows two separate prompts in sequence (see
         // ElevationContext.tsx's "both" mode for why that matters).
         //
-        // `hosthome_mount` is the same kind of host exposure but a *global* setting (Settings'
-        // own save already gates turning it on — see SettingsPage.tsx), so every deploy while
-        // it's on needs to say so too: it applies to this lab's devices whether or not this lab
-        // itself declares any `volumes`. Fetched fresh rather than cached, since it can change
-        // between deploys and there is nothing else in this app that already tracks it.
-        const hosthomeMount = await api
-          .getSettings()
-          .then((s) => !!s.hosthome_mount)
-          .catch(() => false); // fail open to "off" — the deploy attempt itself will surface anything real
-        const volumeMachines = lab.machines.filter((m) => m.volumes.length > 0);
+        // The global `hosthome_mount` setting is the same kind of host exposure but is not a
+        // per-device volume, and it applies whether or not this lab declares any: `useDeployGate`
+        // reads it for every caller, so it can't be checked on one deploy path and forgotten on
+        // another (it was — see audit_3 Q5).
         const needsElevation = lab.machines.some((m) => m.privileged);
-        if (needsElevation || volumeMachines.length > 0 || hosthomeMount) {
-          const outcome = await requestDeployAuth({
+        {
+          const outcome = await ensureDeployAuthorized({
             privileged: needsElevation,
-            volumeMachines,
-            hosthomeMount,
+            volumeMachines: lab.machines,
             resumeLab: lab.name,
           });
           if (outcome === "elevating") return; // a reload is already coming
@@ -181,7 +178,7 @@ export function useLabLifecycleActions() {
             toast.show(needsElevation ? PRIVILEGE_CANCELLED_MESSAGE : VOLUME_CANCELLED_MESSAGE, "danger");
             return;
           }
-          // "proceed": fall through and deploy normally.
+          // "proceed": nothing needed asking, or the user agreed — deploy normally.
         }
 
         try {
@@ -213,7 +210,7 @@ export function useLabLifecycleActions() {
         await onDone();
       });
     },
-    [requestDeployAuth, requestImageDownload, requestReclaimAuth, runBusy, toast],
+    [ensureDeployAuthorized, requestDeployAuth, requestImageDownload, requestReclaimAuth, runBusy, toast],
   );
 
   const deleteLab = useCallback(
