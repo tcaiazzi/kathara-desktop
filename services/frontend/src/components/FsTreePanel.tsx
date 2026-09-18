@@ -11,6 +11,7 @@ import {
   Upload as UploadIcon,
 } from "lucide-react";
 import { createContext, memo, useContext, useEffect, useRef, type ReactNode } from "react";
+import { useDragDropManager } from "react-dnd";
 import { Button, Form } from "react-bootstrap";
 import { NodeApi, Tree, type NodeRendererProps } from "react-arborist";
 import { useWorkspaceCore } from "../context/WorkspaceCoreContext";
@@ -72,6 +73,9 @@ export function FsTreePanel({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { ref: treeSizeRef, width: treeWidth, height: treeHeight } = useElementSize<HTMLDivElement>();
   const { setContextMenu } = useWorkspaceCore();
+  // Shares the app's single HTML5Backend (see App.tsx) instead of letting each <Tree> spin up its
+  // own — Files and Runtime Filesystem can both be mounted at once as dockview tabs.
+  const dndManager = useDragDropManager();
 
   const { selected, selectedPaths, selectedIsDir, isBinary, bufferPath, busy } = tree;
   // `selected !== bufferPath` covers the window where the tree highlight has moved (a
@@ -218,6 +222,7 @@ export function FsTreePanel({
                     <Tree<FsNode>
                       key={treeKey}
                       ref={tree.treeRef}
+                      dndManager={dndManager}
                       data={tree.data}
                       idAccessor="path"
                       childrenAccessor={(d) => (d.dir ? d.children ?? [] : null)}

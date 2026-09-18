@@ -1,4 +1,6 @@
 import { Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { DndProvider } from "react-dnd";
+import { HTML5Backend } from "react-dnd-html5-backend";
 import { AppNavbar } from "./components/AppNavbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { OnboardingTour } from "./components/OnboardingTour";
@@ -55,6 +57,11 @@ function AppLayoutFull() {
 
 export function App() {
   return (
+    // One HTML5Backend for the whole app: react-arborist's <Tree> otherwise spins up its own
+    // DndProvider/HTML5Backend per instance, and the Files + Runtime Filesystem panels can both
+    // be mounted at once (dockview tabs), which throws "Cannot have two HTML5 backends at the
+    // same time". FsTreePanel reads this one back via useDragDropManager() and hands it to <Tree>.
+    <DndProvider backend={HTML5Backend}>
     <ToastProvider>
       <ConfirmProvider>
         <PromptProvider>
@@ -116,5 +123,6 @@ export function App() {
         </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>
+    </DndProvider>
   );
 }
