@@ -240,6 +240,8 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
   );
 }
 
+// v7: default arrangement flipped again — topology is now a full-width row on top, with the
+// inspector, tool panels and every terminal sharing one tab group below it.
 // v6: renamed several tab titles (Node info -> Device Information, Devices -> Lab Details,
 // Runtime FS -> Runtime Filesystem, Stats -> Statistics). dockview persists each panel's title in
 // the saved layout, so without a version bump a restored layout would keep showing the old names.
@@ -247,7 +249,7 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
 // the inspector, tool panels and every terminal sharing one tab group on the left. Ignore older
 // saved layouts (v4 node info out of the topology, v3 core tabs, v2 closable core tabs, v1 removed
 // "terminals" panel) so the new default applies.
-const LS_LAYOUT = "kt-ws-layout-v6";
+const LS_LAYOUT = "kt-ws-layout-v7";
 const LS_RAIL = "kt-ws-rail-open";
 const LS_RAIL_W = "kt-ws-rail-width";
 const LS_LAST_LAB = "kt-ws-last-lab";
@@ -288,30 +290,33 @@ const HEADER_ACTIONS_COMPACT_WIDTH = 900;
 // row's natural unsquished width (3 sm buttons, icon+label); padded for font-rendering variance.
 const IMPORT_ROW_COMPACT_WIDTH = 260;
 
-// Fraction of the total width the topology column gets when it's first split off from the left
-// tab group — matches the shipped default screenshot (topology noticeably wider than the tabs).
-const TOPOLOGY_WIDTH_FRACTION = 0.62;
+// Fraction of the total height the topology row gets when it's first split off from the shared
+// tab group below it — matches the shipped default screenshot (topology noticeably taller than
+// the tabs).
+const TOPOLOGY_HEIGHT_FRACTION = 0.62;
 
 // Matches an `openTerminal`-minted panel id (`terminal:<machine>:<n>`) so a restored layout's
 // terminals can be told apart from every other panel.
 const TERMINAL_ID_RE = /^terminal:(.*):(\d+)$/;
 
 function buildDefaultLayout(api: DockviewApi) {
-  // One shared tab group on the left: the inspector plus every tool panel. Node info goes in
-  // first so it lands as the left-most tab.
-  api.addPanel({ id: "node-info", component: "node-info", title: "Device Information" });
+  // Topology first: its own full-width row on top, with nothing else yet so it fills the canvas.
+  api.addPanel({ id: "topology", component: "topology", title: "Topology" });
+  // One shared tab group below it: the inspector plus every tool panel. Node info goes in first
+  // so it lands as the left-most tab.
+  api.addPanel({
+    id: "node-info",
+    component: "node-info",
+    title: "Device Information",
+    position: { referencePanel: "topology", direction: "below" },
+  });
   api.addPanel({ id: "devices", component: "devices", title: "Lab Details", position: { referencePanel: "node-info", direction: "within" } });
   api.addPanel({ id: "files", component: "files", title: "Lab Configuration", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime Filesystem", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "stats", component: "stats", title: "Statistics", position: { referencePanel: "devices", direction: "within" } });
-  // Topology: its own full-height column to the right of that shared group.
-  api.addPanel({
-    id: "topology",
-    component: "topology",
-    title: "Topology",
-    position: { referencePanel: "devices", direction: "right" },
-    initialWidth: api.width ? Math.round(api.width * TOPOLOGY_WIDTH_FRACTION) : undefined,
-  });
+  if (api.height) {
+    api.getPanel("topology")?.api.group.api.setSize({ height: Math.round(api.height * TOPOLOGY_HEIGHT_FRACTION) });
+  }
   api.getPanel("devices")?.api.setActive();
 }
 
@@ -447,8 +452,8 @@ function tileTerminals(api: DockviewApi): DockviewGroupPanel[][] {
   return rows;
 }
 
-// Default: one shared tab group on the left with the inspector, every tool panel, and every open
-// terminal; the topology full-height on the right. Without unmounting anything.
+// Default: one shared tab group below with the inspector, every tool panel, and every open
+// terminal; the topology full-width on top. Without unmounting anything.
 function resetLayout(api: DockviewApi) {
   const devices = api.getPanel("devices");
   const topo = api.getPanel("topology");
@@ -459,13 +464,13 @@ function resetLayout(api: DockviewApi) {
     api.getPanel(id)?.api.moveTo({ group: devices.api.group });
   }
   for (const p of terminalPanelsOf(api)) p.api.moveTo({ group: devices.api.group });
-  topo.api.moveTo({ group: devices.api.group, position: "right" as const });
+  topo.api.moveTo({ group: devices.api.group, position: "top" as const });
   // Undo any collapse pinning left by the manual per-group "Collapse panel" toggle, on every
   // group (not just tools) — any of them can end up shrunk depending on what ran last.
   for (const g of api.groups) {
     g.api.setConstraints({ minimumHeight: 100, minimumWidth: 100 });
   }
-  topo.api.group.api.setSize({ width: Math.round(api.width * TOPOLOGY_WIDTH_FRACTION) });
+  topo.api.group.api.setSize({ height: Math.round(api.height * TOPOLOGY_HEIGHT_FRACTION) });
   devices.api.setActive();
 }
 
