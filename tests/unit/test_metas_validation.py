@@ -67,9 +67,13 @@ def test_every_reserved_key_is_one_the_parser_actually_interprets(key):
     reserved by mistake), it lands in `metas` here and this fails.
 
     The converse direction — *interpreted* -> reserved, which is how `cpu` slipped through for as
-    long as it did — can't be asserted generally while `_apply_conf_option` is an if/elif chain with
-    no enumerable key set. `test_cpu_is_normalized_to_cpus_on_reparse` pins the one known alias;
-    the structural check arrives when that chain is driven by an exported set (audit_3 Q8).
+    long as it did — used to be unassertable here. It no longer needs asserting at all: since
+    audit_3 Q8, `_apply_conf_option` *gates* on `lab_conf_options.INTERPRETED_OPTIONS`, and
+    `MODELED_META_KEYS` is derived from that same set, so an option cannot be interpreted without
+    being reserved. `tests/unit/test_lab_conf_options.py` covers that end.
+
+    `_JSON_ONLY_ALIASES` below stays hand-written on purpose. Deriving it from the same module
+    would make this test compare a set with itself.
     """
     parsed = parse_lab_conf(f"pc1[{key}]=1")
     assert parsed.machines["pc1"].metas == {}, f"`{key}` is reserved but reaches metas unparsed"
