@@ -84,8 +84,9 @@ _DOCKER_MANAGER_LABEL = "Docker (Kathara)"
 
 
 # Caps for fs_search_offline — module-level (not class-level) so _search_lines_in_text, a bare
-# module-level helper, can use them without forward-referencing the class body.
-_SEARCH_MAX_FILE_SIZE = 5 * 1024 * 1024  # mirrors ApiSettings.max_bytes_per_file (config.py)
+# module-level helper, can use them without forward-referencing the class body. The per-file size
+# cap is deliberately *not* here: it is ApiSettings.max_bytes_per_file, which PUT /settings can
+# change at runtime, so fs_search_offline reads it live like every other consumer does.
 _SEARCH_MAX_MATCHES_PER_FILE = 200
 _SEARCH_MAX_TOTAL_MATCHES = 1000
 _SEARCH_MAX_LINE_LENGTH = 300
@@ -1136,6 +1137,10 @@ class KatharaService:
         owner, guest = self._offline_fs_owner(lab, path)
         target_fs = self._fs_for(lab, owner)
 
+        # Read once for the whole walk rather than per file: one search has to apply one threshold
+        # to every file it considers, or a concurrent PUT /settings would make its results depend
+        # on where in the tree the walk happened to be.
+        max_file_size = get_settings().max_bytes_per_file
         matches: list[FsSearchMatch] = []
         truncated = False
         if target_fs is not None and target_fs.exists(guest):
@@ -1145,7 +1150,7 @@ class KatharaService:
                     break
                 try:
                     info = target_fs.getinfo(file_path, namespaces=["details"])
-                    if info.size is not None and info.size > _SEARCH_MAX_FILE_SIZE:
+                    if info.size is not None and info.size > max_file_size:
                         continue
                     text = target_fs.readtext(file_path)
                 except UnicodeDecodeError:

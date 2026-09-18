@@ -657,3 +657,35 @@ def test_fs_search_offline_raises_on_missing_path(tmp_path):
 
     with pytest.raises(PathNotFoundError):
         service.fs_search_offline("testlab", "/does-not-exist", "needle")
+
+
+def test_fs_search_offline_follows_max_bytes_per_file_at_runtime(tmp_path, monkeypatch):
+    """The search cap must track `ApiSettings.max_bytes_per_file`, which `PUT /settings` can change
+    at runtime (audit_3 Q3). It used to be a module constant seeded with the same default and a
+    comment claiming it mirrored the setting — which a constant cannot do. Every other consumer
+    (`lab_store.extract_zip`, `lab_gallery`) already reads it live.
+
+    Driven through `update_settings` rather than by patching the constant, so the test exercises
+    the path a user actually takes. Both directions matter: the stale constant pinned the cap in
+    the middle, so lowering the setting under-filtered and raising it over-filtered.
+    """
+    from kathara_api.config import get_settings
+
+    settings = get_settings()
+    # Registers monkeypatch's restore for the process-wide singleton; the value itself is then
+    # changed through update_settings below, exactly as a settings save would.
+    monkeypatch.setattr(settings, "max_bytes_per_file", settings.max_bytes_per_file)
+    original = settings.max_bytes_per_file
+
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "needle\n" + "x" * 500)
+
+    assert len(service.fs_search_offline("testlab", "/", "needle")[0]) == 1
+
+    # Below the file's size: it must now be skipped.
+    service.update_settings({"max_bytes_per_file": 100})
+    assert service.fs_search_offline("testlab", "/", "needle")[0] == []
+
+    # ...and back up again: the cap follows in both directions, it is not one-way.
+    service.update_settings({"max_bytes_per_file": original})
+    assert len(service.fs_search_offline("testlab", "/", "needle")[0]) == 1
