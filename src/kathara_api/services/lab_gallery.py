@@ -358,7 +358,15 @@ async def _run_fetch(future: "asyncio.Future[Catalog]") -> None:
 
 
 def invalidate_cache() -> None:
-    """Drop the cached catalog (settings changed, or a test wants a clean slate)."""
+    """Drop the cached catalog. A test hook, and only that.
+
+    It used to offer "settings changed" as the other reason, which cannot happen: the
+    ``gallery_*`` settings are not in ``KatharaService._API_SETTINGS_KEYS`` and ``SettingsUpdate``
+    does not expose them, so they come from env/config and are fixed for the life of the process.
+    The only invalidation a running backend performs on its own is ``gallery_cache_ttl`` expiry.
+    If ``gallery_*`` ever becomes runtime-editable, this is the call that has to be wired into
+    ``update_settings`` in the same change.
+    """
     global _cache
     with _cache_lock:
         _cache = None

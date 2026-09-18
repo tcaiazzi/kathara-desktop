@@ -65,6 +65,12 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
     try {
       const result = await api.createExampleLab(example.id);
       toast.show(`Lab "${result.name}" created.`, "success");
+      // Same LabImportResult GalleryModal gets, so the same non-fatal parse warnings can come
+      // back (a lab.conf directive the API keeps but doesn't apply). Dropping them here meant an
+      // example installed "cleanly" while the gallery reported the identical problem.
+      if (result.warnings?.length) {
+        toast.show(result.warnings.join(" · "), "info", "Import warnings");
+      }
       onLabCreated(result.name ?? example.id);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
