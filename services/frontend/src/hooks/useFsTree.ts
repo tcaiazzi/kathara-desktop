@@ -220,6 +220,25 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const [searchLoading, setSearchLoading] = useState(false);
   const [scrollTarget, setScrollTarget] = useState<{ line: number; seq: number } | null>(null);
 
+  // The editor buffer is four pieces of state that only ever move together: which file is loaded,
+  // its text, the baseline to diff dirtiness against, and whether it is binary. Seven call sites
+  // used to set all four by hand, which is four chances each to forget one.
+  const installBuffer = useCallback((path: string | null, content: string) => {
+    setBufferPath(path);
+    setEditorText(content);
+    setLoadedText(content);
+    setIsBinary(false);
+  }, []);
+
+  // `binary` is the one case that clears the text but still has something to show for it: the
+  // editor renders a "not UTF-8" placeholder rather than an empty document.
+  const clearBuffer = useCallback((opts?: { binary?: boolean }) => {
+    setBufferPath(null);
+    setEditorText("");
+    setLoadedText("");
+    setIsBinary(opts?.binary ?? false);
+  }, []);
+
   const toast = useToast();
   const prompt = usePrompt();
   const confirm = useConfirm();
@@ -268,10 +287,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setSelected(null);
     setSelectedPaths([]);
     setClipboard(null);
-    setBufferPath(null);
-    setEditorText("");
-    setLoadedText("");
-    setIsBinary(false);
+    clearBuffer();
     setLoadingPath(null);
     setSearchMode(false);
     setSearchQuery("");
@@ -279,7 +295,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setSearchTruncated(false);
     setSearchLoading(false);
     setScrollTarget(null);
-  }, [scopeKey]);
+  }, [clearBuffer, scopeKey]);
 
   // Root listing: on scope change, and again whenever the caller's `refreshKey` changes (which
   // keeps the current selection — see UseFsTreeOptions).
@@ -469,12 +485,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         return;
       }
       setSelected(path);
-      setBufferPath(null);
-      setEditorText("");
-      setLoadedText("");
-      setIsBinary(false);
+      clearBuffer();
     },
-    [requestFileSwitch, revealAndSelect],
+    [clearBuffer, requestFileSwitch, revealAndSelect],
   );
 
   const selectFile = useCallback(
@@ -493,10 +506,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
             const content = await sourceRef.current.readText(path);
             if (scoped.current.selectGen !== gen) return;
             setSelected(path);
-            setBufferPath(path);
-            setEditorText(content);
-            setLoadedText(content);
-            setIsBinary(false);
+            installBuffer(path, content);
             if (targetLine != null) {
               setScrollTarget({ line: targetLine, seq: ++scoped.current.scrollSeq });
             }
@@ -506,10 +516,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
               // rename work, just without a text preview.
               if (scoped.current.selectGen !== gen) return;
               setSelected(path);
-              setBufferPath(null);
-              setEditorText("");
-              setLoadedText("");
-              setIsBinary(true);
+              clearBuffer({ binary: true });
               return;
             }
             throw e;
@@ -523,7 +530,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         setLoadingPath((prev) => (prev === path ? null : prev));
       }
     },
-    [requestFileSwitch, revealAndSelect, runBusy],
+    [clearBuffer, installBuffer, requestFileSwitch, revealAndSelect, runBusy],
   );
 
   const selectedIsDir = !!selected && (findNode(tree, selected)?.dir ?? false);
@@ -531,11 +538,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const setBuffer = useCallback((content: string) => {
     // Self-correcting rather than trusting the caller to have checked first: whichever path is
     // currently selected is, by construction, what a freshly-installed buffer belongs to.
-    setBufferPath(scoped.current.selected);
-    setEditorText(content);
-    setLoadedText(content);
-    setIsBinary(false);
-  }, []);
+    installBuffer(scoped.current.selected, content);
+  }, [installBuffer]);
 
   const handleSave = useCallback(async () => {
     const path = scoped.current.bufferPath;
@@ -576,24 +580,46 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     [confirm],
   );
 
+  // The prompt half the three "create something here" handlers share: ask, normalize, and — for
+  // the two that can clobber an existing file — confirm. Returns the absolute path to act on, or
+  // null when the user backed out at any of those steps, so callers need one `if (!clean) return`
+  // instead of three.
+  const promptForPath = useCallback(
+    async (opts: {
+      title: string;
+      message: string;
+      defaultValue: string;
+      placeholder: string;
+      okLabel: string;
+      /** Only for the two that overwrite silently — `mkdir` errors on a collision by itself. */
+      checkOverwrite?: boolean;
+    }): Promise<string | null> => {
+      const { checkOverwrite, ...promptOpts } = opts;
+      const answer = await prompt(promptOpts);
+      if (!answer) return null;
+      const clean = toAbsolutePath(answer);
+      if (!clean) return null;
+      if (checkOverwrite && !(await confirmOverwriteIfExists(clean))) return null;
+      return clean;
+    },
+    [confirmOverwriteIfExists, prompt],
+  );
+
   const handleNewFile = useCallback(
     async (dirOverride?: string) => {
       const dir = dirOverride ?? defaultDir();
       const { title, message, placeholder } = sourceRef.current.labels.newFilePrompt;
-      const answer = await prompt({
+      const clean = await promptForPath({
         title,
         message,
         defaultValue: dir === "/" ? "/" : `${dir}/`,
         placeholder: placeholder(dir),
         okLabel: "Create",
+        // Unlike paste, writeText("") happily replaces an existing file with an empty one instead
+        // of erroring — so this needs the overwrite check.
+        checkOverwrite: true,
       });
-      if (!answer) return;
-      const clean = toAbsolutePath(answer);
       if (!clean) return;
-
-      // Unlike paste, writeText("") happily replaces an existing file with an empty one instead
-      // of erroring — so this needs its own overwrite check, reusing the same confirmation labels.
-      if (!(await confirmOverwriteIfExists(clean))) return;
 
       await runBusy(setBusy, sourceRef.current.labels.createFile, async () => {
         await sourceRef.current.writeText(clean, "");
@@ -601,21 +627,21 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         await selectFile(clean);
       });
     },
-    [confirmOverwriteIfExists, defaultDir, prompt, refreshDir, runBusy, selectFile],
+    [defaultDir, promptForPath, refreshDir, runBusy, selectFile],
   );
 
   const handleNewDirectory = useCallback(async (dirOverride?: string) => {
     const dir = dirOverride ?? defaultDir();
     const { title, message, placeholder } = sourceRef.current.labels.newDirectoryPrompt;
-    const answer = await prompt({
+    // No `checkOverwrite`: mkdir refuses an existing name on its own, so asking first would be a
+    // second dialog for something the backend already guards.
+    const clean = await promptForPath({
       title,
       message,
       defaultValue: dir === "/" ? "/" : `${dir}/`,
       placeholder: placeholder(dir),
       okLabel: "Create",
     });
-    if (!answer) return;
-    const clean = toAbsolutePath(answer);
     if (!clean) return;
 
     await runBusy(setBusy, sourceRef.current.labels.createDirectory, async () => {
@@ -623,7 +649,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       await refreshDir(parentOf(clean));
       revealAndSelect(clean);
     });
-  }, [defaultDir, prompt, refreshDir, revealAndSelect, runBusy]);
+  }, [defaultDir, promptForPath, refreshDir, revealAndSelect, runBusy]);
 
   const handleUpload = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -634,18 +660,15 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       const dir = defaultDir(true);
       const suggested = dir === "/" ? `/${file.name}` : `${dir}/${file.name}`;
       const { title, message } = sourceRef.current.labels.uploadPrompt;
-      const answer = await prompt({
+      const clean = await promptForPath({
         title: title(file.name),
         message,
         defaultValue: suggested,
         placeholder: suggested,
         okLabel: "Upload",
+        checkOverwrite: true,
       });
-      if (!answer) return;
-      const clean = toAbsolutePath(answer);
       if (!clean) return;
-
-      if (!(await confirmOverwriteIfExists(clean))) return;
 
       await runBusy(setBusy, sourceRef.current.labels.upload, async () => {
         await sourceRef.current.upload(clean, file);
@@ -654,7 +677,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         toast.show(`Uploaded ${file.name} → ${clean}.`, "success");
       });
     },
-    [confirmOverwriteIfExists, defaultDir, prompt, refreshDir, runBusy, selectFile, toast],
+    [defaultDir, promptForPath, refreshDir, runBusy, selectFile, toast],
   );
 
   // Drops a path from the clipboard (or rewrites it, and every descendant of it, to its new
@@ -705,10 +728,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
               : scoped.current.bufferPath === path;
             if (!clearedEditor && (affectsSelection || affectsBuffer)) {
               setSelected(null);
-              setBufferPath(null);
-              setEditorText("");
-              setLoadedText("");
-              setIsBinary(false);
+              clearBuffer();
               clearedEditor = true;
             }
           }
@@ -722,7 +742,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         toast.show(multiple ? `Deleted ${targets.length} items.` : `Deleted ${targets[0]}.`, "success");
       });
     },
-    [canModify, confirm, pruneClipboard, refreshDir, runBusy, toast],
+    [canModify, clearBuffer, confirm, pruneClipboard, refreshDir, runBusy, toast],
   );
 
   const handleDownload = useCallback(
@@ -921,10 +941,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       if (paths.length === 0) {
         scoped.current.pendingSelect = null;
         setSelected(null);
-        setBufferPath(null);
-        setEditorText("");
-        setLoadedText("");
-        setIsBinary(false);
+        clearBuffer();
         return;
       }
       // The tree's own notion of "most recently interacted with" row — so ctrl/shift-click
@@ -954,7 +971,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         if (scoped.current.pendingSelect === primary) scoped.current.pendingSelect = null;
       });
     },
-    [selectDir, selectFile],
+    [clearBuffer, selectDir, selectFile],
   );
 
   const onTreeRename = useCallback((args: { id: string; name: string }) => void handleRename(args), [handleRename]);

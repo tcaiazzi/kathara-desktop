@@ -263,6 +263,19 @@ const RAIL_DEFAULT_W = 300;
 // clicking it again (or its header strip) restores it to a usable height.
 const COLLAPSED_GROUP_HEIGHT = 35;
 const RESTORE_GROUP_HEIGHT = 280;
+// The layout presets, in menu order. One list, rendered by both header variants — each used to
+// carry its own copy, and they had already drifted apart: the compact menu said "Focus Topology"
+// where the wide one said "Focus topology". The wide spelling wins here because a normal window
+// shows that branch, so it is the wording most users already know.
+const LAYOUT_PRESETS = [
+  { key: "default", label: "Default" },
+  { key: "topology", label: "Focus topology" },
+  { key: "editing", label: "Focus editing" },
+  { key: "terminals", label: "Focus terminals" },
+] as const;
+
+type LayoutPreset = (typeof LAYOUT_PRESETS)[number]["key"];
+
 // A group at/under this height is considered collapsed (header strip only).
 const COLLAPSE_THRESHOLD = 60;
 
@@ -1095,7 +1108,13 @@ export function WorkspacePage() {
 
   const runningMachines = deviceMachines.filter((m) => m.running);
 
-  function applyPreset(preset: "default" | "topology" | "editing" | "terminals") {
+  const layoutPresetItems = LAYOUT_PRESETS.map((preset) => (
+    <Dropdown.Item key={preset.key} onClick={() => applyPreset(preset.key)}>
+      {preset.label}
+    </Dropdown.Item>
+  ));
+
+  function applyPreset(preset: LayoutPreset) {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
     if (preset === "default") {
@@ -1423,10 +1442,7 @@ export function WorkspacePage() {
                       <Dropdown.Item onClick={closeAllTerminals}>Close All Terminals</Dropdown.Item>
                       <Dropdown.Divider />
                       <Dropdown.Header>Layout</Dropdown.Header>
-                      <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
-                      <Dropdown.Item onClick={() => applyPreset("topology")}>Focus Topology</Dropdown.Item>
-                      <Dropdown.Item onClick={() => applyPreset("editing")}>Focus Editing</Dropdown.Item>
-                      <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus Terminals</Dropdown.Item>
+                      {layoutPresetItems}
                       <Dropdown.Divider />
                       <Dropdown.Header>Lab</Dropdown.Header>
                       <Dropdown.Item disabled={busy} onClick={() => void handleDeployToggle().catch(() => {})}>
@@ -1486,10 +1502,7 @@ export function WorkspacePage() {
                           </>
                         }
                       >
-                        <Dropdown.Item onClick={() => applyPreset("default")}>Default</Dropdown.Item>
-                        <Dropdown.Item onClick={() => applyPreset("topology")}>Focus topology</Dropdown.Item>
-                        <Dropdown.Item onClick={() => applyPreset("editing")}>Focus editing</Dropdown.Item>
-                        <Dropdown.Item onClick={() => applyPreset("terminals")}>Focus terminals</Dropdown.Item>
+                        {layoutPresetItems}
                       </DropdownButton>
                     </span>
                     <span data-tour="deploy-btn" className="d-inline-flex">

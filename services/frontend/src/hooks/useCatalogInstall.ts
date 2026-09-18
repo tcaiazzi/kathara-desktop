@@ -1,0 +1,72 @@
+import { useState } from "react";
+import { useToast } from "../context/ToastContext";
+import { ApiError } from "../services/api";
+import type { LabImportResult } from "../services/types";
+
+/** What both catalogues have in common: a stable id to send to the API, and whether the lab is
+ * already on disk (in which case the button opens it instead of installing it again). */
+interface CatalogItem {
+  id: string;
+  installed: boolean;
+}
+
+interface CatalogInstallOptions<T extends CatalogItem> {
+  install: (item: T) => Promise<LabImportResult>;
+  /** The lab name to use when the response has none, and in the "already exists" message. The two
+   * catalogues differ here: an example is identified by its id, a gallery entry carries a separate
+   * local name alongside the repo path it is fetched by. */
+  fallbackName: (item: T) => string;
+  /** Past tense for the success toast — "created" for an example, "imported" from the gallery. */
+  verbPast: string;
+  /** Prefix for `toast.reportError` when the failure is not a 409. */
+  errorLabel: string;
+  /** Run once the lab exists. Closing the modal, if there is one, belongs here — the gallery has
+   * to close *before* the workspace navigates. */
+  onDone: (labName: string) => void;
+}
+
+/** The install-or-open flow behind the welcome screen's examples and the gallery's labs.
+ *
+ * Deliberately not routed through `useBusyAction`: a 409 here is a benign race — another tab
+ * installed the same lab between the list loading and this click — and deserves "opening it"
+ * rather than that hook's automatic error toast.
+ */
+export function useCatalogInstall<T extends CatalogItem>({
+  install,
+  fallbackName,
+  verbPast,
+  errorLabel,
+  onDone,
+}: CatalogInstallOptions<T>) {
+  const toast = useToast();
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function run(item: T) {
+    if (item.installed) {
+      onDone(fallbackName(item));
+      return;
+    }
+    setBusyId(item.id);
+    try {
+      const result = await install(item);
+      toast.show(`Lab "${result.name}" ${verbPast}.`, "success");
+      // Non-fatal parse warnings — a lab.conf directive the API keeps but doesn't apply. Both
+      // catalogues surface them; the welcome screen used to drop them silently.
+      if (result.warnings?.length) {
+        toast.show(result.warnings.join(" · "), "info", "Import warnings");
+      }
+      onDone(result.name ?? fallbackName(item));
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        toast.show(`Lab "${fallbackName(item)}" already exists — opening it.`, "info");
+        onDone(fallbackName(item));
+      } else {
+        toast.reportError(errorLabel, e);
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return { busyId, install: run };
+}

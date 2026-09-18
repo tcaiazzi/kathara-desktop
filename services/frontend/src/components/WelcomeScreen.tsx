@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
+import { useCatalogInstall } from "../hooks/useCatalogInstall";
+import { CatalogInstallButton } from "./CatalogInstallButton";
 import { Button } from "react-bootstrap";
-import { Globe, Loader2, Plus, Upload } from "lucide-react";
+import { Globe, Plus, Upload } from "lucide-react";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
-import { useToast } from "../context/ToastContext";
 import { useTheme } from "../hooks/useTheme";
-import { api, ApiError } from "../services/api";
+import { api } from "../services/api";
 import { DOCS_URL } from "../services/constants";
 import type { ExampleLab } from "../services/types";
 import "./WelcomeScreen.css";
@@ -30,10 +31,8 @@ interface WelcomeScreenProps {
 // only launches the two flows (NewLabModal/UploadLabModal) that already exist.
 export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCreated, onDismiss }: WelcomeScreenProps) {
   const { dark } = useTheme();
-  const toast = useToast();
 
   const [examples, setExamples] = useState<ExampleLab[] | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,36 +52,13 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
     };
   }, []);
 
-  // Not routed through useBusyAction: a 409 here is a benign race (another tab/window installed
-  // the same example between the list load and this click), not an error worth its automatic
-  // toast — it needs its own handling below, so the try/catch stays local to this function.
-  async function handleCreateExample(example: ExampleLab) {
-    if (example.installed) {
-      onLabCreated(example.id);
-      return;
-    }
-    setBusyId(example.id);
-    try {
-      const result = await api.createExampleLab(example.id);
-      toast.show(`Lab "${result.name}" created.`, "success");
-      // Same LabImportResult GalleryModal gets, so the same non-fatal parse warnings can come
-      // back (a lab.conf directive the API keeps but doesn't apply). Dropping them here meant an
-      // example installed "cleanly" while the gallery reported the identical problem.
-      if (result.warnings?.length) {
-        toast.show(result.warnings.join(" · "), "info", "Import warnings");
-      }
-      onLabCreated(result.name ?? example.id);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        toast.show(`Lab "${example.id}" already exists — opening it.`, "info");
-        onLabCreated(example.id);
-      } else {
-        toast.reportError("Create example lab", e);
-      }
-    } finally {
-      setBusyId(null);
-    }
-  }
+  const { busyId, install } = useCatalogInstall<ExampleLab>({
+    install: (example) => api.createExampleLab(example.id),
+    fallbackName: (example) => example.id,
+    verbPast: "created",
+    errorLabel: "Create example lab",
+    onDone: onLabCreated,
+  });
 
   return (
     <div className="kt-welcome">
@@ -130,23 +106,14 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
                       {example.author ? ` · by ${example.author}` : ""}
                     </div>
                   </div>
-                  <Button
-                    size="sm"
-                    variant={example.installed ? "outline-secondary" : "outline-primary"}
-                    disabled={busyId !== null}
-                    onClick={() => void handleCreateExample(example)}
-                  >
-                    {busyId === example.id ? (
-                      <>
-                        <Loader2 size={14} className="kt-explorer-spin me-1" />
-                        Creating…
-                      </>
-                    ) : example.installed ? (
-                      "Open"
-                    ) : (
-                      "Create"
-                    )}
-                  </Button>
+                  <CatalogInstallButton
+                    installed={example.installed}
+                    busy={busyId === example.id}
+                    anyBusy={busyId !== null}
+                    idleLabel="Create"
+                    busyLabel="Creating…"
+                    onClick={() => void install(example)}
+                  />
                 </div>
               ))}
             </div>

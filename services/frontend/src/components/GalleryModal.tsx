@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useCatalogInstall } from "../hooks/useCatalogInstall";
+import { CatalogInstallButton } from "./CatalogInstallButton";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
-import { useToast } from "../context/ToastContext";
 import { api, ApiError } from "../services/api";
 import type { GalleryLab } from "../services/types";
 import "./GalleryModal.css";
@@ -42,7 +43,6 @@ function matches(lab: GalleryLab, query: string): boolean {
 // straight into the local labs directory — the remote twin of WelcomeScreen's "start from an
 // example" list, scaled up to a full searchable catalog (~70 labs across ~9 categories).
 export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
-  const toast = useToast();
 
   const [catalog, setCatalog] = useState<GalleryLab[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +50,6 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [busyId, setBusyId] = useState<string | null>(null);
 
   const loadIdRef = useRef(0);
 
@@ -98,36 +97,19 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
     return groupByCategory(filtered);
   }, [catalog, query]);
 
-  // Not routed through useBusyAction: a 409 here is a benign race (another tab/window installed
-  // the same lab between the list load and this click) that gets its own handling below, exactly
-  // as WelcomeScreen's handleCreateExample treats it — not a toast-worthy error.
-  async function handleImport(lab: GalleryLab) {
-    if (lab.installed) {
+  const { busyId, install } = useCatalogInstall<GalleryLab>({
+    install: (lab) => api.createGalleryLab(lab.id),
+    // A gallery entry's `id` is its path in the upstream repo; `name` is what the lab is called
+    // locally, and the only one worth showing a user.
+    fallbackName: (lab) => lab.name,
+    verbPast: "imported",
+    errorLabel: "Import gallery lab",
+    // Closing first is load-bearing: the modal has to be gone before the workspace navigates.
+    onDone: (labName) => {
       onClose();
-      onCreated(lab.name);
-      return;
-    }
-    setBusyId(lab.id);
-    try {
-      const result = await api.createGalleryLab(lab.id);
-      toast.show(`Lab "${result.name}" imported.`, "success");
-      if (result.warnings?.length) {
-        toast.show(result.warnings.join(" · "), "info", "Import warnings");
-      }
-      onClose();
-      onCreated(result.name ?? lab.name);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) {
-        toast.show(`Lab "${lab.name}" already exists — opening it.`, "info");
-        onClose();
-        onCreated(lab.name);
-      } else {
-        toast.reportError("Import gallery lab", e);
-      }
-    } finally {
-      setBusyId(null);
-    }
-  }
+      onCreated(labName);
+    },
+  });
 
   return (
     <Modal show={show} onHide={onClose} size="lg" scrollable className="kt-gallery-modal">
@@ -204,23 +186,14 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
                             </a>
                           </div>
                         </div>
-                        <Button
-                          size="sm"
-                          variant={lab.installed ? "outline-secondary" : "outline-primary"}
-                          disabled={busyId !== null}
-                          onClick={() => void handleImport(lab)}
-                        >
-                          {busyId === lab.id ? (
-                            <>
-                              <Loader2 size={14} className="kt-explorer-spin me-1" />
-                              Importing…
-                            </>
-                          ) : lab.installed ? (
-                            "Open"
-                          ) : (
-                            "Import"
-                          )}
-                        </Button>
+                        <CatalogInstallButton
+                          installed={lab.installed}
+                          busy={busyId === lab.id}
+                          anyBusy={busyId !== null}
+                          idleLabel="Import"
+                          busyLabel="Importing…"
+                          onClick={() => void install(lab)}
+                        />
                       </div>
                     ))}
                   </div>
