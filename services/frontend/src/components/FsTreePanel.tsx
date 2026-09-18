@@ -96,9 +96,8 @@ export function FsTreePanel({
   });
 
   return (
-    <div ref={rootRef} className="kt-explorer" style={{ display: "flex", flexDirection: "row", gap: 12, minHeight: 0 }}>
+    <div ref={rootRef} style={{ display: "flex", flexDirection: "row", gap: 12, minHeight: 0 }}>
       <div
-        className="kt-explorer-side"
         style={{ width: 260, flex: "0 0 260px", display: "flex", flexDirection: "column", minHeight: 0 }}
       >
         {headerSlot}

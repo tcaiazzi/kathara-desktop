@@ -5,7 +5,8 @@ import { AutocompleteInput } from "./AutocompleteInput";
 export interface TopoActionField {
   name: string;
   label: string;
-  type?: "text" | "number" | "textarea";
+  /** Only `"number"` is ever set; anything else renders a plain text input. */
+  type?: "number";
   options?: { value: string; label: string }[]; // renders a <select> instead of an <input>
   // Typeahead suggestions on an otherwise plain text input — the field still accepts free text,
   // this only helps find a value (e.g. official Docker Hub image names). Ignored when `options`
@@ -92,13 +93,10 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
                 />
               ) : (
                 <Form.Control
-                  as={f.type === "textarea" ? "textarea" : undefined}
-                  type={f.type === "number" ? "number" : f.type === "textarea" ? undefined : "text"}
-                  rows={f.type === "textarea" ? 8 : undefined}
+                  type={f.type === "number" ? "number" : "text"}
                   min={f.min}
                   required={f.required}
                   placeholder={f.placeholder}
-                  className={f.type === "textarea" ? "font-monospace" : undefined}
                   value={values[f.name] ?? ""}
                   onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
                 />

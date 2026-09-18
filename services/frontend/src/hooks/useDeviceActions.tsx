@@ -391,6 +391,9 @@ export function useDeviceActions({
     ];
   }
 
+  // Only what a caller actually reads. The device/domain mutators live on in the context
+  // menus built above (`deviceContextItems`/`domainContextItems`), which is how the UI
+  // reaches them — exposing them here as well just invited a second, unused surface.
   return {
     model,
     startups,
@@ -406,17 +409,11 @@ export function useDeviceActions({
     openAddInterface,
     openConnectExisting,
     openDisconnect,
-    removeDevice,
-    deployDevice,
-    undeployDevice,
-    removeDomain,
     openRuntimeFs,
     openOptions,
     openTerminalPopup,
     openWorkspaceTerminal,
     machineNames,
-    domainNames,
-    withRefresh,
   };
 }
 

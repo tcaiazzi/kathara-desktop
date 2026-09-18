@@ -57,10 +57,6 @@
 
   --kt-term-bg: var(--kt-surface-recessed);
   --kt-term-border: var(--kt-surface-recessed-border);
-  --kt-term-text: #24292f;
-  --kt-term-cmd: #0969da;
-  --kt-term-err: #cf222e;
-  --kt-term-exit: #9a6700;
 }
 
 :root[data-kt-theme="dark"] {
@@ -101,10 +97,6 @@
 
   --kt-term-bg: #0f1723;
   --kt-term-border: #2b3645;
-  --kt-term-text: #e6edf3;
-  --kt-term-cmd: #8ad6ff;
-  --kt-term-err: #ff8c8c;
-  --kt-term-exit: #f4d35e;
 }
 
 :root[data-kt-theme="dark"] {

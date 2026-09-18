@@ -1137,7 +1137,7 @@ export function WorkspacePage() {
       {railOpen ? (
         <>
         <aside className="kt-ws-rail" ref={railRef} data-tour="rail" style={{ flexBasis: railWidth }}>
-          <div className="kt-ws-rail-sec">
+          <div>
             <div className="kt-ws-rail-head">
               <span>Labs</span>
               <button className="kt-ws-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar" onClick={() => setRailOpen(false)}>
@@ -1309,7 +1309,7 @@ export function WorkspacePage() {
           </div>
 
           {detail && (
-            <div className="kt-ws-rail-sec">
+            <div>
               <div className="kt-ws-rail-head">
                 <span>Devices</span>
               </div>

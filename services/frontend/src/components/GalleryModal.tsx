@@ -112,7 +112,7 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
   });
 
   return (
-    <Modal show={show} onHide={onClose} size="lg" scrollable className="kt-gallery-modal">
+    <Modal show={show} onHide={onClose} size="lg" scrollable>
       <Modal.Header closeButton>
         <Modal.Title>Browse Kathara Labs</Modal.Title>
       </Modal.Header>
