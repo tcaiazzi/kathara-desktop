@@ -23,6 +23,11 @@ export function languageForPath(path: string | null | undefined): EditorLanguage
 // lab.conf machine option keywords (the `machine[<option>]=value` form), split by how the backend
 // treats them. `num_terms` is validated separately by the linter (int-or-warning) so it is listed
 // here but not part of MAPPED_OPTION_SET's generic value-validation path.
+//
+// Both lists have a consumer no TypeScript tool can see: tests/unit/test_lab_conf_options.py reads
+// this file as text and matches `export const <NAME> = [...]`, to assert the editor and the parser
+// agree on the option set. Keep the `export` and the literal-array form even if nothing in the
+// frontend imports them — a rename or a reshape here fails in the *Python* suite.
 export const MAPPED_OPTIONS = [
   "image",
   "mem",

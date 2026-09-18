@@ -49,7 +49,7 @@ interface Engine {
   settledOnce: boolean;
 }
 
-export interface UseForceLayoutCallbacks {
+interface UseForceLayoutCallbacks {
   onSelect: (id: string | null) => void;
   onDismissContextMenu: () => void;
   onNodeContextMenu: (node: TopoNode, clientX: number, clientY: number) => void;
@@ -57,7 +57,7 @@ export interface UseForceLayoutCallbacks {
   onNodeDoubleClick: (node: TopoNode) => void;
 }
 
-export interface UseForceLayoutOptions {
+interface UseForceLayoutOptions {
   // Seed positions per node id — a lab's fixed layout (its `lab.layout` file) overlaid with the
   // local draft in localStorage. Seeded nodes are pinned (see the rebuild effect); when every node
   // has one, the simulation starts cold so the graph doesn't reshuffle on reload.
@@ -69,7 +69,7 @@ export interface UseForceLayoutOptions {
   selectedId?: string | null;
 }
 
-export interface UseForceLayout {
+interface UseForceLayout {
   canvasRef: MutableRefObject<HTMLDivElement | null>;
   fit: () => void;
   // Imperatively set the selected node (e.g. from an external list). No-op if unchanged.

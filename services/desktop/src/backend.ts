@@ -19,7 +19,7 @@ import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
 import { isPlainAbsolutePath, quoteForShellString } from "./safety";
 
-export interface BackendHandle {
+interface BackendHandle {
   port: number;
   baseUrl: string;
   /** Pairing token for this one backend instance — see buildBackendCommand. Sent as
@@ -54,7 +54,7 @@ export type ElevateFailureReason = "wrong-password" | "not-permitted" | "cancell
  * failed alongside a still-running backend — the caller's page is still on a live origin and
  * must be left alone, so its elevation prompt can show the error and offer a retry in place.
  * When true, the backend was restarted on a *new* port and the caller has to be sent there. */
-export type ElevateResult =
+type ElevateResult =
   | { ok: true; handle: BackendHandle }
   | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
 
@@ -428,7 +428,7 @@ function forgetPort(): void {
  * have one. The native (macOS/Windows) elevation path doesn't: `@vscode/sudo-prompt` returns no
  * process handle at all, so its caller passes a substitute liveness check instead.
  */
-export async function waitForHealth(
+async function waitForHealth(
   baseUrl: string,
   token: string,
   deadline: number,

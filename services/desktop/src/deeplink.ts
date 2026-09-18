@@ -9,10 +9,10 @@
 import { app, BrowserWindow } from "electron";
 import { log } from "./logger";
 
-export const PROTOCOL = "kathara";
+const PROTOCOL = "kathara";
 
 /** A renderer route, or null when the URL isn't one we handle. */
-export function parseDeepLink(raw: string): string | null {
+function parseDeepLink(raw: string): string | null {
   let url: URL;
   try {
     url = new URL(raw);

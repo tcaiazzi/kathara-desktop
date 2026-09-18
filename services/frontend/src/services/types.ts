@@ -64,7 +64,7 @@ export interface SettingsView {
 
 export type SettingsUpdate = Partial<Omit<SettingsView, "last_checked" | "remote_url" | "cert_path">>;
 
-export interface LabMetadata {
+interface LabMetadata {
   description: string | null;
   version: string | null;
   author: string | null;
@@ -268,9 +268,9 @@ export interface StartupStatus {
 // Docker image state for a lab, ahead of a deploy. Only `missing` (mandatory) and `outdated`
 // (optional) are actionable; `unknown` means the registry couldn't be consulted (offline, or
 // slower than the backend's time budget) and is deliberately not reported as `ok`.
-export type ImageState = "ok" | "missing" | "outdated" | "unknown";
+type ImageState = "ok" | "missing" | "outdated" | "unknown";
 
-export interface LabImageStatus {
+interface LabImageStatus {
   name: string;
   state: ImageState;
 }

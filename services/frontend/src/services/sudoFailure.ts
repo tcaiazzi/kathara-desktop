@@ -9,7 +9,7 @@
 /** A failure reason the modal stays open for, mapped to what it says about it. A reason *absent*
  * from the table closes the modal instead: currently only `"cancelled"`, i.e. the user dismissed
  * the OS's own admin dialog on macOS/Windows, where closing is exactly what they asked for. */
-export type SudoRetryMessages = Record<string, ((message: string) => string) | undefined>;
+type SudoRetryMessages = Record<string, ((message: string) => string) | undefined>;
 
 /** The three reasons that read the same whatever the operation was, plus the two that do not.
  *
@@ -30,7 +30,7 @@ export function sudoRetryMessages(
   };
 }
 
-export interface SudoRetryFields {
+interface SudoRetryFields {
   setPassword: (value: string) => void;
   setError: (value: string) => void;
   setBusy: (value: boolean) => void;

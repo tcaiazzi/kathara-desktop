@@ -23,7 +23,7 @@ import { desktop } from "./bridge";
  * user declined, or the check failed and they gave up — the caller should abort. */
 export type DeployAuthOutcome = "proceed" | "elevating" | "cancelled";
 
-export interface DeployAuthRequest {
+interface DeployAuthRequest {
   privileged: boolean;
   volumeMachines: { name: string; volumes: VolumeMount[] }[];
   /** Whether Settings' "Mount host home directory" is on — a global toggle, not a per-device

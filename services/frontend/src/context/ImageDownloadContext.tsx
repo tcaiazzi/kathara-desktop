@@ -21,7 +21,7 @@ import "./ImageDownloadContext.css";
  *                carry straight on and deploy with the images already on disk.
  * "cancelled"  — do not deploy.
  */
-export type ImageDownloadOutcome = "downloaded" | "skipped" | "cancelled";
+type ImageDownloadOutcome = "downloaded" | "skipped" | "cancelled";
 
 type ImageDownloadApi = (status: LabImagesStatus) => Promise<ImageDownloadOutcome>;
 
@@ -30,7 +30,7 @@ const ImageDownloadCtx = createContext<ImageDownloadApi | null>(null);
 /** What the navbar badge needs — kept as its own context so a component that only cares about
  * "is a download running in the background" doesn't have to depend on `ImageDownloadApi` (whose
  * identity is stable but whose *purpose*, requesting a new download, is unrelated). */
-export interface ImageDownloadStatus {
+interface ImageDownloadStatus {
   /** True only while a download is running AND its modal isn't currently shown — i.e. exactly
    * the case the badge exists for. Goes false again the moment the modal is reopened, and also
    * once the download finishes (the toast is what reports that, not the badge). */

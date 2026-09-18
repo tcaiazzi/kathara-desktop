@@ -11,7 +11,7 @@ import { isPlainAbsolutePath } from "./safety";
  * Repo root in dev: app.getAppPath() is services/desktop, so the root is two levels up.
  * A function, not a const: module initialisation can run before `app` is usable.
  */
-export function repoRoot(): string {
+function repoRoot(): string {
   return path.resolve(app.getAppPath(), "..", "..");
 }
 
@@ -21,7 +21,7 @@ export function repoRoot(): string {
  * Returns null when the frontend has not been built yet, so the caller can say so plainly
  * instead of starting a backend that would answer 404 at /.
  */
-export function frontendDir(): string | null {
+function frontendDir(): string | null {
   const candidate = app.isPackaged
     ? path.join(process.resourcesPath, "frontend")
     : path.join(repoRoot(), "services", "frontend", "dist");

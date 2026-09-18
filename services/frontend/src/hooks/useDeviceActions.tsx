@@ -10,7 +10,7 @@ import type { LabDetail } from "../services/types";
 import type { TopoActionConfig, TopoActionField } from "../components/TopologyActionModal";
 import type { ContextMenuItem } from "../components/TopologyContextMenu";
 
-export interface UseDeviceActionsOptions {
+interface UseDeviceActionsOptions {
   labName: string;
   // null while the lab detail hasn't loaded yet — every derived value degrades to empty/no-op.
   detail: LabDetail | null;

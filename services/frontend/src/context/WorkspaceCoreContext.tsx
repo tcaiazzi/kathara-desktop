@@ -10,7 +10,7 @@ import type { LabDetail } from "../services/types";
 // this context instead of the full one means an unrelated re-render elsewhere in the workspace
 // (topology hover, a context-menu open, a rail drag) no longer forces every visible tree row to
 // re-render.
-export interface WorkspaceCoreCtx {
+interface WorkspaceCoreCtx {
   labName: string;
   detail: LabDetail;
   onRefresh: () => Promise<void>;

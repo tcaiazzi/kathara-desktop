@@ -109,7 +109,7 @@ function authHeaders(): HeadersInit {
 }
 
 /** Ordered boot phases. KEEP IN SYNC with the PHASE_COPY table in setup.html. */
-export type BootPhase =
+type BootPhase =
   | "environment"     // querying the login shell for PATH
   | "frontend"        // locating (and, under AppImage, copying) the bundled SPA
   | "docker"          // `docker info` round trip to the daemon

@@ -14,7 +14,7 @@ const REPO = "tcaiazzi/kathara-desktop";
 const RELEASES_LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 const FETCH_TIMEOUT_MS = 10_000;
 
-export interface UpdateInfo {
+interface UpdateInfo {
   /** The newer version's number, without the leading "v" (e.g. "1.3.0"). */
   version: string;
   /** The release page on GitHub, to open externally — never auto-downloaded (see

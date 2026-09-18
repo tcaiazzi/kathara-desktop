@@ -19,7 +19,7 @@ export type DeviceCategory =
   | "analyzer"
   | "device";
 
-export interface DeviceType {
+interface DeviceType {
   category: DeviceCategory;
   label: string;
 }
@@ -84,7 +84,7 @@ export function deviceType(machine: MachineDetail): DeviceType {
 // Inline SVG line-art per category (16×16 user units, stroke = currentColor), as element specs
 // (`[tag, attrs]`) so both the imperative canvas engine and the React legend build the same icon via
 // the DOM/JSX — no `innerHTML` (which rasterizes unreliably for SVG in some engines).
-export type IconSpec = [tag: "rect" | "path" | "circle", attrs: Record<string, string | number>];
+type IconSpec = [tag: "rect" | "path" | "circle", attrs: Record<string, string | number>];
 
 export const CATEGORY_ICON: Record<DeviceCategory, IconSpec[]> = {
   host: [

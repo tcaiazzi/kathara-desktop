@@ -7,7 +7,7 @@ import { app } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
-export interface Prefs {
+interface Prefs {
   /** Terminal emulator argv template; "{cmd}" is replaced with the command to run. */
   terminalCommand?: string[];
   /**

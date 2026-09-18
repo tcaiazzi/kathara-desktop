@@ -116,7 +116,7 @@ const DOCKER_PRODUCT_NAME =
 /** The three-way answer `docker info` can give — "ok" isn't in `Check`'s vocabulary, so this is
  * the shape the renderer's on-demand recheck (main.ts's "docker:check") hands back too, letting
  * it reuse the exact same remedy copy without re-deriving it from a `Check`. */
-export type DockerState = "ok" | "stopped" | "missing";
+type DockerState = "ok" | "stopped" | "missing";
 
 export interface DockerStatus {
   state: DockerState;

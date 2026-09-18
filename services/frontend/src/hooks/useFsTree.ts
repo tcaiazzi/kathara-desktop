@@ -51,7 +51,7 @@ export interface FsTreeSource {
   labels: FsTreeLabels;
 }
 
-export interface FsTreeLabels {
+interface FsTreeLabels {
   /** Toast prefixes for the busy-action wrapper (`useBusyAction`'s error label). */
   openFile: string;
   saveFile: string;
@@ -82,7 +82,7 @@ export interface FsTreeLabels {
   uploadFallbackDir?(): string;
 }
 
-export interface UseFsTreeOptions {
+interface UseFsTreeOptions {
   source: FsTreeSource;
   /** Identity of what is being browsed (lab name, device name). A change resets everything. */
   scopeKey: string;

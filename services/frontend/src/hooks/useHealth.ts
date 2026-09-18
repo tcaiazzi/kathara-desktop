@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../services/api";
 
-export type Health = "checking" | "ok" | "down";
+type Health = "checking" | "ok" | "down";
 
 /** One-shot backend reachability probe, shown as a badge in the top bar. */
 export function useHealth(): Health {

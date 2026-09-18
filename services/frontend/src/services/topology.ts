@@ -5,7 +5,7 @@ import { HOST_BRIDGE, visibleInterfaces } from "./constants";
 import { type DeviceCategory, deviceType } from "./deviceIcon";
 import type { LabDetail, MachineDetail, PortMapping } from "./types";
 
-export interface TopoIface {
+interface TopoIface {
   num: number;
   link: string;
   mac: string | null;

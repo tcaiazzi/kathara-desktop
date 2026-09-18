@@ -9,7 +9,7 @@ type ToastVariant = "success" | "danger" | "info";
  *  update-available notice (see UpdateChecker.tsx). Deliberately a plain url string rather than a
  *  callback: it must survive the notification history's IPC round-trip (saveNotificationHistory/
  *  loadNotificationHistory) across a shell-triggered reload, which a closure can't. */
-export interface ToastAction {
+interface ToastAction {
   label: string;
   url: string;
 }
@@ -22,7 +22,7 @@ interface ToastItem {
   action?: ToastAction;
 }
 
-export interface NotificationHistoryItem {
+interface NotificationHistoryItem {
   id: number;
   message: string;
   detail?: string;

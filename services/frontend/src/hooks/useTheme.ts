@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type ThemeMode = "light" | "dark";
+type ThemeMode = "light" | "dark";
 
 const THEME_STORAGE_KEY = "kt-ui-theme";
 const THEME_ATTR = "data-kt-theme";

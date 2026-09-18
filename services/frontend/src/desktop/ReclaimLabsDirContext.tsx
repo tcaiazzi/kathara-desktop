@@ -14,7 +14,7 @@ import { showSudoRetry, sudoRetryMessages } from "../services/sudoFailure";
 import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { desktop } from "./bridge";
 
-export type ReclaimOutcome = "reclaimed" | "skipped";
+type ReclaimOutcome = "reclaimed" | "skipped";
 type ReclaimAuthApi = () => Promise<ReclaimOutcome>;
 const ReclaimAuthCtx = createContext<ReclaimAuthApi | null>(null);
 

@@ -13,7 +13,7 @@ import type { VolumeMount } from "../services/types";
 // so adding a device to a live lab bind-mounted the operator's real $HOME with no prompt at all
 // (audit_3 Q5).
 
-export interface DeployGateRequest {
+interface DeployGateRequest {
   /** Devices whose own `volumes` would be mounted. Entries without volumes are dropped, so
    * callers can pass a device unconditionally without having to pre-filter. */
   volumeMachines?: { name: string; volumes: VolumeMount[] }[];

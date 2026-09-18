@@ -7,7 +7,7 @@ import { decodeLiveMessage, type LiveTtyEvent } from "../services/liveTty";
 const MIN_TERMINAL_FONT_SIZE = 8;
 const MAX_TERMINAL_FONT_SIZE = 28;
 
-export interface UseLiveTtyOptions {
+interface UseLiveTtyOptions {
   /** Returns the `/tty/ws` URL to connect to, or null when there's nothing to connect to yet. */
   wsUrl: () => string | null;
   terminalOptions: ConstructorParameters<typeof Terminal>[0];
@@ -25,7 +25,7 @@ export interface UseLiveTtyOptions {
   focusScopeRef?: MutableRefObject<HTMLElement | null>;
 }
 
-export interface UseLiveTty {
+interface UseLiveTty {
   containerRef: MutableRefObject<HTMLDivElement | null>;
   terminalRef: MutableRefObject<Terminal | null>;
   connected: boolean;
