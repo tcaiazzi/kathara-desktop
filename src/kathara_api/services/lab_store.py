@@ -25,6 +25,7 @@ from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
 from ..config import format_mb, get_settings
+from ..lab_conf_options import DEFAULT_IMAGE, IMAGE_KEY, MODELED_META_KEYS, SCALAR_OPTIONS
 from ..errors import ApiError, LabAlreadyRegisteredError
 
 logger = logging.getLogger("kathara_api")
@@ -44,18 +45,10 @@ LAB_CONF_FILENAME = "lab.conf"
 # generated or legitimately-imported file could ever approach.
 MAX_LAB_CONF_BYTES = 1 << 20
 
-# Meta keys handled generically as scalar `machine[key]="value"` lines (in this order).
-_SCALAR_META_ORDER = (
-    "mem", "cpus", "shell", "ipv6", "privileged", "bridged", "num_terms", "entrypoint", "args",
-)
-
-# Meta keys already emitted explicitly above (scalars) or by the container-typed loops below, plus
-# `bridged_iface`, which the manager derives at deploy time rather than something authored in
-# lab.conf. Everything else in `device.meta` is a pass-through option (see
-# `lab_builder.apply_options`) and gets its own `name[key]="value"` line, sorted for stability.
-_KNOWN_META_KEYS = frozenset(_SCALAR_META_ORDER) | {
-    "image", "exec_commands", "ports", "envs", "sysctls", "ulimits", "volumes", "bridged_iface",
-}
+# The scalar render order and the "already has a home" set both come from `lab_conf_options` now —
+# see that module for why they are not spelled out here. Everything in `device.meta` that is *not*
+# in MODELED_META_KEYS is a pass-through option (see `lab_builder.apply_options`) and gets its own
+# `name[key]="value"` line, sorted for stability.
 
 
 def sanitize_lab_name(name: str) -> str:
@@ -109,10 +102,10 @@ def gen_device_lines(device) -> list[str]:
             lines.append(f'{name}[{num}]="{link_name}"')
 
     meta = device.meta
-    image = meta.get("image")
-    lines.append(f'{name}[image]="{image if image else "kathara/base"}"')
+    image = meta.get(IMAGE_KEY)
+    lines.append(f'{name}[{IMAGE_KEY}]="{image if image else DEFAULT_IMAGE}"')
 
-    for key in _SCALAR_META_ORDER:
+    for key in SCALAR_OPTIONS:
         value = meta.get(key)
         if value not in (None, "", False):
             lines.append(f'{name}[{key}]={conf_value(value)}')
@@ -132,7 +125,7 @@ def gen_device_lines(device) -> list[str]:
 
     # Pass-through metas this API doesn't interpret (see lab_builder.apply_options), sorted for
     # stable output.
-    for key in sorted(set(meta) - _KNOWN_META_KEYS):
+    for key in sorted(set(meta) - MODELED_META_KEYS):
         lines.append(f'{name}[{key}]={conf_value(meta[key])}')
 
     return lines

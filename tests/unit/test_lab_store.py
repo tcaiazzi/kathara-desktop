@@ -266,8 +266,9 @@ def test_write_lab_conf_text_is_atomic_and_requires_existing_dir(tmp_path):
 # --- generated lab.conf byte-for-byte ------------------------------------------------------------
 
 # Every option this API models, on one device, so the *order* `gen_device_lines` emits them in is
-# pinned. That order is not cosmetic: `_SCALAR_META_ORDER` drives a loop, and the container block
-# below it is a hand-written sequence — both decide the bytes that land in a user's lab.conf.
+# pinned. That order is not cosmetic: `lab_conf_options.SCALAR_OPTIONS` drives a loop, and the
+# container block below it is a hand-written sequence — both decide the bytes that land in a
+# user's lab.conf.
 #
 # Written before the audit_3 Q8 refactor that makes the five copies of this vocabulary derive from
 # one source. Without it that refactor could reorder or set-ify the tuple and silently rewrite every
@@ -300,7 +301,7 @@ _GOLDEN_LINES = [
     'r1[1]="B"',
     # image always, always double-quoted
     'r1[image]="kathara/frr"',
-    # then _SCALAR_META_ORDER, in exactly this order
+    # then SCALAR_OPTIONS, in exactly this order
     "r1[mem]=512m",
     "r1[cpus]=1.5",
     "r1[shell]=/bin/bash",

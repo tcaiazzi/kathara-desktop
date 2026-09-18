@@ -14,7 +14,7 @@ from ..schemas.lab import LabDetail, LabMetadata, LabSummary
 from ..schemas.link import LinkDetail
 from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping, Ulimit, VolumeMount
 from ..schemas.stats import MachineStats
-from .lab_store import _KNOWN_META_KEYS
+from ..lab_conf_options import MODELED_META_KEYS
 
 
 def _ports_to_schema(ports: dict) -> list[PortMapping]:
@@ -90,7 +90,7 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
         num_terms=machine.meta.get("num_terms"),
         entrypoint=machine.meta.get("entrypoint"),
         args=machine.meta.get("args"),
-        metas={k: str(v) for k, v in machine.meta.items() if k not in _KNOWN_META_KEYS},
+        metas={k: str(v) for k, v in machine.meta.items() if k not in MODELED_META_KEYS},
         running=running,
         status=status,
     )

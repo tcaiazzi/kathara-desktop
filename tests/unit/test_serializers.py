@@ -92,3 +92,24 @@ def test_machine_to_detail_exposes_num_terms_entrypoint_args():
     assert detail.num_terms == 2
     assert detail.entrypoint == "/sbin/init"
     assert detail.args == "--verbose"
+
+
+def test_a_singular_option_spelling_never_escapes_into_metas():
+    """`MachineDetail.metas` feeds straight back into a PUT, so it must not contain a key the
+    request schema would then reject.
+
+    Before audit_3 Q8 the filter here used a narrower set than the schema's: it knew the plural
+    field names (`ports`) but not the lab.conf spellings (`port`) or the `cpu` alias, so a
+    `machine.meta` carrying one of those escaped into `metas` and the round-trip 422'd. Both sides
+    now derive from `lab_conf_options.MODELED_META_KEYS`. Unreachable through the normal paths —
+    the meta is set directly here — but the point is that it stays unreachable.
+    """
+    lab = _lab()
+    machine = lab.machines["r1"]
+    machine.meta["port"] = "8080:80/tcp"
+    machine.meta["cpu"] = "2"
+    machine.meta["genuinely_unknown"] = "kept"
+
+    detail = serializers.machine_to_detail(machine)
+
+    assert detail.metas == {"genuinely_unknown": "kept"}

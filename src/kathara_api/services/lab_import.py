@@ -17,6 +17,7 @@ from typing import Optional
 
 from pydantic import ValidationError
 
+from ..lab_conf_options import INTERPRETED_OPTIONS, OPTION_ALIASES
 from ..schemas.lab import LabCreate, LabMetadata
 from ..schemas.link import LinkCreate
 from ..schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit, VolumeMount
@@ -128,11 +129,26 @@ def _parse_volume(value: str) -> Optional[VolumeMount]:
 
 
 def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int, errors: list) -> None:
+    """Apply one `device[opt]=value` directive to the in-progress machine.
+
+    The gate below is the point of `lab_conf_options.INTERPRETED_OPTIONS`: an option is interpreted
+    here **because** it is listed there, not merely in agreement with it. So a new option cannot be
+    handled without being added to that module — and once it is there it is reserved by
+    `schemas.machine` too, which is exactly the step that was missed for `cpu` (audit_3 Q1).
+    """
+    # Normalize before the gate, not after: an alias resolves to a real option, so treating it as a
+    # pass-through would write it back to lab.conf verbatim and reinterpret it on the next load.
+    opt = OPTION_ALIASES.get(opt, opt)
+    if opt not in INTERPRETED_OPTIONS:
+        machine.metas[opt] = value
+        machine.unsupported.append(f'meta "{opt}" not recognized')
+        return
+
     if opt == "image":
         machine.image = value
     elif opt == "mem":
         machine.mem = value
-    elif opt in ("cpus", "cpu"):
+    elif opt == "cpus":
         try:
             machine.cpus = float(value)
         except ValueError:
@@ -200,9 +216,9 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
             errors.append(
                 f'line {line_no}: invalid volume "{value}" (expected <host_path>|<guest_path>|[<mode>])'
             )
-    else:
-        machine.metas[opt] = value
-        machine.unsupported.append(f'meta "{opt}" not recognized')
+    # No `else`: anything not interpreted returned at the gate above. A key listed in
+    # INTERPRETED_OPTIONS with no branch here would silently do nothing — which is what
+    # `test_every_interpreted_option_is_actually_applied` exists to catch.
 
 
 def strip_quotes(value: str) -> str:

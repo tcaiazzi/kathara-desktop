@@ -31,6 +31,7 @@ from Kathara.exceptions import MachineAlreadyExistsError, MachineCollisionDomain
 from Kathara.model.Lab import Lab
 
 from ..errors import ApiError
+from ..lab_conf_options import DEFAULT_IMAGE, GROUP_OPTIONS, IMAGE_KEY, SCALAR_OPTIONS
 from ..schemas.machine import MachineCreate, MachineUpdate
 from . import lab_builder, lab_import, lab_store
 
@@ -519,13 +520,10 @@ def unset_meta(text: str, device: str, key: str) -> str:
     return doc.render()
 
 
-# Scalar meta keys, and the six keys that repeat (one line per list/dict entry) — used by
-# `replace_device_options` to know which lines are "modeled" (so anything else left on the device
-# is a pass-through `metas` entry, not one this function forgot to handle).
-_SCALAR_OPTION_KEYS = (
-    "image", "mem", "cpus", "shell", "num_terms", "entrypoint", "args", "bridged", "privileged", "ipv6",
-)
-_GROUP_OPTION_KEYS = ("exec", "port", "env", "sysctl", "ulimit", "volume")
+# Which lines `replace_device_options` considers "modeled" — so anything else left on the device is
+# a pass-through `metas` entry, not one that function forgot to handle. Order is irrelevant here
+# (it is only ever used as a set); the emission order below is the hand-written call sequence.
+_MODELED_LINE_KEYS = frozenset({IMAGE_KEY, *SCALAR_OPTIONS, *GROUP_OPTIONS})
 
 
 def _set_scalar(doc: "LabConfDoc", device: str, key: str, value) -> None:
@@ -557,7 +555,7 @@ def replace_device_options(text: str, device: str, spec: MachineUpdate) -> str:
     # "", False)` guard: a boolean like `bridged`/`privileged`/`ipv6` set to False is
     # indistinguishable from "never set" in this project's own generator, so writing it explicitly
     # would be inconsistent with a freshly created device.
-    doc.set_meta(device, "image", spec.image or "kathara/base", '"')
+    doc.set_meta(device, IMAGE_KEY, spec.image or DEFAULT_IMAGE, '"')
     _set_scalar(doc, device, "mem", spec.mem)
     _set_scalar(doc, device, "cpus", spec.cpus)
     _set_scalar(doc, device, "shell", spec.shell)
@@ -582,8 +580,7 @@ def replace_device_options(text: str, device: str, spec: MachineUpdate) -> str:
     # Anything left on the device that isn't one of the keys just handled above is a pass-through
     # `metas` entry (an option this API doesn't model explicitly) — reconcile it against `spec.metas`
     # rather than leaving stale ones behind or dropping ones the caller didn't touch.
-    modeled = set(_SCALAR_OPTION_KEYS) | set(_GROUP_OPTION_KEYS)
-    existing_passthrough = doc.device_meta_keys(device) - modeled
+    existing_passthrough = doc.device_meta_keys(device) - _MODELED_LINE_KEYS
     for stale_key in existing_passthrough - set(spec.metas):
         doc.unset_meta(device, stale_key)
     # `key` is rendered raw into `name[key]=...` by `_set_scalar`/`_Line.render` below, with no

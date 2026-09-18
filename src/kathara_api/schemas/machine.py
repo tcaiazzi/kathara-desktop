@@ -7,6 +7,7 @@ from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..lab_conf_options import MODELED_META_KEYS
 from .common import reject_lab_conf_quotes
 
 MACHINE_NAME_PATTERN = r"^[a-z0-9_]{1,30}$"
@@ -22,28 +23,20 @@ MACHINE_NAME_PATTERN = r"^[a-z0-9_]{1,30}$"
 # case the same way.
 _META_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-# Names this API models explicitly (as a first-class field, or a container it renders itself) or
-# that Kathara's own `Machine.add_meta`/`Machine.check` treat specially. A `metas` pass-through
-# entry using one of these is never applied on the *live* JSON-create/update path (see
-# `lab_builder.apply_options`, which never routes metas through `add_meta` in the first place) —
-# but `metas` also round-trips through lab.conf text (`lab_conf_edit.replace_device_options`), and
-# that path re-parses on the next load, where a key like `volume` *is* interpreted specially. Since
-# every one of these already has its own modeled field with its own validation, a `metas` entry
-# using the same name can't add any capability a request doesn't already have through that field —
-# rejecting it here just keeps the two paths from disagreeing about it.
+# A `metas` pass-through entry using a name this API already models is never applied on the *live*
+# JSON-create/update path (see `lab_builder.apply_options`, which never routes metas through
+# `add_meta` in the first place) — but `metas` also round-trips through lab.conf text
+# (`lab_conf_edit.replace_device_options`), and that path re-parses on the next load, where a key
+# like `volume` *is* interpreted specially. Since every one of these already has its own modeled
+# field with its own validation, a `metas` entry using the same name can't add any capability a
+# request doesn't already have through that field — rejecting it here just keeps the two paths from
+# disagreeing about it.
 #
-# `cpu` earns its place for the same reason even though no field is named that: it is an *alias*
-# `_apply_conf_option` normalizes to `cpus`, so a pass-through meta using it is not pass-through at
-# all — it comes back as the real option on the next load. An alias has to be reserved as tightly
-# as the name it resolves to.
-_RESERVED_META_KEYS = frozenset(
-    {
-        "image", "mem", "cpus", "cpu", "shell", "ipv6", "privileged", "bridged", "bridged_iface",
-        "num_terms", "entrypoint", "args",
-        "exec", "exec_commands", "port", "ports", "env", "envs", "sysctl", "sysctls",
-        "ulimit", "ulimits", "volume", "volumes",
-    }
-)
+# Aliases count, and that is the half this used to miss: `cpu` reaches `cpus` through the parser, so
+# accepting it as a pass-through meant it came back as the real option on the next load (audit_3 Q1).
+# Deriving the set from `lab_conf_options` is what makes that impossible to get wrong again — the
+# parser gates on the same names it reserves.
+_RESERVED_META_KEYS = MODELED_META_KEYS
 
 
 class PortMapping(BaseModel):
