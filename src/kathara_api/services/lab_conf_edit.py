@@ -108,14 +108,22 @@ def _classify(raw: str) -> _Line:
 
 def _split_text(text: str) -> tuple[list[str], str, bool]:
     """Split ``text`` into physical lines plus enough information to reassemble it exactly:
-    the dominant line terminator (CRLF if any line uses it, else LF) and whether the text ended
-    with a trailing newline at all."""
-    terminator = "\r\n" if "\r\n" in text else "\n"
+    the dominant line terminator and whether the text ended with a trailing newline at all.
+
+    "Dominant" is a ladder, CRLF before CR before LF, because a CRLF file contains CRs too. A file
+    mixing terminators keeps only the dominant one on render — the one case where the
+    byte-identical promise below cannot be kept, and never could.
+
+    The split itself is ``lab_import.LINE_SPLIT_RE``, shared with the parser on purpose: the two
+    disagreeing about where a line ends is what let a CR-terminated lab.conf lose an interface
+    silently (audit_3 Q2).
+    """
+    terminator = "\r\n" if "\r\n" in text else "\r" if "\r" in text else "\n"
     trailing_newline = text.endswith(("\n", "\r"))
     body = text[:-1] if trailing_newline and not text.endswith("\r\n") else text
     if trailing_newline and text.endswith("\r\n"):
         body = text[:-2]
-    lines = re.split(r"\r\n|\r|\n", body) if body or not trailing_newline else []
+    lines = lab_import.LINE_SPLIT_RE.split(body) if body or not trailing_newline else []
     if body == "" and trailing_newline:
         lines = [""]
     return lines, terminator, trailing_newline
@@ -125,7 +133,8 @@ class LabConfDoc:
     """A ``lab.conf`` as an editable list of classified physical lines.
 
     ``render()`` of a document that was never mutated is byte-identical to the text it was built
-    from, including CRLF line endings and a missing final newline.
+    from, including CR or CRLF line endings and a missing final newline. The one exception is a
+    file that *mixes* terminators, which renders with the dominant one — see ``_split_text``.
     """
 
     def __init__(self, text: str) -> None:

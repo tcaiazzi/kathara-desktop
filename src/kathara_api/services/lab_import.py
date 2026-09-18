@@ -27,6 +27,12 @@ CONF_LINE_RE = re.compile(r"""^([a-z0-9_]{1,30})\[(\w+)\]=(["']?)([^"']+)\3(\s+#
 # A top-level `KEY=value` line that isn't a known LAB_* key: preserved, not applied (see parse_lab_conf).
 TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 STARTUP_NAME_RE = re.compile(r"^([a-z0-9_]{1,30})\.startup$")
+# Physical line split for lab.conf/lab.ext, shared with `lab_conf_edit._split_text` so the parser
+# and the editor can never disagree about where a line ends. A bare CR counts: without it,
+# CONF_LINE_RE's `[^"']+` swallows the following line into the value, and a CR-terminated file
+# parses "successfully" into a device with a garbage image and one interface fewer — no error, no
+# warning. (LF and CRLF behave identically under `\r?\n`; the bare CR is the whole difference.)
+LINE_SPLIT_RE = re.compile(r"\r\n|\r|\n")
 
 
 @dataclass
@@ -214,7 +220,7 @@ def parse_lab_conf(text: str) -> _ParsedConf:
     def get(name: str) -> _ConfMachine:
         return machines.setdefault(name, _ConfMachine(name))
 
-    for idx, raw in enumerate(re.split(r"\r?\n", text)):
+    for idx, raw in enumerate(LINE_SPLIT_RE.split(text)):
         line = raw.strip()
         line_no = idx + 1
         if not line or line.startswith("#"):
@@ -270,7 +276,7 @@ def parse_lab_conf(text: str) -> _ParsedConf:
 def parse_lab_ext(text: str) -> list[LinkCreate]:
     """Parse ``lab.ext`` contents into external-interface link declarations."""
     links: dict[str, LinkCreate] = {}
-    for raw in re.split(r"\r?\n", text):
+    for raw in LINE_SPLIT_RE.split(text):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
