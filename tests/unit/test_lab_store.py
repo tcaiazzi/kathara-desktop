@@ -14,9 +14,9 @@ from Kathara.exceptions import LabNotFoundError
 
 from kathara_api.errors import ApiError, LabAlreadyRegisteredError
 from kathara_api.schemas.lab import LabCreate, LabMetadata
-from kathara_api.schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit
+from kathara_api.schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit, VolumeMount
 from kathara_api.services import lab_builder, lab_import
-from kathara_api.services.lab_store import LabStore, gen_lab_conf, sanitize_lab_name
+from kathara_api.services.lab_store import LabStore, gen_device_lines, gen_lab_conf, sanitize_lab_name
 from tests.helpers import zip_bytes
 
 
@@ -262,3 +262,90 @@ def test_write_lab_conf_text_is_atomic_and_requires_existing_dir(tmp_path):
     lab_dir = store.lab_dir("atomiclab")
     assert (lab_dir / "lab.conf").read_text() == "pc1[image]=kathara/base\n"
     assert not (lab_dir / ".lab.conf.tmp").exists()
+
+# --- generated lab.conf byte-for-byte ------------------------------------------------------------
+
+# Every option this API models, on one device, so the *order* `gen_device_lines` emits them in is
+# pinned. That order is not cosmetic: `_SCALAR_META_ORDER` drives a loop, and the container block
+# below it is a hand-written sequence — both decide the bytes that land in a user's lab.conf.
+#
+# Written before the audit_3 Q8 refactor that makes the five copies of this vocabulary derive from
+# one source. Without it that refactor could reorder or set-ify the tuple and silently rewrite every
+# JSON-created lab.conf, because no other test asserts more than one scalar at a time.
+_GOLDEN_DEVICE = MachineCreate(
+    name="r1",
+    image="kathara/frr",
+    mem="512m",
+    cpus=1.5,
+    shell="/bin/bash",
+    ipv6=True,
+    privileged=True,
+    bridged=True,
+    num_terms=2,
+    entrypoint="/sbin/init",
+    args="--foo bar",
+    ports=[PortMapping(host_port=8080, guest_port=80, protocol="tcp")],
+    envs={"FOO": "bar"},
+    sysctls={"net.ipv4.ip_forward": 1},
+    ulimits=[Ulimit(name="nofile", soft=1024, hard=2048)],
+    volumes=[VolumeMount(host_path="/srv/data", guest_path="/mnt/data", mode="ro")],
+    exec_commands=["echo hi"],
+    metas={"zz_last": "1", "aa_first": "2"},
+    interfaces=[InterfaceAttach(link="A", number=0), InterfaceAttach(link="B", number=1)],
+)
+
+_GOLDEN_LINES = [
+    # interfaces first, sorted by number
+    'r1[0]="A"',
+    'r1[1]="B"',
+    # image always, always double-quoted
+    'r1[image]="kathara/frr"',
+    # then _SCALAR_META_ORDER, in exactly this order
+    "r1[mem]=512m",
+    "r1[cpus]=1.5",
+    "r1[shell]=/bin/bash",
+    "r1[ipv6]=True",
+    "r1[privileged]=True",
+    "r1[bridged]=True",
+    "r1[num_terms]=2",
+    "r1[entrypoint]=/sbin/init",
+    'r1[args]="--foo bar"',  # quoted only because it contains a space (conf_value)
+    # then the container loops, in exactly this order
+    'r1[port]="8080:80/tcp"',
+    'r1[env]="FOO=bar"',
+    'r1[sysctl]="net.ipv4.ip_forward=1"',
+    'r1[ulimit]="nofile=1024:2048"',
+    'r1[volume]="/srv/data|/mnt/data|ro"',
+    'r1[exec]="echo hi"',
+    # finally pass-through metas, sorted alphabetically for stable output
+    "r1[aa_first]=2",
+    "r1[zz_last]=1",
+]
+
+
+def test_gen_device_lines_is_byte_for_byte_stable():
+    """Pins the exact rendered block for a device using every modeled option.
+
+    A round-trip test (see `test_gen_lab_conf_round_trips_through_parser`) cannot catch a reordering
+    — the parser is order-agnostic — yet a reordering rewrites files the user never edited.
+    """
+    lab = lab_builder.build_lab(LabCreate(name="golden", machines=[_GOLDEN_DEVICE]))
+
+    assert gen_device_lines(lab.machines["r1"]) == _GOLDEN_LINES
+
+
+def test_gen_device_lines_omits_unset_scalars_without_disturbing_the_order():
+    """The scalar loop skips None/""/False, so a sparsely-configured device must still come out in
+    the same relative order — this is what a naive `for key in sorted(...)` would break."""
+    lab = lab_builder.build_lab(
+        LabCreate(
+            name="sparse",
+            machines=[MachineCreate(name="pc1", image="kathara/base", shell="/bin/sh", num_terms=3)],
+        )
+    )
+
+    assert gen_device_lines(lab.machines["pc1"]) == [
+        'pc1[image]="kathara/base"',
+        "pc1[shell]=/bin/sh",
+        "pc1[num_terms]=3",
+    ]
