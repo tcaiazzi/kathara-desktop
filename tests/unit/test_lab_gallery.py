@@ -452,7 +452,9 @@ def test_install_gallery_lab_flips_installed_on_next_listing(tmp_path, monkeypat
     service = _service(tmp_path)
     service.install_gallery_lab("main-labs/basic-topics/arp/kathara-lab_arp")
 
-    catalog = service.list_gallery_labs()
+    # `list_gallery_labs` is async (the fetch is network-bound); same asyncio.run pattern the
+    # other async cases in this file use, rather than pulling in pytest-asyncio for one test.
+    catalog = asyncio.run(service.list_gallery_labs())
 
     by_id = {e.id: e for e in catalog.labs}
     assert by_id["main-labs/basic-topics/arp/kathara-lab_arp"].installed is True

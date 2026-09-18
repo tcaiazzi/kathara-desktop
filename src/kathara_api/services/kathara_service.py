@@ -48,6 +48,7 @@ from Kathara.webhooks.DockerHubApi import DockerHubApi
 from pydantic import ValidationError
 
 from ..config import format_mb, get_settings
+from ..lab_conf_options import LAB_CONF_FILENAME
 from ..errors import (
     ApiError,
     BinaryFileError,
@@ -520,9 +521,7 @@ class KatharaService:
         re-writing everything a machine has ever queued on every single edit would be wasteful and
         would keep touching files nothing asked to change.
         """
-        machine = lab.machines.get(machine_name)
-        if machine is None:
-            return
+        machine = self._registered_machine(lab, machine_name)
         if dirs:
             if machine.fs is None:
                 machine.fs = lab.fs.makedir(machine_name, recreate=True)
@@ -544,6 +543,28 @@ class KatharaService:
         for path, content in files.items():
             lab.create_file_from_string(content, path)
 
+    @staticmethod
+    def _registered_machine(lab: Lab, machine_name: str) -> Machine:
+        """The device `machine_name` names, for callers that have already established it exists.
+
+        Every caller gets its name from `_offline_fs_owner`, which returns a device name *only*
+        when `lab.machines.get(top) is not None`, and returns `ROOT_MACHINE` otherwise — on the
+        same `lab` object, inside the same `_mutate_lock`, so there is no window in between. The
+        lookup here can therefore only fail if that contract is broken.
+
+        It raises rather than returning `None` so a broken invariant surfaces once, loudly, as a
+        server error. The three call sites used to answer it three different ways — one returned
+        200 having written nothing, one 400, one 404 — which is the wrong shape for a condition
+        that means "this code is wrong", not "your request is wrong".
+        """
+        machine = lab.machines.get(machine_name)
+        if machine is None:
+            raise RuntimeError(
+                f"`{machine_name}` is not a registered device of lab `{lab.name}` — "
+                "_offline_fs_owner's contract was broken."
+            )
+        return machine
+
     def _fs_for(self, lab: Lab, machine_name: str):
         """The real (osfs) fs backing ``machine_name``'s offline files — the lab's own root
         directory for ``ROOT_MACHINE``, or a registered device's own subdirectory. ``None`` if
@@ -558,15 +579,13 @@ class KatharaService:
         directory if it has none yet, and *raises* instead of returning ``None`` for a name that
         is neither ``ROOT_MACHINE`` nor a registered device.
 
-        The raise is the difference that matters. ``_fs_for`` returning ``None`` lets read paths
-        answer 404; a write to an unknown device is a bad request, and every caller here turned it
-        into one already.
+        The difference that matters is that it does not return ``None``: ``_fs_for`` doing so is
+        how read paths answer 404, whereas every caller here has already established the device
+        exists (see ``_registered_machine``).
         """
         if machine_name == ROOT_MACHINE:
             return lab.fs
-        machine = lab.machines.get(machine_name)
-        if machine is None:
-            raise ApiError(f"Unknown device `{machine_name}`.")
+        machine = self._registered_machine(lab, machine_name)
         if machine.fs is None:
             machine.fs = lab.fs.makedir(machine_name, recreate=True)
         return machine.fs
@@ -597,7 +616,7 @@ class KatharaService:
         Mirrors the normalized comparison the lab-root guard in `fs_delete_offline` already uses,
         and for the same reason its comment gives.
         """
-        return path.strip("/") == lab_store.LAB_CONF_FILENAME
+        return path.strip("/") == LAB_CONF_FILENAME
 
     @staticmethod
     def _is_lab_root(owner: str, guest: str) -> bool:
@@ -1005,18 +1024,16 @@ class KatharaService:
             ],
         )
 
-    def list_gallery_labs(self, refresh: bool = False) -> GalleryCatalog:
+    async def list_gallery_labs(self, refresh: bool = False) -> GalleryCatalog:
         """The upstream Kathara-Labs catalog, each entry flagged with whether it's already
-        installed — the remote twin of ``list_example_labs``. See services/lab_gallery.py."""
-        return self._to_gallery_catalog(lab_gallery.fetch_catalog(refresh=refresh))
+        installed — the remote twin of ``list_example_labs``. See services/lab_gallery.py.
 
-    async def list_gallery_labs_async(self, refresh: bool = False) -> GalleryCatalog:
-        """Async twin of ``list_gallery_labs``, for the ``/gallery`` HTTP route only (see I4 in
-        docs/audit_2.md). Every other caller — ``install_gallery_lab``, internal lookups, and
-        every existing test — keeps using the synchronous ``list_gallery_labs``/``fetch_catalog``.
+        Async because the fetch is network-bound and the route awaits it (I4 in docs/audit_2.md):
+        a synchronous fetch here blocked the event loop for the whole round trip. There used to be
+        a sync twin alongside it, kept for "every other caller" — but there were none, only a test.
+        ``install_gallery_lab`` goes through ``lab_gallery.get_entry`` instead.
         """
-        catalog = await lab_gallery.fetch_catalog_async(refresh=refresh)
-        return self._to_gallery_catalog(catalog)
+        return self._to_gallery_catalog(await lab_gallery.fetch_catalog_async(refresh=refresh))
 
     def _install_from(self, clean_name: str, populate: Callable[[], None]) -> tuple[Lab, list[str]]:
         """Claim ``clean_name``, populate its directory, and adopt what landed there.
@@ -1321,9 +1338,7 @@ class KatharaService:
                 # (matching fs_list_offline, which then stops showing it) rather than leaving an
                 # empty shell behind; it starts existing again the moment anything new is written
                 # under this device. <name>.startup is a separate, sibling entry and untouched.
-                machine = lab.machines.get(owner)
-                if machine is None:
-                    raise PathNotFoundError(f"Path `{path}` not found.")
+                machine = self._registered_machine(lab, owner)
                 if machine.fs is not None and lab.fs.exists(owner):
                     # Same non-empty guard as the generic branch below — `recursive` means the
                     # same thing everywhere in this endpoint, not "always recursive for a device's

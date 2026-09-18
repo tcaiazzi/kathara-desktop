@@ -13,7 +13,7 @@ import pytest
 from kathara_api.errors import ApiError, LabConfLockedError, PathNotFoundError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
-from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.kathara_service import ROOT_MACHINE, KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service
 
@@ -688,3 +688,29 @@ def test_fs_search_offline_follows_max_bytes_per_file_at_runtime(tmp_path, monke
     # ...and back up again: the cap follows in both directions, it is not one-way.
     service.update_settings({"max_bytes_per_file": original})
     assert len(service.fs_search_offline("testlab", "/", "needle")[0]) == 1
+
+
+def test_offline_fs_owner_only_ever_names_a_registered_device(tmp_path):
+    """The invariant `_registered_machine` relies on, asserted at its source.
+
+    Three call sites used to guard against a device name that isn't in `lab.machines`, each with a
+    different answer (200-having-written-nothing, 400, 404) for a condition none of them could
+    reach. They now share one helper that raises, because the condition means "this code is wrong".
+    That is only safe while `_offline_fs_owner` keeps its end of the bargain — which is what this
+    checks, rather than the dead guards it replaced.
+    """
+    service, _ = _two_machine_lab(tmp_path)
+    lab = service.get_lab_or_reconstruct("testlab")
+
+    paths = [
+        "/", "", "//", "/.",                      # the lab root, in its several spellings
+        "/pc1", "/pc1/", "/pc1/etc/motd",         # a registered device
+        "/notes.txt", "/scratch/deep/file",       # root-level files and folders
+        "/nosuchdevice", "/nosuchdevice/file",    # a name that is not a device at all
+        "/lab.conf", "/pc1.startup",              # files whose first segment looks device-ish
+    ]
+    for raw in paths:
+        owner, _guest = service._offline_fs_owner(lab, service._clean_offline_path(raw))
+        assert owner == ROOT_MACHINE or owner in lab.machines, (
+            f"`{raw}` resolved to owner `{owner}`, which is neither the lab root nor a device"
+        )

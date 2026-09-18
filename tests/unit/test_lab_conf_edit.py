@@ -176,6 +176,24 @@ def test_renumber_interfaces_is_idempotent():
     assert lce.interface_links(once, "r1") == {0: "A", 1: "B"}
 
 
+def test_device_names_lists_devices_once_in_file_order():
+    """`lab_conf_edit`'s module docstring claims every read helper it exposes is covered here.
+    That was true of `interface_links` and false of this one — the module deliberately exposes the
+    complete editing surface (see the docstring's own reasoning), so the fix is the missing test,
+    not a smaller surface."""
+    text = (
+        "# a comment\n"
+        'r1[image]="kathara/base"\n'
+        "pc1[0]=A\n"
+        "r1[0]=A\n"          # r1 again, interleaved: must not appear twice
+        'LAB_NAME="demo"\n'
+        "pc2[0]=B\n"
+    )
+
+    assert lce.device_names(text) == ["r1", "pc1", "pc2"]
+    assert lce.device_names("") == []
+
+
 # -- set_meta / unset_meta -------------------------------------------------------
 
 
