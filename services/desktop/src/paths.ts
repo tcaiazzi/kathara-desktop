@@ -192,7 +192,7 @@ export function bundledPythonPath(): string | null {
  * identically on an AppImage's squashfs, a root-owned /opt from the .deb/.rpm, a Program Files
  * directory chosen in the NSIS installer, and a signed .app on macOS.
  */
-export function bundledPythonDir(): string | null {
+function bundledPythonDir(): string | null {
   if (!app.isPackaged) return null;
   const root = path.join(process.resourcesPath, "python");
   return fs.existsSync(root) ? root : null;

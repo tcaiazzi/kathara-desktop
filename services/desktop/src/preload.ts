@@ -160,6 +160,8 @@ const api = {
     subscribe<{ maximized: boolean; fullscreen: boolean }>("window:state", cb),
 };
 
-export type KatharaDesktopApi = typeof api;
+// No exported type for `api` on purpose: the renderer is a separate npm package and cannot import
+// from here, so `services/frontend/src/desktop/bridge.ts` declares the same shape by hand. One was
+// exported for a while and nothing ever imported it.
 
 contextBridge.exposeInMainWorld("katharaDesktop", api);

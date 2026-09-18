@@ -138,10 +138,6 @@ export function onOrphanedBackend(cb: (info: { pid: number | null; baseUrl: stri
   orphanListener = cb;
 }
 
-export function getOrphanedBackend(): { pid: number | null; baseUrl: string } | null {
-  return orphanedBackend;
-}
-
 /** Last resort for an orphan whose PID is known (either tracked all along on Linux, or
  * recovered after the fact by `resolvePidForPort` on macOS): ask the OS to authorize a root-level
  * `kill -9`, via the same sudo-prompt dialog already used to elevate a backend in the first
