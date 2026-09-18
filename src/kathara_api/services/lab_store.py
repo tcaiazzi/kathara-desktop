@@ -25,7 +25,13 @@ from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
 from ..config import format_mb, get_settings
-from ..lab_conf_options import DEFAULT_IMAGE, IMAGE_KEY, MODELED_META_KEYS, SCALAR_OPTIONS
+from ..lab_conf_options import (
+    DEFAULT_IMAGE,
+    IMAGE_KEY,
+    LAB_CONF_FILENAME,
+    MODELED_META_KEYS,
+    SCALAR_OPTIONS,
+)
 from ..errors import ApiError, LabAlreadyRegisteredError
 
 logger = logging.getLogger("kathara_api")
@@ -38,7 +44,6 @@ LAB_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 # ignored by this project's lab.conf/folder parser (see lab_import.translate_lab_files).
 LAYOUT_FILENAME = "lab.layout"
 
-LAB_CONF_FILENAME = "lab.conf"
 
 # A lab.conf is a handful of lines; this is a sanity ceiling on what a hand-dropped file in the
 # labs directory will be read back as (cf. LAYOUT_MAX_NODES in schemas/lab.py), not a limit any
@@ -605,7 +610,7 @@ class LabStore:
     @staticmethod
     def _find_lab_root(base: Path) -> Path:
         """Locate the directory that is the actual lab root within a freshly extracted tree."""
-        if (base / "lab.conf").exists():
+        if (base / LAB_CONF_FILENAME).exists():
             return base
         subdirs = [p for p in base.iterdir() if p.is_dir()]
         files = [p for p in base.iterdir() if p.is_file()]

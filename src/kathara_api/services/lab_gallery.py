@@ -41,8 +41,8 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import format_mb, get_settings
 from ..errors import GalleryLabNotFoundError, GalleryUnavailableError
+from ..lab_conf_options import LAB_CONF_FILENAME
 
-LAB_CONF = "lab.conf"
 
 # What a single lab is allowed to be — shared with the JSON-import and .zip-upload paths (see
 # ApiSettings.max_files_per_lab and friends in config.py) rather than a copy of the same three
@@ -214,9 +214,9 @@ def _build_entries(tree: list[dict], section: str) -> dict[str, GalleryEntry]:
     blobs = [item for item in tree if item.get("type") == "blob" and isinstance(item.get("path"), str)]
 
     roots = sorted(
-        blob["path"][: -len(LAB_CONF) - 1]
+        blob["path"][: -len(LAB_CONF_FILENAME) - 1]
         for blob in blobs
-        if blob["path"].startswith(prefix) and blob["path"].endswith("/" + LAB_CONF)
+        if blob["path"].startswith(prefix) and blob["path"].endswith("/" + LAB_CONF_FILENAME)
     )
     if not roots:
         return {}
@@ -432,9 +432,9 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
             f"Gallery lab `{entry.id}` downloaded to {format_mb(total)}, more than the "
             f"{format_mb(settings.max_bytes_per_lab)} this import allows."
         )
-    if LAB_CONF not in files:
+    if LAB_CONF_FILENAME not in files:
         # The tree said there was one; if it's gone the catalog is stale rather than the lab bad.
         raise GalleryUnavailableError(
-            f"Gallery lab `{entry.id}` no longer has a {LAB_CONF} upstream. Refresh the catalog."
+            f"Gallery lab `{entry.id}` no longer has a {LAB_CONF_FILENAME} upstream. Refresh the catalog."
         )
     return files

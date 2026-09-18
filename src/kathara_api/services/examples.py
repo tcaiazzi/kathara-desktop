@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..errors import ExampleNotFoundError
+from ..lab_conf_options import LAB_CONF_FILENAME
 from ..schemas.examples import ExampleSummary
 from . import lab_import
 from .lab_store import LabStore
@@ -64,6 +65,6 @@ def example_dir(example_id: str) -> Path:
     client sends — a malformed id surfaces as sanitize_lab_name's own ApiError (400) instead.
     """
     directory = _catalog().lab_dir(example_id)
-    if not directory.is_dir() or not (directory / "lab.conf").is_file():
+    if not directory.is_dir() or not (directory / LAB_CONF_FILENAME).is_file():
         raise ExampleNotFoundError(f"Example `{example_id}` not found.")
     return directory

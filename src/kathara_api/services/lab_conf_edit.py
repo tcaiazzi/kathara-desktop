@@ -22,7 +22,6 @@ surface is what pushed earlier code back into "rebuild the whole file from the m
 exactly the lossy behaviour this module exists to replace.
 """
 
-import re
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Optional
@@ -31,7 +30,13 @@ from Kathara.exceptions import MachineAlreadyExistsError, MachineCollisionDomain
 from Kathara.model.Lab import Lab
 
 from ..errors import ApiError
-from ..lab_conf_options import DEFAULT_IMAGE, GROUP_OPTIONS, IMAGE_KEY, SCALAR_OPTIONS
+from ..lab_conf_options import (
+    DEFAULT_IMAGE,
+    GROUP_OPTIONS,
+    IMAGE_KEY,
+    LAB_CONF_FILENAME,
+    SCALAR_OPTIONS,
+)
 from ..schemas.machine import MachineCreate, MachineUpdate
 from . import lab_builder, lab_import, lab_store
 
@@ -389,7 +394,7 @@ def validate(text: str) -> None:
     restart path runs (``KatharaService._translate_lab_dir`` / ``_reload_lab_from_disk``). An
     edit that fails this would make the lab unloadable, so it is refused instead of written.
     """
-    t = lab_import.translate_lab_files({"lab.conf": text}, "_lab_conf_edit_validate")
+    t = lab_import.translate_lab_files({LAB_CONF_FILENAME: text}, "_lab_conf_edit_validate")
     if t.errors:
         raise ApiError("This edit would leave lab.conf unloadable: " + "; ".join(t.errors))
     lab_builder.build_lab(t.payload)

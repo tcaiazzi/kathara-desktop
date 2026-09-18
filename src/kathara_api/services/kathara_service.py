@@ -194,6 +194,20 @@ class KatharaService:
         with self._transitioning_lock:
             self._transitioning.discard(name)
 
+    def _assert_name_free(self, clean_name: str) -> None:
+        """Refuse a lab name already taken, in the registry or merely on disk.
+
+        Both halves matter: a directory can exist without a registry entry (a lab dropped into the
+        labs dir by hand, or one whose lab.conf failed to parse at startup), and overwriting it
+        would destroy work this process never knew about.
+
+        Called under `_claiming_name` on every create path, and a second time *before* the lock on
+        the two install paths — a cheap 409 that avoids a download or a copy that is about to be
+        thrown away.
+        """
+        if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
+            raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+
     @contextmanager
     def _claiming_name(self, name: str) -> Generator[None, None, None]:
         """Serialize everything that claims or releases the lab name ``name``.
@@ -538,6 +552,24 @@ class KatharaService:
             return lab.fs
         machine = lab.machines.get(machine_name)
         return machine.fs if machine is not None else None
+
+    def _fs_for_write(self, lab: Lab, machine_name: str):
+        """Like ``_fs_for``, but for a path about to be written: materializes the device's own
+        directory if it has none yet, and *raises* instead of returning ``None`` for a name that
+        is neither ``ROOT_MACHINE`` nor a registered device.
+
+        The raise is the difference that matters. ``_fs_for`` returning ``None`` lets read paths
+        answer 404; a write to an unknown device is a bad request, and every caller here turned it
+        into one already.
+        """
+        if machine_name == ROOT_MACHINE:
+            return lab.fs
+        machine = lab.machines.get(machine_name)
+        if machine is None:
+            raise ApiError(f"Unknown device `{machine_name}`.")
+        if machine.fs is None:
+            machine.fs = lab.fs.makedir(machine_name, recreate=True)
+        return machine.fs
 
     @staticmethod
     def _clean_offline_path(path: str) -> str:
@@ -893,8 +925,7 @@ class KatharaService:
         # at construction time — building first would leave every machine with `fs = None` and
         # nothing would ever be packed at deploy.
         with self._claiming_name(clean):
-            if self.registry.get(clean) is not None or self.store.lab_dir(clean).exists():
-                raise LabAlreadyRegisteredError(f"Lab `{clean}` already exists.")
+            self._assert_name_free(clean)
             self.store.write_lab(clean, files, dirs or [])
             try:
                 lab = self._adopt_lab_dir(clean, t)
@@ -941,8 +972,7 @@ class KatharaService:
         """
         clean_name = lab_store.sanitize_lab_name(name)
         with self._claiming_name(clean_name):
-            if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
-                raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+            self._assert_name_free(clean_name)
             self.store.extract_zip(clean_name, zip_data)
             lab, warnings = self._adopt_populated_dir(clean_name)
         if deploy:
@@ -988,6 +1018,20 @@ class KatharaService:
         catalog = await lab_gallery.fetch_catalog_async(refresh=refresh)
         return self._to_gallery_catalog(catalog)
 
+    def _install_from(self, clean_name: str, populate: Callable[[], None]) -> tuple[Lab, list[str]]:
+        """Claim ``clean_name``, populate its directory, and adopt what landed there.
+
+        The shared tail of both install paths; they differ only in ``populate`` (files written from
+        a gallery download, or a bundled example copied). Anything slow that does *not* need the
+        name — a gallery fetch — belongs before the call, not inside ``populate``.
+        """
+        with self._claiming_name(clean_name):
+            # Re-checked inside the lock: the caller's pre-check may have run before a long
+            # download, so by now another create may well have taken the name.
+            self._assert_name_free(clean_name)
+            populate()
+            return self._adopt_populated_dir(clean_name)
+
     def install_gallery_lab(self, lab_id: str, name: Optional[str] = None) -> tuple[Lab, list[str]]:
         """Create a lab from an entry in the upstream Kathara-Labs gallery.
 
@@ -1000,17 +1044,12 @@ class KatharaService:
         """
         entry = lab_gallery.get_entry(lab_id)  # raises GalleryLabNotFoundError (404) if unknown
         clean_name = lab_store.sanitize_lab_name(name or entry.name)
-        if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
-            raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+        self._assert_name_free(clean_name)
 
+        # Downloaded *before* `_install_from` takes the name lock, not inside it: a slow or failing
+        # fetch must not hold a lock other operations on this name are waiting for.
         files = lab_gallery.download_lab_files(entry)
-        with self._claiming_name(clean_name):
-            # Re-checked inside the lock: the pre-check above ran before a potentially long
-            # download, so by now another create may well have taken the name.
-            if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
-                raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
-            self.store.write_lab(clean_name, files)
-            return self._adopt_populated_dir(clean_name)
+        return self._install_from(clean_name, lambda: self.store.write_lab(clean_name, files))
 
     def install_example(self, example_id: str, name: Optional[str] = None) -> tuple[Lab, list[str]]:
         """Create a lab from one of the bundled example network scenarios.
@@ -1022,15 +1061,10 @@ class KatharaService:
         import_lab, so retrying an install never silently overwrites something the user changed.
         """
         clean_name = lab_store.sanitize_lab_name(name or example_id)
-        if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
-            raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
+        self._assert_name_free(clean_name)
 
         source = examples.example_dir(example_id)  # raises ExampleNotFoundError (404) if unknown
-        with self._claiming_name(clean_name):
-            if self.registry.get(clean_name) is not None or self.store.lab_dir(clean_name).exists():
-                raise LabAlreadyRegisteredError(f"Lab `{clean_name}` already exists.")
-            self.store.copy_lab_dir(clean_name, source)
-            return self._adopt_populated_dir(clean_name)
+        return self._install_from(clean_name, lambda: self.store.copy_lab_dir(clean_name, source))
 
     def update_lab_conf(self, name: str, content: str) -> Lab:
         """Rebuild a **non-deployed** lab from an edited ``lab.conf`` (topology + device metadata).
@@ -1173,10 +1207,12 @@ class KatharaService:
             raise PathNotFoundError(f"Path `{path}` not found.")
         return matches, truncated
 
-    def fs_read_text_offline(self, lab_name: str, path: str) -> str:
-        path = self._clean_offline_path(path)
-        if self._is_lab_conf(path):
-            return self.read_lab_conf(lab_name).content
+    def _resolve_offline_file(self, lab_name: str, path: str):
+        """Resolve a cleaned offline path to ``(fs, guest_path)`` for reading, or raise.
+
+        404 for a path that is not there, 400 for a directory — the two answers both readers owe
+        before they can differ about *how* they read the bytes.
+        """
         lab = self.get_lab_or_reconstruct(lab_name)
         owner, guest = self._offline_fs_owner(lab, path)
         target_fs = self._fs_for(lab, owner)
@@ -1184,20 +1220,22 @@ class KatharaService:
             raise PathNotFoundError(f"Path `{path}` not found.")
         if target_fs.isdir(guest):
             raise ApiError(f"`{path}` is a directory. Use list to navigate it.")
+        return target_fs, guest
+
+    def fs_read_text_offline(self, lab_name: str, path: str) -> str:
+        path = self._clean_offline_path(path)
+        # Only the text read short-circuits lab.conf: it is the one whose content the API owns a
+        # canonical copy of. A bytes read (a download) wants the file as it is on disk.
+        if self._is_lab_conf(path):
+            return self.read_lab_conf(lab_name).content
+        target_fs, guest = self._resolve_offline_file(lab_name, path)
         try:
             return target_fs.readtext(guest)
         except UnicodeDecodeError as exc:
             raise BinaryFileError("File is not UTF-8 text. Use download for binary files.") from exc
 
     def fs_read_bytes_offline(self, lab_name: str, path: str) -> bytes:
-        path = self._clean_offline_path(path)
-        lab = self.get_lab_or_reconstruct(lab_name)
-        owner, guest = self._offline_fs_owner(lab, path)
-        target_fs = self._fs_for(lab, owner)
-        if target_fs is None or not target_fs.exists(guest):
-            raise PathNotFoundError(f"Path `{path}` not found.")
-        if target_fs.isdir(guest):
-            raise ApiError(f"`{path}` is a directory. Use list to navigate it.")
+        target_fs, guest = self._resolve_offline_file(lab_name, self._clean_offline_path(path))
         return target_fs.readbytes(guest)
 
     def fs_write_text_offline(self, lab_name: str, path: str, content: str) -> int:
@@ -1236,15 +1274,7 @@ class KatharaService:
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_name)
             owner, guest = self._offline_fs_owner(lab, path)
-            if owner == ROOT_MACHINE:
-                target_fs = lab.fs
-            else:
-                machine = lab.machines.get(owner)
-                if machine is None:
-                    raise ApiError(f"Unknown device `{owner}`.")
-                if machine.fs is None:
-                    machine.fs = lab.fs.makedir(owner, recreate=True)
-                target_fs = machine.fs
+            target_fs = self._fs_for_write(lab, owner)
             parent = posixpath.dirname(guest)
             if parent and parent != "/":
                 target_fs.makedirs(parent, recreate=True)
@@ -1319,6 +1349,35 @@ class KatharaService:
             if dirty:
                 self.registry.mark_dirty(lab_name, dirty)
 
+    def _resolve_two_ended_offline_op(self, lab_name: str, source_path: str, destination_path: str):
+        """Resolve both ends of a move or a copy to ``(lab, src_fs, src_guest, dst_fs, dst_guest)``.
+
+        Must be called while holding ``_mutate_lock``: the callers' own work continues under it.
+
+        What deliberately stays with the callers is the ``lab.conf`` guard, because the two do not
+        agree on it — a move refuses lab.conf at *either* end, a copy only refuses overwriting it —
+        and the divergent tail: a move needs a same-fs/cross-fs split and marks both paths dirty,
+        a copy needs neither.
+        """
+        lab = self.get_lab_or_reconstruct(lab_name)
+        source_owner, source_guest = self._offline_fs_owner(lab, source_path)
+        dest_owner, dest_guest = self._offline_fs_owner(lab, destination_path)
+        # Neither end may be the lab's own root: moving it away and copying something over it are
+        # as destructive as deleting it, which `fs_delete_offline` already refuses.
+        if self._is_lab_root(source_owner, source_guest) or self._is_lab_root(dest_owner, dest_guest):
+            raise ApiError("The lab root can't be moved or copied.")
+
+        src_fs = self._fs_for(lab, source_owner)
+        if src_fs is None or not src_fs.exists(source_guest):
+            raise PathNotFoundError(f"Path `{source_path}` not found.")
+
+        dst_fs = self._fs_for_write(lab, dest_owner)
+        parent = posixpath.dirname(dest_guest)
+        if parent and parent != "/":
+            dst_fs.makedirs(parent, recreate=True)
+
+        return lab, src_fs, source_guest, dst_fs, dest_guest
+
     def fs_move_offline(self, lab_name: str, source_path: str, destination_path: str) -> None:
         source_path = self._clean_offline_path(source_path)
         destination_path = self._clean_offline_path(destination_path)
@@ -1326,30 +1385,9 @@ class KatharaService:
             raise ApiError("lab.conf can't be moved.")
         self._check_not_transitioning(lab_name)
         with self._mutate_lock:
-            lab = self.get_lab_or_reconstruct(lab_name)
-            source_owner, source_guest = self._offline_fs_owner(lab, source_path)
-            dest_owner, dest_guest = self._offline_fs_owner(lab, destination_path)
-            # Neither end may be the lab's own root: moving it away and copying something over
-            # it are as destructive as deleting it, which `fs_delete_offline` already refuses.
-            if self._is_lab_root(source_owner, source_guest) or self._is_lab_root(dest_owner, dest_guest):
-                raise ApiError("The lab root can't be moved or copied.")
-            src_fs = self._fs_for(lab, source_owner)
-            if src_fs is None or not src_fs.exists(source_guest):
-                raise PathNotFoundError(f"Path `{source_path}` not found.")
-
-            if dest_owner == ROOT_MACHINE:
-                dst_fs = lab.fs
-            else:
-                dst_machine = lab.machines.get(dest_owner)
-                if dst_machine is None:
-                    raise ApiError(f"Unknown device `{dest_owner}`.")
-                if dst_machine.fs is None:
-                    dst_machine.fs = lab.fs.makedir(dest_owner, recreate=True)
-                dst_fs = dst_machine.fs
-
-            parent = posixpath.dirname(dest_guest)
-            if parent and parent != "/":
-                dst_fs.makedirs(parent, recreate=True)
+            lab, src_fs, source_guest, dst_fs, dest_guest = self._resolve_two_ended_offline_op(
+                lab_name, source_path, destination_path
+            )
 
             is_dir = src_fs.isdir(source_guest)
             same_fs = src_fs is dst_fs
@@ -1379,30 +1417,9 @@ class KatharaService:
             raise ApiError("lab.conf can't be replaced by copy — edit it directly.")
         self._check_not_transitioning(lab_name)
         with self._mutate_lock:
-            lab = self.get_lab_or_reconstruct(lab_name)
-            source_owner, source_guest = self._offline_fs_owner(lab, source_path)
-            dest_owner, dest_guest = self._offline_fs_owner(lab, destination_path)
-            # Neither end may be the lab's own root: moving it away and copying something over
-            # it are as destructive as deleting it, which `fs_delete_offline` already refuses.
-            if self._is_lab_root(source_owner, source_guest) or self._is_lab_root(dest_owner, dest_guest):
-                raise ApiError("The lab root can't be moved or copied.")
-            src_fs = self._fs_for(lab, source_owner)
-            if src_fs is None or not src_fs.exists(source_guest):
-                raise PathNotFoundError(f"Path `{source_path}` not found.")
-
-            if dest_owner == ROOT_MACHINE:
-                dst_fs = lab.fs
-            else:
-                dst_machine = lab.machines.get(dest_owner)
-                if dst_machine is None:
-                    raise ApiError(f"Unknown device `{dest_owner}`.")
-                if dst_machine.fs is None:
-                    dst_machine.fs = lab.fs.makedir(dest_owner, recreate=True)
-                dst_fs = dst_machine.fs
-
-            parent = posixpath.dirname(dest_guest)
-            if parent and parent != "/":
-                dst_fs.makedirs(parent, recreate=True)
+            lab, src_fs, source_guest, dst_fs, dest_guest = self._resolve_two_ended_offline_op(
+                lab_name, source_path, destination_path
+            )
 
             # No same-fs/cross-fs split like fs_move_offline needs: fs.copy.copy_dir/copy_file
             # work identically either way, and unlike move there is no source to remove.
@@ -1725,8 +1742,7 @@ class KatharaService:
             # `_claiming_name` alone and never reach for `_mutate_lock` while holding it, so this
             # ordering cannot close a cycle.
             with self._claiming_name(clean_new):
-                if self.registry.get(clean_new) is not None or self.store.lab_dir(clean_new).exists():
-                    raise LabAlreadyRegisteredError(f"Lab `{clean_new}` already exists.")
+                self._assert_name_free(clean_new)
                 self.store.rename_lab(clean, clean_new)
                 try:
                     if not self._reload_lab_from_disk(clean_new):

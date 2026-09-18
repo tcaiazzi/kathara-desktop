@@ -1,27 +1,19 @@
 """Schemas describing Kathara devices (machines)."""
 
 import os
-import re
 from pathlib import PurePosixPath
 from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..lab_conf_options import MODELED_META_KEYS
+from ..lab_conf_options import DEVICE_NAME_PATTERN, IDENTIFIER_RE, MODELED_META_KEYS
 from .common import reject_lab_conf_quotes
 
-MACHINE_NAME_PATTERN = r"^[a-z0-9_]{1,30}$"
+MACHINE_NAME_PATTERN = DEVICE_NAME_PATTERN
 
-# A `metas` key is rendered raw into a `name[key]=...` lab.conf line by both
-# `lab_store.gen_device_lines` and `lab_conf_edit.replace_device_options` — unlike the *value*,
-# which both routes quote/escape, the key never was. Restricting it to a bare identifier closes
-# two ways that used to reach real damage: an embedded newline split one rendered line into two,
-# and the second half — if it happened to match the lab.conf line grammar — became an independent,
-# unrelated device directive; a purely numeric key was indistinguishable from a real interface
-# number on the next parse. Requiring a leading letter/underscore rules out the numeric case by
-# construction, and the character class rules out the newline (and brackets/quotes/whitespace)
-# case the same way.
-_META_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# A `metas` key reaches a lab.conf line unescaped — see `lab_conf_options.IDENTIFIER_RE` for
+# the two ways that used to reach real damage.
+_META_KEY_RE = IDENTIFIER_RE
 
 # A `metas` pass-through entry using a name this API already models is never applied on the *live*
 # JSON-create/update path (see `lab_builder.apply_options`, which never routes metas through

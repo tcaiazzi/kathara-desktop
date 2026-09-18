@@ -17,17 +17,25 @@ from typing import Optional
 
 from pydantic import ValidationError
 
-from ..lab_conf_options import INTERPRETED_OPTIONS, OPTION_ALIASES
+from ..lab_conf_options import (
+    DEVICE_NAME_CHARS,
+    IDENTIFIER_RE,
+    INTERPRETED_OPTIONS,
+    LAB_CONF_FILENAME,
+    OPTION_ALIASES,
+)
 from ..schemas.lab import LabCreate, LabMetadata
 from ..schemas.link import LinkCreate
 from ..schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit, VolumeMount
 
 RESERVED_NAMES = {"shared", "_test"}
 LAB_META_KEYS = {"LAB_NAME", "LAB_DESCRIPTION", "LAB_VERSION", "LAB_AUTHOR", "LAB_EMAIL", "LAB_WEB"}
-CONF_LINE_RE = re.compile(r"""^([a-z0-9_]{1,30})\[(\w+)\]=(["']?)([^"']+)\3(\s+#.*)?$""")
-# A top-level `KEY=value` line that isn't a known LAB_* key: preserved, not applied (see parse_lab_conf).
-TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-STARTUP_NAME_RE = re.compile(r"^([a-z0-9_]{1,30})\.startup$")
+CONF_LINE_RE = re.compile(rf"""^({DEVICE_NAME_CHARS})\[(\w+)\]=(["']?)([^"']+)\3(\s+#.*)?$""")
+# A top-level `KEY=value` line whose key is a bare identifier: preserved, not applied (see
+# parse_lab_conf). Shared with the request schema's `metas` key check — same rule, see
+# `lab_conf_options.IDENTIFIER_RE`.
+TOP_LEVEL_KEY_RE = IDENTIFIER_RE
+STARTUP_NAME_RE = re.compile(rf"^({DEVICE_NAME_CHARS})\.startup$")
 # Physical line split for lab.conf/lab.ext, shared with `lab_conf_edit._split_text` so the parser
 # and the editor can never disagree about where a line ends. A bare CR counts: without it,
 # CONF_LINE_RE's `[^"']+` swallows the following line into the value, and a CR-terminated file
@@ -327,7 +335,7 @@ def translate_lab_files(
     errors: list[str] = []
     warnings: list[str] = []
 
-    conf_text = files.get("lab.conf")
+    conf_text = files.get(LAB_CONF_FILENAME)
     if conf_text is not None:
         parsed = parse_lab_conf(conf_text)
     else:

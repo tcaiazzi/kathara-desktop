@@ -1,4 +1,4 @@
-"""The `lab.conf` device options this API models — the one place they are named.
+"""The `lab.conf` vocabulary — the names and shapes this API and its parser agree on.
 
 A leaf module on purpose: it imports nothing from ``schemas`` or ``services``, so every layer can
 depend on it without a cycle. (``schemas.machine`` and ``services.lab_store`` both need it, and
@@ -12,6 +12,29 @@ schema's reserved-key set, and the frontend's editor vocabulary. They had drifte
 interpreted by the parser but not reserved by the schema, so ``metas={"cpu": "2"}`` was accepted,
 written to disk verbatim, and came back as a real ``cpus`` on the next load (audit_3 Q1).
 """
+
+import re
+
+LAB_CONF_FILENAME = "lab.conf"
+
+# The device-name grammar, as a fragment so the three places that need it cannot disagree: the
+# request schema validates a name against it, and the parser embeds it in both the directive-line
+# and the `<name>.startup` patterns.
+DEVICE_NAME_CHARS = r"[a-z0-9_]{1,30}"
+DEVICE_NAME_PATTERN = rf"^{DEVICE_NAME_CHARS}$"
+
+# A bare identifier. lab.conf has no escaping, so a key that is anything else cannot be written back
+# out unambiguously. Two callers need exactly this shape, for reasons that meet in the middle:
+#
+#   - the parser, deciding whether an unrecognized top-level `KEY=value` line is safe to preserve;
+#   - the request schema, validating a `metas` key — which both renderers write raw into a
+#     `name[key]=...` line. That one is load-bearing rather than tidy: a key containing a newline
+#     used to split one rendered line into two, and the second half, if it happened to match the
+#     directive grammar, became an independent ghost device; and a purely numeric key was
+#     indistinguishable from a real interface number on the next parse. Requiring a leading
+#     letter/underscore rules out the numeric case by construction, and the character class rules
+#     out newlines, brackets, quotes and whitespace the same way.
+IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 # Always emitted, always double-quoted, defaulted rather than omitted — special-cased by both
 # renderers, so it is not part of SCALAR_OPTIONS.
