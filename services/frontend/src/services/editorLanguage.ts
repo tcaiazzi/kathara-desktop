@@ -42,9 +42,10 @@ export const MAPPED_OPTIONS = [
 ] as const;
 
 // Recognized, and applied to the model (see lab_import._parse_volume) — but not run through the
-// lint's generic optionError value-check like MAPPED_OPTIONS are: validating an absolute host
-// path depends on the *backend's* OS (os.path.isabs), which this browser-side linter has no way
-// to know, so a malformed value is left for the backend to reject instead of guessed at here.
+// lint's generic optionError value-check like MAPPED_OPTIONS are, because only *half* of the
+// backend's validation is reproducible here. The arity check (2 or 3 `|`-separated fields) is
+// OS-independent and labConfRules does apply it; the absolute-host-path check depends on the
+// backend's own `os.path.isabs`, which a browser cannot know, so that half is left to the backend.
 export const PASSTHROUGH_OPTIONS = ["volume"] as const;
 
 export const OPTION_KEYWORDS = [...MAPPED_OPTIONS, "num_terms", ...PASSTHROUGH_OPTIONS] as const;
