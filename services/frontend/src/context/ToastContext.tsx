@@ -156,7 +156,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastCtx.Provider value={value}>
       <NotificationsCtx.Provider value={notificationsValue}>
         {children}
-        <ToastContainer position="bottom-end" className="p-3" style={{ zIndex: 1080 }}>
+        {/* containerPosition="fixed": .toast-container is position:absolute by default, which
+            anchors to the document rather than the viewport — invisible once a normally
+            scrolling page (e.g. Settings) is scrolled past that anchor point. */}
+        <ToastContainer position="bottom-end" containerPosition="fixed" className="p-3" style={{ zIndex: 1080 }}>
           {toasts.map((t) => (
             <Toast key={t.id} bg={t.variant === "info" ? undefined : t.variant} onClose={() => remove(t.id)}>
               <Toast.Header closeButton>
