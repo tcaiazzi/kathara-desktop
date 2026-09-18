@@ -12,12 +12,17 @@ import {
 import "dockview-react/dist/styles/dockview.css";
 import {
   AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   Download,
   Globe,
   LayoutGrid,
   List,
   Loader2,
+  Maximize,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
@@ -63,7 +68,7 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useElementSize } from "../hooks/useElementSize";
 import { useIsAdmin } from "../hooks/useIsAdmin";
-import { useKtTheme } from "../hooks/useKtTheme";
+import { useTheme } from "../hooks/useTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError } from "../services/api";
 import { visibleLinks } from "../services/constants";
@@ -212,12 +217,7 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
         aria-label="Maximize panel"
         onClick={() => maximizeGroup(props.containerApi, props.group)}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-          <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
-          <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
-        </svg>
+        <Maximize size={14} aria-hidden="true" />
       </button>
       <button
         className="kt-ws-group-btn"
@@ -234,9 +234,7 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
           }
         }}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d={collapsed ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} />
-        </svg>
+        {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
       </button>
     </div>
   );
@@ -496,7 +494,7 @@ export function WorkspacePage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
-  const ktTheme = useKtTheme();
+  const { theme: ktTheme } = useTheme();
   const { run: runBusy } = useBusyAction();
   const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
 
@@ -1120,11 +1118,7 @@ export function WorkspacePage() {
             <div className="kt-ws-rail-head">
               <span>Labs</span>
               <button className="kt-ws-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar" onClick={() => setRailOpen(false)}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <path d="M9 3v18" />
-                  <path d="m16 15-3-3 3-3" />
-                </svg>
+                <PanelLeftClose size={16} aria-hidden="true" />
               </button>
             </div>
             <div className="d-flex gap-1 mb-2" data-tour="import-row" ref={importRowRef}>
@@ -1362,11 +1356,7 @@ export function WorkspacePage() {
         </>
       ) : (
         <button className="kt-ws-rail-reopen" title="Show sidebar" aria-label="Show sidebar" onClick={() => setRailOpen(true)}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="2" />
-            <path d="M9 3v18" />
-            <path d="m14 9 3 3-3 3" />
-          </svg>
+          <PanelLeftOpen size={16} aria-hidden="true" />
         </button>
       )}
 

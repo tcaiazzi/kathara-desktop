@@ -1,20 +1,17 @@
 import { HelpCircle } from "lucide-react";
-import { Badge, Container, Nav, Navbar } from "react-bootstrap";
+import { Container, Nav, Navbar } from "react-bootstrap";
 import { Link } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useOnboardingTour } from "../context/OnboardingTourContext";
-import { useHealth } from "../hooks/useHealth";
-import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { ImageDownloadBadge } from "./ImageDownloadBadge";
 import { NotificationsPanel } from "./NotificationsPanel";
+import { HealthBadge, PrivilegedBadge } from "./StatusBadges";
 
 // The browser top bar. In the Electron shell it is replaced by desktop/TitleBar.tsx, which folds
 // the same content into the window's own title strip — see App.tsx.
 export function AppNavbar() {
-  const health = useHealth();
-  const isAdmin = useIsAdmin();
   const { theme, dark } = useTheme();
   const { requestTour } = useOnboardingTour();
 
@@ -34,14 +31,8 @@ export function AppNavbar() {
           </Nav.Link>
         </Nav>
         <Navbar.Text className="d-flex align-items-center gap-2">
-          {isAdmin && (
-            <Badge bg="warning" title="The local Kathara API is running with administrator privileges">
-              privileged
-            </Badge>
-          )}
-          <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
-            {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
-          </Badge>
+          <PrivilegedBadge />
+          <HealthBadge />
           <button
             type="button"
             className="btn btn-sm btn-outline-secondary d-flex align-items-center"

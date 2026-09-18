@@ -12,14 +12,13 @@
 // in step when adding an item.
 import { Copy, Minus, Settings as SettingsIcon, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { HealthBadge, PrivilegedBadge } from "../components/StatusBadges";
 import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { ImageDownloadBadge } from "../components/ImageDownloadBadge";
 import { NotificationsPanel } from "../components/NotificationsPanel";
-import { useHealth } from "../hooks/useHealth";
-import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { DOCS_URL } from "../services/constants";
 import { desktop, type DesktopMenuAction } from "./bridge";
@@ -41,9 +40,7 @@ function isSeparator(entry: Entry): entry is "separator" {
 
 export function TitleBar() {
   const { theme, dark } = useTheme();
-  const health = useHealth();
   const docker = useDockerStatus();
-  const isAdmin = useIsAdmin();
   const dispatch = useDesktopDispatch();
   const location = useLocation();
   const shell = desktop();
@@ -233,19 +230,13 @@ export function TitleBar() {
       <div className="kt-titlebar-title">{title}</div>
 
       <div className="kt-titlebar-right kt-titlebar-nodrag">
-        {isAdmin && (
-          <Badge bg="warning" title="The local Kathara API is running with administrator privileges">
-            privileged
-          </Badge>
-        )}
+        <PrivilegedBadge />
         {docker && docker.state !== "ok" && (
           <Badge bg="warning" title={docker.remedy ?? docker.detail}>
             docker {docker.state === "missing" ? "missing" : "stopped"}
           </Badge>
         )}
-        <Badge bg={health === "ok" ? "success" : health === "down" ? "danger" : "secondary"}>
-          {health === "checking" ? "checking…" : health === "ok" ? "healthy" : "server unreachable"}
-        </Badge>
+        <HealthBadge />
         <ImageDownloadBadge />
         <NotificationsPanel />
         <Link

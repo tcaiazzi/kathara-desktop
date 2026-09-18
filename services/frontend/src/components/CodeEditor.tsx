@@ -17,7 +17,7 @@ import { labConfCompletion } from "../editor/labConfComplete";
 import { labConf } from "../editor/labConfLanguage";
 import { labConfLinter } from "../editor/labConfLint";
 import { editorTheme } from "../editor/theme";
-import { useKtTheme } from "../hooks/useKtTheme";
+import { useTheme } from "../hooks/useTheme";
 import type { EditorLanguage } from "../services/editorLanguage";
 
 interface CodeEditorProps {
@@ -68,7 +68,7 @@ export function CodeEditor({
   const editableComp = useRef(new Compartment());
   const placeholderComp = useRef(new Compartment());
 
-  const theme = useKtTheme();
+  const { theme } = useTheme();
 
   // Create the view once; tear it down on unmount (critical for dockview panel remounts).
   useEffect(() => {
