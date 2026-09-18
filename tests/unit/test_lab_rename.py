@@ -13,7 +13,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import InterfaceAttach, MachineCreate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 LAB_CONF = (
     "# keep me\n"
@@ -24,11 +24,6 @@ LAB_CONF = (
     "pc2[0]=A\n"
 )
 
-
-def _service(store: LabStore) -> KatharaService:
-    service = KatharaService(store=store)
-    service._instance = FakeFacadeBase()
-    return service
 
 
 def _make_lab(store: LabStore, service: KatharaService, name: str = "mylab") -> None:
@@ -96,7 +91,7 @@ def test_store_rename_rejects_unsafe_and_missing(tmp_path):
 
 def test_service_rename_rekeys_registry_and_keeps_content(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _make_lab(store, service)
 
     renamed = service.rename_lab("mylab", "renamed")
@@ -116,7 +111,7 @@ def test_service_rename_rekeys_registry_and_keeps_content(tmp_path):
 
 def test_service_rename_keeps_the_layout(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _make_lab(store, service)
 
     service.rename_lab("mylab", "renamed")
@@ -126,7 +121,7 @@ def test_service_rename_keeps_the_layout(tmp_path):
 
 def test_service_rename_refuses_while_deployed(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _make_lab(store, service)
     service.registry.get("mylab").machines["pc1"].api_object = object()
 
@@ -140,7 +135,7 @@ def test_service_rename_refuses_while_deployed(tmp_path):
 
 def test_service_rename_refuses_existing_name(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _make_lab(store, service, "mylab")
     service.create_lab(
         LabCreate(
@@ -158,7 +153,7 @@ def test_service_rename_refuses_existing_name(tmp_path):
 
 def test_service_rename_unknown_lab(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
 
     with pytest.raises(LabNotFoundError):
         service.rename_lab("ghost", "whatever")
@@ -171,7 +166,7 @@ def test_rename_route(client, tmp_path, monkeypatch):
     from kathara_api import dependencies
 
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     monkeypatch.setattr(dependencies, "_service", service)
     _make_lab(store, service, "routelab")
 
@@ -194,7 +189,7 @@ def test_rename_route_conflicts_while_deployed(client, tmp_path, monkeypatch):
     from kathara_api import dependencies
 
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     monkeypatch.setattr(dependencies, "_service", service)
     _make_lab(store, service, "uplab")
     service.registry.get("uplab").machines["pc1"].api_object = object()

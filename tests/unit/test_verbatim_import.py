@@ -10,14 +10,12 @@ import zipfile
 import pytest
 
 from kathara_api.errors import LabAlreadyRegisteredError
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, zip_bytes
+from tests.helpers import FakeFacadeBase, make_service, zip_bytes
 
 
 def _service(tmp_path):
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     return service
 
 

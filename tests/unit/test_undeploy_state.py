@@ -9,8 +9,7 @@ import pytest
 from kathara_api.errors import LinkInUseError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
-from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, make_service
 
 
 class _NoopFacade(FakeFacadeBase):
@@ -19,8 +18,7 @@ class _NoopFacade(FakeFacadeBase):
 
 
 def _service_with_lab():
-    service = KatharaService()
-    service._instance = _NoopFacade()  # bypass Kathara.get_instance() (needs Docker)
+    service = make_service(facade=_NoopFacade())  # bypass Kathara.get_instance() (needs Docker)
 
     spec = LabCreate.model_validate(
         {

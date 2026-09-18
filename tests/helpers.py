@@ -12,6 +12,8 @@ from typing import Optional
 
 from Kathara.exceptions import LabNotFoundError
 
+from kathara_api.services.kathara_service import KatharaService
+
 
 def zip_bytes(entries: dict[str, bytes], modes: Optional[dict[str, int]] = None) -> io.BytesIO:
     """Build an in-memory .zip archive from a path->content map.
@@ -36,6 +38,22 @@ def zip_bytes(entries: dict[str, bytes], modes: Optional[dict[str, int]] = None)
                 zf.writestr(name, content)
     buf.seek(0)
     return buf
+
+
+def make_service(store=None, facade=None):
+    """A ``KatharaService`` with its Kathara facade replaced, so no Docker is needed.
+
+    ``_instance`` is assigned directly rather than through any public path: ``Kathara.get_instance()``
+    is a true singleton that reaches for a Docker daemon when it is first constructed, so every test
+    touching a lab has to bypass it.
+
+    ``store=None`` keeps ``KatharaService``'s own default, which is the *configured* labs directory —
+    tests that must not write there pass a ``tmp_path``-backed ``LabStore`` explicitly, and the
+    difference is deliberate at each call site rather than hidden here.
+    """
+    service = KatharaService(store=store)
+    service._instance = FakeFacadeBase() if facade is None else facade
+    return service
 
 
 class FakeFacadeBase:

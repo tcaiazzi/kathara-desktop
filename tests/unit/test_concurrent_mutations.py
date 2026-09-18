@@ -45,7 +45,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, zip_bytes
+from tests.helpers import FakeFacadeBase, make_service, zip_bytes
 
 
 class _BlockingFacade(FakeFacadeBase):
@@ -159,8 +159,7 @@ def test_transitioning_flag_is_cleared_even_if_deploy_lab_raises(tmp_path):
     mutating call against it would be rejected forever, with no way out short of a process
     restart. Guards the `try`/`finally` around deploy_lab's body."""
     store = LabStore(tmp_path / "labs")
-    service = KatharaService(store=store)
-    service._instance = _RaisingDeployFacade()
+    service = make_service(store=store, facade=_RaisingDeployFacade())
     service.create_lab(LabCreate(name="testlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
 
     with pytest.raises(RuntimeError):
@@ -369,8 +368,7 @@ def test_remove_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_
 
 
 def _plain_service(tmp_path) -> KatharaService:
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     return service
 
 

@@ -23,17 +23,12 @@ from kathara_api.schemas.lab import LabLayout
 from kathara_api.schemas.machine import MachineCreate, MachineUpdate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 UNKNOWN = "never-existed"
 MACHINE = "pc1"
 LINK = "A"
 
-
-def _service(store: LabStore) -> KatharaService:
-    service = KatharaService(store=store)
-    service._instance = FakeFacadeBase()  # bypass Kathara.get_instance() (needs Docker)
-    return service
 
 
 # -- Tier 2: one entry per lookup method, with minimal dummy values for its other arguments -----
@@ -106,7 +101,7 @@ SKIPPED = {
 
 @pytest.mark.parametrize("method_name,extra_args", CASES)
 def test_unknown_lab_404s(tmp_path, method_name, extra_args):
-    service = _service(LabStore(tmp_path / "labs"))
+    service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         getattr(service, method_name)(UNKNOWN, *extra_args)
 

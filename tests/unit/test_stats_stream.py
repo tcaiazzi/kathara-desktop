@@ -10,8 +10,7 @@ import itertools
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import kathara_service as kathara_service_module
 from kathara_api.services import lab_builder
-from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, make_service
 
 
 class _EmptyStatsFacade(FakeFacadeBase):
@@ -27,8 +26,7 @@ def test_machines_stats_stream_throttles_consecutive_empty_samples(monkeypatch):
     sleeps: list[float] = []
     monkeypatch.setattr(kathara_service_module.time, "sleep", lambda s: sleeps.append(s))
 
-    service = KatharaService()
-    service._instance = _EmptyStatsFacade()  # bypass Kathara.get_instance() (needs Docker)
+    service = make_service(facade=_EmptyStatsFacade())  # bypass Kathara.get_instance() (needs Docker)
     spec = LabCreate.model_validate({"name": "testlab", "machines": [{"name": "pc1"}]})
     service.registry.add(lab_builder.build_lab(spec))
 

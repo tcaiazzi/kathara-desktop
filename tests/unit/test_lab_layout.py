@@ -16,15 +16,10 @@ from kathara_api.schemas.machine import InterfaceAttach, MachineCreate
 from kathara_api.services import lab_import
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LAYOUT_FILENAME, LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 LAYOUT = {"version": 1, "nodes": {"dev:pc1": {"x": 240, "y": 130}, "cd:A": {"x": 380.5, "y": 210}}}
 
-
-def _service(store: LabStore) -> KatharaService:
-    service = KatharaService(store=store)
-    service._instance = FakeFacadeBase()
-    return service
 
 
 def _lab_with_pc1(service: KatharaService, name: str = "mylab") -> None:
@@ -107,7 +102,7 @@ def test_delete_layout_reports_whether_it_existed(tmp_path):
 
 def test_service_layout_round_trip(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _lab_with_pc1(service)
     assert service.get_lab_layout("mylab").nodes == {}
     service.save_lab_layout("mylab", LabLayout.model_validate(LAYOUT))
@@ -120,7 +115,7 @@ def test_service_layout_round_trip(tmp_path):
 def test_service_ignores_invalid_layout_content(tmp_path):
     """Well-formed JSON that doesn't match the schema (bad node id) is ignored, not a 500."""
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _lab_with_pc1(service)
     store.write_layout("mylab", {"version": 1, "nodes": {"pc1": {"x": 1, "y": 2}}})
     assert service.get_lab_layout("mylab").nodes == {}
@@ -128,7 +123,7 @@ def test_service_ignores_invalid_layout_content(tmp_path):
 
 def test_clear_lab_layout(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _lab_with_pc1(service)
     service.save_lab_layout("mylab", LabLayout.model_validate(LAYOUT))
     assert service.clear_lab_layout("mylab") is True
@@ -157,12 +152,12 @@ def test_layout_file_is_inert_for_the_importer():
 
 def test_layout_survives_reload_and_zip_round_trip(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     _lab_with_pc1(service)
     service.save_lab_layout("mylab", LabLayout.model_validate(LAYOUT))
 
     # A restart re-parses the lab directory; the extra file must not disturb it, and the layout stays.
-    fresh = _service(LabStore(tmp_path / "labs"))
+    fresh = make_service(LabStore(tmp_path / "labs"))
     assert fresh.registry.get("mylab") is not None
     assert fresh.get_lab_layout("mylab").nodes["dev:pc1"].x == 240
 
@@ -179,7 +174,7 @@ def test_layout_routes(client, tmp_path, monkeypatch):
     from kathara_api import dependencies
 
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     monkeypatch.setattr(dependencies, "_service", service)
     _lab_with_pc1(service, "routelab")
 

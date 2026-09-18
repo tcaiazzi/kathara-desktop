@@ -23,7 +23,7 @@ from kathara_api.errors import ApiError
 from kathara_api.main import create_app
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, zip_bytes
+from tests.helpers import make_service, zip_bytes
 
 
 def test_import_limits_are_configurable():
@@ -125,8 +125,7 @@ def test_extract_zip_still_works_within_every_cap(tmp_path):
 
 
 def _service(tmp_path) -> KatharaService:
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     return service
 
 
@@ -166,8 +165,7 @@ def test_import_lab_still_works_within_every_cap(tmp_path):
 
 @pytest.fixture
 def client_and_service(tmp_path):
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     app = create_app()
     app.dependency_overrides[get_service] = lambda: service
     with TestClient(app) as client:
@@ -177,8 +175,7 @@ def client_and_service(tmp_path):
 
 def test_body_size_middleware_rejects_a_declared_content_length_over_the_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 10)
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     app = create_app()
     app.dependency_overrides[get_service] = lambda: service
     with TestClient(app) as client:
@@ -211,8 +208,7 @@ def test_body_size_middleware_drains_the_body_before_responding_so_a_browser_isn
     reset), so this drives a real uvicorn server over a loopback socket by hand.
     """
     monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 100)
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     app = create_app()
     app.dependency_overrides[get_service] = lambda: service
 

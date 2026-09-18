@@ -16,13 +16,13 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from kathara_api.config import ApiSettings
 from kathara_api.dependencies import get_service
 from kathara_api.errors import ApiError, GalleryLabNotFoundError, GalleryUnavailableError, LabAlreadyRegisteredError
 from kathara_api.main import create_app
 from kathara_api.services import lab_gallery
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 
 # ---------------------------------------------------------------------------
@@ -39,10 +39,12 @@ class _FakeSettings:
         self.gallery_section = section
         self.gallery_cache_ttl = 900
         self.gallery_token = None
-        # Same defaults as ApiSettings (config.py) — see E9.
-        self.max_files_per_lab = 200
-        self.max_bytes_per_file = 5 * 1024 * 1024
-        self.max_bytes_per_lab = 20 * 1024 * 1024
+        # Read off ApiSettings' declared defaults rather than retyped here, so this fake cannot
+        # quietly disagree with the caps the code under test enforces. `model_fields[...].default`
+        # and not `ApiSettings()`: the latter would pick up KATHARA_API_* from the environment and
+        # make the test depend on where it runs.
+        for cap in ("max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"):
+            setattr(self, cap, ApiSettings.model_fields[cap].default)
 
     def gallery_slug(self):
         return self.gallery_repo
@@ -426,8 +428,7 @@ def test_gallery_route_deduplicates_concurrent_http_requests(client_and_service,
 
 
 def _service(tmp_path):
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     return service
 
 

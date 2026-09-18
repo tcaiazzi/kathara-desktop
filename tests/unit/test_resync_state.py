@@ -7,8 +7,7 @@ stopped one, so without this, a lab wiped via `kathara wipe` would keep reportin
 
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
-from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, make_service
 
 
 class _WipeFacade(FakeFacadeBase):
@@ -21,8 +20,7 @@ class _WipeFacade(FakeFacadeBase):
 
 
 def _service_with_lab():
-    service = KatharaService()
-    service._instance = _WipeFacade()  # bypass Kathara.get_instance() (needs Docker)
+    service = make_service(facade=_WipeFacade())  # bypass Kathara.get_instance() (needs Docker)
 
     spec = LabCreate.model_validate(
         {

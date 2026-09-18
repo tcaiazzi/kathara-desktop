@@ -20,9 +20,8 @@ from kathara_api.dependencies import get_service
 from kathara_api.main import create_app
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import image_pull, lab_builder
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, make_service
 
 
 @pytest.fixture(autouse=True)
@@ -85,8 +84,7 @@ class _FakeFacade(FakeFacadeBase):
 
 
 def _service(tmp_path, docker_image, api=None):
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = _FakeFacade(docker_image, api)
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=_FakeFacade(docker_image, api))
     return service
 
 

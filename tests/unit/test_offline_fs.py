@@ -15,13 +15,12 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 
 def _service(tmp_path) -> tuple[KatharaService, LabStore]:
     store = LabStore(tmp_path / "labs")
-    service = KatharaService(store=store)
-    service._instance = FakeFacadeBase()
+    service = make_service(store=store)
     return service, store
 
 

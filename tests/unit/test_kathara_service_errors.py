@@ -10,31 +10,33 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
 
+from tests.helpers import FakeFacadeBase, make_service
 
-class _FacadeEmptyMachineStats:
+
+class _FacadeEmptyMachineStats(FakeFacadeBase):
     def get_machine_stats(self, machine_name, lab_name=None):
         if False:
             yield (machine_name, lab_name)
 
 
-class _FacadeNoneMachineStats:
+class _FacadeNoneMachineStats(FakeFacadeBase):
     # Mirrors DockerManager.get_machine_stats, which *yields None* (rather than stopping) for a device
     # that isn't running.
     def get_machine_stats(self, machine_name, lab_name=None):
         yield None
 
 
-class _FacadeLabFromApiFailure:
+class _FacadeLabFromApiFailure(FakeFacadeBase):
     def get_lab_from_api(self, lab_name):
         raise DockerDaemonConnectionError("daemon down")
 
 
-class _FacadeRefreshFailure:
+class _FacadeRefreshFailure(FakeFacadeBase):
     def update_lab_from_api(self, lab):
         raise DockerDaemonConnectionError("daemon down")
 
 
-class _FacadeNoCopyOnStopped:
+class _FacadeNoCopyOnStopped(FakeFacadeBase):
     def update_lab_from_api(self, lab):
         return lab
 
@@ -43,8 +45,7 @@ class _FacadeNoCopyOnStopped:
 
 
 def test_machine_stats_snapshot_raises_machine_not_running_on_empty_stream():
-    service = KatharaService()
-    service._instance = _FacadeEmptyMachineStats()
+    service = make_service(facade=_FacadeEmptyMachineStats())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     service.registry.add(lab_builder.build_lab(spec))
 
@@ -53,8 +54,7 @@ def test_machine_stats_snapshot_raises_machine_not_running_on_empty_stream():
 
 
 def test_machine_stats_snapshot_raises_machine_not_running_on_none_sample():
-    service = KatharaService()
-    service._instance = _FacadeNoneMachineStats()
+    service = make_service(facade=_FacadeNoneMachineStats())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     service.registry.add(lab_builder.build_lab(spec))
 
@@ -63,16 +63,14 @@ def test_machine_stats_snapshot_raises_machine_not_running_on_none_sample():
 
 
 def test_get_lab_or_reconstruct_propagates_non_not_found_errors():
-    service = KatharaService()
-    service._instance = _FacadeLabFromApiFailure()
+    service = make_service(facade=_FacadeLabFromApiFailure())
 
     with pytest.raises(DockerDaemonConnectionError):
         service.get_lab_or_reconstruct("lab1")
 
 
 def test_list_labs_propagates_refresh_errors():
-    service = KatharaService()
-    service._instance = _FacadeRefreshFailure()
+    service = make_service(facade=_FacadeRefreshFailure())
     service.registry.add(Lab("lab1"))
 
     with pytest.raises(DockerDaemonConnectionError):
@@ -80,8 +78,7 @@ def test_list_labs_propagates_refresh_errors():
 
 
 def test_copy_files_on_stopped_machine_raises_machine_not_running():
-    service = KatharaService()
-    service._instance = _FacadeNoCopyOnStopped()
+    service = make_service(facade=_FacadeNoCopyOnStopped())
 
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     lab = lab_builder.build_lab(spec)
@@ -115,8 +112,7 @@ def test_available_shells_falls_back_when_detection_yields_nothing():
 
 
 def test_available_shells_requires_running_machine():
-    service = KatharaService()
-    service._instance = _FacadeNoCopyOnStopped()
+    service = make_service(facade=_FacadeNoCopyOnStopped())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     service.registry.add(lab_builder.build_lab(spec))
 
@@ -238,8 +234,7 @@ def test_is_startup_finished_is_false_before_the_marker_exists():
 
 
 def test_get_startup_log_requires_running_machine():
-    service = KatharaService()
-    service._instance = _FacadeNoCopyOnStopped()
+    service = make_service(facade=_FacadeNoCopyOnStopped())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     service.registry.add(lab_builder.build_lab(spec))
 
@@ -248,8 +243,7 @@ def test_get_startup_log_requires_running_machine():
 
 
 def test_is_startup_finished_requires_running_machine():
-    service = KatharaService()
-    service._instance = _FacadeNoCopyOnStopped()
+    service = make_service(facade=_FacadeNoCopyOnStopped())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     service.registry.add(lab_builder.build_lab(spec))
 

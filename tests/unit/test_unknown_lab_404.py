@@ -9,33 +9,27 @@ wrong exception (409 MachineNotRunningError instead of 404).
 import pytest
 from Kathara.exceptions import LabNotFoundError
 
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 UNKNOWN = "never-existed"
 
 
-def _service(store: LabStore) -> KatharaService:
-    service = KatharaService(store=store)
-    service._instance = FakeFacadeBase()  # bypass Kathara.get_instance() (needs Docker)
-    return service
-
 
 def test_undeploy_lab_404s_for_an_unknown_name(tmp_path):
-    service = _service(LabStore(tmp_path / "labs"))
+    service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         service.undeploy_lab(UNKNOWN)
 
 
 def test_delete_lab_404s_for_an_unknown_name(tmp_path):
-    service = _service(LabStore(tmp_path / "labs"))
+    service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         service.delete_lab(UNKNOWN)
 
 
 def test_machines_stats_snapshot_404s_for_an_unknown_name(tmp_path):
-    service = _service(LabStore(tmp_path / "labs"))
+    service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         service.machines_stats_snapshot(UNKNOWN)
 
@@ -43,7 +37,7 @@ def test_machines_stats_snapshot_404s_for_an_unknown_name(tmp_path):
 def test_machine_stats_snapshot_404s_for_an_unknown_lab_not_409(tmp_path):
     """An unknown *lab* must be a 404, not the 409 (MachineNotRunningError) a missing device
     sample would otherwise produce regardless of whether the lab itself exists."""
-    service = _service(LabStore(tmp_path / "labs"))
+    service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         service.machine_stats_snapshot(UNKNOWN, "pc1")
 
@@ -52,7 +46,7 @@ def test_machines_stats_stream_404s_eagerly_not_on_first_iteration(tmp_path):
     """machines_stats_stream must raise on the call itself, not lazily on first iteration: the
     router hands the returned generator straight to an already-started EventSourceResponse, so a
     LabNotFoundError raised only once iterated could no longer become an HTTP 404."""
-    service = _service(LabStore(tmp_path / "labs"))
+    service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         service.machines_stats_stream(UNKNOWN)  # must raise right here, not on next()
 

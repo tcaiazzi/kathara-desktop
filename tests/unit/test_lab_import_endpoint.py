@@ -10,9 +10,8 @@ from fastapi.testclient import TestClient
 
 from kathara_api.dependencies import get_service
 from kathara_api.main import create_app
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, make_service
 
 
 class _FakeFacade(FakeFacadeBase):
@@ -27,8 +26,7 @@ class _FakeFacade(FakeFacadeBase):
 
 @pytest.fixture
 def client_and_service(tmp_path):
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = _FakeFacade()
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=_FakeFacade())
     app = create_app()
     app.dependency_overrides[get_service] = lambda: service
     with TestClient(app) as client:

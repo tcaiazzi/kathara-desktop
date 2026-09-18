@@ -15,9 +15,8 @@ from kathara_api.config import get_settings
 from kathara_api.dependencies import get_service
 from kathara_api.main import create_app
 from kathara_api.schemas.settings import SettingsUpdate, SettingsView
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
 
 @pytest.fixture(autouse=True)
@@ -94,8 +93,7 @@ def test_settings_view_still_reads_remote_url_and_cert_path():
 
 @pytest.fixture
 def client_and_service(tmp_path):
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = FakeFacadeBase()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     app = create_app()
     app.dependency_overrides[get_service] = lambda: service
     with TestClient(app) as client:

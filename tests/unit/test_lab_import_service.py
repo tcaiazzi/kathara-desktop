@@ -9,9 +9,8 @@ from kathara_api.errors import ApiError, LabAlreadyRegisteredError, LabConfLocke
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate, MachineOptionsBase, MachineUpdate
 from kathara_api.services import serializers
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, zip_bytes
+from tests.helpers import FakeFacadeBase, make_service, zip_bytes
 
 
 class _FakeFacade(FakeFacadeBase):
@@ -48,8 +47,7 @@ class _FakeFacade(FakeFacadeBase):
 
 def _service(tmp_path):
     # Inject a temp-dir store so persistence writes stay out of the repo.
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
-    service._instance = _FakeFacade()
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=_FakeFacade())
     return service
 
 
@@ -440,8 +438,7 @@ def test_disconnect_stopped_device_renumbers_and_lab_still_reloads(tmp_path):
     }
 
     # A brand-new service instance (simulating a restart) must still be able to load the lab.
-    fresh = KatharaService(store=service.store)
-    fresh._instance = _FakeFacade()
+    fresh = make_service(store=service.store, facade=_FakeFacade())
     fresh._reload_from_disk()
     assert "lab1" in fresh.registry.names()
 

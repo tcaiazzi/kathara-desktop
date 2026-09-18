@@ -6,20 +6,14 @@ survival), and delete removes the directory.
 
 from kathara_api.schemas.lab import LabCreate, LabMetadata
 from kathara_api.schemas.machine import InterfaceAttach, MachineCreate
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase
+from tests.helpers import make_service
 
-
-def _service(store: LabStore) -> KatharaService:
-    service = KatharaService(store=store)
-    service._instance = FakeFacadeBase()
-    return service
 
 
 def test_create_lab_writes_directory(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     service.create_lab(
         LabCreate(
             name="jsonlab",
@@ -37,7 +31,7 @@ def test_create_lab_registers_under_the_sanitized_name(tmp_path):
     keep the raw, untrimmed name on the model while creating the directory under the trimmed one,
     so the lab was unreachable by its own (trimmed) name until a restart re-read it from disk."""
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     service.create_lab(
         LabCreate(name=" demo ", machines=[MachineCreate(name="pc1", image="kathara/base")])
     )
@@ -50,7 +44,7 @@ def test_create_lab_registers_under_the_sanitized_name(tmp_path):
 
     # Survives a restart too: a fresh service reloading the same on-disk store must find the lab
     # under the same "demo" name, not rename it out from under a caller who registered it earlier.
-    restarted = _service(store)
+    restarted = make_service(store)
     assert restarted.registry.get("demo") is not None
 
 
@@ -61,7 +55,7 @@ def test_import_lab_materializes_onto_native_fs(tmp_path):
     applies it natively from where it sits.
     """
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     files = {
         "lab.conf": 'r1[image]="kathara/base"\nr1[0]="A"\n',
         "r1.startup": "ip a\n",
@@ -81,14 +75,14 @@ def test_import_lab_materializes_onto_native_fs(tmp_path):
 
 def test_labs_reload_from_disk_on_fresh_service(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     service.import_lab("imported", {"lab.conf": 'r1[image]="kathara/base"\nr1[0]="A"\n', "r1.startup": "ip a\n"}, [])
     service.create_lab(
         LabCreate(name="jsonlab", machines=[MachineCreate(name="pc1", image="kathara/base")])
     )
 
     # A brand-new service (simulating a restart) sees the same labs, rebuilt from disk.
-    fresh = _service(LabStore(tmp_path / "labs"))
+    fresh = make_service(LabStore(tmp_path / "labs"))
     assert set(fresh.registry.names()) == {"imported", "jsonlab"}
     # The startup script is a real file on disk — nothing needs reconstructing to see it.
     assert fresh.get_startup_scripts("imported")["r1"].strip() == "ip a"
@@ -96,7 +90,7 @@ def test_labs_reload_from_disk_on_fresh_service(tmp_path):
 
 def test_delete_lab_removes_directory(tmp_path):
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     service.create_lab(LabCreate(name="jsonlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
     assert store.lab_dir("jsonlab").exists()
 
@@ -108,7 +102,7 @@ def test_offline_fs_edit_writes_through_to_disk_before_any_deploy(tmp_path):
     """A queued files/dirs edit must survive a restart even for a lab that has never been
     deployed — not just at deploy time."""
     store = LabStore(tmp_path / "labs")
-    service = _service(store)
+    service = make_service(store)
     service.create_lab(LabCreate(name="jsonlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
 
     service.fs_write_text_offline("jsonlab", "/pc1/etc/motd", "edited\n")
@@ -119,5 +113,5 @@ def test_offline_fs_edit_writes_through_to_disk_before_any_deploy(tmp_path):
     assert (lab_dir / "pc1" / "var" / "log").is_dir()
 
     # Simulated restart: a fresh service still sees the edit — it's a real file, not a cache.
-    fresh = _service(LabStore(tmp_path / "labs"))
+    fresh = make_service(LabStore(tmp_path / "labs"))
     assert fresh.fs_read_text_offline("jsonlab", "/pc1/etc/motd") == "edited\n"
