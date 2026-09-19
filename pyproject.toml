@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.14"]
 
 [project.scripts]
 kathara-api = "kathara_api.main:run"
@@ -61,6 +61,22 @@ namespaces = false
 # Bundled example network scenarios (src/kathara_api/examples/) — see services/examples.py.
 # Ships in every build (wheel, sdist, editable install) with no extra packaging step.
 kathara_api = ["examples/**/*"]
+
+# Deliberately narrow. Type errors and unused locals are not the failure mode this codebase has —
+# `--select F` reports nothing across it today — so this is a ratchet rather than a cleanup: it
+# costs nothing while the code stays clean and catches the dead import a refactor leaves behind.
+#
+# Everything else stays off on purpose. `UP045`/`UP007` would rewrite ~170 `Optional[X]`
+# annotations into `X | None`, against the spelling this codebase already uses consistently, and
+# `B008` flags every `Depends(...)` in a FastAPI signature. Formatting is not enforced at all:
+# `ruff format` would reflow half the backend for no defect.
+[tool.ruff]
+# Matches the width the code is already hand-wrapped to, so import sorting does not rewrap
+# anything that fits today.
+line-length = 110
+
+[tool.ruff.lint]
+select = ["F", "I"]
 
 [tool.pytest.ini_options]
 markers = [

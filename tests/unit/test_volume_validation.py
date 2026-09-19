@@ -11,9 +11,9 @@ them through lab_store.conf_value.
 import pytest
 from pydantic import ValidationError
 
+from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import VolumeMount
 from kathara_api.services import lab_builder, lab_import, lab_store
-from kathara_api.schemas.lab import LabCreate
 
 
 def test_plain_absolute_paths_are_accepted():

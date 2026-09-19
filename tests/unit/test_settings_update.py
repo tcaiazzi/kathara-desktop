@@ -8,7 +8,6 @@ from Kathara.setting.Setting import Setting
 from kathara_api.config import get_settings
 from kathara_api.errors import SettingsLockedError
 from kathara_api.services.kathara_service import KatharaService
-
 from tests.helpers import make_service
 
 

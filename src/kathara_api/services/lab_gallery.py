@@ -43,7 +43,6 @@ from ..config import format_mb, get_settings
 from ..errors import GalleryLabNotFoundError, GalleryUnavailableError
 from ..lab_conf_options import LAB_CONF_FILENAME
 
-
 # What a single lab is allowed to be — shared with the JSON-import and .zip-upload paths (see
 # ApiSettings.max_files_per_lab and friends in config.py) rather than a copy of the same three
 # numbers kept here: a mis-set gallery_repo (or a hostile fork) turning one click into a

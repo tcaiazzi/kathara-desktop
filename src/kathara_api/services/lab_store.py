@@ -25,6 +25,7 @@ from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
 from ..config import format_mb, get_settings
+from ..errors import ApiError, LabAlreadyRegisteredError
 from ..lab_conf_options import (
     DEFAULT_IMAGE,
     IMAGE_KEY,
@@ -32,7 +33,6 @@ from ..lab_conf_options import (
     MODELED_META_KEYS,
     SCALAR_OPTIONS,
 )
-from ..errors import ApiError, LabAlreadyRegisteredError
 
 logger = logging.getLogger("kathara_api")
 

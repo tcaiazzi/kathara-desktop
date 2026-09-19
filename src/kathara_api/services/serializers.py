@@ -10,11 +10,11 @@ from Kathara.model.Lab import Lab
 from Kathara.model.Link import Link
 from Kathara.model.Machine import Machine
 
+from ..lab_conf_options import MODELED_META_KEYS
 from ..schemas.lab import LabDetail, LabMetadata, LabSummary
 from ..schemas.link import LinkDetail
 from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping, Ulimit, VolumeMount
 from ..schemas.stats import MachineStats
-from ..lab_conf_options import MODELED_META_KEYS
 
 
 def _ports_to_schema(ports: dict) -> list[PortMapping]:

@@ -10,6 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from ..dependencies import get_service
 from ..downloads import attachment_headers
 from ..schemas.common import Message
+from ..schemas.examples import ExampleCreate, ExampleSummary
 from ..schemas.filesystem import (
     FsCopyRequest,
     FsDeleteRequest,
@@ -21,6 +22,8 @@ from ..schemas.filesystem import (
     FsUploadResponse,
     FsWriteTextRequest,
 )
+from ..schemas.gallery import GalleryCatalog, GalleryInstall
+from ..schemas.images import LabImagesStatus
 from ..schemas.lab import (
     DeployOptions,
     LabConfUpdate,
@@ -33,9 +36,6 @@ from ..schemas.lab import (
     LabSummary,
     UndeployOptions,
 )
-from ..schemas.examples import ExampleCreate, ExampleSummary
-from ..schemas.gallery import GalleryCatalog, GalleryInstall
-from ..schemas.images import LabImagesStatus
 from ..schemas.lab_import import LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService

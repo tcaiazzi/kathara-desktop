@@ -13,7 +13,7 @@ already-modeled option (`volume`, `image`, ...) rather than dropping it silently
 import pytest
 from pydantic import ValidationError
 
-from kathara_api.schemas.machine import MachineCreate, _RESERVED_META_KEYS
+from kathara_api.schemas.machine import _RESERVED_META_KEYS, MachineCreate
 from kathara_api.services.lab_import import parse_lab_conf
 
 

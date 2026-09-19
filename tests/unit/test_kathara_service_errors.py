@@ -1,7 +1,6 @@
 """Unit tests for KatharaService error semantics (no Docker required)."""
 
 import pytest
-
 from Kathara.exceptions import DockerDaemonConnectionError, MachineNotRunningError
 from Kathara.model.Lab import Lab
 
@@ -9,7 +8,6 @@ from kathara_api.errors import ApiError, BinaryFileError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
-
 from tests.helpers import FakeFacadeBase, make_service
 
 

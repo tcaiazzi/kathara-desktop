@@ -18,12 +18,16 @@ from fastapi.testclient import TestClient
 
 from kathara_api.config import ApiSettings
 from kathara_api.dependencies import get_service
-from kathara_api.errors import ApiError, GalleryLabNotFoundError, GalleryUnavailableError, LabAlreadyRegisteredError
+from kathara_api.errors import (
+    ApiError,
+    GalleryLabNotFoundError,
+    GalleryUnavailableError,
+    LabAlreadyRegisteredError,
+)
 from kathara_api.main import create_app
 from kathara_api.services import lab_gallery
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service
-
 
 # ---------------------------------------------------------------------------
 # Fake GitHub

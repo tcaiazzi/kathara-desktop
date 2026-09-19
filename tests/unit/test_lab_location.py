@@ -14,7 +14,6 @@ from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service
 
 
-
 def test_returns_the_store_directory_for_an_existing_lab(tmp_path):
     store = LabStore(tmp_path / "labs")
     service = make_service(store)

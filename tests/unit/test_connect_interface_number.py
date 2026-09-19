@@ -1,7 +1,6 @@
 """Unit tests for machine interface add/remove semantics (no Docker required)."""
 
 import pytest
-
 from Kathara.exceptions import NotSupportedError
 
 from kathara_api.schemas.lab import LabCreate

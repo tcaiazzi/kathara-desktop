@@ -10,7 +10,6 @@ from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_lab, make_service
 
 
-
 def test_create_lab_writes_directory(tmp_path):
     store = LabStore(tmp_path / "labs")
     service = make_service(store)

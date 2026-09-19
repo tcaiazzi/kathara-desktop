@@ -5,14 +5,14 @@ import fs.errors
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, Field
-
 from Kathara.exceptions import (
     LabNotFoundError,
     MachineAlreadyExistsError,
     MachineOptionError,
     PrivilegeError,
 )
+from pydantic import BaseModel, Field
+
 from kathara_api.errors import SettingsLockedError, register_exception_handlers
 
 

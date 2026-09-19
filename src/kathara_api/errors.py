@@ -7,8 +7,6 @@ import fs.errors
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
-
 from Kathara.exceptions import (
     DockerDaemonConnectionError,
     DockerImageNotFoundError,
@@ -36,6 +34,7 @@ from Kathara.exceptions import (
     PrivilegeError,
     SettingsError,
 )
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .schemas.common import ErrorResponse
 

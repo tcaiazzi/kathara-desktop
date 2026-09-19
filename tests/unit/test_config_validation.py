@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from kathara_api.config import ApiSettings
 from kathara_api.main import create_app
 
-
 # -- gallery ref -----------------------------------------------------------------------------
 
 @pytest.mark.parametrize("ref", ["main", "v1.2.3", "feature/foo", "0" * 40])
