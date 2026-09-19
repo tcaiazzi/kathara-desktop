@@ -11,7 +11,7 @@ import pytest
 
 from kathara_api.errors import LabAlreadyRegisteredError
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_service, zip_bytes
+from tests.helpers import FakeFacadeBase, make_lab, make_service, zip_bytes
 
 
 def _service(tmp_path):
@@ -127,32 +127,9 @@ def test_download_after_upload_round_trips(tmp_path):
             assert archive.read(rel) == content
 
 
-def test_import_lab_writes_files_verbatim(tmp_path):
-    service = _service(tmp_path)
-    files = {
-        "lab.conf": NASTY_LAB_CONF,
-        "pc1.startup": "ip a\r\n",
-    }
-
-    lab, warnings = service.import_lab("imported", files, [])
-
-    lab_dir = service.store.lab_dir("imported")
-    assert (lab_dir / "lab.conf").read_bytes().decode("utf-8") == NASTY_LAB_CONF
-    assert (lab_dir / "pc1.startup").read_bytes() == b"ip a\r\n"
-    assert lab.machines["pc1"] is not None
-
-
-def test_import_lab_refuses_to_clobber_an_existing_lab_directory(tmp_path):
-    service = _service(tmp_path)
-    service.import_lab("dup", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
-
-    with pytest.raises(LabAlreadyRegisteredError):
-        service.import_lab("dup", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
-
-
 def test_upload_lab_refuses_to_clobber_an_existing_lab_directory(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("dup", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
+    make_lab(service, "dup", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
 
     with pytest.raises(LabAlreadyRegisteredError):
         service.upload_lab("dup", zip_bytes({"lab.conf": b"pc1[image]=kathara/base\n"}))
@@ -162,7 +139,7 @@ def test_upload_lab_refuses_to_clobber_an_existing_lab_directory(tmp_path):
 
 def test_update_lab_conf_stores_the_submitted_text_verbatim(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
 
     edited = (
         "# hand-edited\r\n"
@@ -177,14 +154,13 @@ def test_update_lab_conf_stores_the_submitted_text_verbatim(tmp_path):
     assert (lab_dir / "lab.conf").read_bytes().decode("utf-8") == edited
 
 
-
 def test_live_push_boot_script_composes_shared_own_and_exec_commands(tmp_path):
     # A machine already running when a redeploy is requested gets its queued startup pushed live
     # (KatharaService._apply_pending / _boot_script) — it must run in the same order Kathara's own
     # native deploy would: shared.startup, then the device's own startup, then exec_commands.
     service = _service(tmp_path)
     service._instance = _RecordingFacade()
-    service.import_lab(
+    make_lab(service, 
         "lab1",
         {
             "lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[exec]=echo three\n",
@@ -210,7 +186,7 @@ def test_get_startup_scripts_is_the_verbatim_machine_startup(tmp_path):
     # prefix, no exec_commands suffix (those are native-deploy's/the live-push boot script's job;
     # composing them here would silently diverge from the real file on disk).
     service = _service(tmp_path)
-    service.import_lab(
+    make_lab(service, 
         "lab1",
         {
             "lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[exec]=echo three\n",

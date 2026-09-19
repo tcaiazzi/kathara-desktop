@@ -6,7 +6,6 @@ not fixtures/hooks.
 
 import io
 import stat
-import threading
 import zipfile
 from typing import Optional
 
@@ -38,6 +37,20 @@ def zip_bytes(entries: dict[str, bytes], modes: Optional[dict[str, int]] = None)
                 zf.writestr(name, content)
     buf.seek(0)
     return buf
+
+
+def make_lab(service, name: str, files: dict[str, str], dirs=None, deploy: bool = False):
+    """Create a lab on disk from a ``{path: text}`` mapping, through the .zip upload path.
+
+    Most tests only need *a lab that exists* before exercising deploy, lab.conf edits or device
+    changes; they used to build one with ``KatharaService.import_lab``, the JSON twin of
+    ``upload_lab``, which was removed along with its endpoint. ``upload_lab`` takes an archive,
+    so build one here rather than at every call site. Returns ``(lab, warnings)``, same shape.
+    """
+    entries: dict[str, bytes] = {path: text.encode() for path, text in files.items()}
+    for d in dirs or []:
+        entries[d.rstrip("/") + "/"] = b""
+    return service.upload_lab(name, zip_bytes(entries), deploy=deploy)
 
 
 def make_service(store=None, facade=None):
@@ -94,28 +107,3 @@ class FakeFacadeBase:
         return (b"", b"", 0)
 
 
-class NeverEndingExecStream:
-    """Fake IExecStream whose `next()` blocks forever until another thread calls `close()` —
-    reproducing a command that never produces output (`sleep 10000`, a shell waiting on stdin)
-    without a real Docker daemon. See I4 in docs/audit_2.md.
-
-    `self._stream = self` mirrors the real shape routers.exec._force_close_exec_stream expects: on
-    Docker, `IExecStream._stream` is the actual closeable object (a `CancellableStream`), one level
-    below the `IExecStream` itself.
-    """
-
-    def __init__(self):
-        self._event = threading.Event()
-        self.closed = False
-        self._stream = self
-
-    def __next__(self):
-        self._event.wait()
-        raise StopIteration
-
-    def exit_code(self):
-        return 0
-
-    def close(self):
-        self.closed = True
-        self._event.set()

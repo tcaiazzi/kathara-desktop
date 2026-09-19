@@ -9,7 +9,6 @@ from starlette.concurrency import run_in_threadpool
 from ..dependencies import get_service
 from ..downloads import attachment_headers
 from ..schemas.common import Message
-from ..schemas.exec import CopyFilesRequest
 from ..schemas.filesystem import (
     FsCopyRequest,
     FsDeleteRequest,
@@ -25,22 +24,6 @@ from ..services import serializers
 from ..services.kathara_service import KatharaService
 
 router = APIRouter(prefix="/labs/{lab_name}/machines", tags=["machines"])
-
-
-@router.get("", response_model=list[MachineDetail])
-def list_machines(lab_name: str, service: KatharaService = Depends(get_service)) -> list[MachineDetail]:
-    """List the devices of a network scenario."""
-    lab = service.get_lab_or_reconstruct(lab_name)
-    return [serializers.machine_to_detail(m) for m in lab.machines.values()]
-
-
-@router.get("/{machine_name}", response_model=MachineDetail)
-def get_machine(
-    lab_name: str, machine_name: str, service: KatharaService = Depends(get_service)
-) -> MachineDetail:
-    """Return details of a single device."""
-    machine = service.get_machine(lab_name, machine_name)
-    return serializers.machine_to_detail(machine)
 
 
 @router.get("/{machine_name}/shells", response_model=list[str])
@@ -117,18 +100,6 @@ def disconnect_machine(
     """Detach a device from a collision domain."""
     service.disconnect_machine(lab_name, machine_name, link, keep_link=keep_link)
     return Message(detail=f"Device `{machine_name}` disconnected from `{link}`.")
-
-
-@router.post("/{machine_name}/files", response_model=Message)
-def copy_files(
-    lab_name: str,
-    machine_name: str,
-    payload: CopyFilesRequest,
-    service: KatharaService = Depends(get_service),
-) -> Message:
-    """Copy in-line file contents into a running device."""
-    service.copy_files(lab_name, machine_name, payload.files)
-    return Message(detail=f"Copied {len(payload.files)} file(s) into `{machine_name}`.")
 
 
 @router.get("/{machine_name}/fs/list", response_model=FsListResponse)

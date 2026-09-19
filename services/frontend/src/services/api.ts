@@ -353,8 +353,8 @@ export const api = {
     return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}${tokenParam}`;
   },
 
-  // stats/stream is a GET endpoint, so (unlike exec/stream) the browser's native EventSource
-  // can be used directly against this URL.
+  // stats/stream is a GET endpoint, so the browser's native EventSource can be used directly
+  // against this URL — no manual SSE body-parsing needed.
   statsStreamUrl: (labName: string) => {
     const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
     return `${API_BASE}/labs/${encodeURIComponent(labName)}/stats/stream${tokenParam}`;

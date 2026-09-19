@@ -7,7 +7,7 @@ survival), and delete removes the directory.
 from kathara_api.schemas.lab import LabCreate, LabMetadata
 from kathara_api.schemas.machine import InterfaceAttach, MachineCreate
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import make_service
+from tests.helpers import make_lab, make_service
 
 
 
@@ -62,7 +62,7 @@ def test_import_lab_materializes_onto_native_fs(tmp_path):
         "r1/etc/frr/frr.conf": "hostname r1\n",
         "shared/etc/motd": "hi\n",
     }
-    lab, warnings = service.import_lab("imported", files, [])
+    lab, warnings = make_lab(service, "imported", files, [])
     lab_dir = store.lab_dir("imported")
     assert (lab_dir / "lab.conf").exists()
     assert 'r1[image]="kathara/base"' in (lab_dir / "lab.conf").read_text()
@@ -76,7 +76,7 @@ def test_import_lab_materializes_onto_native_fs(tmp_path):
 def test_labs_reload_from_disk_on_fresh_service(tmp_path):
     store = LabStore(tmp_path / "labs")
     service = make_service(store)
-    service.import_lab("imported", {"lab.conf": 'r1[image]="kathara/base"\nr1[0]="A"\n', "r1.startup": "ip a\n"}, [])
+    make_lab(service, "imported", {"lab.conf": 'r1[image]="kathara/base"\nr1[0]="A"\n', "r1.startup": "ip a\n"}, [])
     service.create_lab(
         LabCreate(name="jsonlab", machines=[MachineCreate(name="pc1", image="kathara/base")])
     )

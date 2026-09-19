@@ -125,7 +125,6 @@ that `None` up instead of falling back to a sensible default.
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
 | POST | `/api/labs` | Create a lab from a JSON description (not deployed) | `LabCreate` | `LabDetail` (201) |
-| POST | `/api/labs/import` | Create (and optionally deploy) from lab.conf/.startup/folder files | `LabImportRequest` | `LabImportResult` (201) |
 | POST | `/api/labs/upload` | Create (and optionally deploy) from an uploaded `.zip` (binary-safe) | multipart: `file`, `name?`, `deploy?` | `LabImportResult` (201) |
 | GET | `/api/labs/examples` | Bundled example network scenarios (package data), each flagged `installed` | — | `ExampleSummary[]` |
 | POST | `/api/labs/examples` | Install a bundled example as a real lab (409 if the name exists) | `ExampleCreate {id, name?}` | `LabImportResult` (201) |
@@ -161,14 +160,11 @@ that `None` up instead of falling back to a sensible default.
 
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
-| GET | `…/machines` | List devices | — | `MachineDetail[]` |
-| GET | `…/machines/{m}` | Device detail | — | `MachineDetail` |
 | POST | `…/machines` | Add + deploy a device | `MachineCreate` | `MachineDetail` (201) |
 | PUT | `…/machines/{m}` | Replace a **stopped** device's full option set (lab.conf metadata); 409 while the lab is deployed. A full replacement, not a patch — see the note below | `MachineUpdate` | `MachineDetail` |
 | DELETE | `…/machines/{m}` | Undeploy + remove a device | `?keep_links=false` | `Message` |
 | POST | `…/machines/{m}/connect` | Attach to a collision domain (running → runtime; stopped → lab.conf) | `?link=` `&interface_number=` `&mac_address=` | `MachineDetail` |
 | POST | `…/machines/{m}/disconnect` | Detach from a collision domain | `?link=` `&keep_link=false` | `Message` |
-| POST | `…/machines/{m}/files` | Copy inline text files into a running device | `CopyFilesRequest {files}` | `Message` |
 | GET | `…/machines/{m}/shells` | Shells actually present in the running device (populates the terminal picker) | — | `string[]` |
 | GET | `…/machines/{m}/startup-status` | Boot-time startup log tail + whether the startup commands have finished | — | `StartupStatus {log, finished}` |
 | GET | `…/machines/{m}/fs/list` | List a runtime directory | `?path=/` | `FsListResponse` |
@@ -189,27 +185,22 @@ that `None` up instead of falling back to a sensible default.
 > submitted unchanged drops that line from `lab.conf`. `[volume]` used to be in this category too;
 > it no longer is, since it's now modeled from either source.
 
-## Exec — `/api/labs/{lab}/machines/{m}`
+## Live terminal — `/api/labs/{lab}/machines/{m}`
 
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
-| POST | `…/{m}/exec` | Run a command, wait, return combined output | `ExecRequest {command, wait?}` | `ExecResult` |
-| POST | `…/{m}/exec/stream` | Stream stdout/stderr as SSE, then a final `exit` event | `ExecRequest` | `text/event-stream` |
 | WS | `…/{m}/tty/ws` | Interactive TTY bridge (Docker) | `?shell=bash` | WebSocket |
 
 ## Stats — `/api/labs/{lab}`
 
 | Method | Path | Purpose | Response |
 |---|---|---|---|
-| GET | `…/{lab}/stats` | One-shot machine stats snapshot | `MachineStats[]` |
-| GET | `…/{lab}/machines/{m}/stats` | One-shot stats for a device (409 if not running) | `MachineStats` |
 | GET | `…/{lab}/stats/stream` | Live machine stats (SSE) | `text/event-stream` |
 
 ## Collision domains — `/api/labs/{lab}/links`
 
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
-| GET | `…/{lab}/links` | List collision domains | — | `LinkDetail[]` |
 | POST | `…/{lab}/links` | Create a collision domain (optionally attached to host interfaces, `iface` or `iface.<vlan>`) | `{name, external?}` | `LinkDetail` (201) |
 | DELETE | `…/{lab}/links/{name}` | Remove a collision domain | — | `Message` |
 

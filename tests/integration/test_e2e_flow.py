@@ -4,7 +4,6 @@ Run with: ``pytest -m docker``
 """
 
 import base64
-import json
 
 import pytest
 
@@ -39,41 +38,10 @@ def test_system_endpoints(client):
 
 
 def test_deploy_lists_machines(client, deployed_lab):
-    machines = client.get("/api/labs/apitest/machines").json()
+    machines = client.get("/api/labs/apitest").json()["machines"]
     names = {m["name"] for m in machines}
     assert names == {"pc1", "pc2"}
     assert all(m["running"] for m in machines)
-
-
-def test_exec_command(client, deployed_lab):
-    resp = client.post(
-        "/api/labs/apitest/machines/pc1/exec",
-        json={"command": "hostname"},
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["exit_code"] == 0
-    assert "pc1" in body["stdout"]
-
-
-def test_exec_stream(client, deployed_lab):
-    with client.stream(
-        "POST",
-        "/api/labs/apitest/machines/pc1/exec/stream",
-        json={"command": ["echo", "streamed"]},
-    ) as resp:
-        assert resp.status_code == 200
-        collected = ""
-        exit_code = None
-        for line in resp.iter_lines():
-            if line.startswith("data:"):
-                payload = json.loads(line[len("data:"):].strip())
-                if "data" in payload:
-                    collected += base64.b64decode(payload["data"]).decode()
-                elif "exit_code" in payload:
-                    exit_code = payload["exit_code"]
-        assert "streamed" in collected
-        assert exit_code == 0
 
 
 def test_live_tty_websocket_smoke(client, deployed_lab):
@@ -100,14 +68,8 @@ def test_live_tty_websocket_smoke(client, deployed_lab):
         assert ws.receive_json() == {"event": "closed"}
 
 
-def test_stats_snapshot(client, deployed_lab):
-    stats = client.get("/api/labs/apitest/stats").json()
-    assert len(stats) == 2
-    assert all(s["name"] in {"pc1", "pc2"} for s in stats)
-
-
 def test_unknown_lab_404(client):
-    assert client.get("/api/labs/does_not_exist_xyz/machines").status_code == 404
+    assert client.get("/api/labs/does_not_exist_xyz").status_code == 404
 
 
 def test_duplicate_lab_409(client, deployed_lab):

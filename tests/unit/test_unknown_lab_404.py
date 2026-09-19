@@ -15,7 +15,6 @@ from tests.helpers import make_service
 UNKNOWN = "never-existed"
 
 
-
 def test_undeploy_lab_404s_for_an_unknown_name(tmp_path):
     service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
@@ -26,20 +25,6 @@ def test_delete_lab_404s_for_an_unknown_name(tmp_path):
     service = make_service(LabStore(tmp_path / "labs"))
     with pytest.raises(LabNotFoundError):
         service.delete_lab(UNKNOWN)
-
-
-def test_machines_stats_snapshot_404s_for_an_unknown_name(tmp_path):
-    service = make_service(LabStore(tmp_path / "labs"))
-    with pytest.raises(LabNotFoundError):
-        service.machines_stats_snapshot(UNKNOWN)
-
-
-def test_machine_stats_snapshot_404s_for_an_unknown_lab_not_409(tmp_path):
-    """An unknown *lab* must be a 404, not the 409 (MachineNotRunningError) a missing device
-    sample would otherwise produce regardless of whether the lab itself exists."""
-    service = make_service(LabStore(tmp_path / "labs"))
-    with pytest.raises(LabNotFoundError):
-        service.machine_stats_snapshot(UNKNOWN, "pc1")
 
 
 def test_machines_stats_stream_404s_eagerly_not_on_first_iteration(tmp_path):

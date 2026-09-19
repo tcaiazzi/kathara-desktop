@@ -36,7 +36,7 @@ from ..schemas.lab import (
 from ..schemas.examples import ExampleCreate, ExampleSummary
 from ..schemas.gallery import GalleryCatalog, GalleryInstall
 from ..schemas.images import LabImagesStatus
-from ..schemas.lab_import import LabImportRequest, LabImportResult
+from ..schemas.lab_import import LabImportResult
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
@@ -59,22 +59,6 @@ def create_lab(payload: LabCreate, service: KatharaService = Depends(get_service
     return serializers.lab_to_detail(lab)
 
 
-@router.post("/import", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)
-def import_lab(payload: LabImportRequest, service: KatharaService = Depends(get_service)) -> LabImportResult:
-    """Create (and optionally deploy) a lab from a lab.conf/.startup/folder directory.
-
-    Every file/dir is written to disk verbatim server-side, so file/startup application on
-    deploy is atomic regardless of client state.
-    """
-    lab, warnings = service.import_lab(payload.name, payload.files, payload.dirs, payload.skipped_files)
-    if payload.deploy:
-        # `lab.name`, not `payload.name`: import_lab stores/registers the lab under
-        # `sanitize_lab_name(payload.name)`, which strips surrounding whitespace — deploying by the
-        # raw submitted name would 404 on a lab that was just created successfully.
-        lab = service.deploy_lab(lab.name)
-    return _import_result(lab, warnings)
-
-
 @router.post("/upload", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)
 def upload_lab(
     file: UploadFile = File(...),
@@ -84,8 +68,7 @@ def upload_lab(
 ) -> LabImportResult:
     """Create (and optionally deploy) a lab from an uploaded .zip archive of a lab directory.
 
-    Binary-safe, unlike ``POST /import`` (JSON/text-only): the archive is extracted verbatim to
-    disk, then parsed the same way as a JSON-described lab.conf/folder import.
+    The archive is extracted verbatim to disk, then parsed into a registered lab.
     """
     lab_name = (name or "").strip() or Path(file.filename or "lab").stem
     lab, warnings = service.upload_lab(lab_name, file.file, deploy=deploy)

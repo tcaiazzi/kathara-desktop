@@ -40,7 +40,7 @@ def _flatten_routes(routes):
 def _full_path(route: APIRoute) -> str:
     """The route's path as this app actually serves it. `route.path` on a flattened route is
     relative to whatever router it was declared on (its own internal prefix, e.g.
-    `/labs/{lab_name}/machines/{machine_name}/exec`, is already included) — but the outer
+    `/labs/{lab_name}/machines/{machine_name}/shells`, is already included) — but the outer
     `API_PREFIX` passed to `include_router` in main.py is applied at inclusion time and is not
     reflected on the route object itself in this FastAPI version, so it has to be prepended by
     hand."""
@@ -85,23 +85,6 @@ def test_route_requires_auth_token(auth_client, method, path):
         f"{method} {path} returned {resp.status_code}, not 401 — either the auth dependency is "
         "missing from this route, or something else (e.g. request validation) ran before it."
     )
-
-
-def test_exec_non_websocket_routes_still_carry_the_dependency_individually(auth_client):
-    """Guards the one exclusion above: routers/exec.py's router is registered without
-    `dependencies=auth` (main.py:146-150, required for /tty/ws to work at all), so its two plain
-    HTTP routes carry the dependency individually instead. If that per-route dependency were ever
-    dropped on the assumption that some broader mechanism already covers it, this fails."""
-    app = create_app()
-    exec_paths = {
-        _full_path(route)
-        for route in _api_routes(app)
-        if route.path.endswith("/exec") or route.path.endswith("/exec/stream")
-    }
-    assert exec_paths, "expected to find the exec/exec-stream routes"
-    for path in exec_paths:
-        resp = auth_client.post(path.format(lab_name="placeholder", machine_name="placeholder"))
-        assert resp.status_code == 401
 
 
 def test_no_token_configured_leaves_every_route_reachable(monkeypatch):

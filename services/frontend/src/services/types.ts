@@ -156,7 +156,7 @@ export interface LabDetail extends LabSummary {
   links: LinkDetail[];
 }
 
-// Response for POST /api/labs/upload (and /api/labs/import) — mirrors backend
+// Response for POST /api/labs/upload — mirrors backend
 // schemas/lab_import.py's LabImportResult (LabDetail plus non-fatal parse warnings, e.g. a
 // lab.conf directive the API doesn't support).
 export interface LabImportResult extends LabDetail {

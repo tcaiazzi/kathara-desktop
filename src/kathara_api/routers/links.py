@@ -11,13 +11,6 @@ from ..services.kathara_service import KatharaService
 router = APIRouter(prefix="/labs/{lab_name}/links", tags=["links"])
 
 
-@router.get("", response_model=list[LinkDetail])
-def list_links(lab_name: str, service: KatharaService = Depends(get_service)) -> list[LinkDetail]:
-    """List the collision domains of a network scenario."""
-    lab = service.get_lab_or_reconstruct(lab_name)
-    return [serializers.link_to_detail(link) for link in lab.links.values()]
-
-
 @router.post("", response_model=LinkDetail, status_code=status.HTTP_201_CREATED)
 def add_link(
     lab_name: str, payload: LinkCreate, service: KatharaService = Depends(get_service)

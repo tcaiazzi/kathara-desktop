@@ -1,29 +1,18 @@
-"""Command execution endpoints (synchronous and streaming)."""
+"""Interactive TTY endpoint for a running device (websocket)."""
 
 import asyncio
 import base64
-import contextlib
 import hmac
 import json
-import logging
 
-import chardet
-from fastapi import APIRouter, Depends, Query, Request, WebSocket, WebSocketDisconnect
-from sse_starlette.sse import EventSourceResponse
-from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from ..config import get_settings
-from ..dependencies import get_service, is_origin_allowed, require_auth_token
-from ..schemas.exec import ExecRequest, ExecResult
+from ..dependencies import get_service, is_origin_allowed
 from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
 
 router = APIRouter(prefix="/labs/{lab_name}/machines/{machine_name}", tags=["exec"])
-logger = logging.getLogger(__name__)
-
-# How often the SSE stream below polls for a client disconnect while a chunk read is in flight
-# (see _force_close_exec_stream and event_generator).
-_DISCONNECT_POLL_INTERVAL_SECONDS = 0.5
 
 # How many tty_live_ws sessions are open right now. Mutated only from coroutines on this single
 # event loop (never from a thread), same as the `stop` flag inside tty_live_ws itself, so no lock
@@ -34,70 +23,8 @@ _DISCONNECT_POLL_INTERVAL_SECONDS = 0.5
 _tty_active_sessions = 0
 
 
-def _iter_exec_stream(stream):
-    """Adapt an IExecStream (implements `__next__` but not `__iter__`) into a real iterator."""
-    while True:
-        try:
-            yield next(stream)
-        except StopIteration:
-            return
-
-
-def _force_close_exec_stream(stream) -> None:
-    """Best-effort: unblock a `next(stream)` sitting in a threadpool worker by closing the
-    underlying Docker socket from here.
-
-    `IExecStream` (Kathara upstream) exposes no public close()/cancel() — a prior
-    `getattr(stream, "close", None)` in this module was always None and did nothing. On the only
-    manager reachable here (Docker, via KatharaService.exec_stream), the private `_stream`
-    attribute of `DockerExecStream` (Kathara.manager.docker.exec_stream) is actually a
-    `docker.types.daemon.CancellableStream`, whose own docstring documents exactly this use
-    ("cancel from another thread"): its close() shuts the exec's HTTP socket down, and its
-    `__next__` already turns the resulting `urllib3.exceptions.ProtocolError`/`OSError` into a
-    clean `StopIteration` — already handled by `_iter_exec_stream` above, so no new except clause
-    is needed anywhere in the read path for this.
-
-    No contract is being relied on beyond that: if this shape changes (a different manager, a
-    future docker-py/Kathara version, a test double), we simply do nothing — this is a
-    best-effort cleanup in a background path with no client left to report a failure to, which is
-    why a broad `except` here is scoped to this cleanup only and does not fall under I5 (mapping
-    exceptions into HTTP responses) — there is no response being built at this point.
-    """
-    inner = getattr(stream, "_stream", None)
-    close = getattr(inner, "close", None)
-    if not callable(close):
-        return
-    try:
-        close()
-    except Exception:
-        logger.debug("exec stream force-close failed", exc_info=True)
-
-
-def _decode(data: bytes) -> str:
-    if not data:
-        return ""
-    encoding = chardet.detect(data).get("encoding") or "utf-8"
-    try:
-        return data.decode(encoding)
-    except (UnicodeDecodeError, LookupError):
-        return data.decode("utf-8", errors="replace")
-
-
 def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
-
-
-def _output_parts(chunk):
-    """Yield ``(stream_name, bytes)`` for the non-empty halves of an exec ``(stdout, stderr)`` chunk."""
-    stdout, stderr = chunk
-    if stdout:
-        yield "stdout", stdout
-    if stderr:
-        yield "stderr", stderr
-
-
-def _sse_json(stream_name: str, data: bytes) -> str:
-    return json.dumps({"stream": stream_name, "data": _b64(data)})
 
 
 async def _ws_send_error(websocket: WebSocket, detail: str) -> None:
@@ -113,84 +40,6 @@ async def _recv_json(websocket: WebSocket):
     except json.JSONDecodeError:
         await _ws_send_error(websocket, "Invalid JSON message.")
         return None
-
-
-@router.post("/exec", response_model=ExecResult, dependencies=[Depends(require_auth_token)])
-def exec_command(
-    lab_name: str,
-    machine_name: str,
-    payload: ExecRequest,
-    service: KatharaService = Depends(get_service),
-) -> ExecResult:
-    """Execute a command, wait for completion, and return its combined output."""
-    stdout, stderr, exit_code = service.exec_command(
-        lab_name, machine_name, payload.command, wait=payload.wait
-    )
-    return ExecResult(
-        machine=machine_name,
-        stdout=_decode(stdout),
-        stderr=_decode(stderr),
-        exit_code=exit_code,
-    )
-
-
-@router.post("/exec/stream", dependencies=[Depends(require_auth_token)])
-async def exec_command_stream(
-    lab_name: str,
-    machine_name: str,
-    payload: ExecRequest,
-    request: Request,
-    service: KatharaService = Depends(get_service),
-):
-    """Stream a command's stdout/stderr as Server-Sent Events, then a final exit event.
-
-    Event data payloads:
-      - ``{"stream": "stdout"|"stderr", "data": "<base64>"}`` for output chunks
-      - ``{"exit_code": <int>}`` as the terminal ``exit`` event
-    """
-    stream = await run_in_threadpool(
-        service.exec_stream, lab_name, machine_name, payload.command, payload.wait
-    )
-
-    async def event_generator():
-        disconnected = False
-
-        async def watch_disconnect() -> None:
-            nonlocal disconnected
-            while True:
-                if await request.is_disconnected():
-                    disconnected = True
-                    # This is the only thing that can free a `next(stream)` stuck in the
-                    # threadpool: run_in_threadpool/iterate_in_threadpool run on
-                    # anyio.to_thread.run_sync with the default abandon_on_cancel=False, so
-                    # cancelling the task consuming the stream does NOT interrupt an in-flight
-                    # blocking read — anyio waits for the worker thread to return on its own.
-                    # Closing the socket from this independent task is what makes it return.
-                    await run_in_threadpool(_force_close_exec_stream, stream)
-                    return
-                await asyncio.sleep(_DISCONNECT_POLL_INTERVAL_SECONDS)
-
-        watcher = asyncio.create_task(watch_disconnect())
-        try:
-            async for chunk in iterate_in_threadpool(_iter_exec_stream(stream)):
-                if disconnected:
-                    break
-                for stream_name, data in _output_parts(chunk):
-                    yield {"event": "output", "data": _sse_json(stream_name, data)}
-            if not disconnected:
-                # No client left to read this for a disconnected stream — skip it, and the
-                # exec_inspect() call behind it.
-                exit_code = await run_in_threadpool(stream.exit_code)
-                yield {"event": "exit", "data": f'{{"exit_code": {exit_code}}}'}
-        finally:
-            watcher.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await watcher
-            # Idempotent (CancellableStream.close() checks response.raw.closed) — covers the
-            # normal/error exit paths too, not just the disconnect one above.
-            await run_in_threadpool(_force_close_exec_stream, stream)
-
-    return EventSourceResponse(event_generator())
 
 
 @router.websocket("/tty/ws")
@@ -221,9 +70,9 @@ async def tty_live_ws(
       - shell: one of bash|sh|ash|zsh (default: bash)
     """
     # A WebSocket handshake carries no Authorization header a browser can set, so the pairing
-    # token (see dependencies.require_auth_token, applied to exec_command/exec_command_stream
-    # above) travels as a query param instead — checked by hand rather than via the same
-    # Depends(): FastAPI's dependency solver can't supply a `Request`-typed dependency in a
+    # token (see dependencies.require_auth_token) travels as a query param instead — checked by
+    # hand rather than via the same Depends(): FastAPI's dependency solver can't supply a
+    # `Request`-typed dependency in a
     # websocket scope (there is no Request there, only WebSocket), and errors on every connection
     # if one is attached router- or route-wide, e.g. through the router-level `dependencies=`
     # main.py otherwise uses for every other router. Closing before ever calling accept() makes

@@ -10,7 +10,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate, MachineOptionsBase, MachineUpdate
 from kathara_api.services import serializers
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_service, zip_bytes
+from tests.helpers import FakeFacadeBase, make_lab, make_service, zip_bytes
 
 
 class _FakeFacade(FakeFacadeBase):
@@ -54,29 +54,12 @@ def _service(tmp_path):
 LAB_CONF = "r1[image]=kathara/base\nr1[0]=A\npc1[image]=kathara/base\npc1[0]=A\n"
 
 
-def test_import_lab_creates_lab_with_files_on_disk(tmp_path):
-    service = _service(tmp_path)
-    files = {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}
-
-    lab, warnings = service.import_lab("lab1", files, [])
-
-    assert warnings == []
-    assert set(lab.machines.keys()) == {"r1", "pc1"}
-    assert service.get_startup_scripts("lab1")["r1"].strip() == "ip a"
-
-
-def test_import_lab_raises_api_error_on_parse_errors(tmp_path):
-    service = _service(tmp_path)
-    with pytest.raises(ApiError):
-        service.import_lab("lab1", {}, [])
-
-
 def test_fresh_deploy_materializes_pending_to_native_fs_not_exec(tmp_path):
     """A machine's *first* deploy is native (Machine.pack_data reads real files off disk) —
     no copy_files/exec push happens for it (that would double-run a non-idempotent startup
     script, once via pack_data and once via the old live-push mechanism)."""
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 
     service.deploy_lab("lab1")
 
@@ -94,7 +77,7 @@ def test_fresh_deploy_materializes_pending_to_native_fs_not_exec(tmp_path):
 
 def test_deploy_materializes_offline_edits_to_native_fs(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
     service.fs_write_text_offline("lab1", "/pc1/etc/motd", "hi\n")
     service.fs_mkdir_offline("lab1", "/pc1/etc/empty")
 
@@ -112,7 +95,7 @@ def test_redeploy_never_repasses_already_running_machines_to_facade(tmp_path):
     """The facade's own deploy_lab raises MachineAlreadyExistsError for a machine that's already
     running, so a redeploy call must never pass an already-running machine to it again."""
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 
     service.deploy_lab("lab1")
     service.deploy_lab("lab1")
@@ -125,7 +108,7 @@ def test_redeploy_never_repasses_already_running_machines_to_facade(tmp_path):
 
 def test_deploy_is_scoped_to_selected_machines(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 
     service.deploy_lab("lab1", selected_machines={"pc1"})
 
@@ -140,7 +123,7 @@ def test_redeploy_of_already_running_machine_pushes_live_update_once(tmp_path):
     startup script once. An explicit edit in between must be pushed live exactly once (via the
     dirty-machine set, not a redeploy-always-pushes rule)."""
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 
     service.deploy_lab("lab1")  # fresh: native materialization, no copy_files/exec
     service.deploy_lab("lab1")  # both already running, nothing changed since: no push
@@ -162,7 +145,7 @@ def test_redeploy_of_already_running_machine_pushes_live_update_once(tmp_path):
 
 def test_offline_fs_writes_accumulate_without_clobbering(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
 
     service.fs_write_text_offline("lab1", "/pc1/a", "1")
     service.fs_write_text_offline("lab1", "/pc1/b", "2")
@@ -205,7 +188,7 @@ def test_upload_lab_extracts_and_materializes_binary_and_text(tmp_path):
 
 def test_upload_lab_rejects_duplicate_name(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("dup", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
+    make_lab(service, "dup", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
 
     with pytest.raises(LabAlreadyRegisteredError):
         service.upload_lab("dup", zip_bytes({"lab.conf": b"pc1[image]=kathara/base\n"}))
@@ -234,7 +217,7 @@ def test_update_lab_conf_rebuilds_empty_lab(tmp_path):
 
 def test_update_lab_conf_preserves_existing_device_startup(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 
     # Edit lab.conf (drop pc1); r1's existing startup must survive the rebuild.
     service.update_lab_conf("lab1", "r1[image]=kathara/base\nr1[0]=A\n")
@@ -254,7 +237,7 @@ def test_update_lab_conf_rejects_when_deployed(tmp_path):
 
 def test_remove_machine_removes_from_model_and_lab_conf(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
     service.fs_write_text_offline("lab1", "/r1/etc/motd", "hi\n")
 
     service.remove_machine("lab1", "r1")
@@ -275,7 +258,7 @@ def test_connect_disconnect_stopped_persists_lab_conf(tmp_path):
 
     service = _service(tmp_path)
     original = "pc1[image]=kathara/base\n"
-    service.import_lab("lab1", {"lab.conf": original}, [])
+    make_lab(service, "lab1", {"lab.conf": original}, [])
 
     # Static (stopped) interface add → persisted to lab.conf, surgically. The new interface line
     # is inserted *before* the device's existing option lines (interfaces-before-options, matching
@@ -294,7 +277,7 @@ def test_connect_disconnect_stopped_persists_lab_conf(tmp_path):
 
 def test_add_machine_persists_to_lab_conf_and_defers_deploy_when_stopped(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
 
     spec = MachineCreate.model_validate(
         {"name": "pc2", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]}
@@ -313,7 +296,7 @@ def test_add_machine_persists_to_lab_conf_and_defers_deploy_when_stopped(tmp_pat
 
 def test_add_machine_deploys_live_when_lab_running(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
     service.deploy_lab("lab1")  # pc1 running
 
     spec = MachineCreate.model_validate({"name": "pc2", "image": "kathara/base"})
@@ -326,7 +309,7 @@ def test_add_machine_deploys_live_when_lab_running(tmp_path):
 
 def test_update_machine_persists_to_lab_conf_when_stopped(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
 
     spec = MachineUpdate(mem="256m", bridged=True, envs={"FOO": "bar"})
     machine = service.update_machine("lab1", "pc1", spec)
@@ -349,11 +332,11 @@ def test_update_machine_unchanged_round_trip_keeps_an_imported_volume(tmp_path):
     # place. Now that lab_import applies it like any other option, the round-trip must preserve
     # it — this is the regression test for that fix.
     service = _service(tmp_path)
-    service.import_lab(
+    make_lab(service, 
         "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[volume]=/host|/mnt|rw\n"}, []
     )
 
-    detail = serializers.machine_to_detail(service.get_machine("lab1", "pc1"))
+    detail = serializers.machine_to_detail(service.get_lab_or_reconstruct("lab1").get_machine("pc1"))
     assert detail.volumes  # sanity: the import really did populate it
 
     unchanged = MachineUpdate(**detail.model_dump(include=set(MachineOptionsBase.model_fields)))
@@ -365,7 +348,7 @@ def test_update_machine_unchanged_round_trip_keeps_an_imported_volume(tmp_path):
 
 def test_update_machine_rejects_when_deployed(tmp_path):
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
     service.deploy_lab("lab1")  # fake facade sets api_object on machines
 
     with pytest.raises(LabConfLockedError):
@@ -379,7 +362,7 @@ def test_update_machine_rejects_when_deployed(tmp_path):
 
 def test_update_machine_clears_options_not_resubmitted(tmp_path):
     service = _service(tmp_path)
-    service.import_lab(
+    make_lab(service, 
         "lab1", {"lab.conf": 'pc1[image]=kathara/base\npc1[0]=A\npc1[mem]="128m"\npc1[env]="A=1"\n'}, []
     )
 
@@ -395,7 +378,7 @@ def test_runtime_interface_change_never_leaks_into_lab_conf(tmp_path):
     """A runtime (running-device) interface add mutates the shared model, but must never reach
     lab.conf — not from the runtime op itself, nor from a later offline edit on another device."""
     service = _service(tmp_path)
-    service.import_lab(
+    make_lab(service, 
         "lab1",
         {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc2[image]=kathara/base\npc2[0]=A\n"},
         [],
@@ -423,7 +406,7 @@ def test_disconnect_stopped_device_renumbers_and_lab_still_reloads(tmp_path):
     from kathara_api.services import lab_import
 
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[1]=B\npc1[2]=C\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[1]=B\npc1[2]=C\n"}, [])
 
     service.disconnect_machine("lab1", "pc1", "B")  # remove the middle interface (eth1)
 
@@ -447,7 +430,10 @@ def test_edit_on_folder_based_lab_generates_lab_conf_first(tmp_path):
     """A lab imported from folders only (no lab.conf) has nothing to preserve verbatim, so its
     first structural edit legitimately bootstraps one via gen_lab_conf, then applies the edit."""
     service = _service(tmp_path)
-    service.import_lab("lab1", {"pc1/etc/motd": "hi\n"}, [])
+    # Two device folders, not one: extract_zip strips a *single* common top-level directory as a
+    # wrapper (`mylab/lab.conf` -> `lab.conf`), which with one folder would turn pc1 into the lab
+    # root and its `etc/` child into the device.
+    make_lab(service, "lab1", {"pc1/etc/motd": "hi\n", "pc3/etc/motd": "hi\n"}, [])
     assert not (service.store.lab_dir("lab1") / "lab.conf").exists()
 
     spec = MachineCreate.model_validate({"name": "pc2", "image": "kathara/base"})
@@ -477,7 +463,7 @@ def test_full_undeploy_restores_configuration_topology(tmp_path):
     """A full undeploy discards runtime-only model changes and restores the saved (lab.conf)
     topology."""
     service = _service(tmp_path)
-    service.import_lab("lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
+    make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
     service.deploy_lab("lab1")  # fake facade sets api_object on pc1
 
     # Runtime add on the running pc1 → live model gains eth1→B (not persisted to lab.conf).
@@ -487,7 +473,7 @@ def test_full_undeploy_restores_configuration_topology(tmp_path):
 
     # Full undeploy → topology returns to the saved config (runtime eth1 gone), nothing running.
     service.undeploy_lab("lab1")
-    pc1 = service.get_machine("lab1", "pc1")
+    pc1 = service.get_lab_or_reconstruct("lab1").get_machine("pc1")
     assert {i.link.name for i in pc1.interfaces.values() if i is not None} == {"A"}
     assert pc1.api_object is None
 
@@ -497,7 +483,7 @@ def test_bridged_is_parsed_built_serialized_and_persisted(tmp_path):
 
     service = _service(tmp_path)
     conf = 'ws[image]="lscr.io/linuxserver/wireshark"\nws[bridged]=true\n'
-    lab, _ = service.import_lab("brlab", {"lab.conf": conf}, [])
+    lab, _ = make_lab(service, "brlab", {"lab.conf": conf}, [])
 
     assert lab.machines["ws"].is_bridged() is True
     assert serializers.machine_to_detail(lab.machines["ws"]).bridged is True

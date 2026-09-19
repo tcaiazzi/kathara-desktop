@@ -99,8 +99,8 @@ def create_app() -> FastAPI:
 
     # Cheap, early reject for the common case (a client that sends `Content-Length`, which every
     # request this app's own frontend makes does). Not the real enforcement — that counts actual
-    # bytes lower down, per import (KatharaService._check_import_size, LabStore._read_bounded/
-    # _copy_with_cap — see E9), and still applies to a body sent without this header (chunked
+    # bytes lower down, per import (LabStore._read_bounded/_copy_with_cap — see E9), and
+    # still applies to a body sent without this header (chunked
     # transfer) exactly as before. This only saves reading/parsing a request whose *declared* size
     # alone already rules it out, e.g. before FastAPI buffers a multipart upload into memory.
     #
@@ -143,17 +143,14 @@ def create_app() -> FastAPI:
     app.include_router(labs.router, prefix=API_PREFIX, dependencies=auth)
     app.include_router(machines.router, prefix=API_PREFIX, dependencies=auth)
     app.include_router(links.router, prefix=API_PREFIX, dependencies=auth)
-    # Not `dependencies=auth` here: this router also carries /tty/ws, and FastAPI's dependency
+    # Not `dependencies=auth` here: this router carries only /tty/ws, and FastAPI's dependency
     # solver can't supply a `Request`-typed dependency in a websocket scope (there's no Request
     # there, only WebSocket) — attaching one at the router level 500s every websocket connection,
-    # token or not. exec_command/exec_command_stream instead carry the dependency individually
-    # (see routers/exec.py), and /tty/ws checks the same token by hand.
+    # token or not. /tty/ws checks the same token by hand instead (see routers/exec.py).
     app.include_router(exec_router.router, prefix=API_PREFIX)
-    # Not `dependencies=auth` here either: `/stats/stream` is the one route in this router that
-    # needs `?token=` accepted (native EventSource, see require_auth_token_or_query), while
-    # `/stats` and `/machines/{name}/stats` should only ever accept the header. Each route in
-    # routers/stats.py carries its own matching dependency instead of one blanket router-level
-    # choice.
+    # Not `dependencies=auth` here either: `/stats/stream` needs `?token=` accepted (native
+    # EventSource, see require_auth_token_or_query), not the plain header-only dependency this
+    # would attach. The route carries its own matching dependency in routers/stats.py instead.
     app.include_router(stats.router, prefix=API_PREFIX)
 
     # Strictly last: mount_spa adds a catch-all route, and Starlette matches routes in

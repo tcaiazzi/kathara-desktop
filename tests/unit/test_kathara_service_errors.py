@@ -44,24 +44,6 @@ class _FacadeNoCopyOnStopped(FakeFacadeBase):
         raise AssertionError("copy_files should not be called for stopped machines")
 
 
-def test_machine_stats_snapshot_raises_machine_not_running_on_empty_stream():
-    service = make_service(facade=_FacadeEmptyMachineStats())
-    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
-    service.registry.add(lab_builder.build_lab(spec))
-
-    with pytest.raises(MachineNotRunningError):
-        service.machine_stats_snapshot("lab1", "pc1")
-
-
-def test_machine_stats_snapshot_raises_machine_not_running_on_none_sample():
-    service = make_service(facade=_FacadeNoneMachineStats())
-    spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
-    service.registry.add(lab_builder.build_lab(spec))
-
-    with pytest.raises(MachineNotRunningError):
-        service.machine_stats_snapshot("lab1", "pc1")
-
-
 def test_get_lab_or_reconstruct_propagates_non_not_found_errors():
     service = make_service(facade=_FacadeLabFromApiFailure())
 

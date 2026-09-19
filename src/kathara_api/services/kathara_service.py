@@ -47,7 +47,7 @@ from Kathara.utils import is_admin
 from Kathara.webhooks.DockerHubApi import DockerHubApi
 from pydantic import ValidationError
 
-from ..config import format_mb, get_settings
+from ..config import get_settings
 from ..lab_conf_options import LAB_CONF_FILENAME
 from ..errors import (
     ApiError,
@@ -110,34 +110,6 @@ def _search_lines_in_text(
             if len(matches) >= max_matches:
                 return matches, True
     return matches, False
-
-
-def _check_import_size(files: dict[str, str]) -> None:
-    """Enforce the same file-count/size caps a gallery install already has (ApiSettings, config.py)
-    on a JSON import's ``files`` — already fully in memory as parsed request-body strings by the
-    time this runs, so this only stops an oversized import from being written to disk, not the
-    initial request-body cost itself (see the body-size limit in main.py for that).
-    """
-    settings = get_settings()
-    if len(files) > settings.max_files_per_lab:
-        raise ApiError(
-            f"This import has {len(files)} files, more than the {settings.max_files_per_lab} this "
-            "import allows."
-        )
-    total = 0
-    for path, content in files.items():
-        size = len(content.encode("utf-8"))
-        if size > settings.max_bytes_per_file:
-            raise ApiError(
-                f"`{path}` is {format_mb(size)}, more than the {format_mb(settings.max_bytes_per_file)} "
-                "this import allows."
-            )
-        total += size
-    if total > settings.max_bytes_per_lab:
-        raise ApiError(
-            f"This import is {format_mb(total)}, more than the {format_mb(settings.max_bytes_per_lab)} "
-            "this import allows."
-        )
 
 
 class KatharaService:
@@ -330,7 +302,7 @@ class KatharaService:
         aren't Kathara settings at all — they're this project's own ``ApiSettings`` (config.py, see
         E9), just exposed on the same page. They're set directly on the ``get_settings()``
         singleton, which every request already reads fresh (``main.py``'s body-size middleware,
-        ``LabStore.extract_zip``, ``_check_import_size``), rather than passed to
+        ``LabStore.extract_zip``), rather than passed to
         ``Setting.load_from_dict`` — which has no idea these attributes exist. This mutation is
         in-process only: it does not persist past a restart (see ``SettingsView``'s docstring).
         """
@@ -679,7 +651,7 @@ class KatharaService:
         """Build + register a Lab against its already-populated on-disk directory.
 
         Writes nothing: by the time this runs, the directory *is* the lab (verbatim — see
-        ``import_lab``/``upload_lab``), so there is nothing left to materialize. Kathara's own
+        ``upload_lab``), so there is nothing left to materialize. Kathara's own
         ``Machine.pack_data`` reads a machine's files straight off ``machine.fs`` and its
         ``<name>.startup``/``shared.startup``/``shared.shutdown`` straight off ``lab.fs`` at
         deploy time — a machine whose subfolder already exists on disk picks up ``machine.fs``
@@ -917,46 +889,6 @@ class KatharaService:
         self.registry.add(lab)
         return True
 
-    # -- lab.conf / folder import ----------------------------------------------
-
-    def import_lab(
-        self,
-        name: str,
-        files: dict[str, str],
-        dirs: Optional[list[str]] = None,
-        skipped: Optional[list[str]] = None,
-    ) -> tuple[Lab, list[str]]:
-        """Create a lab from a lab.conf/.startup/folder description, writing every supplied file
-        to disk verbatim (the JSON twin of ``upload_lab``) and queuing it for deploy."""
-        clean = lab_store.sanitize_lab_name(name)
-        _check_import_size(files)
-        # The "is the name free?" check lives *only* inside _claiming_name below. A cheaper copy
-        # out here would answer from outside the lock, so a create issued while a delete of the
-        # same name is still in flight would get a spurious 409 instead of simply waiting its
-        # turn — and it buys nothing: translate_lab_files is pure and cheap.
-        t = lab_import.translate_lab_files(files, clean, skipped)
-        if t.errors:
-            raise ApiError("; ".join(t.errors))
-        # Verbatim + atomic: write_lab writes into a private scratch dir and os.replace()s it
-        # into place, so a crash mid-write never leaves a half-populated lab directory. This
-        # must run *before* _adopt_lab_dir: Lab(path=...) opens an osfs on the directory, and
-        # Machine.__init__ only picks up an already-existing `<name>/` subfolder as `machine.fs`
-        # at construction time — building first would leave every machine with `fs = None` and
-        # nothing would ever be packed at deploy.
-        with self._claiming_name(clean):
-            self._assert_name_free(clean)
-            self.store.write_lab(clean, files, dirs or [])
-            try:
-                lab = self._adopt_lab_dir(clean, t)
-            except Exception:
-                # Guarded exactly like _adopt_populated_dir's rollback: if another create won the
-                # race for this name, the directory on disk is *its* lab, and deleting it here
-                # would destroy a lab that was just created successfully.
-                if self.registry.get(clean) is None:
-                    self.store.delete_lab(clean)
-                raise
-        return lab, t.warnings
-
     def _adopt_populated_dir(self, clean_name: str) -> tuple[Lab, list[str]]:
         """Parse an already-populated, on-disk lab directory and register it.
 
@@ -981,8 +913,7 @@ class KatharaService:
     def upload_lab(self, name: str, zip_data: BinaryIO, deploy: bool = False) -> tuple[Lab, list[str]]:
         """Create (and optionally deploy) a lab from an uploaded .zip archive, verbatim.
 
-        Binary-safe (unlike ``import_lab``, whose ``files`` are JSON/text-only): the archive is
-        extracted to disk exactly as uploaded — comments, quoting, ``shared.startup``/
+        The archive is extracted to disk exactly as uploaded — comments, quoting, ``shared.startup``/
         ``shared.shutdown``, binaries and all — then parsed the same way as a JSON-described
         import. Machine subfolders that already exist on disk after extraction are picked up
         automatically as ``machine.fs`` (see ``Machine.__init__``), so any binary files travel to
@@ -1074,8 +1005,8 @@ class KatharaService:
         Structurally identical to ``upload_lab`` — the only difference is *how* the lab
         directory gets populated (a verbatim copy of a bundled example, instead of a zip
         extraction) — see ``_adopt_populated_dir``, which both share. Installing is a create, not
-        an upsert: an existing lab under the target name is a 409, exactly like upload_lab/
-        import_lab, so retrying an install never silently overwrites something the user changed.
+        an upsert: an existing lab under the target name is a 409, exactly like upload_lab,
+        so retrying an install never silently overwrites something the user changed.
         """
         clean_name = lab_store.sanitize_lab_name(name or example_id)
         self._assert_name_free(clean_name)
@@ -1791,10 +1722,6 @@ class KatharaService:
 
     # -- machines -------------------------------------------------------------
 
-    def get_machine(self, lab_name: str, machine_name: str) -> Machine:
-        lab = self.get_lab_or_reconstruct(lab_name)
-        return lab.get_machine(machine_name)
-
     def get_machine_api_object(self, lab_name: str, machine_name: str):
         """Return backend-native API object for a running machine.
 
@@ -2283,8 +2210,6 @@ class KatharaService:
 
             lab.links.pop(link_name, None)
 
-            lab.links.pop(link_name, None)
-
     # -- exec -----------------------------------------------------------------
 
     def exec_command(
@@ -2296,17 +2221,6 @@ class KatharaService:
     ) -> tuple[bytes, bytes, int]:
         return self._facade().exec(
             machine_name, command, lab_name=lab_name, wait=wait, stream=False
-        )
-
-    def exec_stream(
-        self,
-        lab_name: str,
-        machine_name: str,
-        command: Union[str, list[str]],
-        wait: bool = False,
-    ):
-        return self._facade().exec(
-            machine_name, command, lab_name=lab_name, wait=wait, stream=True
         )
 
     # -- stats ----------------------------------------------------------------
@@ -2341,32 +2255,4 @@ class KatharaService:
 
         return _stream()
 
-    @staticmethod
-    def _first_sample(gen, default=None):
-        """Pull the first item from a lazy stats generator, always closing it afterwards. Returns
-        ``default`` when the generator is empty (``StopIteration``)."""
-        try:
-            return next(gen)
-        except StopIteration:
-            return default
-        finally:
-            gen.close()
 
-    def machines_stats_snapshot(self, lab_name: str) -> list:
-        if self.registry.get(lab_name) is None and not self.store.lab_dir(lab_name).is_dir():
-            self.get_lab_or_reconstruct(lab_name)  # raises LabNotFoundError unless running under this name
-        sample = self._first_sample(self._facade().get_machines_stats(lab_name=lab_name))
-        return list(sample.values()) if sample is not None else []
-
-    def machine_stats_snapshot(self, lab_name: str, machine_name: str):
-        # Checked before the not-running guard below, so an unknown *lab* is a 404, not the 409 a
-        # missing sample would otherwise produce regardless of whether the lab itself exists.
-        if self.registry.get(lab_name) is None and not self.store.lab_dir(lab_name).is_dir():
-            self.get_lab_or_reconstruct(lab_name)  # raises LabNotFoundError unless running under this name
-        # get_machine_stats *yields None* (it doesn't stop) for a device that isn't running, so guard
-        # the None sentinel as well as an empty generator — both mean "no live device".
-        sample = self._first_sample(self._facade().get_machine_stats(machine_name, lab_name=lab_name))
-        if sample is None:
-            # MachineNotRunningError formats its own "Device `<name>` is not running." message.
-            raise MachineNotRunningError(machine_name)
-        return sample

@@ -58,7 +58,6 @@ CASES: list[tuple[str, tuple]] = [
     ("undeploy_lab", ()),
     ("rename_lab", ("new-name",)),
     ("delete_lab", ()),
-    ("get_machine", (MACHINE,)),
     ("get_machine_api_object", (MACHINE,)),
     ("available_shells", (MACHINE,)),
     ("add_machine", (MachineCreate(name=MACHINE),)),
@@ -81,8 +80,6 @@ CASES: list[tuple[str, tuple]] = [
     ("add_link", (LINK,)),
     ("remove_link", (LINK,)),
     ("machines_stats_stream", ()),
-    ("machines_stats_snapshot", ()),
-    ("machine_stats_snapshot", (MACHINE,)),
 ]
 
 # Methods whose first parameter is `name`/`lab_name` but that are *not* part of this "does an
@@ -137,13 +134,8 @@ GET_ROUTES = [
     "/api/labs/{name}/layout",
     "/api/labs/{name}/fs/startups",
     "/api/labs/{name}/images",
-    "/api/labs/{name}/machines",
-    f"/api/labs/{{name}}/machines/{MACHINE}",
     f"/api/labs/{{name}}/machines/{MACHINE}/shells",
     f"/api/labs/{{name}}/machines/{MACHINE}/startup-status",
-    "/api/labs/{name}/links",
-    "/api/labs/{name}/stats",
-    f"/api/labs/{{name}}/machines/{MACHINE}/stats",
 ]
 
 # Routes above whose handler has a *required* query parameter with no default — supplied here so

@@ -45,7 +45,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_service, zip_bytes
+from tests.helpers import FakeFacadeBase, make_lab, make_service, zip_bytes
 
 
 class _BlockingFacade(FakeFacadeBase):
@@ -393,21 +393,21 @@ def _pause_inside(store, method_name: str):
 
 def test_a_second_import_of_the_same_name_waits_and_then_gets_a_clean_409(tmp_path):
     service = _plain_service(tmp_path)
-    paused, release, real_write = _pause_inside(service.store, "write_lab")
+    paused, release, real_extract = _pause_inside(service.store, "extract_zip")
 
     winner = threading.Thread(
-        target=lambda: service.import_lab("dup", {"lab.conf": "pcwin[image]=kathara/base\n"}, [])
+        target=lambda: make_lab(service, "dup", {"lab.conf": "pcwin[image]=kathara/base\n"}, [])
     )
     winner.start()
     assert paused.wait(timeout=3), "the first import never reached its on-disk write"
-    service.store.write_lab = real_write  # the loser takes the normal path
+    service.store.extract_zip = real_extract  # the loser takes the normal path
 
     loser_done = threading.Event()
     errors = []
 
     def run_loser():
         try:
-            service.import_lab("dup", {"lab.conf": "pclose[image]=kathara/base\n"}, [])
+            make_lab(service, "dup", {"lab.conf": "pclose[image]=kathara/base\n"}, [])
         except Exception as exc:  # noqa: BLE001 — the type is the assertion
             errors.append(exc)
         loser_done.set()
@@ -429,7 +429,7 @@ def test_a_second_import_of_the_same_name_waits_and_then_gets_a_clean_409(tmp_pa
     assert set(service.registry.get("dup").machines) == {"pcwin"}
 
 
-def test_an_upload_racing_an_import_of_the_same_name_does_not_overwrite_it(tmp_path):
+def test_an_upload_racing_another_of_the_same_name_does_not_overwrite_it(tmp_path):
     """The other half of the damage: the loser's atomic swap used to `rmtree` the published
     directory and put *its* files there, while the registry kept the winner's model — a silent
     disagreement between disk and memory, with the loser reporting a 409 as if nothing happened.
@@ -450,7 +450,7 @@ def test_an_upload_racing_an_import_of_the_same_name_does_not_overwrite_it(tmp_p
 
     def run_loser():
         try:
-            service.import_lab("dup", {"lab.conf": "pclose[image]=kathara/base\n", "loser_was_here": "x"}, [])
+            make_lab(service, "dup", {"lab.conf": "pclose[image]=kathara/base\n", "loser_was_here": "x"}, [])
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
 
@@ -477,7 +477,7 @@ def test_n_concurrent_imports_of_one_name_yield_one_success_and_the_rest_409(tmp
     def worker(i):
         start.wait()
         try:
-            service.import_lab(
+            make_lab(service, 
                 "dup",
                 {"lab.conf": f"pc{i}[image]=kathara/base\n", f"pc{i}/etc/hosts": "x" * 2000},
                 [f"pc{i}/etc"],
@@ -511,7 +511,7 @@ def test_deleting_a_lab_cannot_land_inside_a_concurrent_import_of_the_same_name(
     """`delete_lab`'s unregister + rmtree pair used to run outside every lock, so it could remove
     the directory an import had just written."""
     service = _plain_service(tmp_path)
-    service.import_lab("dup", {"lab.conf": "pcold[image]=kathara/base\n"}, [])
+    make_lab(service, "dup", {"lab.conf": "pcold[image]=kathara/base\n"}, [])
     paused, release, real_delete = _pause_inside(service.store, "delete_lab")
 
     deleter = threading.Thread(target=lambda: service.delete_lab("dup"))
@@ -522,7 +522,7 @@ def test_deleting_a_lab_cannot_land_inside_a_concurrent_import_of_the_same_name(
     import_done = threading.Event()
 
     def run_import():
-        service.import_lab("dup", {"lab.conf": "pcnew[image]=kathara/base\n"}, [])
+        make_lab(service, "dup", {"lab.conf": "pcnew[image]=kathara/base\n"}, [])
         import_done.set()
 
     importer = threading.Thread(target=run_import)

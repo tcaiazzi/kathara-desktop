@@ -1,11 +1,10 @@
-"""Unit tests for the upload/import size and count caps (E9).
+"""Unit tests for the upload size and count caps (E9).
 
-Before this, neither `import_lab` (JSON) nor `upload_lab`/`extract_zip` (.zip) had any limit at
-all — unlike `lab_gallery.py`, which has always capped a *remote* lab at 200 files / 5 MB per
-file / 20 MB total. The caps now live on `ApiSettings` (config.py), shared by all three paths, and
-are exercised here at three levels: the low-level `LabStore` helpers directly, `LabStore.
-extract_zip`/`KatharaService.import_lab` against realistic (honestly-sized) inputs, and the
-request-level body-size middleware in main.py.
+Before this, `upload_lab`/`extract_zip` had no limit at all — unlike `lab_gallery.py`, which has
+always capped a *remote* lab at 200 files / 5 MB per file / 20 MB total. The caps now live on
+`ApiSettings` (config.py), shared by both paths, and are exercised here at three levels: the
+low-level `LabStore` helpers directly, `LabStore.extract_zip` against realistic (honestly-sized)
+inputs, and the request-level body-size middleware in main.py.
 """
 
 import io
@@ -21,7 +20,6 @@ from kathara_api.config import ApiSettings, get_settings
 from kathara_api.dependencies import get_service
 from kathara_api.errors import ApiError
 from kathara_api.main import create_app
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service, zip_bytes
 
@@ -121,46 +119,7 @@ def test_extract_zip_still_works_within_every_cap(tmp_path):
     assert (tmp_path / "labs" / "demo" / "lab.conf").exists()
 
 
-# -- KatharaService.import_lab (JSON), same caps ------------------------------------------------
-
-
-def _service(tmp_path) -> KatharaService:
-    service = make_service(store=LabStore(tmp_path / "labs"))
-    return service
-
-
-def test_import_lab_enforces_the_file_count_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr(get_settings(), "max_files_per_lab", 1)
-    service = _service(tmp_path)
-    with pytest.raises(ApiError):
-        service.import_lab("toobig", {"lab.conf": "pc1[image]=kathara/base\n", "extra.txt": "x"}, [])
-    assert not service.store.lab_dir("toobig").exists()
-
-
-def test_import_lab_enforces_the_per_file_size_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr(get_settings(), "max_bytes_per_file", 10)
-    service = _service(tmp_path)
-    with pytest.raises(ApiError):
-        service.import_lab("toobig", {"lab.conf": "x" * 100}, [])
-
-
-def test_import_lab_enforces_the_total_size_cap(tmp_path, monkeypatch):
-    monkeypatch.setattr(get_settings(), "max_bytes_per_file", 1000)
-    monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 50)
-    service = _service(tmp_path)
-    files = {"lab.conf": "pc1[image]=kathara/base\n"}
-    files.update({f"f{i}.txt": "x" * 20 for i in range(5)})  # 100 bytes, each well under per-file cap
-    with pytest.raises(ApiError):
-        service.import_lab("toobig", files, [])
-
-
-def test_import_lab_still_works_within_every_cap(tmp_path):
-    service = _service(tmp_path)
-    lab, _warnings = service.import_lab("fine", {"lab.conf": "pc1[image]=kathara/base\n"}, [])
-    assert lab.name == "fine"
-
-
-# -- Request body-size middleware (main.py) ------------------------------------------------------
+# -- the request-level body-size middleware (main.py) ------------------------------------------
 
 
 @pytest.fixture
@@ -183,7 +142,7 @@ def test_body_size_middleware_rejects_a_declared_content_length_over_the_cap(tmp
         # real body with an inflated declared Content-Length is enough to prove that, and is also
         # exactly what a client lying about its own upload size would look like on the wire.
         resp = client.post(
-            "/api/labs/import",
+            "/api/labs",
             content=b'{"name": "x"}',
             headers={"content-length": str(10_000_000)},
         )
@@ -225,7 +184,7 @@ def test_body_size_middleware_drains_the_body_before_responding_so_a_browser_isn
 
         payload = b"x" * (2 * 1024 * 1024)  # well over the 100-byte + 1MiB cap
         request_head = (
-            b"POST /api/labs/import HTTP/1.1\r\n"
+            b"POST /api/labs HTTP/1.1\r\n"
             b"Host: 127.0.0.1\r\n"
             b"Content-Type: application/json\r\n"
             b"Content-Length: " + str(len(payload)).encode() + b"\r\n"
@@ -258,7 +217,7 @@ def test_body_size_middleware_picks_up_a_cap_change_without_rebuilding_the_app(c
     client, _service = client_and_service
     monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 10)
     resp = client.post(
-        "/api/labs/import",
+        "/api/labs",
         content=b'{"name": "x"}',
         headers={"content-length": str(10_000_000)},
     )

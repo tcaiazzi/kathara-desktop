@@ -73,10 +73,10 @@ class ApiSettings(BaseSettings):
     gallery_token: Optional[str] = None
 
     # What a single lab is allowed to be, for every path that populates one from someone else's
-    # bytes: a gallery install (services/lab_gallery.py), a JSON import (KatharaService.import_lab)
-    # and a .zip upload (LabStore.extract_zip). One shared set of caps rather than one per path —
-    # a mis-set gallery_repo (or a hostile fork), an oversized JSON body, or a zip bomb are all the
-    # same failure mode: something that turns one request into a disk- or memory-filling write.
+    # bytes: a gallery install (services/lab_gallery.py) and a .zip upload (LabStore.extract_zip).
+    # One shared set of caps rather than one per path — a mis-set gallery_repo (or a hostile
+    # fork) and a zip bomb are the same failure mode: something that turns one request into a
+    # disk- or memory-filling write.
     # The defaults match what the gallery import has enforced from the start; overridable because a
     # *local* upload is the user's own content, not fetched from a repo — a course bundling a large
     # binary or packet capture may need more room than upstream's own labs (tens of KB) ever would.
