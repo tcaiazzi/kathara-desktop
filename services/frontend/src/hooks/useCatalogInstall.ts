@@ -55,7 +55,7 @@ export function useCatalogInstall<T extends CatalogItem>({
       const name = result.name ?? fallbackName(item);
       toast.show(`Lab "${name}" ${verbPast}.`, "success");
       // Non-fatal parse warnings — a lab.conf directive the API keeps but doesn't apply. Both
-      // catalogues surface them; the welcome screen used to drop them silently.
+      // catalogues surface them through this hook, so neither can drop them silently.
       if (result.warnings?.length) {
         toast.show(result.warnings.join(" · "), "info", "Import warnings");
       }

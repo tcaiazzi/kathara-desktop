@@ -601,7 +601,7 @@ export function WorkspacePage() {
   // slower fetch land after B's and clobber the workspace with the wrong lab's data. The
   // generation counter alone only guarded the `setState` calls; `loadAbortRef` additionally
   // aborts the actual in-flight fetch (superseded or the component unmounting) instead of just
-  // ignoring its result — see docs/audit_2.md I6.
+  // ignoring its result.
   const loadGenRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
@@ -727,7 +727,7 @@ export function WorkspacePage() {
   // Zero labs is the only trigger for the welcome screen — no persisted "seen" flag: it's
   // self-healing (it comes back if the user empties their workspace, which is exactly when they
   // want the on-ramp again) and works identically whether or not localStorage survives a relaunch
-  // (see backend.ts's stable-port fix for why that used to matter more than it should have).
+  // (see backend.ts's stable-port handling for why that matters).
   // `?welcome=1` (Help menu, or the "show it again" link below) reopens it on demand even with
   // labs present.
   const welcomeRequested = searchParams.get("welcome") === "1";

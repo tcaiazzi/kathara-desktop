@@ -358,10 +358,10 @@ def test_fs_list_offline_back_reference_path_raises_illegal_back_reference(tmp_p
         service.fs_list_offline("testlab", "../../../etc")
 
 
-# Every spelling that resolves to the lab's own lab.conf. The guards used to compare the raw
-# string (`path.strip("/") == "lab.conf"`), so only the first four were recognised — "./lab.conf"
-# and friends fell through to the generic write path, which overwrote lab.conf with unvalidated
-# text, skipped the 409-while-deployed gate and left the registry on the previous model.
+# Every spelling that resolves to the lab's own lab.conf. A raw string comparison
+# (`path.strip("/") == "lab.conf"`) recognises only the first four: "./lab.conf" and friends fall
+# through to the generic write path, which overwrites lab.conf with unvalidated text, skips the
+# 409-while-deployed gate and leaves the registry on the previous model.
 LAB_CONF_SPELLINGS = [
     "lab.conf",
     "/lab.conf",
@@ -474,8 +474,8 @@ def test_fs_move_and_copy_offline_reject_the_lab_root(tmp_path, path):
 
 
 def test_a_non_canonical_device_path_still_marks_the_device_dirty(tmp_path):
-    """`_dirty_target_for` splits on "/" too, so "./pc1/etc/motd" used to mark nothing dirty and
-    the write would never be live-pushed on the next deploy."""
+    """`_dirty_target_for` splits on "/" too, so an unnormalized "./pc1/etc/motd" marks nothing
+    dirty and the write is never live-pushed on the next deploy."""
     service, _store = _two_machine_lab(tmp_path)
 
     service.fs_write_text_offline("testlab", "./pc1/etc/motd", "hi\n")
@@ -659,14 +659,14 @@ def test_fs_search_offline_raises_on_missing_path(tmp_path):
 
 
 def test_fs_search_offline_follows_max_bytes_per_file_at_runtime(tmp_path, monkeypatch):
-    """The search cap must track `ApiSettings.max_bytes_per_file`, which `PUT /settings` can change
-    at runtime (audit_3 Q3). It used to be a module constant seeded with the same default and a
-    comment claiming it mirrored the setting — which a constant cannot do. Every other consumer
-    (`lab_store.extract_zip`, `lab_gallery`) already reads it live.
+    """The search cap must track `ApiSettings.max_bytes_per_file`, which `PUT /settings` can
+    change at runtime, so it is read live rather than captured in a module constant — a constant
+    seeded with the same default cannot follow the setting. Every other consumer
+    (`lab_store.extract_zip`, `lab_gallery`) reads it live too.
 
-    Driven through `update_settings` rather than by patching the constant, so the test exercises
-    the path a user actually takes. Both directions matter: the stale constant pinned the cap in
-    the middle, so lowering the setting under-filtered and raising it over-filtered.
+    Driven through `update_settings` rather than by patching anything, so the test exercises the
+    path a user actually takes. Both directions matter: a cap pinned at its default
+    under-filters when the setting is lowered and over-filters when it is raised.
     """
     from kathara_api.config import get_settings
 
@@ -693,11 +693,11 @@ def test_fs_search_offline_follows_max_bytes_per_file_at_runtime(tmp_path, monke
 def test_offline_fs_owner_only_ever_names_a_registered_device(tmp_path):
     """The invariant `_registered_machine` relies on, asserted at its source.
 
-    Three call sites used to guard against a device name that isn't in `lab.machines`, each with a
-    different answer (200-having-written-nothing, 400, 404) for a condition none of them could
-    reach. They now share one helper that raises, because the condition means "this code is wrong".
-    That is only safe while `_offline_fs_owner` keeps its end of the bargain — which is what this
-    checks, rather than the dead guards it replaced.
+    A device name that isn't in `lab.machines` is a condition no call site can reach, so the
+    three of them share one helper that raises rather than each answering it its own way
+    (200-having-written-nothing, 400, 404): it means "this code is wrong", not "your request is
+    wrong". That is only safe while `_offline_fs_owner` keeps its end of the bargain, which is
+    what this checks.
     """
     service, _ = _two_machine_lab(tmp_path)
     lab = service.get_lab_or_reconstruct("testlab")

@@ -1,7 +1,7 @@
 """Unit tests for KatharaService.list_available_images's cache (no Docker/network required).
 
-See docs/audit_2.md minor reperti: the method used to return the cached list object itself, so a
-caller that mutated it in place would corrupt the cache for everyone else.
+The method returns a copy, never the cached list object itself: a caller that mutates the result
+in place must not be able to corrupt the cache for everyone else.
 """
 
 from Kathara.webhooks import DockerHubApi as docker_hub_api_module

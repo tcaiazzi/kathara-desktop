@@ -1,11 +1,11 @@
 """Surgical, line-level edits to ``lab.conf`` text.
 
-Every offline structural edit used to rebuild an in-memory ``Lab`` from disk and re-serialize the
-whole file with ``lab_store.gen_lab_conf``, which silently dropped everything the IDE's model does
-not carry: comments, line ordering, quoting style, ``[num_terms]``/``[entrypoint]``/``[args]`` and
-any option this API doesn't interpret. Every function here instead takes the file's
-full text and returns it with only the lines it must touch changed — anything else, including
-lines this project's own parser only warns about, survives byte for byte.
+Rebuilding an in-memory ``Lab`` from disk and re-serializing the whole file with
+``lab_store.gen_lab_conf`` silently drops everything the IDE's model does not carry: comments,
+line ordering, quoting style, ``[num_terms]``/``[entrypoint]``/``[args]`` and any option this API
+doesn't interpret. Every function here instead takes the file's full text and returns it with only
+the lines it must touch changed — anything else, including lines this project's own parser only
+warns about, survives byte for byte.
 
 Line classification is delegated to ``lab_import``'s own regex/constants (``CONF_LINE_RE``,
 ``LAB_META_KEYS``, ``RESERVED_NAMES``), so this module can never disagree with the parser about
@@ -120,9 +120,9 @@ def _split_text(text: str) -> tuple[list[str], str, bool]:
     mixing terminators keeps only the dominant one on render — the one case where the
     byte-identical promise below cannot be kept, and never could.
 
-    The split itself is ``lab_import.LINE_SPLIT_RE``, shared with the parser on purpose: the two
-    disagreeing about where a line ends is what let a CR-terminated lab.conf lose an interface
-    silently (audit_3 Q2).
+    The split itself is ``lab_import.LINE_SPLIT_RE``, shared with the parser on purpose: if the
+    two disagreed about where a line ends, a CR-terminated lab.conf would lose an interface
+    silently.
     """
     terminator = "\r\n" if "\r\n" in text else "\r" if "\r" in text else "\n"
     trailing_newline = text.endswith(("\n", "\r"))

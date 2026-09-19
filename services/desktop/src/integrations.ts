@@ -129,9 +129,9 @@ export async function openTerminalHere(labDir: string): Promise<void> {
 
 // `command` currently has no caller — the only entry point is `openTerminalHere`, which opens a
 // plain shell. It is kept, with the per-platform branches that serve it, because it is the whole
-// reason `terminalCommand`'s "{cmd}" placeholder exists and because re-deriving the macOS
-// throwaway-script path (mkdtemp + "wx" + cleanup, a deliberate fix) from scratch would be worse
-// than leaving it. The device-attaching caller that used it was removed as dead code (audit_3 Q15).
+// reason `terminalCommand`'s "{cmd}" placeholder exists, and because the macOS throwaway-script
+// path (mkdtemp + "wx" + cleanup) is deliberate in every detail and would be worse to re-derive
+// from scratch than to leave in place.
 async function spawnTerminal(labDir: string, command?: string): Promise<void> {
   if (!fs.existsSync(labDir)) throw new Error(`lab directory does not exist: ${labDir}`);
 

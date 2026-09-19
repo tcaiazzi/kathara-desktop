@@ -1,13 +1,13 @@
-"""Validation of `metas` keys (E12b).
+"""Validation of `metas` keys.
 
-Only `metas` *values* used to be validated (`MachineOptionsBase._no_quotes_in_values`) — the keys
-were rendered raw into a `name[key]=...` lab.conf line by both `lab_store.gen_device_lines` and
-`lab_conf_edit.replace_device_options`. A key with an embedded newline split one rendered line
-into two, and the second half — when it happened to match the lab.conf line grammar — became an
-independent, unrelated device directive (a ghost device). A purely numeric key was indistinguishable
-from a real interface number on the next parse. `_valid_meta_keys` closes both by requiring a bare
-identifier shape, and separately rejects any key that shadows an already-modeled option (`volume`,
-`image`, ...), which used to be silently dropped instead of rejected.
+Validating only `metas` *values* (`MachineOptionsBase._no_quotes_in_values`) is not enough: the
+keys are rendered raw into a `name[key]=...` lab.conf line by both `lab_store.gen_device_lines`
+and `lab_conf_edit.replace_device_options`. A key with an embedded newline splits one rendered
+line into two, and the second half — when it matches the lab.conf line grammar — becomes an
+independent, unrelated device directive (a ghost device). A purely numeric key is
+indistinguishable from a real interface number on the next parse. `_valid_meta_keys` closes both
+by requiring a bare identifier shape, and separately rejects any key that shadows an
+already-modeled option (`volume`, `image`, ...) rather than dropping it silently.
 """
 
 import pytest
@@ -25,8 +25,8 @@ def test_a_plain_identifier_key_is_accepted():
 @pytest.mark.parametrize(
     "key",
     [
-        'X]=1\npc3[image]="ghost" #',  # embedded newline — used to inject an independent device
-        "1",  # purely numeric — collided with a real interface number on reparse
+        'X]=1\npc3[image]="ghost" #',  # embedded newline — would inject an independent device
+        "1",  # purely numeric — collides with a real interface number on reparse
         "0",
         "pc[image]",
         'key"quoted',
@@ -39,14 +39,14 @@ def test_malformed_meta_keys_are_refused(key):
         MachineCreate(name="pc1", metas={key: "value"})
 
 
-# Parametrized over the constant itself, not a copy of it: the previous hand-written list could
-# only ever assert that its own names were refused, so a name missing from `_RESERVED_META_KEYS`
-# (as `cpu` was) left no trace here.
+# Parametrized over the constant itself, not a copy of it: a hand-written list can only assert
+# that its own names are refused, so a name missing from `_RESERVED_META_KEYS` leaves no trace
+# here.
 @pytest.mark.parametrize("key", sorted(_RESERVED_META_KEYS))
 def test_meta_keys_shadowing_a_modeled_option_are_refused(key):
-    """These used to be silently dropped (`lab_builder.apply_options`'s old `continue`) rather
-    than rejected — ambiguous, and inconsistent with `lab_conf_edit.replace_device_options`, which
-    had no equivalent check at all."""
+    """Dropping these silently rather than rejecting them is ambiguous, and leaves
+    `lab_conf_edit.replace_device_options` — which has no equivalent check — disagreeing with this
+    path about what a request may contain."""
     with pytest.raises(ValidationError):
         MachineCreate(name="pc1", metas={key: "x"})
 
@@ -66,10 +66,9 @@ def test_every_reserved_key_is_one_the_parser_actually_interprets(key):
     `_apply_conf_option` would consume it on the next load. If one stops being interpreted (or was
     reserved by mistake), it lands in `metas` here and this fails.
 
-    The converse direction — *interpreted* -> reserved, which is how `cpu` slipped through for as
-    long as it did — used to be unassertable here. It no longer needs asserting at all: since
-    audit_3 Q8, `_apply_conf_option` *gates* on `lab_conf_options.INTERPRETED_OPTIONS`, and
-    `MODELED_META_KEYS` is derived from that same set, so an option cannot be interpreted without
+    The converse direction — *interpreted* -> reserved — needs no assertion here:
+    `_apply_conf_option` *gates* on `lab_conf_options.INTERPRETED_OPTIONS`, and
+    `MODELED_META_KEYS` derives from that same set, so an option cannot be interpreted without
     being reserved. `tests/unit/test_lab_conf_options.py` covers that end.
 
     `_JSON_ONLY_ALIASES` below stays hand-written on purpose. Deriving it from the same module

@@ -3,8 +3,8 @@
 // back ownership of the labs directory).
 //
 // Both face the same question after a failure — keep the modal open so the user can try again, or
-// give up and close it — and both used to answer it with their own copy of the same table and the
-// same seven-line block.
+// give up and close it — and they answer it from this one table rather than each carrying its own
+// copy of it.
 
 /** A failure reason the modal stays open for, mapped to what it says about it. A reason *absent*
  * from the table closes the modal instead: currently only `"cancelled"`, i.e. the user dismissed

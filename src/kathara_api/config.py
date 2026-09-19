@@ -203,6 +203,6 @@ def get_settings() -> ApiSettings:
 
 def format_mb(num_bytes: int) -> str:
     """Render a byte count the way an operator actually thinks about it, for the user-facing
-    max_bytes_per_file/max_bytes_per_lab messages (E9) — "1048676 bytes" isn't actionable,
+    max_bytes_per_file/max_bytes_per_lab messages — "1048676 bytes" isn't actionable,
     "1.0 MB" is."""
     return f"{num_bytes / (1024 * 1024):.1f} MB"

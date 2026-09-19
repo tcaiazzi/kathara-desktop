@@ -1,5 +1,5 @@
-// First tests for the lab.conf linter (audit_3 Q4). The rules are pure, so no jsdom and no
-// CodeMirror are involved — that is exactly why they were split out of labConfLint.ts.
+// Tests for the lab.conf linter. The rules are pure, so no jsdom and no CodeMirror are involved
+// — that is exactly why they are split out of labConfLint.ts.
 //
 // The invariant every case below serves: severity here must match the backend's own verdict in
 // lab_import.py. An error the backend would accept blocks a legitimate save; a warning where the

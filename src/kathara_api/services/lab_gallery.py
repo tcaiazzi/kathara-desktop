@@ -93,7 +93,7 @@ class Catalog:
 _cache: Optional[Catalog] = None
 _cache_lock = Lock()
 
-# Coordination for fetch_catalog_async (the /gallery HTTP route only — see I4 in docs/audit_2.md).
+# Coordination for fetch_catalog_async (the /gallery HTTP route only — see docs/DESIGN-NOTES.md).
 # `_async_lock` guards *only* the `_inflight` pointer, never the fetch itself: a concurrent async
 # caller that finds a fetch already in flight awaits that fetch's Future on the event loop, which
 # costs nothing, instead of blocking a worker thread from the shared threadpool for up to
@@ -295,7 +295,7 @@ def _fresh_cached_catalog() -> Optional[Catalog]:
 
 async def fetch_catalog_async(refresh: bool = False) -> Catalog:
     """Async twin of `fetch_catalog`, for the one caller that must never park a threadpool worker
-    while waiting on someone else's fetch: the `/gallery` HTTP route (see I4 in docs/audit_2.md).
+    while waiting on someone else's fetch: the `/gallery` HTTP route (see docs/DESIGN-NOTES.md).
 
     Coordination lives entirely on the event loop: `_async_lock` only ever guards the `_inflight`
     pointer — a handful of synchronous statements — and is released before anyone awaits the
@@ -360,7 +360,7 @@ async def _run_fetch(future: "asyncio.Future[Catalog]") -> None:
 def invalidate_cache() -> None:
     """Drop the cached catalog. A test hook, and only that.
 
-    It used to offer "settings changed" as the other reason, which cannot happen: the
+    "Settings changed" is not a second reason to call it, because it cannot happen: the
     ``gallery_*`` settings are not in ``KatharaService._API_SETTINGS_KEYS`` and ``SettingsUpdate``
     does not expose them, so they come from env/config and are fixed for the life of the process.
     The only invalidation a running backend performs on its own is ``gallery_cache_ttl`` expiry.

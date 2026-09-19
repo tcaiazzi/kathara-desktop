@@ -196,8 +196,8 @@ function isOrUnder(candidate: string | null, path: string): boolean {
 // The whole state machine behind a lazily-loaded, editable filesystem tree: listing and merging
 // directories, the selection/discard-confirmation flow, the editor buffer, and every mutation
 // (create, upload, rename, move, delete, download). Both filesystem panels run on this one copy
-// of the logic — they used to be two near-identical 800-line components, which is why the same
-// bugs kept having to be fixed twice.
+// of the logic, so a fix lands once; what differs between them arrives as the `source` endpoints
+// and `labels` copy, never as flags on this hook.
 export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseFsTreeOptions): UseFsTree {
   const treeRef = useRef<TreeApi<FsNode> | undefined>(undefined);
 
@@ -221,8 +221,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const [scrollTarget, setScrollTarget] = useState<{ line: number; seq: number } | null>(null);
 
   // The editor buffer is four pieces of state that only ever move together: which file is loaded,
-  // its text, the baseline to diff dirtiness against, and whether it is binary. Seven call sites
-  // used to set all four by hand, which is four chances each to forget one.
+  // its text, the baseline to diff dirtiness against, and whether it is binary. Setting all four
+  // by hand at each of the seven call sites is four chances each to forget one.
   const installBuffer = useCallback((path: string | null, content: string) => {
     setBufferPath(path);
     setEditorText(content);
@@ -445,8 +445,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         }),
       );
     }
-    // Wrapped, unlike the callers' bare `void reload()`: a failure here used to surface as nothing
-    // at all (an unhandled rejection), while every sibling operation reports through a toast.
+    // Wrapped, unlike the callers' bare `void reload()`: unwrapped, a failure here surfaces as
+    // nothing at all (an unhandled rejection), while every sibling operation reports via a toast.
     try {
       const merged = mergeNodeList(scoped.current.tree, (await list("/")).map(entryToNode));
       setTree(await reloadLevel(merged));
@@ -461,8 +461,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   loadedTextRef.current = loadedText;
 
   // The discard-confirmation prompt is about the *buffer*, not about `selected` — they can differ
-  // (see FsTreeScopeState.bufferPath), and asking about the wrong file is exactly how a stale
-  // buffer used to get silently overwritten.
+  // (see FsTreeScopeState.bufferPath), and asking about the wrong file silently overwrites a
+  // stale buffer.
   const requestFileSwitch = useCallback(
     (nextPath: string) =>
       confirmDiscard({
@@ -525,8 +525,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       } finally {
         // No generation guard here, unlike the writes above: an aborted later selection (e.g. a
         // cancelled discard-changes prompt) bumps selectGen without ever calling setLoadingPath,
-        // which used to make this check fail forever and leave loadingPath stuck on `path`. The
-        // functional update is guard enough, same as ensureLoaded's.
+        // so a generation check here would fail forever and leave loadingPath stuck on `path`.
+        // The functional update is guard enough, same as ensureLoaded's.
         setLoadingPath((prev) => (prev === path ? null : prev));
       }
     },
@@ -934,7 +934,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       // event (e.g. a slow readText for a just-clicked file) — without this, that call's eventual
       // `setSelected(path)` fires unconditionally once its fetch resolves, silently clobbering
       // whatever the user has selected by then (a ctrl/shift multi-selection included: nothing
-      // else invalidates it, since only selectFile/selectDir themselves used to touch this ref).
+      // else invalidates it, since selectFile/selectDir are otherwise this ref's only writers).
       scoped.current.selectGen++;
       const paths = nodes.map((n) => n.data.path);
       setSelectedPaths(paths);

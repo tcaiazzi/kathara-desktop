@@ -11,9 +11,9 @@
  * how the app was launched — so this is a no-op there.
  *
  * Asynchronous on purpose. An interactive login shell can take seconds to start (a heavy .zshrc,
- * a shell prompt framework, an NVM/pyenv init), and this used to run synchronously *before* the
- * window existed — so the whole app was a blank screen for as long as the user's dotfiles took,
- * up to the 10s timeout. It is now awaited from startup(), after the window is on screen showing
+ * a shell prompt framework, an NVM/pyenv init), so running it synchronously before the window
+ * exists leaves the whole app a blank screen for as long as the user's dotfiles take, up to the
+ * 10s timeout. It is awaited from startup() instead, once the window is on screen showing
  * "Reading your shell environment…".
  */
 import { execFile } from "node:child_process";

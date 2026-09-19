@@ -90,9 +90,9 @@ def test_read_lab_conf_rejects_non_utf8(tmp_path):
 
 
 def test_remove_link_persists_interface_removal_to_lab_conf(tmp_path):
-    """Regression for I1's "remove" half: removing a collision domain used to only touch the
-    in-memory model, leaving each attached (stopped) machine's interface line on disk — the domain
-    and its interfaces would resurrect on a full undeploy or a backend restart."""
+    """Removing a collision domain must reach disk, not just the in-memory model: leaving each
+    attached (stopped) machine's interface line in lab.conf resurrects the domain and its
+    interfaces on a full undeploy or a backend restart."""
     store = LabStore(tmp_path / "labs")
     service = make_service(store)
     conf = (

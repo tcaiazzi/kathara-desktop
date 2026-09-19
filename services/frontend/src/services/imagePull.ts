@@ -54,8 +54,8 @@ export function pulledMessage(name?: string): string {
 
 /**
  * The Deploy button's label. Phase-aware so a multi-second image pre-check doesn't look like a
- * frozen "Deploying…" — shared by the toolbar button and its narrow-width dropdown twin, which
- * previously duplicated the same ternary chain.
+ * frozen "Deploying…" — shared by the toolbar button and its narrow-width dropdown twin, so the
+ * two cannot disagree about what the button says.
  */
 export function deployButtonLabel(
   action: "checking" | "deploy" | "undeploy" | null,

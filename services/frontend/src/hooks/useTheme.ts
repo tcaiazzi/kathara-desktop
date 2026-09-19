@@ -25,8 +25,8 @@ function systemTheme(): ThemeMode {
 // without that component needing to hold the "current" value itself — every useTheme() instance
 // observes the DOM (below) and reacts to whichever one of them called this, instead of each
 // holding its own independent copy that drifts until a full reload. The dock and the code editor
-// read the same value through this hook for the same reason; they used to have their own
-// near-identical observer (`useKtTheme`), which was a strict subset of this one.
+// read the same value through this hook for the same reason, rather than each running its own
+// observer.
 //
 // `persist` exists so seeding from the OS preference doesn't silently freeze it as a deliberate
 // choice: a theme the user never picked must keep following the system on the next launch, while

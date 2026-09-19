@@ -1,10 +1,11 @@
-"""The shared lab.conf vocabulary, and the two contracts it exists to enforce (audit_3 Q8).
+"""The shared lab.conf vocabulary, and the two contracts it exists to enforce.
 
-`lab_conf_options` replaced five hand-maintained copies of the same option names. The copies had
-drifted — `cpu` was interpreted by the parser but not reserved by the request schema, so a
-pass-through meta using it came back as the real `cpus` on the next load (Q1). Deriving them all
-from one module removes the drift; these tests check the two properties that derivation is
-supposed to buy, so that a future edit to the module cannot quietly give them up.
+`lab_conf_options` is the one place the option names are spelled; the parser, the renderer, the
+in-place editor, the request schema and the frontend editor all derive from it. Hand-maintained
+copies drift — an option interpreted by the parser but not reserved by the request schema is
+accepted as a pass-through meta and comes back as the real option on the next load, which is what
+`cpu` reaching `cpus` does. These tests check the two properties that derivation is supposed to
+buy, so an edit to the module cannot quietly give them up.
 """
 
 import pathlib
@@ -74,8 +75,8 @@ def test_an_alias_reaches_the_same_field_as_its_canonical_name(alias, canonical)
 
 
 def test_interpreted_options_are_all_reserved():
-    """The Q1 invariant, now structural rather than hoped for: anything the parser will consume on
-    the next load cannot be accepted as a pass-through `metas` entry today."""
+    """Structural rather than hoped for: anything the parser will consume on the next load
+    cannot be accepted as a pass-through `metas` entry today."""
     assert INTERPRETED_OPTIONS <= MODELED_META_KEYS
 
 

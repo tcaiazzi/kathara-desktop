@@ -1,8 +1,9 @@
-"""Unit tests for the upload size and count caps (E9).
+"""Unit tests for the upload size and count caps.
 
-Before this, `upload_lab`/`extract_zip` had no limit at all — unlike `lab_gallery.py`, which has
-always capped a *remote* lab at 200 files / 5 MB per file / 20 MB total. The caps now live on
-`ApiSettings` (config.py), shared by both paths, and are exercised here at three levels: the
+`upload_lab`/`extract_zip` and `lab_gallery.py` cap a lab the same way — 200 files, 5 MB per file,
+20 MB in total by default — because an uploaded archive is no more trusted than a remote one. The
+caps live on `ApiSettings` (config.py), shared by both paths, and are exercised here at three
+levels: the
 low-level `LabStore` helpers directly, `LabStore.extract_zip` against realistic (honestly-sized)
 inputs, and the request-level body-size middleware in main.py.
 """

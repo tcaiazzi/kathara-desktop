@@ -6,8 +6,8 @@ import { useDesktopCommand } from "../desktop/DesktopCommands";
 // the browser/OS save shortcut when the user's focus is elsewhere on the page.
 export function useSaveShortcut(rootRef: RefObject<HTMLElement | null>, onSave: () => void) {
   // Read through a ref so the listener is registered once instead of being torn down and
-  // re-added on every render (callers used to pass a `deps` array that included editor state,
-  // churning this on every keystroke).
+  // re-added on every render (a `deps` array carrying editor state would churn this on every
+  // keystroke).
   const onSaveRef = useRef(onSave);
   onSaveRef.current = onSave;
 

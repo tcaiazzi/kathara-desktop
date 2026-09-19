@@ -23,15 +23,14 @@ serialized per lab *name* (`_claiming_name`) rather than behind `_mutate_lock`, 
 critical section contains the on-disk write itself and holding the global lock across a large .zip
 extraction would stall unrelated labs' deploys.
 
-**Fallback protection** (the `_mutate_lock` discipline fix, finding #10): the primary check above
-has an inherent, unavoidable TOCTOU gap — a `deploy_lab` can start in the instant *after* a mutator
+**Fallback protection** (the `_mutate_lock` discipline): the primary check above has an
+inherent, unavoidable TOCTOU gap — a `deploy_lab` can start in the instant *after* a mutator
 passes the check but *before* it acquires `_mutate_lock`. `connect_machine`/`disconnect_machine`/
-`remove_machine`/`copy_files`/`add_link`/`remove_link` used to read `lab`/`machine` (and, for
-connect/disconnect, decide their whole stopped-vs-running branch from `machine.api_object`)
-*before* acquiring that lock, so a mutator caught in that gap would still read stale state once it
-did proceed. They now read it *inside* the lock instead (matching what `add_machine` already
-documented), so even a mutator that slips through the fast-fail window is still correct — merely
-not fast. The tests for this layer bypass `_check_not_transitioning` via monkeypatch specifically
+`remove_machine`/`copy_files`/`add_link`/`remove_link` therefore read `lab`/`machine` — and, for
+connect/disconnect, decide their whole stopped-vs-running branch from `machine.api_object` —
+*inside* that lock, never before acquiring it, the same way `add_machine` documents. Reading
+before the lock leaves a mutator caught in the gap working from stale state once it does proceed;
+reading inside it keeps even a slipped-through mutator correct, merely not fast. The tests for this layer bypass `_check_not_transitioning` via monkeypatch specifically
 to force that gap and exercise the lock behavior underneath it, the same way a real race would.
 """
 
@@ -169,15 +168,15 @@ def test_transitioning_flag_is_cleared_even_if_deploy_lab_raises(tmp_path):
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
 
 
-# -- deploy_lab/undeploy_lab self-exclusion (E7-E15 audit, E10) -----------------------------
+# -- deploy_lab/undeploy_lab self-exclusion ---------------------------------------------------
 #
 # Everything above guards *other* mutators against an in-flight deploy/undeploy. deploy_lab and
-# undeploy_lab themselves used to have no such guard against *each other*: both called
-# `_begin_transition` (a plain `set.add`, not a lock) and neither called `_check_not_transitioning`
-# on itself first, so two concurrent deploy_lab calls on the same lab both proceeded — each
-# computing its own fresh/already-running split from a `Lab` the other was mutating at the same
-# time, colliding inside the facade call. deploy_lab's body is now entirely inside `_mutate_lock`
-# (previously only the facade call was), matching what undeploy_lab already did for its own body.
+# undeploy_lab also have to guard against *each other*, and `_begin_transition` alone does not do
+# it: it is a plain `set.add`, not a lock, so without each calling `_check_not_transitioning` on
+# itself first, two concurrent deploy_lab calls on the same lab both proceed — each computing its
+# own fresh/already-running split from a `Lab` the other is mutating at the same time, colliding
+# inside the facade call. Both bodies therefore sit entirely inside `_mutate_lock`, not just the
+# facade call.
 
 
 def _run_undeploy_in_background(service: KatharaService, facade: "_BlockingFacade") -> threading.Thread:
@@ -215,11 +214,10 @@ def test_undeploy_lab_fails_fast_against_a_concurrent_undeploy_of_the_same_lab(t
 
 
 def test_deploy_lab_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_check(tmp_path, monkeypatch):
-    """The self-check above is fast-fail only; deploy_lab's whole body now living inside
-    `_mutate_lock` (not just the facade call) is what keeps a slipped-through second call
-    *correct* rather than merely rejected — the actual bug this audit finding described: reading
-    `lab.machines`/`api_object` outside the lock let two concurrent calls both see pc1 as "fresh"
-    and both hand it to the facade."""
+    """The self-check above is fast-fail only; deploy_lab's whole body living inside
+    `_mutate_lock` — not just the facade call — is what keeps a slipped-through second call
+    *correct* rather than merely rejected. Reading `lab.machines`/`api_object` outside the lock
+    lets two concurrent calls both see pc1 as "fresh" and both hand it to the facade."""
     service, facade, store = _service_with_blocking_facade(tmp_path)
     deploy_thread = _run_deploy_in_background(service, facade)
     monkeypatch.setattr(service, "_check_not_transitioning", lambda name: None)
@@ -430,9 +428,9 @@ def test_a_second_import_of_the_same_name_waits_and_then_gets_a_clean_409(tmp_pa
 
 
 def test_an_upload_racing_another_of_the_same_name_does_not_overwrite_it(tmp_path):
-    """The other half of the damage: the loser's atomic swap used to `rmtree` the published
-    directory and put *its* files there, while the registry kept the winner's model — a silent
-    disagreement between disk and memory, with the loser reporting a 409 as if nothing happened.
+    """The loser's atomic swap must not `rmtree` the published directory and put *its* files
+    there while the registry keeps the winner's model — a silent disagreement between disk and
+    memory, with the loser reporting a 409 as if nothing had happened.
     """
     service = _plain_service(tmp_path)
     paused, release, real_extract = _pause_inside(service.store, "extract_zip")
@@ -508,8 +506,8 @@ def test_n_concurrent_imports_of_one_name_yield_one_success_and_the_rest_409(tmp
 
 
 def test_deleting_a_lab_cannot_land_inside_a_concurrent_import_of_the_same_name(tmp_path):
-    """`delete_lab`'s unregister + rmtree pair used to run outside every lock, so it could remove
-    the directory an import had just written."""
+    """`delete_lab`'s unregister + rmtree pair runs under a lock: outside one, it removes the
+    directory an import has just written."""
     service = _plain_service(tmp_path)
     make_lab(service, "dup", {"lab.conf": "pcold[image]=kathara/base\n"}, [])
     paused, release, real_delete = _pause_inside(service.store, "delete_lab")

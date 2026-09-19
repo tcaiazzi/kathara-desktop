@@ -29,10 +29,10 @@ export interface FsClipboard {
  * Everything hooks/useFsTree.ts derives from its `scopeKey` (lab name, or lab+device) and needs to
  * read *synchronously* inside a callback — never only through React state, which only lands after
  * the render that scheduled it. Grouped into one type, reset by replacing the whole object, rather
- * than one ref per field: a field that isn't part of this type can't be left out of a reset the
- * way `selectGen` used to be — declared, incremented and compared far from the rest of the
- * per-scope refs, and *not* among them when a scope change cleared everything else. That let a
- * still-in-flight read from a *previous* device's filesystem land under a newly selected one.
+ * than one ref per field: a per-scope ref declared, incremented and compared away from the others
+ * is the one a scope change forgets to clear, and that lets a still-in-flight read from a
+ * *previous* device's filesystem land under a newly selected one. A field that belongs to this
+ * type cannot be left out of a reset, because the reset replaces the whole object.
  */
 export interface FsTreeScopeState {
   tree: FsNode[];

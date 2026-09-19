@@ -196,8 +196,8 @@ def test_layout_routes(client, tmp_path, monkeypatch):
     assert client.delete("/api/labs/routelab/layout").status_code == 200  # idempotent
 
     assert client.put("/api/labs/unknown_lab/layout", json=LAYOUT).status_code == 404
-    # All three verbs on the same resource must agree about whether the lab needs to exist —
-    # GET/DELETE used to treat "no layout" and "no lab" as the same thing (a silent 200), unlike
-    # PUT above and every other per-lab endpoint.
+    # All three verbs on the same resource must agree about whether the lab needs to exist.
+    # GET/DELETE treating "no layout" and "no lab" as the same thing (a silent 200) would put
+    # them out of step with PUT above and with every other per-lab endpoint.
     assert client.get("/api/labs/unknown_lab/layout").status_code == 404
     assert client.delete("/api/labs/unknown_lab/layout").status_code == 404

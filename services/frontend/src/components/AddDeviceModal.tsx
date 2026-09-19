@@ -62,7 +62,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
 
     // Adding a device to a lab that is already running deploys it right away (see
     // KatharaService.add_machine), so this needs the same gate the two deploy paths use — volumes
-    // *and* the global hosthome_mount, which this call site used to skip (audit_3 Q5).
+    // *and* the global hosthome_mount, which `useDeployGate` reads for every caller.
     //
     // Never asks for "both" even if the Advanced options' privileged checkbox is also set, for the
     // same reason as a single-device redeploy: no resume-after-reload path exists for this modal's

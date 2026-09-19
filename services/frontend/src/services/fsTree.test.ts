@@ -27,8 +27,8 @@ describe("freshScopeState", () => {
   });
 
   it("gives every call its own arrays, never a shared one", () => {
-    // This is the F3 regression test: a scope reset replaces `scoped.current` wholesale with a
-    // fresh call to this factory. If two calls returned the same `tree`/`selectedPaths` array,
+    // A scope reset replaces `scoped.current` wholesale with a fresh call to this factory.
+    // If two calls returned the same `tree`/`selectedPaths` array,
     // mutating one scope's state (e.g. `scoped.current.selectedPaths.push(...)`, which several
     // call sites in the hook do indirectly via `setSelectedPaths`-derived reads) would leak into
     // every other scope that had ever been reset, defeating the whole point of resetting at all.

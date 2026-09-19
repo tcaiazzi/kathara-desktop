@@ -1,10 +1,9 @@
-"""Generalized regression coverage for "unknown lab -> 404" (docs/audit_2.md, Piano di
-intervento / Blocco 4: "semantica 404 sui lab inesistenti, avrebbe colto I2").
+"""Generalized coverage for "unknown lab -> 404".
 
-test_unknown_lab_404.py is a narrow regression test tied to the exact methods I2 fixed
-(undeploy_lab, delete_lab, the three stats methods). This file generalizes the same check to
-every other KatharaService method that looks up an existing lab by name, so a *future* method
-that forgets the check (exactly what happened with I2) fails a test instead of shipping silently.
+test_unknown_lab_404.py is narrow, tied to five specific methods (undeploy_lab, delete_lab and
+the three stats methods). This file generalizes the same check to every other KatharaService
+method that looks up an existing lab by name, so a method that forgets the check fails a test
+instead of shipping silently.
 
 Three tiers, cheapest/most valuable first:
 1. A drift guard (`test_every_lab_lookup_method_is_covered`) that fails if a new per-lab lookup
@@ -108,8 +107,8 @@ def test_unknown_lab_404s(tmp_path, method_name, extra_args):
 
 def test_every_lab_lookup_method_is_covered():
     """Every KatharaService method whose first parameter (after self) is literally `name` or
-    `lab_name` must appear in CASES or SKIPPED. A new method that satisfies neither is exactly
-    the class of bug I2 was: a per-lab operation nobody checked 404s for `never-existed`."""
+    `lab_name` must appear in CASES or SKIPPED. A method that satisfies neither is a per-lab
+    operation nobody has checked returns 404 for `never-existed`."""
     covered = {name for name, _ in CASES} | set(SKIPPED)
     missing = []
     for method_name, method in inspect.getmembers(KatharaService, predicate=inspect.isfunction):

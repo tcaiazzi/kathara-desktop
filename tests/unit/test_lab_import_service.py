@@ -327,10 +327,9 @@ def test_update_machine_persists_to_lab_conf_when_stopped(tmp_path):
 
 
 def test_update_machine_unchanged_round_trip_keeps_an_imported_volume(tmp_path):
-    # docs/BACKEND.md used to warn that a MachineDetail -> MachineUpdate round-trip drops a
-    # [volume] line, because an imported lab.conf's volume never reached the model in the first
-    # place. Now that lab_import applies it like any other option, the round-trip must preserve
-    # it — this is the regression test for that fix.
+    # lab_import applies [volume] like any other option, so a MachineDetail -> MachineUpdate
+    # round-trip must preserve it. A volume that never reaches the model is one this round-trip
+    # silently drops.
     service = _service(tmp_path)
     make_lab(service, 
         "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\npc1[volume]=/host|/mnt|rw\n"}, []

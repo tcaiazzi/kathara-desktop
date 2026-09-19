@@ -8,10 +8,11 @@ import type { VolumeMount } from "../services/types";
 // adding a device to a lab that is already running (`add_machine` deploys it outright in that
 // case — see KatharaService.add_machine).
 //
-// It existed in three copies before, and they had drifted: two checked the global
-// `hosthome_mount` setting alongside the per-device `volumes`, the third checked only volumes —
-// so adding a device to a live lab bind-mounted the operator's real $HOME with no prompt at all
-// (audit_3 Q5).
+// Two things have to be checked together, and only here: the per-device `volumes` and the global
+// `hosthome_mount` setting, which is host exposure of the same kind but belongs to no device and
+// applies whether or not a lab declares any volume. Re-deriving either test at a call site
+// defeats the gate — a path that checks volumes alone bind-mounts the operator's real $HOME with
+// no prompt at all.
 
 interface DeployGateRequest {
   /** Devices whose own `volumes` would be mounted. Entries without volumes are dropped, so

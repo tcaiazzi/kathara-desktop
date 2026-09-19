@@ -46,8 +46,8 @@ def test_deploy_lists_machines(client, deployed_lab):
 
 def test_live_tty_websocket_smoke(client, deployed_lab):
     """End-to-end smoke test for the live-TTY bridge (routers/exec.py:tty_live_ws) against a real
-    container, after moving its session I/O onto a dedicated executor (see I4 in docs/audit_2.md):
-    a real astart/aread/awrite/aresize/aclose round trip must still behave exactly as before.
+    container: a real astart/aread/awrite/aresize/aclose round trip over the dedicated TTY
+    executor (see docs/DESIGN-NOTES.md) must behave like any other session.
     """
     with client.websocket_connect("/api/labs/apitest/machines/pc1/tty/ws") as ws:
         assert ws.receive_json() == {"event": "ready"}

@@ -53,7 +53,7 @@ export interface SettingsView {
   remote_url?: string | null;
   cert_path?: string | null;
   network_plugin?: string;
-  // This app's own upload/import caps (ApiSettings, see E9), not a Kathara setting — surfaced here
+  // This app's own upload/import caps (ApiSettings), not a Kathara setting — surfaced here
   // so they share this page, but a change here does NOT persist past a backend restart (unlike
   // every field above), since it mutates the in-process ApiSettings singleton, not Kathara's own
   // settings file.
@@ -215,9 +215,8 @@ export interface LabLayout {
 
 // Deliberately the subset the UI actually sends, not a full mirror of the backend's `LabCreate`
 // (which also accepts metadata, machines and links): the only creation path here posts a name and
-// nothing else — everything richer arrives through import or upload. It used to be
-// `Record<string, unknown> & { name: string }` for a "new lab from JSON" flow that no longer
-// exists, which meant a typo'd key type-checked.
+// nothing else — everything richer arrives through import or upload. Kept this narrow on
+// purpose: a `Record<string, unknown> & { name: string }` would let a typo'd key type-check.
 export interface LabCreate {
   name: string;
 }

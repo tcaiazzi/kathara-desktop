@@ -2,9 +2,9 @@
 
 Every device file/``<machine>.startup``/``lab.conf`` a real import or upload writes lands on disk
 verbatim (see ``KatharaService.import_lab``/``upload_lab``) — this module only needs to translate
-that directory into the structural ``LabCreate`` (machines, interfaces, links); it no longer also
-builds a separate in-memory file/dir tracking structure (an earlier design did — see git history —
-and it repeatedly went stale relative to what was actually on disk). A top-level ``shared/`` folder
+that directory into the structural ``LabCreate`` (machines, interfaces, links). It deliberately
+keeps no in-memory file/dir tracking structure of its own: a second copy of that state goes stale
+relative to what is actually on disk. A top-level ``shared/`` folder
 needs no translation here: it isn't a per-machine concept, so there's nothing to fold into any
 ``MachineCreate``. It lands on disk verbatim like every other file, and Kathara's own ``deploy()``
 (``Lab.create_shared_folder`` + a bind mount to ``/shared`` on every container) picks it up natively
@@ -142,7 +142,7 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
     The gate below is the point of `lab_conf_options.INTERPRETED_OPTIONS`: an option is interpreted
     here **because** it is listed there, not merely in agreement with it. So a new option cannot be
     handled without being added to that module — and once it is there it is reserved by
-    `schemas.machine` too, which is exactly the step that was missed for `cpu` (audit_3 Q1).
+    `schemas.machine` too, which is the step that keeps the two paths from disagreeing.
     """
     # Normalize before the gate, not after: an alias resolves to a real option, so treating it as a
     # pass-through would write it back to lab.conf verbatim and reinterpret it on the next load.
@@ -211,12 +211,11 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
     elif opt == "args":
         machine.args = value
     elif opt == "volume":
-        # Applied like any other structured option (see _parse_volume) — the API used to refuse
-        # this specifically on import, on the theory that a shared lab.conf is untrusted content.
-        # It no longer does: mounting a host directory now always needs the user's own
-        # confirmation at deploy time regardless of where the volume came from (the frontend's
-        # deploy-authorization prompt), so there is no longer a reason for import and the JSON
-        # path to disagree about whether the directive itself is honored.
+        # Applied like any other structured option (see _parse_volume), with no special case for
+        # import even though a shared lab.conf is untrusted content: mounting a host directory
+        # always needs the user's own confirmation at deploy time regardless of where the volume
+        # came from (the frontend's deploy-authorization prompt), so import and the JSON path have
+        # no reason to disagree about whether the directive itself is honored.
         v = _parse_volume(value)
         if v:
             machine.volumes.append(v)

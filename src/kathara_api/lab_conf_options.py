@@ -6,11 +6,12 @@ depend on it without a cycle. (``schemas.machine`` and ``services.lab_store`` bo
 ``schemas.machine``, so hosting the vocabulary there would close a loop. Same reasoning, and same
 shape, as ``services/desktop/scripts/python-version.mjs``.)
 
-Before this module the vocabulary was written out five times — the parser's dispatch chain, the
-lab.conf renderer's scalar order, the in-place editor's "which lines do we own", the request
-schema's reserved-key set, and the frontend's editor vocabulary. They had drifted: ``cpu`` was
-interpreted by the parser but not reserved by the schema, so ``metas={"cpu": "2"}`` was accepted,
-written to disk verbatim, and came back as a real ``cpus`` on the next load (audit_3 Q1).
+Five layers derive their names from here instead of spelling them out: the parser's dispatch
+chain, the lab.conf renderer's scalar order, the in-place editor's "which lines do we own", the
+request schema's reserved-key set, and the frontend's editor vocabulary. A local copy in any of
+them drifts, and the drift is silent — an option the parser interprets but the schema fails to
+reserve is accepted as a ``metas`` pass-through, written to disk verbatim, and comes back as the
+real option on the next load (``cpu`` reaching ``cpus`` is the case that bites).
 """
 
 import re
@@ -29,8 +30,8 @@ DEVICE_NAME_PATTERN = rf"^{DEVICE_NAME_CHARS}$"
 #   - the parser, deciding whether an unrecognized top-level `KEY=value` line is safe to preserve;
 #   - the request schema, validating a `metas` key — which both renderers write raw into a
 #     `name[key]=...` line. That one is load-bearing rather than tidy: a key containing a newline
-#     used to split one rendered line into two, and the second half, if it happened to match the
-#     directive grammar, became an independent ghost device; and a purely numeric key was
+#     would split one rendered line into two, and the second half, if it matched the directive
+#     grammar, would become an independent ghost device; a purely numeric key would be
 #     indistinguishable from a real interface number on the next parse. Requiring a leading
 #     letter/underscore rules out the numeric case by construction, and the character class rules
 #     out newlines, brackets, quotes and whitespace the same way.
@@ -85,8 +86,8 @@ INTERPRETED_OPTIONS = frozenset({IMAGE_KEY, *SCALAR_OPTIONS, *GROUP_OPTIONS, *OP
 #: pass-through rendering and `serializers`' `metas` filter) and "may a request's `metas` use this
 #: key?" (`schemas.machine._valid_meta_keys`).
 #:
-#: Those two used to differ — the renderer's set lacked the aliases and the singular group
-#: spellings — which meant a `machine.meta` keyed `port` or `cpu` escaped the serializer into
-#: `MachineDetail.metas`, a field documented as feeding straight back into a PUT, where the schema
-#: then rejected it with a 422. Unreachable in practice, but only by accident.
+#: Deriving both from this one set is what keeps the answers identical. Were the renderer's set to
+#: lack the aliases or the singular group spellings, a `machine.meta` keyed `port` or `cpu` would
+#: escape the serializer into `MachineDetail.metas` — a field documented as feeding straight back
+#: into a PUT, where the schema would then reject it with a 422.
 MODELED_META_KEYS = frozenset(INTERPRETED_OPTIONS | set(GROUP_OPTIONS.values()) | DERIVED_META_KEYS)

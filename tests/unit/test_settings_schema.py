@@ -1,9 +1,9 @@
-"""Unit tests for the `SettingsUpdate`/`SettingsView` schemas (E8).
+"""Unit tests for the `SettingsUpdate`/`SettingsView` schemas.
 
 Distinct from `test_settings_update.py`, which exercises `KatharaService.update_settings`'s own
-manager_type lock by calling it directly with a plain dict (bypassing the schema entirely — that
-test predates this one and still describes the service layer correctly). These tests are about the
-schema boundary itself: what `PUT /api/settings` accepts before anything reaches the service.
+manager_type lock by calling it directly with a plain dict, bypassing the schema entirely. These
+tests are about the schema boundary itself: what `PUT /api/settings` accepts before anything
+reaches the service.
 """
 
 import pytest
@@ -77,15 +77,15 @@ def test_settings_update_rejects_fields_removed_from_the_write_surface(key, valu
 
 
 def test_settings_update_rejects_an_unknown_key():
-    # This is the E8 fix itself: extra="allow" used to forward any key Kathara's Setting/
-    # DockerSettingsAddon happened to expose, unvalidated, straight to Setting.load_from_dict.
+    # extra="allow" here would forward any key Kathara's Setting/DockerSettingsAddon happens to
+    # expose, unvalidated, straight to Setting.load_from_dict.
     with pytest.raises(ValidationError):
         SettingsUpdate(some_setting_this_schema_does_not_know="x")
 
 
 def test_settings_view_still_reads_remote_url_and_cert_path():
     # Read-only: a value set outside this API (~/.kathara.conf) stays visible for diagnosis even
-    # though PUT can no longer set it.
+    # though PUT cannot set it.
     view = SettingsView(manager_type="docker", image="kathara/base", remote_url="tcp://host:2375", cert_path="/certs")
     assert view.remote_url == "tcp://host:2375"
     assert view.cert_path == "/certs"

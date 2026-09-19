@@ -1,8 +1,8 @@
 """Unit test for POST /system/shutdown (no Docker required).
 
-See docs/audit_2.md minor reperti: the SIGTERM used to be sent inline, before the response body
-was handed to ASGI for writing, racing the response against the process's own shutdown. It is now
-sent from a `BackgroundTask`, which Starlette only runs after the response has been sent.
+The SIGTERM is sent from a `BackgroundTask`, which Starlette runs only after the response has
+been sent. Sending it inline, before the response body reaches ASGI for writing, races the
+response against the process's own shutdown.
 """
 
 import os

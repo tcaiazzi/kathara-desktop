@@ -10,9 +10,9 @@ function isAbortError(e: unknown): boolean {
 // much per action to usefully centralize).
 //
 // `fn` receives an AbortSignal so a caller that hits a real abandon point (the user cancels, the
-// owning component unmounts) can pass it into `api.*` and actually stop the in-flight request,
-// instead of just letting it run to completion in the background — see docs/audit_2.md I6.
-// Callers that don't need it can ignore the parameter.
+// owning component unmounts) can pass it into `api.*` and actually stop the in-flight request
+// rather than let it run to completion in the background. Pass it on wherever the endpoint takes
+// one; callers that don't need it can ignore the parameter.
 export function useBusyAction() {
   const toast = useToast();
   const controllersRef = useRef<Set<AbortController>>(new Set());

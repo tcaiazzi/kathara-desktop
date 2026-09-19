@@ -23,8 +23,9 @@ export default defineConfig({
     },
   },
   test: {
-    // No jsdom: only the pure services/*.ts helpers are tested here (see docs/AUDIT.md's F1-F4
-    // plan for why component/hook rendering is deliberately out of scope for now).
+    // No jsdom: only the pure services/*.ts helpers are tested here. Component and hook
+    // rendering is out of scope, so logic worth testing gets extracted into a pure helper first —
+    // which is why labConfRules.ts and fsTree.ts exist apart from their CodeMirror/React callers.
     environment: "node",
     include: ["src/**/*.test.ts"],
   },

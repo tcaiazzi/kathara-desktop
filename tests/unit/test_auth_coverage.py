@@ -1,5 +1,4 @@
-"""Every route under /api must require auth (docs/audit_2.md, Piano di intervento / Blocco 4:
-"un test che asserisca che ogni rotta sotto `/api` richiede auth").
+"""Every route under /api must require auth.
 
 test_auth.py only unit-tests require_auth_token in isolation against a throwaway one-route app;
 nothing exercises the real create_app() to confirm the dependency is actually wired onto every

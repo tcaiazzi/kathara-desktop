@@ -270,9 +270,9 @@ def test_write_lab_conf_text_is_atomic_and_requires_existing_dir(tmp_path):
 # container block below it is a hand-written sequence — both decide the bytes that land in a
 # user's lab.conf.
 #
-# Written before the audit_3 Q8 refactor that makes the five copies of this vocabulary derive from
-# one source. Without it that refactor could reorder or set-ify the tuple and silently rewrite every
-# JSON-created lab.conf, because no other test asserts more than one scalar at a time.
+# No other test asserts more than one scalar at a time, so this is the only thing standing
+# between an edit to `SCALAR_OPTIONS` — reordering it, or turning it into a set — and a silent
+# rewrite of every JSON-created lab.conf.
 _GOLDEN_DEVICE = MachineCreate(
     name="r1",
     image="kathara/frr",

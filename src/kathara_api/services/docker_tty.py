@@ -15,8 +15,8 @@ from ..config import get_settings
 # (min(32, cpu+4)) that every other `asyncio.to_thread` call in the app shares — including
 # get_machine_api_object, used to open the *next* terminal. A live session holds one of these
 # threads for as long as it stays open (read() blocks in a loop), so without this isolation a
-# handful of open terminals can starve every other blocking Docker call in the process (see I4
-# in docs/audit_2.md). Sized from settings so it doubles as the session cap enforced in
+# handful of open terminals can starve every other blocking Docker call in the process (see
+# docs/DESIGN-NOTES.md). Sized from settings so it doubles as the session cap enforced in
 # routers/exec.py:tty_live_ws.
 #
 # Recreated lazily by `_get_tty_executor` if it has been shut down, rather than being a true

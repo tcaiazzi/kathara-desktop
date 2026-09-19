@@ -1,11 +1,11 @@
 """Unit tests for the dedicated TTY thread pool (services/docker_tty.py) and the session cap
-enforced by routers/exec.py:tty_live_ws — see I4 in docs/audit_2.md.
+enforced by routers/exec.py:tty_live_ws. See docs/DESIGN-NOTES.md.
 
-Each open live terminal holds one thread for as long as it's connected (a blocking socket read in
-a loop). Before this fix that thread came from asyncio's default executor, shared with every other
-`asyncio.to_thread` call in the app; these tests check both halves of the fix: the async wrapper
-methods actually run off the caller's thread, and a session beyond the configured cap is rejected
-outright instead of queueing silently.
+Each open live terminal holds one thread for as long as it stays connected (a blocking socket
+read in a loop), which is why that thread must not come from asyncio's default executor, shared
+with every other `asyncio.to_thread` call in the app. These tests check both halves: the async
+wrapper methods actually run off the caller's thread, and a session beyond the configured cap is
+rejected outright instead of queueing silently.
 """
 
 import asyncio
@@ -189,8 +189,8 @@ def test_a_freed_slot_can_be_reused(_tty_app, monkeypatch):
 
 
 def test_malformed_resize_reports_an_error_without_closing_the_session(_tty_app, monkeypatch):
-    """See docs/audit_2.md minor reperti: a non-numeric cols/rows used to bubble a ValueError
-    out to the route's outer `except Exception`, which tears down the whole session."""
+    """A non-numeric cols/rows must not bubble a ValueError out to the route's outer
+    `except Exception`, which tears down the whole session."""
     monkeypatch.setattr(exec_router, "get_settings", lambda: _FakeSettings(tty_max_sessions=32))
 
     with _tty_app.websocket_connect("/api/labs/l/machines/m/tty/ws") as ws:

@@ -73,9 +73,8 @@ def test_manager_type_change_allowed_before_facade_init():
 
 
 def test_update_settings_waits_for_mutate_lock_held_elsewhere():
-    """See docs/audit_2.md minor reperti: update_settings used to mutate the process-wide
-    Setting/ApiSettings singletons without acquiring `_mutate_lock` at all, unlike every other
-    mutator on this service."""
+    """update_settings mutates the process-wide Setting/ApiSettings singletons, so it takes
+    `_mutate_lock` like every other mutator on this service."""
     service = make_service(facade=object())
 
     holder_entered = threading.Event()

@@ -116,8 +116,8 @@ async def tty_live_ws(
         # Docker API call (update_lab_from_api + a container lookup) — off the event loop like
         # every other backend call in this function (session.astart/aread/awrite/aresize below all
         # already run on a dedicated executor; this one deliberately stays on asyncio's default,
-        # since it is a one-shot lookup, not a persistent per-session thread — see I4 in
-        # docs/audit_2.md for why the two must not share an executor).
+        # since it is a one-shot lookup, not a persistent per-session thread — see
+        # services/docker_tty.py for why the two must not share an executor).
         machine_obj = await asyncio.to_thread(service.get_machine_api_object, lab_name, machine_name)
         client = getattr(getattr(machine_obj, "client", None), "api", None)
         container_id = getattr(machine_obj, "id", None)

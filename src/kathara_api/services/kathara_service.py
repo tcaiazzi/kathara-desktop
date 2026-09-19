@@ -185,12 +185,12 @@ class KatharaService:
     def _claiming_name(self, name: str) -> Generator[None, None, None]:
         """Serialize everything that claims or releases the lab name ``name``.
 
-        The five creation paths all used to check ``registry.get(name) or lab_dir(name).exists()``
-        and only *then* write, with nothing held in between — so two concurrent creates of the
-        same name both passed the check, both wrote, and the loser's rollback deleted the
-        winner's freshly created directory (the winner keeping its 201 and its registry entry,
-        with no files left on disk). ``rename_lab`` already had the same check-then-write shape
-        done correctly, entirely inside ``_mutate_lock``.
+        A creation path that checks ``registry.get(name) or lab_dir(name).exists()`` and only
+        *then* writes, holding nothing in between, lets two concurrent creates of the same name
+        both pass the check and both write — the loser's rollback then deletes the winner's
+        freshly created directory, leaving the winner with its 201 and its registry entry and no
+        files on disk. All five creation paths hold this instead. ``rename_lab`` has the same
+        check-then-write shape, done entirely inside ``_mutate_lock``.
 
         Deliberately *not* ``_mutate_lock``, which every other mutator uses: the critical section
         here contains the on-disk write itself — extracting a large .zip, ``copytree``-ing a
@@ -283,8 +283,8 @@ class KatharaService:
         if settings:
             Setting.get_instance().load_from_dict(settings)
 
-    # The subset of SettingsUpdate's fields that belong to this project's own ApiSettings (config.py,
-    # see E9), not to Kathara's Setting/DockerSettingsAddon — update_settings/get_settings_view
+    # The subset of SettingsUpdate's fields that belong to this project's own ApiSettings
+    # (config.py), not to Kathara's Setting/DockerSettingsAddon — update_settings/get_settings_view
     # route these to/from the ApiSettings singleton instead of Setting.load_from_dict/_to_dict.
     _API_SETTINGS_KEYS = frozenset({"max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"})
 
@@ -299,8 +299,8 @@ class KatharaService:
         silently accepted but never taking effect.
 
         ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` (``_API_SETTINGS_KEYS``)
-        aren't Kathara settings at all — they're this project's own ``ApiSettings`` (config.py, see
-        E9), just exposed on the same page. They're set directly on the ``get_settings()``
+        aren't Kathara settings at all — they're this project's own ``ApiSettings`` (config.py),
+        just exposed on the same page. They're set directly on the ``get_settings()``
         singleton, which every request already reads fresh (``main.py``'s body-size middleware,
         ``LabStore.extract_zip``), rather than passed to
         ``Setting.load_from_dict`` — which has no idea these attributes exist. This mutation is
@@ -351,7 +351,7 @@ class KatharaService:
             "available_managers": {"docker": _DOCKER_MANAGER_LABEL},
             # A plain real-UID check (Kathara.utils.is_admin), no daemon involved — which is why
             # this endpoint degrading matters: it is the field the frontend actually consumes
-            # (hooks/useIsAdmin.ts), and it used to be lost with the rest of the 503.
+            # (hooks/useIsAdmin.ts), so it has to survive a 503 from the rest of the snapshot.
             "is_admin": is_admin(),
         }
 
@@ -525,9 +525,9 @@ class KatharaService:
         lookup here can therefore only fail if that contract is broken.
 
         It raises rather than returning `None` so a broken invariant surfaces once, loudly, as a
-        server error. The three call sites used to answer it three different ways — one returned
-        200 having written nothing, one 400, one 404 — which is the wrong shape for a condition
-        that means "this code is wrong", not "your request is wrong".
+        server error. Answering it per call site — a 200 having written nothing, a 400, a 404 —
+        is the wrong shape for a condition that means "this code is wrong", not "your request is
+        wrong".
         """
         machine = lab.machines.get(machine_name)
         if machine is None:
@@ -663,10 +663,10 @@ class KatharaService:
         # `sanitize_lab_name` may strip whitespace (e.g. " demo " -> "demo"), and the lab
         # directory below is always created under that stripped form — every *import* path
         # already passes the same clean name through to the LabCreate it builds (see
-        # lab_import.translate_lab_files' `lab_name` parameter), but this JSON path used to keep
-        # `spec.name` raw. Without this, the registered Lab carried the untrimmed name while the
-        # directory on disk used the trimmed one: GET/DELETE/etc by "demo" 404'd until the next
-        # restart re-read the directory from disk and the lab silently renamed itself.
+        # lab_import.translate_lab_files' `lab_name` parameter), so this JSON path sanitizes too.
+        # Keeping `spec.name` raw here would register a Lab carrying the untrimmed name while the
+        # directory on disk used the trimmed one: GET/DELETE/etc by "demo" would 404 until the
+        # next restart re-read the directory from disk and the lab silently renamed itself.
         clean_name = lab_store.sanitize_lab_name(spec.name)
         with self._claiming_name(clean_name):
             lab_dir = self.store.ensure_lab_dir(clean_name)
@@ -959,10 +959,11 @@ class KatharaService:
         """The upstream Kathara-Labs catalog, each entry flagged with whether it's already
         installed — the remote twin of ``list_example_labs``. See services/lab_gallery.py.
 
-        Async because the fetch is network-bound and the route awaits it (I4 in docs/audit_2.md):
-        a synchronous fetch here blocked the event loop for the whole round trip. There used to be
-        a sync twin alongside it, kept for "every other caller" — but there were none, only a test.
-        ``install_gallery_lab`` goes through ``lab_gallery.get_entry`` instead.
+        Async because the fetch is network-bound and the route awaits it: a synchronous fetch
+        here would block the event loop for the whole round trip, and a burst of callers would
+        each park a threadpool worker behind it. See docs/DESIGN-NOTES.md. The sync
+        ``fetch_catalog`` still serves ``install_gallery_lab`` through ``lab_gallery.get_entry``,
+        which is not on the event loop.
         """
         return self._to_gallery_catalog(await lab_gallery.fetch_catalog_async(refresh=refresh))
 
@@ -1258,9 +1259,9 @@ class KatharaService:
             # The lab root itself is never a valid delete target — `DELETE /labs/{lab}` is what
             # removes a lab. Normalized rather than a raw string comparison, since "/", "", "//",
             # "/." and "pc1/.." all resolve to the same root directory once pyfilesystem gets hold
-            # of them, which is what `target_fs.removetree` would actually delete. (The `lab.conf`
-            # guards used to be the cautionary counter-example here, comparing the raw string and
-            # so missing "./lab.conf"; they now normalize too — see `_clean_offline_path`.)
+            # of them, which is what `target_fs.removetree` would actually delete. The `lab.conf`
+            # guards normalize for the same reason — a raw string comparison there misses
+            # "./lab.conf"; see `_clean_offline_path`.
             if self._is_lab_root(owner, guest):
                 raise ApiError("The lab root can't be deleted. Delete the lab instead.")
 
@@ -1475,7 +1476,7 @@ class KatharaService:
         selected_machines: Optional[set[str]] = None,
         excluded_machines: Optional[set[str]] = None,
     ) -> Lab:
-        # Self-checked exactly like every other guarded mutator (E10) — without this, two
+        # Self-checked exactly like every other guarded mutator — without this, two
         # concurrent deploy_lab calls on the same lab both pass _begin_transition (a set add, not
         # a lock) and run concurrently, each computing its own fresh/already-running split from a
         # Lab object the other is mutating at the same time, colliding inside the facade call on
@@ -1627,7 +1628,7 @@ class KatharaService:
         # just-stopped machine look "already running" and get silently skipped by that concurrent
         # deploy_lab's fresh/already-running split.
         #
-        # Self-checked for the same reason deploy_lab now is (E10): without this, a second
+        # Self-checked for the same reason deploy_lab is: without this, a second
         # concurrent undeploy_lab on the same name doesn't fail fast, it just queues up behind
         # _mutate_lock and then runs the facade call a second time against a lab already brought
         # down by the first — a confusing lower-level error instead of a clean "try again".
@@ -1683,7 +1684,7 @@ class KatharaService:
                     f"Cannot rename `{clean}` while it is deployed. Undeploy it first."
                 )
             # The destination name is claimed the same way a create claims it — otherwise this
-            # check-then-move races an import of `clean_new` exactly as two creates used to race
+            # check-then-move races an import of `clean_new` exactly as two unguarded creates race
             # each other. Acquired *after* `_mutate_lock`, never before: creates take
             # `_claiming_name` alone and never reach for `_mutate_lock` while holding it, so this
             # ordering cannot close a cycle.

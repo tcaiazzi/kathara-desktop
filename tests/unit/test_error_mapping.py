@@ -69,8 +69,8 @@ def test_unknown_error_maps_to_500():
 
 
 def test_unknown_error_body_does_not_leak_the_exception_message():
-    # See docs/audit_2.md minor reperti: str(exc) can carry absolute host paths or other
-    # internals; the full message is logged server-side (see the caplog test below) but must
+    # str(exc) can carry absolute host paths or other internals; the full message is logged
+    # server-side (see the caplog test below) but must
     # never reach the client body for an unmapped exception.
     client = _client_raising(RuntimeError("/home/someuser/secret-lab-name: no such file"))
     resp = client.get("/boom")

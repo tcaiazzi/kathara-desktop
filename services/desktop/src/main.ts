@@ -781,10 +781,10 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
   });
   if (!proceed) return false;
 
-  // Nothing is created here on purpose. This used to `mkdir -p` the target *before* the prompt
-  // above, so a call that the user never confirmed — the common case, since that prompt is
-  // skipped entirely when no labs are deployed — still left directories behind on disk. It isn't
-  // needed either: the dialog creates the folder it returns (`createDirectory`), and backend.ts
+  // Nothing is created here on purpose. A `mkdir -p` of the target before the prompt above would
+  // leave directories behind on disk for a call the user never confirmed — the common case, since
+  // that prompt is skipped entirely when no labs are deployed. It isn't needed either: the dialog
+  // creates the folder it returns (`createDirectory`), and backend.ts
   // mkdirs the effective labs dir right before spawning uvicorn regardless.
   writePrefs({ labsDir: isDefault ? undefined : dir });
   log(`labs directory set to ${dir}`);

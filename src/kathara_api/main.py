@@ -29,7 +29,7 @@ async def _lifespan(app: FastAPI):
     yield
     # Stop accepting new live-TTY work on shutdown instead of relying on ThreadPoolExecutor's own
     # atexit, which waits for every worker thread to return — a TTY read can stay blocked for as
-    # long as its terminal is open (see I4 in docs/audit_2.md).
+    # long as its terminal is open (see docs/DESIGN-NOTES.md).
     shutdown_tty_executor()
 
 
@@ -99,14 +99,14 @@ def create_app() -> FastAPI:
 
     # Cheap, early reject for the common case (a client that sends `Content-Length`, which every
     # request this app's own frontend makes does). Not the real enforcement — that counts actual
-    # bytes lower down, per import (LabStore._read_bounded/_copy_with_cap — see E9), and
-    # still applies to a body sent without this header (chunked
-    # transfer) exactly as before. This only saves reading/parsing a request whose *declared* size
+    # bytes lower down, per import (LabStore._read_bounded/_copy_with_cap), and still applies to a
+    # body sent without this header (chunked transfer), which this check cannot see at all.
+    # This only saves reading/parsing a request whose *declared* size
     # alone already rules it out, e.g. before FastAPI buffers a multipart upload into memory.
     #
-    # `max_bytes_per_lab` is read fresh on every request rather than computed once here: since it's
-    # now editable at runtime from the Settings page (KatharaService.update_settings, see E9's
-    # follow-up), baking it into this closure at app-build time would let this middleware keep
+    # `max_bytes_per_lab` is read fresh on every request rather than computed once here: it is
+    # editable at runtime from the Settings page (KatharaService.update_settings), so baking it
+    # into this closure at app-build time would let this middleware keep
     # enforcing a stale cap for the rest of the process's life after a Settings save.
     @app.middleware("http")
     async def _enforce_body_size(request: Request, call_next):

@@ -61,8 +61,8 @@ describe("remapPath", () => {
   });
 
   it("maps a direct child of a renamed directory", () => {
-    // This is F2: movePath used to repair the selection only on an exact match, so a rename of
-    // the directory a selected/open file lived in left the selection pointing at a dead path.
+    // Repairing the selection on an exact match alone is not enough: renaming the directory a
+    // selected or open file lives in would leave the selection pointing at a dead path.
     expect(remapPath("/pc1/etc/motd", "/pc1/etc", "/pc1/conf")).toBe("/pc1/conf/motd");
   });
 

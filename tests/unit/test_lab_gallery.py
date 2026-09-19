@@ -305,7 +305,7 @@ def test_catalog_is_cached_until_refresh_is_requested(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Async single-flight (fetch_catalog_async) — see I4 in docs/audit_2.md
+# Async single-flight (fetch_catalog_async) — see docs/DESIGN-NOTES.md
 # ---------------------------------------------------------------------------
 
 
@@ -355,9 +355,9 @@ def test_fetch_catalog_async_propagates_leader_failure_to_every_follower(monkeyp
 
 
 def test_fetch_catalog_async_followers_never_touch_the_threadpool(monkeypatch):
-    """The architectural half of the fix: even with the worker-thread pool artificially starved
-    to a single slot, N concurrent callers resolve in one fetch's worth of time, not N times
-    that — proving followers suspend on the event loop, not on a threadpool token (see I4)."""
+    """Even with the worker-thread pool artificially starved to a single slot, N concurrent
+    callers resolve in one fetch's worth of time, not N times that — proving followers suspend on
+    the event loop, not on a threadpool token."""
     settings = _FakeSettings()
     monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
     calls = []
@@ -504,8 +504,8 @@ def test_install_gallery_lab_rolls_back_directory_on_parse_error(tmp_path, monke
 
 
 def test_install_gallery_lab_enforces_the_file_count_cap(tmp_path, monkeypatch):
-    # The cap now lives on ApiSettings (shared with the JSON-import/zip-upload paths — see E9),
-    # not a module constant of lab_gallery's own — set it on the fake settings double that
+    # The cap lives on ApiSettings (shared with the JSON-import/zip-upload paths), not on a
+    # module constant of lab_gallery's own — set it on the fake settings double that
     # _install_fake_repo wires in, not the real process-global singleton.
     settings = _FakeSettings()
     settings.max_files_per_lab = 1

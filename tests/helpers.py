@@ -43,9 +43,9 @@ def make_lab(service, name: str, files: dict[str, str], dirs=None, deploy: bool 
     """Create a lab on disk from a ``{path: text}`` mapping, through the .zip upload path.
 
     Most tests only need *a lab that exists* before exercising deploy, lab.conf edits or device
-    changes; they used to build one with ``KatharaService.import_lab``, the JSON twin of
-    ``upload_lab``, which was removed along with its endpoint. ``upload_lab`` takes an archive,
-    so build one here rather than at every call site. Returns ``(lab, warnings)``, same shape.
+    changes, and ``upload_lab`` is the only creation path that takes a whole directory — but it
+    takes it as an archive, so the archive is built here rather than at every call site.
+    Returns ``(lab, warnings)``, the same shape ``upload_lab`` does.
     """
     entries: dict[str, bytes] = {path: text.encode() for path, text in files.items()}
     for d in dirs or []:

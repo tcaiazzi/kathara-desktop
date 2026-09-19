@@ -192,8 +192,8 @@ def test_update_probes_run_on_daemon_threads(tmp_path, monkeypatch):
     """A probe abandoned past the budget must not keep the process alive.
 
     `concurrent.futures` joins its (non-daemon) workers from an interpreter-exit hook, and
-    `shutdown(wait=False)` cannot cancel a running future — so an unanswered `get_registry_data`
-    used to mean the backend could never exit.
+    `shutdown(wait=False)` cannot cancel a running future — so a non-daemon worker stuck on an
+    unanswered `get_registry_data` means the backend can never exit.
     """
     monkeypatch.setattr(image_pull, "UPDATE_CHECK_BUDGET_SECONDS", 0.2)
     docker_image = _FakeDockerImage(

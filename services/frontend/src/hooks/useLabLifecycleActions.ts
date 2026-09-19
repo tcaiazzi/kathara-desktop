@@ -165,8 +165,8 @@ export function useLabLifecycleActions() {
         //
         // The global `hosthome_mount` setting is the same kind of host exposure but is not a
         // per-device volume, and it applies whether or not this lab declares any: `useDeployGate`
-        // reads it for every caller, so it can't be checked on one deploy path and forgotten on
-        // another (it was — see audit_3 Q5).
+        // reads it for every caller, so it cannot be checked on one deploy path and forgotten on
+        // another.
         const needsElevation = lab.machines.some((m) => m.privileged);
         {
           const outcome = await ensureDeployAuthorized({

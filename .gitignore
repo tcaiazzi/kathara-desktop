@@ -15,15 +15,11 @@ data/
 # Playwright MCP verification artifacts
 .playwright-mcp/
 
-# Historical design-decision log, kept locally for reference only
+# Working notes, kept locally
 docs/refactor-plan.md
-
-# Audit findings + remediation status, kept locally for reference only
-docs/AUDIT.md
+docs/[Aa][Uu][Dd][Ii][Tt]*.md
 
 # Local-only editor/agent config, kept on disk but not shared via git
 .claude/
 .vscode/
 .mcp.json
-docs/audit_2.md
-docs/audit_3.md

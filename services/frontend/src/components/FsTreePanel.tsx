@@ -248,7 +248,7 @@ export function FsTreePanel({
                       // folder" behavior belongs. It must NOT be duplicated by a second onClick on
                       // the row content below: both fire (the wrapper's click handler and ours,
                       // via bubbling), and since each independently reacts to the same modifier
-                      // keys, they used to fight over the selection (e.g. our handler adds a
+                      // keys, they fight over the selection (e.g. our handler adds a
                       // ctrl-clicked row, then the wrapper's own handler sees it as already
                       // selected and immediately deselects it again).
                       onActivate={(node) => {

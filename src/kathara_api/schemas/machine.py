@@ -12,7 +12,7 @@ from .common import reject_lab_conf_quotes
 MACHINE_NAME_PATTERN = DEVICE_NAME_PATTERN
 
 # A `metas` key reaches a lab.conf line unescaped — see `lab_conf_options.IDENTIFIER_RE` for
-# the two ways that used to reach real damage.
+# the two ways that reach real damage.
 _META_KEY_RE = IDENTIFIER_RE
 
 # A `metas` pass-through entry using a name this API already models is never applied on the *live*
@@ -24,10 +24,10 @@ _META_KEY_RE = IDENTIFIER_RE
 # request doesn't already have through that field — rejecting it here just keeps the two paths from
 # disagreeing about it.
 #
-# Aliases count, and that is the half this used to miss: `cpu` reaches `cpus` through the parser, so
-# accepting it as a pass-through meant it came back as the real option on the next load (audit_3 Q1).
-# Deriving the set from `lab_conf_options` is what makes that impossible to get wrong again — the
-# parser gates on the same names it reserves.
+# Aliases count too: `cpu` reaches `cpus` through the parser, so accepting it as a pass-through
+# means it comes back as the real option on the next load. Deriving the set from
+# `lab_conf_options` keeps that from being possible — the parser gates on the same names it
+# reserves.
 _RESERVED_META_KEYS = MODELED_META_KEYS
 
 

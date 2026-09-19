@@ -53,7 +53,7 @@ class SettingsView(BaseModel):
     remote_url: Optional[str] = None
     cert_path: Optional[str] = None
     network_plugin: Optional[str] = None
-    # This project's own upload/import caps (ApiSettings in config.py, see E9) — not a Kathara
+    # This project's own upload/import caps (ApiSettings in config.py) — not a Kathara
     # `Setting`/`DockerSettingsAddon` field at all, surfaced here purely so they share one editable
     # page with everything else. Unlike every field above, a change here does NOT persist to
     # Kathara's own settings file and does NOT survive a backend restart: it mutates the in-process
@@ -74,9 +74,9 @@ class SettingsUpdate(BaseModel):
     """Settings overrides forwarded to ``Setting.load_from_dict``.
 
     Every field Kathara's ``Setting.load_from_dict`` would actually apply is named explicitly, and
-    ``extra="forbid"`` rejects anything else with a 422 — this used to be ``extra="allow"``, which
-    let a client set *any* attribute ``Setting``/``DockerSettingsAddon`` expose, unvalidated,
-    including two genuinely dangerous ones:
+    ``extra="forbid"`` rejects anything else with a 422. ``extra="allow"`` here would let a client
+    set *any* attribute ``Setting``/``DockerSettingsAddon`` exposes, unvalidated, including two
+    genuinely dangerous ones:
 
     - ``hosthome_mount`` bind-mounts this process's real ``$HOME`` into every device this backend
       deploys from then on (``DockerMachine.py``: ``volumes[get_current_user_home()] = {'bind':
@@ -97,7 +97,7 @@ class SettingsUpdate(BaseModel):
 
     ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` are the odd ones out: they
     are not Kathara settings at all, but this project's own upload/import caps (``ApiSettings`` in
-    config.py, see E9) — writable here purely so they live on the same page as everything else.
+    config.py) — writable here purely so they live on the same page as everything else.
     ``update_settings`` routes them to the ``ApiSettings`` singleton instead of
     ``Setting.load_from_dict``; see that method's docstring.
     """

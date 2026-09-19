@@ -98,11 +98,11 @@ def test_a_singular_option_spelling_never_escapes_into_metas():
     """`MachineDetail.metas` feeds straight back into a PUT, so it must not contain a key the
     request schema would then reject.
 
-    Before audit_3 Q8 the filter here used a narrower set than the schema's: it knew the plural
-    field names (`ports`) but not the lab.conf spellings (`port`) or the `cpu` alias, so a
-    `machine.meta` carrying one of those escaped into `metas` and the round-trip 422'd. Both sides
-    now derive from `lab_conf_options.MODELED_META_KEYS`. Unreachable through the normal paths —
-    the meta is set directly here — but the point is that it stays unreachable.
+    A filter narrower than the schema's — one knowing the plural field names (`ports`) but not
+    the lab.conf spellings (`port`) or the `cpu` alias — lets a `machine.meta` carrying one of
+    those escape into `metas`, and the round-trip 422s. Both sides derive from
+    `lab_conf_options.MODELED_META_KEYS` instead. Unreachable through the normal paths, since the
+    meta is set directly here, but the point is that it stays unreachable.
     """
     lab = _lab()
     machine = lab.machines["r1"]
