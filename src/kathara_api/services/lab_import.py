@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from ..lab_conf_options import (
     DEVICE_NAME_CHARS,
+    DEVICE_NAME_PATTERN,
     IDENTIFIER_RE,
     INTERPRETED_OPTIONS,
     LAB_CONF_FILENAME,
@@ -36,6 +37,9 @@ CONF_LINE_RE = re.compile(rf"""^({DEVICE_NAME_CHARS})\[(\w+)\]=(["']?)([^"']+)\3
 # `lab_conf_options.IDENTIFIER_RE`.
 TOP_LEVEL_KEY_RE = IDENTIFIER_RE
 STARTUP_NAME_RE = re.compile(rf"^({DEVICE_NAME_CHARS})\.startup$")
+# A device name on its own, for the folder fallback, where the name comes from a directory entry
+# instead of a line this module parsed.
+DEVICE_NAME_RE = re.compile(DEVICE_NAME_PATTERN)
 # Physical line split for lab.conf/lab.ext, shared with `lab_conf_edit._split_text` so the parser
 # and the editor can never disagree about where a line ends. A bare CR counts: without it,
 # CONF_LINE_RE's `[^"']+` swallows the following line into the value, and a CR-terminated file
@@ -340,19 +344,32 @@ def translate_lab_files(
     else:
         # Folder fallback: machine names are top-level subfolders (+ *.startup files).
         names: set[str] = set()
+        # A subfolder name goes on to become `MachineCreate.name`, which enforces the device-name
+        # grammar. Reject it here, where the offending directory can still be named in the message,
+        # rather than letting the schema raise on it: the directive-line path already reports an
+        # unusable name as a parse error, and both paths reach the same callers. Refusing beats
+        # skipping, because a device folder the user meant to import would vanish with nothing but
+        # a warning to say so.
+        unusable: set[str] = set()
         for path in files:
             seg = path.split("/")[0]
-            if "/" in path and seg not in RESERVED_NAMES:
-                names.add(seg)
+            # A dot-prefixed directory belongs to tooling, not to the lab — the same reason
+            # `LabStore.lab_names` leaves one out when listing labs.
+            if "/" in path and seg not in RESERVED_NAMES and not seg.startswith("."):
+                (names if DEVICE_NAME_RE.match(seg) else unusable).add(seg)
+            # The `<name>.startup` pattern embeds the grammar, so a match is always usable.
             m = STARTUP_NAME_RE.match(path)
             if m and m.group(1) not in RESERVED_NAMES:
                 names.add(m.group(1))
         machines = {n: _ConfMachine(n) for n in names}
-        parsed = _ParsedConf(
-            machines=machines,
-            metadata={},
-            errors=[] if names else ["no lab.conf and no machine folders found"],
-        )
+        folder_errors = [
+            f'directory "{bad}" is not a usable device name '
+            "(lowercase letters, digits and underscores, up to 30 characters)"
+            for bad in sorted(unusable)
+        ]
+        if not names and not folder_errors:
+            folder_errors.append("no lab.conf and no machine folders found")
+        parsed = _ParsedConf(machines=machines, metadata={}, errors=folder_errors)
         if names:
             warnings.append("no lab.conf — machines derived from folders (no interfaces defined)")
 

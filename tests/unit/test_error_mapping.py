@@ -11,7 +11,7 @@ from Kathara.exceptions import (
     MachineOptionError,
     PrivilegeError,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from kathara_api.errors import SettingsLockedError, register_exception_handlers
 
@@ -171,6 +171,16 @@ class _ValidatedBody(BaseModel):
     name: str = Field(pattern=r"^[a-z0-9_]{1,30}$")
 
 
+def _validation_error_for(**kwargs) -> ValidationError:
+    """A real `ValidationError` off the same model, rather than one built by hand: the handler
+    reads `errors()`, whose shape is pydantic's to define."""
+    try:
+        _ValidatedBody(**kwargs)
+    except ValidationError as exc:
+        return exc
+    raise AssertionError("expected the model to reject these values")
+
+
 def _client_with_validated_route() -> TestClient:
     app = FastAPI()
     register_exception_handlers(app)
@@ -221,3 +231,41 @@ def test_multiple_validation_errors_are_joined_into_one_string():
     assert "name" in detail
     assert "count" in detail
     assert ";" in detail  # more than one message, joined rather than truncated to the first
+
+
+def test_model_validated_in_service_code_maps_to_422_not_500():
+    """Schemas validate lab content as well as request bodies: a lab.conf or lab directory that
+    violates one is bad input, so it gets a 4xx naming the field. Reaching the catch-all instead
+    would report a bug the operator cannot act on, and replace the message with a generic one."""
+    client = _client_raising(_validation_error_for(name="Router1"))
+
+    resp = client.get("/boom")
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert isinstance(body["detail"], str)
+    assert body["error_type"] == "ValidationError"
+
+
+def test_model_validation_detail_keeps_the_field_name():
+    """A directly validated model's `loc` starts at the field, with no `"body"`/`"query"` prefix to
+    strip — dropping a leading element here would discard the only clue to what is wrong."""
+    client = _client_raising(_validation_error_for(name="Router1"))
+
+    detail = client.get("/boom").json()["detail"]
+
+    assert detail.startswith("name:")
+    assert "pattern" in detail
+
+
+def test_model_validation_detail_is_flattened_not_pydantics_own_rendering():
+    """The detail is built from `errors()`, not from `str(exc)`: pydantic renders that over several
+    lines and ends it with a link to its own documentation, which answers a different question than
+    "what is wrong with this lab"."""
+    client = _client_raising(_validation_error_for(name="Router1"))
+
+    detail = client.get("/boom").json()["detail"]
+
+    assert "pattern" in detail  # the real message, not a generic stand-in
+    assert "errors.pydantic.dev" not in detail
+    assert "\n" not in detail

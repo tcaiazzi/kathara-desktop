@@ -92,6 +92,7 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 | `ForbiddenOriginError` (cross-origin state-changing request), `PrivilegeError` | 403 |
 | `PayloadTooLargeError` (body over `max_bytes_per_file`; raised by `main.py`'s size middleware, not `errors.py`) | 413 |
 | `RequestValidationError` (FastAPI body/query validation) | 422 |
+| `pydantic.ValidationError` (a schema validated by service code — e.g. a device derived from lab content) | 422 |
 | anything else | 500 |
 
 Errors return `{"detail": str, "error_type": str}`. `HTTPException` already answers with its own

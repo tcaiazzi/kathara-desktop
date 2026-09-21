@@ -119,6 +119,36 @@ def test_translate_lab_files_reports_errors_when_nothing_found():
     assert any("no lab.conf" in e for e in t.errors)
 
 
+def test_folder_fallback_names_the_directory_it_cannot_use_as_a_device():
+    """A subfolder that doesn't fit the device-name grammar is a parse error naming that folder,
+    the way a malformed directive line is — not a schema violation raised later from
+    `MachineCreate`, which reports a pattern mismatch without saying which directory caused it."""
+    t = lab_import.translate_lab_files({"Router1/etc/motd": "hi\n", "pc2/etc/motd": "hi\n"}, "lab")
+
+    assert any('"Router1"' in e for e in t.errors)
+    assert {m.name for m in t.payload.machines} == {"pc2"}
+
+
+def test_folder_fallback_refuses_rather_than_dropping_an_unusable_device_folder():
+    """Every unusable folder is reported, and one alone is still an error: skipping would lose a
+    device the lab meant to have, leaving a silently incomplete topology."""
+    t = lab_import.translate_lab_files({"Router1/etc/motd": "hi\n", "SW-2/etc/motd": "hi\n"}, "lab")
+
+    assert len(t.errors) == 2
+    assert t.machine_count == 0
+
+
+def test_folder_fallback_ignores_tooling_directories():
+    """A dot-prefixed directory is tooling (a checked-out `.git`, an editor's state), not a device,
+    and must neither become one nor block the import — the rule `LabStore.lab_names` applies when
+    it lists labs."""
+    files = {"pc1/etc/motd": "hi\n", ".git/config": "[core]\n", ".vscode/settings.json": "{}\n"}
+    t = lab_import.translate_lab_files(files, "lab")
+
+    assert t.errors == []
+    assert {m.name for m in t.payload.machines} == {"pc1"}
+
+
 def test_translate_lab_files_surfaces_skipped_binary_warning():
     t = lab_import.translate_lab_files(_example_files(), "lab", skipped=["pc1/bin/tool"])
     assert any("skipped 1 binary" in w for w in t.warnings)

@@ -1,6 +1,8 @@
 """Exception handling: map Kathara (and API-local) exceptions to HTTP responses."""
 
 import logging
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import docker.errors
 import fs.errors
@@ -34,6 +36,7 @@ from Kathara.exceptions import (
     PrivilegeError,
     SettingsError,
 )
+from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .schemas.common import ErrorResponse
@@ -259,21 +262,51 @@ def _error_response(exc: Exception, code: int) -> JSONResponse:
     return JSONResponse(status_code=code, content=body.model_dump())
 
 
+def _flatten_validation_detail(errors: Sequence[Mapping[str, Any]], drop_source: bool) -> str:
+    """Join a pydantic error list into one ``field: message`` string.
+
+    ``drop_source`` skips ``loc``'s first element, which for a request-validation error names where
+    the value came from (``"body"``, ``"query"``, ``"path"``, ...) — useful to a debugger, not in a
+    user-facing message. A model validated directly has no such prefix, and dropping it there
+    would throw away the field name instead.
+    """
+    messages = []
+    for err in errors:
+        loc = err.get("loc", ())
+        field = ".".join(str(p) for p in (loc[1:] if drop_source else loc))
+        msg = err.get("msg") or "Invalid value."
+        messages.append(f"{field}: {msg}" if field else msg)
+    return "; ".join(messages) or "Invalid request."
+
+
 def _validation_error_response(exc: RequestValidationError) -> JSONResponse:
     """Flatten FastAPI's default validation-error body (``{"detail": [{"loc", "msg", "type", ...},
     ...]}``) into this API's uniform ``ErrorResponse`` — every other handler here returns
     ``detail`` as a plain string, and a client that doesn't special-case this one shape would
     otherwise render the raw list (e.g. JS: ``String(anErrorList)`` -> ``"[object Object]"``).
     """
-    messages = []
-    for err in exc.errors():
-        # `loc`'s first element is always where the value came from (``"body"``, ``"query"``,
-        # ``"path"``, ...) - useful for a debugger, not for a user-facing message.
-        field = ".".join(str(p) for p in err.get("loc", ())[1:])
-        msg = err.get("msg") or "Invalid value."
-        messages.append(f"{field}: {msg}" if field else msg)
-    detail = "; ".join(messages) or "Invalid request."
-    body = ErrorResponse(detail=detail, error_type="RequestValidationError")
+    body = ErrorResponse(
+        detail=_flatten_validation_detail(exc.errors(), drop_source=True),
+        error_type="RequestValidationError",
+    )
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content=body.model_dump())
+
+
+def _model_validation_error_response(exc: ValidationError) -> JSONResponse:
+    """Same uniform body for a model validated inside a service, not by the request layer.
+
+    The schemas are the validation rules for lab content as much as for request bodies, so a
+    ``lab.conf`` or a lab directory that violates one is bad input and reads as a 4xx. Letting it
+    reach the catch-all instead would report a bug the operator cannot act on, and replace the
+    message naming the offending field with a generic one.
+
+    ``str(exc)`` is not used: pydantic renders it over several lines and ends it with a link to its
+    own documentation, which is not an answer to "what is wrong with my lab".
+    """
+    body = ErrorResponse(
+        detail=_flatten_validation_detail(exc.errors(), drop_source=False),
+        error_type=exc.__class__.__name__,
+    )
     return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content=body.model_dump())
 
 
@@ -307,6 +340,16 @@ def register_exception_handlers(app: FastAPI) -> None:
         return _validation_error_response(exc)
 
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+
+    # A schema validated by service code rather than by the request layer — parsing a lab.conf or
+    # deriving devices from a lab directory both build `MachineCreate` from file content. The two
+    # classes do not overlap: `RequestValidationError` does not inherit from pydantic's
+    # `ValidationError`, so each keeps its own handler. Starlette picks by walking the raised
+    # exception's MRO, which puts this ahead of the `Exception` catch-all.
+    async def _handle_model_validation_error(_: Request, exc: ValidationError) -> JSONResponse:
+        return _model_validation_error_response(exc)
+
+    app.add_exception_handler(ValidationError, _handle_model_validation_error)
 
     async def _handle_docker_api_error(_: Request, exc: Exception) -> JSONResponse:
         # docker.errors.APIError.status_code is a *property* reading exc.response, returning None
