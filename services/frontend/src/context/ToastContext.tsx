@@ -163,7 +163,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           {toasts.map((t) => (
             <Toast key={t.id} bg={t.variant === "info" ? undefined : t.variant} onClose={() => remove(t.id)}>
               <Toast.Header closeButton>
-                <strong className="me-auto">{t.detail || (t.variant === "danger" ? "Error" : "Notice")}</strong>
+                <strong className="me-auto">{t.detail || (t.variant === "danger" ? "Error" : "Notification")}</strong>
               </Toast.Header>
               <Toast.Body className={t.variant === "danger" || t.variant === "success" ? "text-white" : undefined}>
                 {t.message}
