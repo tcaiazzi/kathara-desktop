@@ -8,7 +8,15 @@
  *   3. start the backend on a free loopback port, serving the bundled SPA
  *   4. load http://127.0.0.1:<port>/
  */
-import { app, BrowserWindow, clipboard, crashReporter, dialog, ipcMain, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  crashReporter,
+  dialog,
+  shell,
+  type IpcMainInvokeEvent,
+} from "electron";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -39,6 +47,7 @@ import {
   pickLabsDirectory,
   revealPath,
 } from "./integrations";
+import { handleIpc } from "./ipc";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
 import { crashDumpsDir, defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
@@ -414,18 +423,32 @@ async function runStartup(resumePath?: string): Promise<void> {
   }
 }
 
+/**
+ * The window a call actually came from — which is not always the main one: a terminal popup
+ * (windows.ts's setWindowOpenHandler) is a full BrowserWindow running the same SPA, so it invokes
+ * the same channels. Null only if the sender's WebContents has no window of its own, which none
+ * of this app's ever has.
+ *
+ * Deliberately *not* used for the native dialogs below (fs:pick-host-dir, labs:pick-dir,
+ * elevation:drop's message box): those stay parented to the main window, so a popup the user is
+ * free to close can't take a modal dialog down with it.
+ */
+function senderWindow(event: IpcMainInvokeEvent): BrowserWindow | null {
+  return BrowserWindow.fromWebContents(event.sender);
+}
+
 function registerIpc(): void {
-  ipcMain.handle("status:get", () => status);
+  handleIpc("status:get", () => status);
 
   // See carriedNotifications above. `save` is called on every history change (cheap — this is
   // just a variable assignment), so whatever reload happens next always has the latest snapshot,
   // without either side needing to predict exactly when a reload is about to happen.
-  ipcMain.handle("notifications:save", (_e, history: unknown) => {
+  handleIpc("notifications:save", (_e, history: unknown) => {
     carriedNotifications = Array.isArray(history) ? history : [];
   });
-  ipcMain.handle("notifications:load", () => carriedNotifications);
+  handleIpc("notifications:load", () => carriedNotifications);
 
-  ipcMain.handle("status:retry", async () => {
+  handleIpc("status:retry", async () => {
     if (startupInFlight) {
       // A previous "Check again" (or any other startup trigger) hasn't finished yet. Join it
       // instead of calling stopBackend() here, which — unlike startup() itself — has no gate of
@@ -453,7 +476,7 @@ function registerIpc(): void {
   // backend's origin, which tears down the calling renderer mid-flight — the invoking IPC call
   // typically never observes this resolution, only a failure one. That's expected; the renderer
   // must not depend on a success response here.
-  ipcMain.handle(
+  handleIpc(
     "elevation:elevate",
     async (_e, password?: string, resumeLab?: string): Promise<ElevateOutcome> =>
       // Must not run alongside an in-flight startup()/elevation:drop — both stop/start the same
@@ -506,7 +529,7 @@ function registerIpc(): void {
   // volume doesn't need this *process* to be root (unlike a privileged device), only proof the
   // user could authorize it. Unlike elevation:elevate above, this never touches the backend: no
   // restart, no new port, no reload — the caller just gets ok/not-ok back synchronously.
-  ipcMain.handle(
+  handleIpc(
     "elevation:verify",
     (_e, password?: string): ReturnType<typeof verifyCanElevate> => verifyCanElevate(password),
   );
@@ -518,7 +541,7 @@ function registerIpc(): void {
   // startBackend + loadURL + status) rather than duplicating it, same as status:retry above. A
   // cheap no-op — no restart, no reload — when the backend isn't currently elevated at all,
   // which is the common case (most undeploys aren't for a privileged-device lab).
-  ipcMain.handle(
+  handleIpc(
     "elevation:drop",
     async (
       _e,
@@ -595,15 +618,15 @@ function registerIpc(): void {
   // gated on is_admin/hasForeignOwnedFiles again — elevation:drop already established both right
   // before returning needsReclaimPassword, and by the time the renderer calls this the backend
   // hasn't been touched since, so nothing here has changed.
-  ipcMain.handle(
+  handleIpc(
     "elevation:reclaim-labs-dir",
     (_e, password: string): ReturnType<typeof reclaimLabsDirOwnershipWithPassword> =>
       reclaimLabsDirOwnershipWithPassword(password, labsDir()),
   );
 
-  ipcMain.handle("shell:show-log", () => shell.openPath(backendLogPath()));
+  handleIpc("shell:show-log", () => shell.openPath(backendLogPath()));
 
-  ipcMain.handle("shell:log-renderer-error", (_e, message: string) => {
+  handleIpc("shell:log-renderer-error", (_e, message: string) => {
     log(`renderer error: ${String(message).slice(0, 4000)}`);
   });
 
@@ -611,14 +634,14 @@ function registerIpc(): void {
   // state already gets its own tail as part of `status`; this is for the renderer's own
   // ErrorBoundary fallback, which has no other way to see what's in backend.log). Clamped since
   // this is reachable from a page that renders lab content.
-  ipcMain.handle("shell:get-log-tail", (_e, limit?: number) =>
+  handleIpc("shell:get-log-tail", (_e, limit?: number) =>
     tailLog(Math.max(1, Math.min(typeof limit === "number" ? limit : 200, 2000))),
   );
 
   // Routed through the main process rather than the renderer's own navigator.clipboard so both
   // crash screens (this sandboxed setup.html and the SPA's ErrorBoundary fallback) can rely on
   // one path that works the same in a packaged build. Capped defensively, same reasoning as above.
-  ipcMain.handle("shell:copy-text", (_e, text: string) => {
+  handleIpc("shell:copy-text", (_e, text: string) => {
     clipboard.writeText(String(text).slice(0, 2_000_000));
   });
 
@@ -627,9 +650,9 @@ function registerIpc(): void {
   // the backend itself serves. Kept off the response even when null (the renderer is between
   // backends, e.g. mid-elevation) rather than a stale one, since sending the wrong token would
   // just present as a confusing 401 instead of "not ready yet".
-  ipcMain.handle("auth:get-token", () => backendToken());
+  handleIpc("auth:get-token", () => backendToken());
 
-  ipcMain.handle("shell:open-external", (_e, url: string) => {
+  handleIpc("shell:open-external", (_e, url: string) => {
     // Never hand an arbitrary scheme to the OS: file://, and worse, would be a real hole here.
     if (/^https?:\/\//.test(url)) return shell.openExternal(url);
     log(`refused shell:open-external for ${url}`);
@@ -637,7 +660,7 @@ function registerIpc(): void {
 
   // The View/Help menu items the app draws itself act on the window or the shell, not on the
   // page, so they come back here rather than being handled in React.
-  ipcMain.handle("shell:app-info", () => ({
+  handleIpc("shell:app-info", () => ({
     version: app.getVersion(),
     platform: process.platform,
   }));
@@ -648,61 +671,64 @@ function registerIpc(): void {
   // sending the result unprompted) would race the SPA's own load: this fetch can easily finish
   // before win.loadURL(handle.baseUrl) ever happens, and a message sent to a page that hasn't
   // registered a listener yet is simply lost, not queued.
-  ipcMain.handle("update:check", () => checkForUpdate());
+  handleIpc("update:check", () => checkForUpdate());
 
   // Re-runs the same `docker info` probe preflight uses, on demand — this is how
   // DockerStatusContext.tsx notices a stopped daemon coming back (or going down mid-session)
   // without a restart. See dockerStatus() above for the cache/dedupe that keeps a poll cheap.
-  ipcMain.handle("docker:check", () => dockerStatus());
+  handleIpc("docker:check", () => dockerStatus());
 
-  ipcMain.handle("window:zoom", (_e, direction: "in" | "out" | "reset") => {
-    const contents = win?.webContents;
-    if (!contents) return;
+  // Every window:* handler below acts on `senderWindow(e)`, not on the module-level `win`: a
+  // terminal popup carries the same preload and the same React tree as the main window, so a
+  // handler that reached for `win` let a popup minimize — or close — the window behind it.
+  handleIpc("window:zoom", (e, direction: "in" | "out" | "reset") => {
+    const contents = e.sender;
     const current = contents.getZoomLevel();
     contents.setZoomLevel(
       direction === "reset" ? 0 : direction === "in" ? current + 0.5 : current - 0.5,
     );
   });
 
-  ipcMain.handle("window:toggle-full-screen", () => {
-    if (win) win.setFullScreen(!win.isFullScreen());
+  handleIpc("window:toggle-full-screen", (e) => {
+    const target = senderWindow(e);
+    if (target) target.setFullScreen(!target.isFullScreen());
   });
 
-  ipcMain.handle("window:toggle-dev-tools", () => win?.webContents.toggleDevTools());
+  handleIpc("window:toggle-dev-tools", (e) => e.sender.toggleDevTools());
 
-  ipcMain.handle("window:quit", () => app.quit());
+  handleIpc("window:quit", () => app.quit());
 
   // Custom caption buttons (TitleBar.tsx draws them on Windows/Linux, replacing the window
   // controls Chromium would otherwise overlay — see createMainWindow's comment in windows.ts).
-  // win.close() rather than app.quit(): a red "close" button should behave like the platform's
+  // close() rather than app.quit(): a red "close" button should behave like the platform's
   // own close control, which on macOS hides the window without quitting the whole app.
-  ipcMain.handle("window:minimize", () => win?.minimize());
-  ipcMain.handle("window:maximize", () => win?.maximize());
-  ipcMain.handle("window:unmaximize", () => win?.unmaximize());
-  ipcMain.handle("window:close", () => win?.close());
-  ipcMain.handle("window:is-maximized", () => win?.isMaximized() ?? false);
+  handleIpc("window:minimize", (e) => senderWindow(e)?.minimize());
+  handleIpc("window:maximize", (e) => senderWindow(e)?.maximize());
+  handleIpc("window:unmaximize", (e) => senderWindow(e)?.unmaximize());
+  handleIpc("window:close", (e) => senderWindow(e)?.close());
+  handleIpc("window:is-maximized", (e) => senderWindow(e)?.isMaximized() ?? false);
   // Read once on mount by TitleBar.tsx, which can come up against an already-fullscreen window
   // (a reload, a restart after a labs-dir change) and would otherwise miss the state entirely.
-  ipcMain.handle("window:is-fullscreen", () => win?.isFullScreen() ?? false);
+  handleIpc("window:is-fullscreen", (e) => senderWindow(e)?.isFullScreen() ?? false);
 
   // The host side of a device's [volume] bind mount — see MachineOptionsFields.tsx's Volumes rows.
-  ipcMain.handle("fs:pick-host-dir", (_e, current?: string) => pickHostDirectory(win, current));
-  ipcMain.handle("fs:open-labs-folder", () => openLabsDir());
+  handleIpc("fs:pick-host-dir", (_e, current?: string) => pickHostDirectory(win, current));
+  handleIpc("fs:open-labs-folder", () => openLabsDir());
 
-  ipcMain.handle("fs:reveal-lab", async (_e, labName: string) => {
+  handleIpc("fs:reveal-lab", async (_e, labName: string) => {
     revealPath(await labDirectory(labName));
   });
 
-  ipcMain.handle("terminal:open-here", async (_e, labName: string) => {
+  handleIpc("terminal:open-here", async (_e, labName: string) => {
     await openTerminalHere(await labDirectory(labName));
   });
 
-  ipcMain.handle("labs:get-dir", () => labsDir());
-  ipcMain.handle("labs:default-dir", () => defaultLabsDir());
+  handleIpc("labs:get-dir", () => labsDir());
+  handleIpc("labs:default-dir", () => defaultLabsDir());
   // Records what the dialog actually offered, so `labs:set-dir` below can tell a directory the
   // user chose apart from one the renderer made up. realpath'd on the way in so a symlink can't
   // be used to smuggle a different target past the same check.
-  ipcMain.handle("labs:pick-dir", async () => {
+  handleIpc("labs:pick-dir", async () => {
     const picked = await pickLabsDirectory(win);
     if (picked) {
       try {
@@ -714,13 +740,13 @@ function registerIpc(): void {
     }
     return picked;
   });
-  ipcMain.handle("labs:set-dir", (_e, dir: unknown) => setLabsDir(dir));
-  ipcMain.handle("labs:reset-dir", () => setLabsDir(defaultLabsDir()));
+  handleIpc("labs:set-dir", (_e, dir: unknown) => setLabsDir(dir));
+  handleIpc("labs:reset-dir", () => setLabsDir(defaultLabsDir()));
 
   // Dismisses promptForLabsDir()'s wait — the "keep the default" path only, since choosing a
   // different folder goes through labs:set-dir instead, which restarts startup() on its own. A
   // stray call with nothing waiting (the prompt already resolved, or was never shown) is a no-op.
-  ipcMain.handle("labs:confirm-dir", () => {
+  handleIpc("labs:confirm-dir", () => {
     labsDirPromptResolve?.();
     labsDirPromptResolve = null;
   });
@@ -927,7 +953,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(async () => {
     log(`Kathara Desktop ${app.getVersion()} starting (packaged=${app.isPackaged})`);
 
-    // Everything before the window is pure in-memory registration — ipcMain.handle,
+    // Everything before the window is pure in-memory registration — handleIpc (ipc.ts),
     // app.on("web-contents-created"), Menu.setApplicationMenu — so nothing here can delay the
     // first paint. Anything that shells out (the login shell's PATH, the Docker and Python
     // probes) now happens inside startup(), below, with the window already up reporting it.

@@ -111,12 +111,19 @@ function applyNavigationPolicy(contents: Electron.WebContents, origin: () => str
   });
 
   // In-page navigation away from the app (a stray link, a redirect) must not replace the UI.
-  contents.on("will-navigate", (event, url) => {
+  //
+  // Both events, not just `will-navigate`: that one fires on the navigation the page *asked* for,
+  // and says nothing about where it ends up. A request to the app's own origin that answers with
+  // a 302 elsewhere passes `will-navigate` cleanly and only shows its true destination at
+  // `will-redirect` — which is the event that catches it, per redirect hop.
+  const blockForeignNavigation = (event: Electron.Event, url: string) => {
     if (!sameOrigin(url, origin())) {
       event.preventDefault();
       openExternally(url);
     }
-  });
+  };
+  contents.on("will-navigate", blockForeignNavigation);
+  contents.on("will-redirect", blockForeignNavigation);
 }
 
 /**

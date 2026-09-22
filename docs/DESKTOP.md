@@ -211,3 +211,8 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 - The backend is bound to `127.0.0.1` only and paired with this one launch via the token
   described above; the renderer runs sandboxed and context-isolated with no Node access,
   reaching the shell only through an explicit bridge (`preload.ts`).
+- Every IPC channel is registered through `handleIpc` (`ipc.ts`), which answers only a **top**
+  frame showing a page this shell could have loaded — the SPA on a loopback port, or `setup.html`
+  / `splash.html`. Navigation is pinned to the app's own origin on both `will-navigate` and
+  `will-redirect` (`windows.ts`), the second because a server-side redirect never reaches the
+  first; anything else opens in the user's browser instead.
