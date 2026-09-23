@@ -1,4 +1,4 @@
-"""Schemas for device and collision-domain statistics.
+"""Schemas for device statistics.
 
 These mirror the flat dicts returned by the Kathara stats objects' ``to_dict()``.
 ``extra="allow"`` keeps the schema tolerant to backend-specific / evolving fields.

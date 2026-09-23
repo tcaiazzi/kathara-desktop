@@ -96,10 +96,10 @@ def create_example_lab(payload: ExampleCreate, service: KatharaService = Depends
 
 
 # Also declared above GET /{lab_name} for the same registration-order reason as /examples above.
-# async, unlike every other route in this file: a burst of concurrent requests must coordinate on
-# the event loop (KatharaService.list_gallery_labs / lab_gallery.fetch_catalog_async), not
-# by each parking a worker thread from the shared threadpool behind a lock held across a ~20s
-# upstream fetch — see docs/DESIGN-NOTES.md.
+# async for a reason upload_lab_file below does not share (that one awaits UploadFile.read()): a
+# burst of concurrent requests must coordinate on the event loop (KatharaService.list_gallery_labs /
+# lab_gallery.fetch_catalog_async), not by each parking a worker thread from the shared
+# threadpool behind a lock held across a ~20s upstream fetch — see docs/DESIGN-NOTES.md.
 @router.get("/gallery", response_model=GalleryCatalog)
 async def list_gallery_labs(
     refresh: bool = False, service: KatharaService = Depends(get_service)

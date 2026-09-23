@@ -1,4 +1,6 @@
-"""Schemas for runtime machine filesystem operations."""
+"""Schemas shared by the two filesystem surfaces: the lab's own on-disk tree (routers/labs.py)
+and a running device's filesystem (routers/machines.py). Only the search pair below is offline-only.
+"""
 
 from pydantic import BaseModel
 
@@ -15,28 +17,28 @@ class FsEntry(BaseModel):
 
 
 class FsListResponse(BaseModel):
-    """Directory listing for a runtime machine path."""
+    """Directory listing for a filesystem path."""
 
     path: str
     entries: list[FsEntry]
 
 
 class FsReadTextResponse(BaseModel):
-    """Text file content fetched from a running machine."""
+    """Text file content read from a filesystem path."""
 
     path: str
     content: str
 
 
 class FsWriteTextRequest(BaseModel):
-    """Write or overwrite a text file on a running machine."""
+    """Write or overwrite a text file."""
 
     path: str
     content: str
 
 
 class FsMkdirRequest(BaseModel):
-    """Create a directory on a running machine."""
+    """Create a directory."""
 
     path: str
 
@@ -56,14 +58,14 @@ class FsCopyRequest(BaseModel):
 
 
 class FsDeleteRequest(BaseModel):
-    """Delete a file or directory from a running machine."""
+    """Delete a file or directory."""
 
     path: str
     recursive: bool = False
 
 
 class FsUploadResponse(BaseModel):
-    """Result of uploading a binary/text file to a machine path."""
+    """Result of uploading a binary/text file to a filesystem path."""
 
     path: str
     size: int

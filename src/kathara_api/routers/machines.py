@@ -64,7 +64,9 @@ def remove_machine(
     keep_links: bool = False,
     service: KatharaService = Depends(get_service),
 ) -> Message:
-    """Undeploy a single device from a network scenario."""
+    """Remove a device from a network scenario: undeploy it if running, drop it from the model
+    and from ``lab.conf``, and delete its folder and startup/shutdown scripts. ``keep_links=true``
+    leaves the collision domains it was attached to in place."""
     service.remove_machine(lab_name, machine_name, keep_links=keep_links)
     return Message(detail=f"Device `{machine_name}` removed from lab `{lab_name}`.")
 
@@ -78,7 +80,9 @@ def connect_machine(
     mac_address: str | None = None,
     service: KatharaService = Depends(get_service),
 ) -> MachineDetail:
-    """Attach a device to a collision domain on a running network scenario."""
+    """Attach a device to a collision domain. On a stopped device the interface is persisted to
+    ``lab.conf`` and ``interface_number`` may pin its slot; on a running one the connection is live
+    only and ``interface_number`` is rejected."""
     machine = service.connect_machine(
         lab_name,
         machine_name,
@@ -97,7 +101,8 @@ def disconnect_machine(
     keep_link: bool = False,
     service: KatharaService = Depends(get_service),
 ) -> Message:
-    """Detach a device from a collision domain."""
+    """Detach a device from a collision domain. ``keep_link=true`` only applies to a running
+    device: it keeps the collision domain deployed even when the device was the last one on it."""
     service.disconnect_machine(lab_name, machine_name, link, keep_link=keep_link)
     return Message(detail=f"Device `{machine_name}` disconnected from `{link}`.")
 
