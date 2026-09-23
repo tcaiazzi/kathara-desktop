@@ -13,7 +13,6 @@ interface EditorPaneProps {
   placeholder?: string;
   onSave: () => void;
   saveDisabled: boolean;
-  extraActions?: ReactNode;
   // Syntax mode for the code editor. Defaults to plaintext; callers pass languageForPath(path).
   language?: EditorLanguage;
   /** Forwarded to CodeEditor — see its own doc. */
@@ -30,7 +29,6 @@ export function EditorPane({
   placeholder,
   onSave,
   saveDisabled,
-  extraActions,
   language = "plaintext",
   scrollTarget,
 }: EditorPaneProps) {
@@ -43,7 +41,6 @@ export function EditorPane({
       <div className="d-flex justify-content-between align-items-center mb-2">
         <span className="font-monospace small text-muted">{pathLabel}</span>
         <div className="d-flex gap-2">
-          {extraActions}
           <Button size="sm" variant="primary" disabled={saveDisabled} onClick={onSave}>
             Save
           </Button>

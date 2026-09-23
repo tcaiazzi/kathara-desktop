@@ -9,14 +9,14 @@ interface AutocompleteInputProps {
   placeholder?: string;
   disabled?: boolean;
   size?: "sm" | "lg";
-  id?: string;
   required?: boolean;
-  className?: string;
   "aria-label"?: string;
-  // Suggestions are capped to this many entries (closest matches first, by index in `options`) —
-  // matters for a field like sysctl names, which can number in the thousands.
-  maxSuggestions?: number;
 }
+
+// Suggestions shown at once (closest matches first, by index in `options`). A cap rather than a
+// prop because no field needs a different one, and one of them — the host's sysctl names — can
+// number in the thousands, so rendering them all would be the only case that mattered.
+const MAX_SUGGESTIONS = 50;
 
 // Free-text input with a custom-rendered suggestion dropdown — a styleable stand-in for a plain
 // <input list="…"> + <datalist> (see AutocompleteInput.css for why). Nothing here restricts the
@@ -28,11 +28,8 @@ export function AutocompleteInput({
   placeholder,
   disabled,
   size,
-  id,
   required,
-  className,
   "aria-label": ariaLabel,
-  maxSuggestions = 50,
 }: AutocompleteInputProps) {
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
@@ -40,7 +37,7 @@ export function AutocompleteInput({
 
   const query = value.trim().toLowerCase();
   const allMatches = query ? options.filter((o) => o.toLowerCase().includes(query)) : options;
-  const matches = allMatches.slice(0, maxSuggestions);
+  const matches = allMatches.slice(0, MAX_SUGGESTIONS);
 
   useEffect(() => {
     function onDocPointerDown(e: PointerEvent) {
@@ -58,12 +55,10 @@ export function AutocompleteInput({
   return (
     <div className="kt-autocomplete" ref={rootRef}>
       <Form.Control
-        id={id}
         size={size}
         required={required}
         disabled={disabled}
         placeholder={placeholder}
-        className={className}
         aria-label={ariaLabel}
         autoComplete="off"
         value={value}

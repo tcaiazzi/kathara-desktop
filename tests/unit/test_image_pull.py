@@ -295,7 +295,7 @@ def test_concurrent_notes_and_snapshots_stay_consistent():
             for _ in range(500):
                 try:
                     image_pull.snapshot()
-                except Exception as exc:  # noqa: BLE001 - the point of the test
+                except Exception as exc:  # the point of the test
                     errors.append(exc)
 
         threads = [threading.Thread(target=feed, args=(i,)) for i in range(layers)]

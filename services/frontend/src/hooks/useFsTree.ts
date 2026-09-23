@@ -165,8 +165,6 @@ export interface UseFsTree {
   handlePaste: (destDirOverride?: string) => Promise<void>;
   /** Re-fetch every already-loaded directory, preserving expand state. */
   reload: () => Promise<void>;
-  /** Re-list one directory (its not-yet-seen ancestors first). */
-  refreshDir: (path: string) => Promise<void>;
 }
 
 // What the module-level row renderer (react-arborist needs a stable component identity, so it
@@ -1033,6 +1031,5 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     handleCut,
     handlePaste,
     reload,
-    refreshDir,
   };
 }

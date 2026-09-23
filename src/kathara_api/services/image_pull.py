@@ -57,11 +57,14 @@ def format_bytes(value: int) -> str:
     """Human-readable byte count for the server-authored ``detail`` line."""
     if value < 1024:
         return f"{value} B"
-    for unit in ("KB", "MB", "GB"):
-        value /= 1024.0
-        if value < 1024 or unit == "GB":
-            return f"{value:.1f} {unit}".replace(".0 ", " ")
-    return f"{value:.1f} GB"
+    scaled = float(value)
+    for unit in ("KB", "MB"):
+        scaled /= 1024.0
+        if scaled < 1024:
+            return f"{scaled:.1f} {unit}".replace(".0 ", " ")
+    # GB is the last unit deliberately: a container image large enough to need TB isn't a case
+    # worth widening the table for, and anything bigger simply reads as a large GB figure.
+    return f"{scaled / 1024.0:.1f} GB".replace(".0 ", " ")
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +112,7 @@ def classify_images(
             # download in front of a lab whose images are all present.
             logger.debug("image presence check failed for %s", name, exc_info=True)
             states[name] = "unknown"
-        except Exception:  # noqa: BLE001 - a broken check must never block a deploy
+        except Exception:  # a broken check must never block a deploy
             logger.debug("image presence check failed for %s", name, exc_info=True)
             states[name] = "unknown"
 
@@ -147,7 +150,7 @@ def classify_images(
         def probe(image_name: str) -> None:
             try:
                 digest = _remote_digest(docker_image, image_name)
-            except Exception:  # noqa: BLE001 - an unanswered probe simply stays `unknown`
+            except Exception:  # an unanswered probe simply stays `unknown`
                 # Same call Kathara makes, and the same conclusion it draws on failure
                 # ("Cannot check updates, skipping...").
                 logger.debug("update check failed for %s", image_name, exc_info=True)
@@ -382,7 +385,7 @@ def note(line: dict[str, Any]) -> None:
                 elif status == "Pull complete":
                     layer.extracting = False
                 return
-    except Exception:  # noqa: BLE001 - progress bookkeeping must never break a download
+    except Exception:  # progress bookkeeping must never break a download
         logger.debug("failed to record image pull progress", exc_info=True)
 
 

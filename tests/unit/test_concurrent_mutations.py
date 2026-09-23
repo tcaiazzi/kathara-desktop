@@ -471,7 +471,7 @@ def test_a_second_import_of_the_same_name_waits_and_then_gets_a_clean_409(tmp_pa
     def run_loser():
         try:
             make_lab(service, "dup", {"lab.conf": "pclose[image]=kathara/base\n"}, [])
-        except Exception as exc:  # noqa: BLE001 — the type is the assertion
+        except Exception as exc:  # the type is the assertion
             errors.append(exc)
         loser_done.set()
 
@@ -514,7 +514,7 @@ def test_an_upload_racing_another_of_the_same_name_does_not_overwrite_it(tmp_pat
     def run_loser():
         try:
             make_lab(service, "dup", {"lab.conf": "pclose[image]=kathara/base\n", "loser_was_here": "x"}, [])
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # narrow enough is the assertion below
             errors.append(exc)
 
     loser = threading.Thread(target=run_loser)
@@ -548,7 +548,7 @@ def test_n_concurrent_imports_of_one_name_yield_one_success_and_the_rest_409(tmp
             outcomes.append("created")
         except LabAlreadyRegisteredError:
             outcomes.append("conflict")
-        except Exception as exc:  # noqa: BLE001 — anything else is the bug
+        except Exception as exc:  # anything else is the bug
             outcomes.append(f"unexpected: {type(exc).__name__}: {exc}")
 
     threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]

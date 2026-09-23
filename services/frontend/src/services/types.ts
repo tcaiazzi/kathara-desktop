@@ -221,6 +221,9 @@ export interface LabCreate {
   name: string;
 }
 
+// Mirrors schemas/filesystem.py's FsEntry. The tree only draws `name`/`path`/`is_dir`; the rest
+// is carried because the response has it, so a panel that wants to show size or mtime doesn't
+// have to widen the schema first.
 export interface FsEntry {
   name: string;
   path: string;
@@ -298,6 +301,8 @@ export interface ImagePullProgress {
   images_done: number;
   downloaded_bytes: number;
   total_bytes: number;
+  // Per-layer detail the progress bar doesn't draw — it shows bytes and the server-authored
+  // `detail` line instead. Mirrored because the response carries it.
   layers_total: number;
   layers_done: number;
   extracting: boolean;

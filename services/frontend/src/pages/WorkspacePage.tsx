@@ -1090,13 +1090,11 @@ export function WorkspacePage() {
     ? {
         labName: name,
         detail: currentDetail,
-        onRefresh: load,
         selectedId,
         setSelectedId: selectNode,
         openFilesPanel,
         openTerminal,
         openRuntimeFsPanel,
-        runtimeFsPreferredMachine,
         nodeInfoHost,
         setNodeInfoHost,
         deviceActions,

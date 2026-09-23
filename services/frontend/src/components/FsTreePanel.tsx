@@ -285,9 +285,7 @@ export function FsTreePanel({
               : selectedIsDir
               ? "This is a folder — select a file to edit it."
               : isBinary
-                ? tree.hasDownload
-                  ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
-                  : "This file is binary and can't be displayed here. Delete to remove it, or edit it via the Runtime Filesystem tab once the device is running."
+                ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
                 : editorReadOnly
                   ? readOnlyPlaceholder
                   : selected
