@@ -31,8 +31,10 @@ from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 import fs.copy
 import fs.errors
 import fs.path
+from docker.errors import APIError
 from Kathara.exceptions import (
     DockerDaemonConnectionError,
+    HTTPConnectionError,
     InvocationError,
     LabNotFoundError,
     MachineNotFoundError,
@@ -45,7 +47,6 @@ from Kathara.model.Link import Link
 from Kathara.model.Machine import Machine
 from Kathara.setting.Setting import Setting
 from Kathara.utils import is_admin
-from Kathara.webhooks.DockerHubApi import DockerHubApi
 from pydantic import ValidationError
 
 from ..config import get_settings
@@ -64,10 +65,19 @@ from ..lab_conf_options import LAB_CONF_FILENAME
 from ..schemas.examples import ExampleSummary
 from ..schemas.filesystem import FsEntry, FsSearchMatch
 from ..schemas.gallery import GalleryCatalog, GalleryLabSummary
-from ..schemas.images import LabImagesStatus, LabImageStatus
+from ..schemas.images import AvailableImages, LabImagesStatus, LabImageStatus
 from ..schemas.lab import LabConfView, LabCreate, LabLayout
 from ..schemas.machine import MachineCreate, MachineUpdate
-from . import examples, image_pull, lab_builder, lab_conf_edit, lab_gallery, lab_import, lab_store
+from . import (
+    docker_hub,
+    examples,
+    image_pull,
+    lab_builder,
+    lab_conf_edit,
+    lab_gallery,
+    lab_import,
+    lab_store,
+)
 from .docker_tty import SHELL_PATHS
 from .lab_store import LabStore
 from .registry import LabRegistry
@@ -359,26 +369,67 @@ class KatharaService:
             "is_admin": is_admin(),
         }
 
-    def list_available_images(self) -> list[str]:
-        """Official Kathara device images published on Docker Hub (the ``kathara/`` org), via
-        Kathara's own CLI-settings lookup (``DockerHubApi.get_tagged_images``) — the same source
-        the `kathara settings` terminal menu uses to offer a default-image picker. Cached
-        in-process for ``_IMAGES_CACHE_TTL`` seconds; raises ``HTTPConnectionError`` (mapped to a
-        502 by ``errors.py``) if Docker Hub can't be reached, which callers should treat as
-        non-fatal — mirrors the CLI's own behavior of silently falling back to manual entry.
+    def list_available_images(self) -> AvailableImages:
+        """Image-field suggestions, split into the official Kathara images on Docker Hub and the
+        images already present on this machine's Docker daemon.
+
+        Suggestions only — the field stays free text, so neither half is authoritative and
+        neither failing is an error. Docker Hub unreachable leaves the local images; the daemon
+        stopped leaves the Hub list; both down returns two empty lists and the user types the
+        name. An image in both halves is reported as official only, so the picker never shows it
+        under two headings.
+        """
+        official = self._official_images()
+        seen = set(official)
+        return AvailableImages(
+            official=official,
+            local=[name for name in self.list_local_images() if name not in seen],
+        )
+
+    def _official_images(self) -> list[str]:
+        """The Docker Hub half, cached in-process for ``_IMAGES_CACHE_TTL`` seconds.
+
+        Only this half is cached: it is a ~20-request fan-out over the network, while
+        ``list_local_images`` is a millisecond call to the local daemon that must stay fresh so
+        an image the user just pulled shows up without waiting out a TTL.
         """
         with self._images_cache_lock:
             if self._images_cache is not None and time.monotonic() - self._images_cache_at < self._IMAGES_CACHE_TTL:
                 # A copy, not the cached list itself: a caller that mutated it in place would
-                # corrupt the cache for everyone else. The sole caller (routers/system.py) is
-                # serialized through Pydantic before it ever reaches this list, so this only
-                # protects a direct one.
+                # corrupt the cache for everyone else.
                 return list(self._images_cache)
-        images = DockerHubApi.get_tagged_images()
+        try:
+            images = docker_hub.list_tagged_images()
+        except HTTPConnectionError:
+            # Not cached, so the next call retries rather than latching the picker into a
+            # Hub-less state for five minutes after a brief network blip.
+            logger.debug("Could not list the official Kathara images from Docker Hub", exc_info=True)
+            return []
         with self._images_cache_lock:
             self._images_cache = images
             self._images_cache_at = time.monotonic()
         return list(images)
+
+    def list_local_images(self) -> list[str]:
+        """Every tagged image on this machine's Docker daemon, sorted, ``:latest`` stripped.
+
+        Stripping ``:latest`` is what makes a locally pulled ``kathara/base:latest`` dedupe
+        against Docker Hub's ``kathara/base`` instead of sitting next to it as a near-duplicate;
+        it also matches how images are written in ``lab.conf``. Untagged (dangling) images are
+        dropped — there is nothing a user could type to name one.
+        """
+        try:
+            images = self._docker_manager().client.images.list()
+        except (DockerDaemonConnectionError, APIError):
+            logger.debug("Could not list local Docker images", exc_info=True)
+            return []
+        names = {
+            tag[: -len(":latest")] if tag.endswith(":latest") else tag
+            for image in images
+            for tag in (image.tags or [])
+            if tag and not tag.startswith("<none>")
+        }
+        return sorted(names)
 
     # -- Docker images (pre-deploy check + explicit download) -----------------
 

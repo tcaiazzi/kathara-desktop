@@ -3,7 +3,7 @@ import { FolderOpen, Info } from "lucide-react";
 import { Button, Form, OverlayTrigger, Tooltip } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
 import { desktop } from "../desktop/bridge";
-import { useAvailableImages } from "../hooks/useAvailableImages";
+import { useAvailableImageSections } from "../hooks/useAvailableImages";
 import { api } from "../services/api";
 import type { MachineDetail, MachineOptionsPayload, PortMapping, Ulimit, VolumeMount } from "../services/types";
 import { AutocompleteInput } from "./AutocompleteInput";
@@ -147,7 +147,7 @@ interface MachineOptionsFieldsProps {
 export function MachineOptionsFields({ form, disabled, onChange }: MachineOptionsFieldsProps) {
   const [netSysctls, setNetSysctls] = useState<string[]>([]);
   const toast = useToast();
-  const availableImages = useAvailableImages();
+  const imageSections = useAvailableImageSections();
 
   useEffect(() => {
     api.listNetSysctls().then(setNetSysctls).catch((e) => toast.reportError("List sysctls", e));
@@ -221,7 +221,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
             disabled={disabled}
             placeholder="kathara/base"
             onChange={(v) => set("image", v)}
-            options={availableImages}
+            options={imageSections}
           />
         </div>
         <div className="col-3">

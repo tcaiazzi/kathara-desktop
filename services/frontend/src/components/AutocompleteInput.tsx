@@ -1,11 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Form } from "react-bootstrap";
 import "./AutocompleteInput.css";
+
+/** A headed group of suggestions, for fields whose options come from more than one source. */
+export interface AutocompleteSection {
+  label: string;
+  options: string[];
+}
 
 interface AutocompleteInputProps {
   value: string;
   onChange: (value: string) => void;
-  options: string[];
+  /** Either a plain list of suggestions, or sections rendered under a header each. */
+  options: string[] | AutocompleteSection[];
   placeholder?: string;
   disabled?: boolean;
   size?: "sm" | "lg";
@@ -15,8 +22,17 @@ interface AutocompleteInputProps {
 
 // Suggestions shown at once (closest matches first, by index in `options`). A cap rather than a
 // prop because no field needs a different one, and one of them — the host's sysctl names — can
-// number in the thousands, so rendering them all would be the only case that mattered.
+// number in the thousands, so rendering them all would be the only case that mattered. Counted
+// across all sections, so one long section can't push a later one out of view entirely.
 const MAX_SUGGESTIONS = 50;
+
+function asSections(options: string[] | AutocompleteSection[]): AutocompleteSection[] {
+  // A flat list becomes the one anonymous section, so there is a single rendering path. Empty is
+  // ambiguous between the two shapes and means "nothing to suggest" either way.
+  if (options.length === 0) return [];
+  if (typeof options[0] === "string") return [{ label: "", options: options as string[] }];
+  return options as AutocompleteSection[];
+}
 
 // Free-text input with a custom-rendered suggestion dropdown — a styleable stand-in for a plain
 // <input list="…"> + <datalist> (see AutocompleteInput.css for why). Nothing here restricts the
@@ -36,7 +52,14 @@ export function AutocompleteInput({
   const rootRef = useRef<HTMLDivElement>(null);
 
   const query = value.trim().toLowerCase();
-  const allMatches = query ? options.filter((o) => o.toLowerCase().includes(query)) : options;
+  // Flattened, because arrow keys and the highlight index run across section boundaries: each
+  // entry carries the header to draw above it, set only on the first survivor of its section so
+  // a section filtered down to nothing leaves no orphan heading behind.
+  const allMatches: { option: string; header: string | null }[] = [];
+  for (const section of asSections(options)) {
+    const hits = query ? section.options.filter((o) => o.toLowerCase().includes(query)) : section.options;
+    hits.forEach((option, i) => allMatches.push({ option, header: i === 0 ? section.label : null }));
+  }
   const matches = allMatches.slice(0, MAX_SUGGESTIONS);
 
   useEffect(() => {
@@ -79,7 +102,7 @@ export function AutocompleteInput({
           } else if (e.key === "Enter") {
             if (matches[highlight]) {
               e.preventDefault();
-              pick(matches[highlight]);
+              pick(matches[highlight].option);
             }
           } else if (e.key === "Escape") {
             setOpen(false);
@@ -88,18 +111,20 @@ export function AutocompleteInput({
       />
       {open && !disabled && matches.length > 0 && (
         <div className="kt-autocomplete-menu">
-          {matches.map((opt, i) => (
-            <button
-              type="button"
-              key={opt}
-              className={`kt-autocomplete-item${i === highlight ? " active" : ""}`}
-              // Prevents the input's blur (which would close the menu) from firing before onClick.
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(opt)}
-              onMouseEnter={() => setHighlight(i)}
-            >
-              {opt}
-            </button>
+          {matches.map(({ option, header }, i) => (
+            <Fragment key={`${i}-${option}`}>
+              {header && <div className="kt-autocomplete-section">{header}</div>}
+              <button
+                type="button"
+                className={`kt-autocomplete-item${i === highlight ? " active" : ""}`}
+                // Prevents the input's blur (which would close the menu) from firing before onClick.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pick(option)}
+                onMouseEnter={() => setHighlight(i)}
+              >
+                {option}
+              </button>
+            </Fragment>
           ))}
           {allMatches.length > matches.length && (
             <div className="kt-autocomplete-more">

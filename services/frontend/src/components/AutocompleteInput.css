@@ -46,3 +46,17 @@
   font-size: 11px;
   color: var(--bs-secondary-color);
 }
+/* Section heading, when the suggestions come from more than one source (e.g. the official Kathara
+   images vs. the ones already on this machine). Not focusable and not a menu item — arrow keys
+   step over it, straight from one section's last entry to the next section's first. */
+.kt-autocomplete-section {
+  padding: 8px 10px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+}
+.kt-autocomplete-section:first-child {
+  padding-top: 4px;
+}

@@ -80,27 +80,3 @@ export const RESERVED_MACHINE_NAMES = new Set<string>(["shared", "_test"]);
 // The canonical lab.conf directive line, identical to the backend `CONF_LINE_RE`:
 //   machine[arg]=value  (value optionally quoted, optional trailing " # comment")
 export const CONF_LINE_RE = /^([a-z0-9_]{1,30})\[(\w+)\]=(["']?)([^"']+)\3(\s+#.*)?$/;
-
-// Known Kathara official Docker images, offered as image-value completions. Kept aligned with the
-// EXACT map in `deviceIcon.ts` (the Kathara Docker-Images set); curated to the current image names
-// (dropping deprecated aliases).
-export const KATHARA_IMAGES = [
-  "kathara/base",
-  "kathara/frr",
-  "kathara/quagga",
-  "kathara/bird",
-  "kathara/openbgpd",
-  "kathara/scion",
-  "kathara/rift-python",
-  "kathara/openvswitch",
-  "kathara/sdn",
-  "kathara/bmv2",
-  "kathara/p4",
-  "kathara/pox",
-  "kathara/apache",
-  "kathara/bind",
-  "kathara/dnsmasq",
-  "kathara/krill",
-  "kathara/routinator",
-  "kathara/rpki-client",
-];

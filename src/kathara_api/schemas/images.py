@@ -38,6 +38,19 @@ class LabImagesStatus(BaseModel):
     outdated: list[str] = Field(default_factory=list)
 
 
+class AvailableImages(BaseModel):
+    """Image-field suggestions, split by where they come from so the picker can label them.
+
+    Two lists rather than one merged one because the client renders them as separate, headed
+    sections — and because only the backend can tell the two apart. ``local`` never repeats an
+    entry already in ``official``. Both are suggestions, not a restriction: the field stays free
+    text, and either list being empty (Docker Hub unreachable, daemon stopped) is normal.
+    """
+
+    official: list[str] = Field(default_factory=list)
+    local: list[str] = Field(default_factory=list)
+
+
 class ImagePullRequest(BaseModel):
     """The exact set of images to pull. No presence filtering happens server-side — see
     ``services/image_pull.pull_images`` for why an *outdated* image must not be skipped."""

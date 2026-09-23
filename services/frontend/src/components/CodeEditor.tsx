@@ -17,6 +17,7 @@ import { labConfCompletion } from "../editor/labConfComplete";
 import { labConf } from "../editor/labConfLanguage";
 import { labConfLinter } from "../editor/labConfLint";
 import { editorTheme } from "../editor/theme";
+import { useAvailableImageList } from "../hooks/useAvailableImages";
 import { useTheme } from "../hooks/useTheme";
 import type { EditorLanguage } from "../services/editorLanguage";
 
@@ -32,12 +33,14 @@ interface CodeEditorProps {
   scrollTarget?: { line: number; seq: number } | null;
 }
 
-// Language extension + its companions (autocomplete/lint only for lab.conf).
-function languageExtensions(language: EditorLanguage): Extension {
+// Language extension + its companions (autocomplete/lint only for lab.conf). `images` feeds the
+// `[image]=` completions and arrives asynchronously, so this is re-run through the language
+// Compartment when it lands rather than being baked in once.
+function languageExtensions(language: EditorLanguage, images: string[]): Extension {
   if (language === "labconf") {
     return [
       labConf,
-      autocompletion({ override: [labConfCompletion] }),
+      autocompletion({ override: [labConfCompletion(images)] }),
       lintGutter(),
       labConfLinter,
     ];
@@ -57,6 +60,7 @@ export function CodeEditor({
   placeholder,
   scrollTarget,
 }: CodeEditorProps) {
+  const images = useAvailableImageList();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
@@ -82,7 +86,7 @@ export function CodeEditor({
         highlightActiveLineGutter(),
         EditorView.lineWrapping,
         keymap.of([...completionKeymap, ...lintKeymap]),
-        langComp.current.of(languageExtensions(language)),
+        langComp.current.of(languageExtensions(language, images)),
         themeComp.current.of(editorTheme(theme)),
         editableComp.current.of([EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)]),
         placeholderComp.current.of(placeholder ? cmPlaceholder(placeholder) : []),
@@ -117,8 +121,10 @@ export function CodeEditor({
   }, [value]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: langComp.current.reconfigure(languageExtensions(language)) });
-  }, [language]);
+    viewRef.current?.dispatch({
+      effects: langComp.current.reconfigure(languageExtensions(language, images)),
+    });
+  }, [language, images]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: themeComp.current.reconfigure(editorTheme(theme)) });

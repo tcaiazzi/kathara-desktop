@@ -286,6 +286,14 @@ export interface LabImagesStatus {
   outdated: string[];
 }
 
+// Suggestions for an "image" field, split by source so the picker can label the two sections.
+// `local` never repeats an entry already in `official`. Either list can be empty — Docker Hub
+// unreachable, or the Docker daemon stopped — and neither case is an error.
+export interface AvailableImages {
+  official: string[];
+  local: string[];
+}
+
 export interface ImagePullResult {
   pulled: string[];
 }

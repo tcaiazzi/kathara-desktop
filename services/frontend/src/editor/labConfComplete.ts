@@ -1,15 +1,10 @@
 // Autocomplete for lab.conf, driven by the shape of the current line. Offers option keywords inside
-// `[...]`, known Kathara images after `[image]=`, collision domains already used in the doc after
-// `[<num>]=`, and LAB_* globals + existing machine names at the start of a line.
+// `[...]`, the available Docker images after `[image]=`, collision domains already used in the doc
+// after `[<num>]=`, and LAB_* globals + existing machine names at the start of a line.
 
 import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import type { Text } from "@codemirror/state";
-import {
-  CONF_LINE_RE,
-  KATHARA_IMAGES,
-  LAB_GLOBALS,
-  OPTION_KEYWORDS,
-} from "../services/editorLanguage";
+import { CONF_LINE_RE, LAB_GLOBALS, OPTION_KEYWORDS } from "../services/editorLanguage";
 
 // Machine names appearing as `name[...]` anywhere in the document.
 function collectMachines(doc: Text): string[] {
@@ -34,7 +29,14 @@ function collectDomains(doc: Text): string[] {
   return [...set];
 }
 
-export function labConfCompletion(ctx: CompletionContext): CompletionResult | null {
+// A factory rather than a completion source directly, because the image suggestions are fetched
+// at runtime (useAvailableImages) instead of being a constant: the caller re-creates the source
+// through CodeEditor's language Compartment once the list arrives.
+export function labConfCompletion(images: string[]) {
+  return (ctx: CompletionContext): CompletionResult | null => labConfComplete(ctx, images);
+}
+
+function labConfComplete(ctx: CompletionContext, images: string[]): CompletionResult | null {
   const line = ctx.state.doc.lineAt(ctx.pos);
   const before = line.text.slice(0, ctx.pos - line.from);
 
@@ -48,12 +50,14 @@ export function labConfCompletion(ctx: CompletionContext): CompletionResult | nu
     };
   }
 
-  // After `[image]=` → known Kathara images.
+  // After `[image]=` → the official Kathara images plus this machine's local ones. No `validFor`:
+  // an image name contains `/`, `:` and `.`, so any pattern loose enough to keep the popup open
+  // while typing one would also keep it open past the end of the value.
   if (/\[image\]=\s*\S*$/.test(before)) {
     const eq = before.lastIndexOf("=");
     return {
       from: line.from + eq + 1,
-      options: KATHARA_IMAGES.map((label) => ({ label, type: "constant" })),
+      options: images.map((label) => ({ label, type: "constant" })),
     };
   }
 

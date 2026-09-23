@@ -9,7 +9,12 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 
 from ..dependencies import get_service
 from ..schemas.common import HealthStatus, Message, WipeResult
-from ..schemas.images import ImagePullProgress, ImagePullRequest, ImagePullResult
+from ..schemas.images import (
+    AvailableImages,
+    ImagePullProgress,
+    ImagePullRequest,
+    ImagePullResult,
+)
 from ..schemas.settings import SettingsUpdate, SettingsView, SystemInfo
 from ..services import image_pull
 from ..services.kathara_service import KatharaService
@@ -101,11 +106,12 @@ def list_net_sysctls(service: KatharaService = Depends(get_service)) -> list[str
     return service.list_net_sysctls()
 
 
-@router.get("/system/images", response_model=list[str])
-def list_available_images(service: KatharaService = Depends(get_service)) -> list[str]:
-    """Official Kathara device images published on Docker Hub — suggestions for an "image" field,
-    not a restriction (any valid Docker image is still accepted). 502s if Docker Hub is
-    unreachable; callers should treat that as non-fatal and fall back to plain manual entry."""
+@router.get("/system/images", response_model=AvailableImages)
+def list_available_images(service: KatharaService = Depends(get_service)) -> AvailableImages:
+    """The official Kathara images on Docker Hub and the images already on this machine's Docker
+    daemon, kept apart so the picker can label them — suggestions for an "image" field, not a
+    restriction (any valid Docker image is still accepted). Never fails: an unreachable Docker
+    Hub or a stopped daemon just empties that half, and the user types the name."""
     return service.list_available_images()
 
 

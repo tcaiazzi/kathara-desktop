@@ -1,4 +1,5 @@
 import type {
+  AvailableImages,
   ErrorResponse,
   ExampleLab,
   GalleryCatalog,
@@ -150,9 +151,10 @@ export const api = {
   wipeAll: () => request<WipeResult>("POST", "/system/wipe", {}),
   // Every `net.*` sysctl key available on this host's kernel — the only namespace Kathara accepts.
   listNetSysctls: () => request<string[]>("GET", "/system/sysctls"),
-  // Official Kathara device images published on Docker Hub — suggestions for an "image" field,
-  // not a restriction (any valid Docker image is still accepted).
-  listAvailableImages: () => request<string[]>("GET", "/system/images"),
+  // The official Kathara images on Docker Hub and the ones already on this machine's Docker
+  // daemon, kept apart so the picker can label them — suggestions for an "image" field, not a
+  // restriction (any valid Docker image is still accepted).
+  listAvailableImages: () => request<AvailableImages>("GET", "/system/images"),
 
   listLabs: () => request<LabSummary[]>("GET", "/labs"),
   getLab: (name: string, signal?: AbortSignal) =>

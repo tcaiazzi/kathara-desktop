@@ -7,7 +7,7 @@ import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
 import { desktop, isDesktop } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
-import { useAvailableImages } from "../hooks/useAvailableImages";
+import { useAvailableImageSections } from "../hooks/useAvailableImages";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
@@ -166,7 +166,7 @@ export function SettingsPage() {
   const [lockedError, setLockedError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  const availableImages = useAvailableImages();
+  const imageSections = useAvailableImageSections();
   const requestDeployAuth = useDeployAuthorization();
   const { run: runBusy } = useBusyAction();
 
@@ -320,7 +320,7 @@ export function SettingsPage() {
           </Form.Group>
           <Form.Group className="mb-2">
             <Form.Label>Default image</Form.Label>
-            <AutocompleteInput value={form.image} onChange={(v) => set("image", v)} options={availableImages} />
+            <AutocompleteInput value={form.image} onChange={(v) => set("image", v)} options={imageSections} />
           </Form.Group>
           <Form.Group className="mb-2">
             <Form.Label>Device shell</Form.Label>
