@@ -398,9 +398,9 @@ def test_second_concurrent_download_is_refused_with_409(client_and_service):
 
 
 def test_pull_endpoint_returns_a_clean_404_for_a_nonexistent_reference(client_and_service):
-    """Regression for image_pull.py's own comment ("Surfaces a nonexistent reference as a clean
-    error now, rather than mid-stream") above `docker_image.get_remote(name)` — before errors.py
-    had a dedicated docker.errors.APIError handler this fell through the catch-all as a 500."""
+    """`image_pull`'s `docker_image.get_remote(name)` probe must surface a nonexistent reference
+    as a clean 404 up front rather than mid-stream, which takes errors.py's dedicated
+    docker.errors.APIError handler: without it this falls through the catch-all as a 500."""
     client, service = client_and_service
 
     def _raise_not_found(name):

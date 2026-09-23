@@ -55,9 +55,9 @@ LAB_CONF = "r1[image]=kathara/base\nr1[0]=A\npc1[image]=kathara/base\npc1[0]=A\n
 
 
 def test_fresh_deploy_materializes_pending_to_native_fs_not_exec(tmp_path):
-    """A machine's *first* deploy is native (Machine.pack_data reads real files off disk) —
-    no copy_files/exec push happens for it (that would double-run a non-idempotent startup
-    script, once via pack_data and once via the old live-push mechanism)."""
+    """A machine's *first* deploy is native (Machine.pack_data reads real files off disk) — no
+    copy_files/exec push happens for it, which would double-run a non-idempotent startup script:
+    once from pack_data and once from the push."""
     service = _service(tmp_path)
     make_lab(service, "lab1", {"lab.conf": LAB_CONF, "r1.startup": "ip a\n"}, [])
 

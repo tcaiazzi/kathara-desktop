@@ -15,7 +15,7 @@ from kathara_api.services import lab_conf_edit as lce
 # A deliberately hostile lab.conf: comments, unusual interface ordering, single quotes,
 # [num_terms]/[entrypoint]/[args], an unknown meta, a trailing comment on a line that will later be
 # renumbered, and a device's line interleaved into another device's block. Also carries a
-# [volume] line — applied to the model like any other option now, but included here for the same
+# [volume] line — applied to the model like any other option, but included here for the same
 # reason as everything else: proving it survives an unrelated surgical edit byte-for-byte.
 GNARLY = (
     "# Static routing lab — hand written, please do not reformat.\n"
@@ -177,10 +177,9 @@ def test_renumber_interfaces_is_idempotent():
 
 
 def test_device_names_lists_devices_once_in_file_order():
-    """`lab_conf_edit`'s module docstring claims every read helper it exposes is covered here.
-    That was true of `interface_links` and false of this one — the module deliberately exposes the
-    complete editing surface (see the docstring's own reasoning), so the fix is the missing test,
-    not a smaller surface."""
+    """`lab_conf_edit` deliberately exposes the *complete* editing surface rather than the subset
+    with callers (see its module docstring), so this file's coverage has to match that surface:
+    every read helper it exposes is asserted here, `device_names` included."""
     text = (
         "# a comment\n"
         'r1[image]="kathara/base"\n'

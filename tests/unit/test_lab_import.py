@@ -60,10 +60,10 @@ def test_parse_lab_conf_reports_invalid_port_and_sysctl():
 def test_parse_lab_conf_flags_unsupported_options():
     parsed = lab_import.parse_lab_conf("pc1[bridged]=true\npc1[volume]=/h|/g|rw\n")
     pc1 = parsed.machines["pc1"]
-    # bridged is now supported (parsed onto the model), so it must NOT be flagged unsupported.
+    # bridged is supported (parsed onto the model), so it must NOT be flagged unsupported.
     assert pc1.bridged is True
     assert not any("bridged" in w for w in pc1.unsupported)
-    # volume is now supported too (see _parse_volume) — applied to the model, not flagged.
+    # volume is supported too (see _parse_volume) — applied to the model, not flagged.
     assert pc1.volumes == [VolumeMount(host_path="/h", guest_path="/g", mode="rw")]
     assert not any("volume" in w for w in pc1.unsupported)
 

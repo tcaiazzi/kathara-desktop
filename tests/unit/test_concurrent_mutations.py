@@ -2,7 +2,7 @@
 structural change (device/link add/remove/connect/disconnect, rename, delete) racing a
 `deploy_lab`/`undeploy_lab` on the same lab — no Docker required.
 
-**Primary protection** (`_check_not_transitioning`): every one of those operations now fails
+**Primary protection** (`_check_not_transitioning`): every one of those operations fails
 immediately with `LabTransitioningError` if the target lab is mid deploy/undeploy, rather than
 silently queuing behind `_mutate_lock` for however long that takes and only then succeeding or
 failing on whatever state exists by the time it wakes up. Confirmed reachable through the shipped
@@ -11,17 +11,17 @@ menu is gated by the same `busy` flag that disables Deploy/Undeploy, so a user c
 and, before it returns, right-click the same device and connect/disconnect/remove it, or switch to
 the Lab Configuration tab and save an edit.
 
-**Lab creation** is a third, separate race, added below (`test_*_create*`): the four creation
-paths (`create_lab`/`upload_lab`/`install_example`/`install_gallery_lab`) each checked "is this
-name free?" and only *then* wrote to disk, with nothing held in between — so two concurrent
-creates of the same name both passed the check and both wrote. The observed damage was
-not a merely theoretical interleaving: the loser's rollback deleted the *winner's* freshly written
-directory (the winner keeping its 201 and its registry entry, with no files left on disk), or the
-loser's swap replaced the winner's files while the registry kept the winner's model — and an N-way
-race produced raw `FileExistsError`/`FileNotFoundError` 500s instead of clean 409s. They are now
+**Lab creation** is a third, separate race (`test_*_create*`): the four creation paths
+(`create_lab`/`upload_lab`/`install_example`/`install_gallery_lab`) check "is this name free?"
+and only *then* write to disk, so with nothing held in between two concurrent creates of the
+same name both pass the check and both write. The damage is not a merely theoretical
+interleaving: the loser's rollback deletes the *winner's* freshly written directory (the winner
+keeping its 201 and its registry entry, with no files left on disk), or the loser's swap
+replaces the winner's files while the registry keeps the winner's model — and an N-way race
+produces raw `FileExistsError`/`FileNotFoundError` 500s instead of clean 409s. They are
 serialized per lab *name* (`_claiming_name`) rather than behind `_mutate_lock`, because the
-critical section contains the on-disk write itself and holding the global lock across a large .zip
-extraction would stall unrelated labs' deploys.
+critical section contains the on-disk write itself and holding the global lock across a large
+.zip extraction would stall unrelated labs' deploys.
 
 **Fallback protection** (the `_mutate_lock` discipline): the primary check above has an
 inherent, unavoidable TOCTOU gap — a `deploy_lab` can start in the instant *after* a mutator
@@ -30,8 +30,9 @@ passes the check but *before* it acquires `_mutate_lock`. `connect_machine`/`dis
 connect/disconnect, decide their whole stopped-vs-running branch from `machine.api_object` —
 *inside* that lock, never before acquiring it, the same way `add_machine` documents. Reading
 before the lock leaves a mutator caught in the gap working from stale state once it does proceed;
-reading inside it keeps even a slipped-through mutator correct, merely not fast. The tests for this layer bypass `_check_not_transitioning` via monkeypatch specifically
-to force that gap and exercise the lock behavior underneath it, the same way a real race would.
+reading inside it keeps even a slipped-through mutator correct, merely not fast. The tests for
+this layer bypass `_check_not_transitioning` via monkeypatch specifically to force that gap and
+exercise the lock behavior underneath it, the same way a real race would.
 """
 
 import collections
@@ -374,8 +375,8 @@ def _pause_inside(store, method_name: str):
     """Suspend `store.<method_name>` on entry, so a create can be held *inside* `_claiming_name`
     (every one of these store calls is made from within it) while a second create is attempted.
 
-    This is what the fix has to survive: before it, the second create sailed through the
-    check-then-write window while the first was suspended here.
+    That is the window `_claiming_name` has to close: unheld, the second create sails straight
+    through the check-then-write gap while the first is suspended here.
     """
     paused, release = threading.Event(), threading.Event()
     real = getattr(store, method_name)

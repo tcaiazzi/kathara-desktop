@@ -26,8 +26,8 @@ from tests.helpers import make_service, zip_bytes
 
 
 def test_import_limits_are_configurable():
-    # Same defaults the gallery import has always enforced (see lab_gallery.py), now promoted to
-    # ApiSettings and overridable the same way as e.g. cors_origins.
+    # Same defaults the gallery import enforces (see lab_gallery.py), carried on ApiSettings and
+    # overridable the same way as e.g. cors_origins.
     settings = ApiSettings()
     assert settings.max_files_per_lab == 200
     assert settings.max_bytes_per_file == 5 * 1024 * 1024
@@ -157,12 +157,11 @@ def test_body_size_middleware_allows_a_normal_request(client_and_service):
 
 
 def test_body_size_middleware_drains_the_body_before_responding_so_a_browser_isnt_reset(tmp_path, monkeypatch):
-    """Regression test for a real bug found via manual testing in a browser: a client that doesn't
-    send `Expect: 100-continue` (every browser fetch()/XHR upload, unlike curl's default for
-    multipart) is still writing its request body when the 413 above is sent. Closing the
-    connection with that body still in flight resets it out from under the client, surfacing as a
-    generic "NetworkError"/"Failed to fetch" instead of ever showing this JSON response — see
-    `_enforce_body_size`, which now drains `request.stream()` before responding.
+    """A client that doesn't send `Expect: 100-continue` (every browser fetch()/XHR upload, unlike
+    curl's default for multipart) is still writing its request body when the 413 above is sent.
+    Closing the connection with that body still in flight resets it out from under the client,
+    surfacing as a generic "NetworkError"/"Failed to fetch" instead of ever showing this JSON
+    response — so `_enforce_body_size` must drain `request.stream()` before responding.
 
     `TestClient`'s in-process ASGI transport can't reproduce the reset (there's no real socket to
     reset), so this drives a real uvicorn server over a loopback socket by hand.
@@ -211,7 +210,7 @@ def test_body_size_middleware_drains_the_body_before_responding_so_a_browser_isn
 
 
 def test_body_size_middleware_picks_up_a_cap_change_without_rebuilding_the_app(client_and_service, monkeypatch):
-    # max_bytes_per_lab is now editable at runtime from the Settings page
+    # max_bytes_per_lab is editable at runtime from the Settings page
     # (KatharaService.update_settings) — the middleware must read it fresh on every request rather
     # than the value ApiSettings had when create_app() ran, or a Settings save would silently stop
     # taking effect for the rest of the process's life.

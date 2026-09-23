@@ -110,9 +110,9 @@ def test_every_websocket_route_is_deliberately_excluded():
 
 
 def test_no_token_configured_leaves_every_route_reachable(monkeypatch):
-    """Sanity check for the enumeration itself: with no auth_token configured (today's default
-    for every deployment except the desktop app), the same routes must NOT 401 — otherwise the
-    401s above would just mean "auth_token happened to be set", not "the dependency works"."""
+    """Sanity check for the enumeration itself: with no auth_token configured (the default for
+    every deployment except the desktop app), the same routes must NOT 401 — otherwise the 401s
+    above would just mean "auth_token happened to be set", not "the dependency works"."""
     monkeypatch.setattr("kathara_api.dependencies.get_settings", lambda: SimpleNamespace(auth_token=None))
     client = TestClient(create_app(), raise_server_exceptions=False)
     app = create_app()

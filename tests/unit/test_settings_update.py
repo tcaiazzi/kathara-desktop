@@ -23,8 +23,8 @@ def _restore_manager_type():
 
 def test_import_limit_keys_are_not_forwarded_to_kathara_setting():
     # max_files_per_lab isn't a Kathara Setting/DockerSettingsAddon field — Setting.load_from_dict
-    # would silently `setattr` it anyway (no validation there), which would work by accident today
-    # but leave a ghost attribute nothing reads. It must land on ApiSettings instead.
+    # would silently `setattr` it anyway (no validation there), which works by accident but leaves
+    # a ghost attribute nothing reads. It must land on ApiSettings instead.
     service = make_service(facade=object())
 
     service.update_settings({"max_files_per_lab": 3})

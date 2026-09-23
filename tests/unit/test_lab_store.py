@@ -180,9 +180,10 @@ def test_download_upload_round_trip_keeps_the_execute_bit(tmp_path):
 
 @pytest.mark.parametrize("populate", ["write_lab", "extract_zip", "copy_lab_dir"])
 def test_publishing_over_an_existing_lab_directory_is_refused(tmp_path, populate):
-    """All three populate-a-lab-directory paths are *creation* paths, and each used to
-    `rmtree(final)` before its swap — which is how a completed import lost every one of its files
-    to a concurrent create that then failed with a 409 anyway. Refused loudly instead.
+    """All three populate-a-lab-directory paths are *creation* paths, so a `final` that already
+    exists means a concurrent create won this name. Clobbering it — `rmtree(final)` before the
+    swap — costs a completed import every one of its files to a racer that goes on to fail with a
+    409 anyway, so each path must refuse loudly instead.
     """
     store = LabStore(tmp_path / "labs")
     store.write_lab("demo", {"lab.conf": 'pc1[0]="A"\n', "keepme": "precious\n"})

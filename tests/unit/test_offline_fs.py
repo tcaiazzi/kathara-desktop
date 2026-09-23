@@ -2,9 +2,10 @@
 on-disk reads/writes/deletes/moves against a lab's own directory, no Docker required.
 
 No separate "pending" cache exists to test here: a write lands on disk in the same call, so
-there's nothing that can drift or be lost on an undeploy/rename model rebuild. The regression
-tests below (``test_undeploy_does_not_lose_*``/``test_rename_does_not_lose_*``) exist specifically
-because an earlier design *did* keep such a cache, and it did exactly that.
+there's nothing that can drift or be lost on an undeploy/rename model rebuild. The tests below
+(``test_undeploy_does_not_lose_*``/``test_rename_does_not_lose_*``) hold that line: they fail the
+moment a write stops being readable from disk across either rebuild, which is what a cache in
+front of these writes would have to survive.
 """
 
 import fs.errors
@@ -94,7 +95,7 @@ def test_delete_device_root_honours_recursive_false(tmp_path):
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
 
     # Control: the generic (non-device-root) branch already enforces this — confirms both
-    # branches agree, not just that the device-root one now raises for some other reason.
+    # branches agree, not just that the device-root one raises for some other reason.
     with pytest.raises(ApiError):
         service.fs_delete_offline("testlab", "/pc1/etc", recursive=False)
 
@@ -390,8 +391,8 @@ def test_writing_lab_conf_is_validated_whatever_the_spelling(tmp_path, path):
 
 @pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
 def test_writing_lab_conf_rebuilds_the_model_whatever_the_spelling(tmp_path, path):
-    """A *valid* edit must go through update_lab_conf, i.e. actually rebuild the topology — the
-    bypass wrote the file but left the registry holding the old machines."""
+    """A *valid* edit must go through update_lab_conf, i.e. actually rebuild the topology: a
+    bypass writes the file but leaves the registry holding the old machines."""
     service, _store = _two_machine_lab(tmp_path)
 
     service.fs_write_text_offline("testlab", path, 'pc3[image]="kathara/base"\n')
@@ -428,7 +429,8 @@ def test_deleting_lab_conf_is_refused_whatever_the_spelling(tmp_path, path):
 
 @pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
 def test_moving_lab_conf_is_refused_whatever_the_spelling(tmp_path, path):
-    """fs_move_offline's guard had no test at all before this."""
+    """Moving lab.conf away is as destructive as overwriting it, so fs_move_offline's guard must
+    catch every spelling of the name, not just the canonical one."""
     service, store = _two_machine_lab(tmp_path)
 
     with pytest.raises(ApiError):
@@ -519,8 +521,8 @@ def test_fs_delete_offline_rejects_the_lab_root(tmp_path, path, recursive):
 
 
 def test_fs_delete_offline_still_allows_deleting_a_root_level_file_or_dir(tmp_path):
-    """The new lab-root guard must not overreach: root-level entries other than the root itself
-    stay deletable, same as before."""
+    """The lab-root guard must not overreach: root-level entries other than the root itself stay
+    deletable."""
     service, store = _two_machine_lab(tmp_path)
     service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
     service.fs_mkdir_offline("testlab", "/scratch")

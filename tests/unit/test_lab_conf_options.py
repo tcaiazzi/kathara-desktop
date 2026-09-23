@@ -53,9 +53,9 @@ def test_every_interpreted_option_has_a_valid_value_in_this_test():
 
 @pytest.mark.parametrize("option", sorted(INTERPRETED_OPTIONS))
 def test_every_interpreted_option_is_actually_applied(option):
-    """`_apply_conf_option` now *gates* on INTERPRETED_OPTIONS instead of merely agreeing with it,
-    so a name listed there but with no branch in the chain would fall through and do nothing at
-    all — no error, no warning, no effect. This is the test for that failure mode."""
+    """`_apply_conf_option` *gates* on INTERPRETED_OPTIONS rather than merely agreeing with it, so
+    a name listed there but with no branch in the chain falls through and does nothing at all —
+    no error, no warning, no effect. This is the test for that failure mode."""
     parsed = parse_lab_conf(f"pc1[{option}]={_VALID_VALUES[option]}")
 
     machine = parsed.machines["pc1"]
@@ -76,7 +76,7 @@ def test_an_alias_reaches_the_same_field_as_its_canonical_name(alias, canonical)
 
 def test_interpreted_options_are_all_reserved():
     """Structural rather than hoped for: anything the parser will consume on the next load
-    cannot be accepted as a pass-through `metas` entry today."""
+    cannot be accepted as a pass-through `metas` entry."""
     assert INTERPRETED_OPTIONS <= MODELED_META_KEYS
 
 

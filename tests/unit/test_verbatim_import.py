@@ -1,8 +1,7 @@
 """Unit tests for verbatim persistence of imported/uploaded labs (no Docker required).
 
-These are the regression tests for the original bug report: importing a lab from a zip must not
-modify lab.conf (or any other file) — every byte of the source archive must land on disk exactly
-as it was, and stay that way after a fresh deploy.
+Importing a lab from a zip must not modify lab.conf, or any other file: every byte of the source
+archive must land on disk exactly as it was, and stay that way after a fresh deploy.
 """
 
 import zipfile
@@ -95,8 +94,8 @@ def test_upload_lab_preserves_every_archive_member_byte_for_byte(tmp_path):
 
 
 def test_upload_lab_keeps_shared_startup_and_shutdown(tmp_path):
-    # Regression guard for the deleted `for stray in ("shared.startup", "shared.shutdown"):
-    # stray_path.unlink()` block — those files must survive an upload untouched.
+    # shared.startup/shared.shutdown are a lab's own files like any other: an upload must leave
+    # them untouched, never treat them as strays to clean up.
     service = _service(tmp_path)
     archive = zip_bytes(
         {

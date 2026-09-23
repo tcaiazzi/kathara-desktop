@@ -135,9 +135,9 @@ def test_build_machine_pass_through_meta_cannot_smuggle_a_volume():
     # typed `[volume]`/JSON's `volumes` (both applied, both validated by VolumeMount) — this one
     # is the generic `metas` passthrough trying to sneak a mount in under a key it isn't.
     #
-    # Rejected at construction now (MachineOptionsBase._valid_meta_keys, see
-    # test_metas_validation.py) rather than silently dropped once it reached lab_builder — the
-    # request never becomes a `LabCreate` at all, so there is no `Lab` here to assert against.
+    # Rejected at construction (MachineOptionsBase._valid_meta_keys, see test_metas_validation.py)
+    # rather than silently dropped once it reaches lab_builder — the request never becomes a
+    # `LabCreate` at all, so there is no `Lab` here to assert against.
     with pytest.raises(ValidationError):
         LabCreate.model_validate(
             {"name": "metalab", "machines": [{"name": "pc1", "metas": {"volume": "/etc|/etc|rw"}}]}
@@ -147,7 +147,7 @@ def test_build_machine_pass_through_meta_cannot_smuggle_a_volume():
 def test_build_machine_pass_through_meta_cannot_override_reserved_keys():
     # "image" is handled by _machine_kwargs already; a pass-through entry for it must be refused,
     # not silently clobber (or be silently dropped in favor of) the value set through the normal
-    # path — rejected at construction now, same as the volume case above.
+    # path — rejected at construction, same as the volume case above.
     with pytest.raises(ValidationError):
         LabCreate.model_validate(
             {"name": "metalab", "machines": [{"name": "pc1", "image": "kathara/base", "metas": {"image": "evil"}}]}

@@ -1,10 +1,10 @@
 """With the Docker daemon unreachable, reads must answer from the on-disk model instead of 503-ing.
 
 A lab's configuration lives on disk and needs no daemon to be described, so a stopped Docker should
-cost only the live "what is running?" overlay. Before ``KatharaService._facade_or_offline`` it cost
-the whole response, and because the frontend's dock area only mounts once a lab detail loads, that
-also took ``lab.conf``, the file editor and the topology — none of which involve Docker — down with
-it.
+cost only the live "what is running?" overlay. Answering these reads through the facade alone
+costs the whole response instead, and because the frontend's dock area only mounts once a lab
+detail loads, that takes ``lab.conf``, the file editor and the topology — none of which involve
+Docker — down with it. ``KatharaService._facade_or_offline`` is what keeps them up.
 
 No Docker required: ``Kathara.get_instance`` is monkeypatched to fail, which is the one thing these
 tests need it to do.

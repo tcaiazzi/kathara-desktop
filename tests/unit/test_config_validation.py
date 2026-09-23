@@ -1,8 +1,8 @@
 """Validation of the settings that get interpolated into URLs, and the CORS wildcard rule.
 
 Both exist to stop a mis-set (or hostile) environment variable from widening what the backend
-does: `gallery_repo` was already validated for this reason — `gallery_ref`/`gallery_section`
-reach the same URLs and now are too.
+does: `gallery_ref`/`gallery_section` reach the same URLs `gallery_repo` does, so all three are
+validated the same way.
 """
 
 import pytest
