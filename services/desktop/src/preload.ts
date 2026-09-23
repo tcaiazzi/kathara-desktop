@@ -75,8 +75,12 @@ const api = {
   /** `password` is required on Linux, ignored on macOS/Windows (native OS prompt instead).
    * `resumeLab`, if given, is reflected into the post-reload URL so the SPA can continue that
    * lab's deploy on its own once it's back up. On success the window reloads against the
-   * newly-elevated backend, tearing this page down before this call typically resolves —
-   * callers must not rely on a success response. */
+   * newly-elevated backend, tearing this page down before this call typically resolves — callers
+   * must not rely on a success response, only on a failure one. A failure with `restarted: false`
+   * (a wrong password, a dismissed OS dialog — the common ones) left the backend running
+   * untouched, so the page is still on a live origin and can show the error and offer a retry in
+   * place; `restarted: true` means the backend came back on a new port and the shell is already
+   * reloading the page onto it. */
   elevateBackend: (
     password?: string,
     resumeLab?: string,
@@ -85,7 +89,8 @@ const api = {
   /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
    * window against the new instance) so it doesn't keep running with more privilege than
    * whatever's deployed right now actually needs. A no-op (resolves `{ dropped: false }`,
-   * no reload) if it wasn't elevated to begin with. `openLab`, if given, is reflected into the
+   * no reload) if it wasn't elevated to begin with — call freely after any undeploy, not just
+   * ones you know were privileged. `openLab`, if given, is reflected into the
    * post-reload URL so the reload lands back on the lab that was open instead of the bare root.
    * `needsReclaimPassword: true` (Linux only) means files the elevated session left root-owned
    * need a password to reclaim, collected via ReclaimLabsDirContext.tsx's modal and sent through

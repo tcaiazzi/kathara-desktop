@@ -95,8 +95,9 @@ export interface DesktopApi {
    * any undeploy, not just ones you know were privileged. `openLab`, if given, is reflected into
    * the post-reload URL so the reload lands back on the lab that was open instead of bare root.
    * `needsReclaimPassword: true` (Linux only) means files the elevated session left root-owned
-   * need a password to reclaim — see ReclaimLabsDirContext.tsx, and pass `skipReclaimCheck: true`
-   * on the follow-up call once that's resolved, to actually drop the elevation. */
+   * need a password to reclaim — see ReclaimLabsDirContext.tsx. The backend has not been touched
+   * at that point, so the elevation is only actually dropped by a follow-up call passing
+   * `skipReclaimCheck: true` once that's resolved one way or another. */
   dropElevation(
     openLab?: string,
     skipReclaimCheck?: boolean,

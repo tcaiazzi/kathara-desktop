@@ -8,8 +8,10 @@ import { app } from "electron";
 import { log } from "./logger";
 
 // The repo release.yml actually publishes to today (see its tag_name: v<package.json version>).
-// Not a setting: changing where this app is distributed from is a maintainer decision, not a
-// per-install preference.
+// Deliberately not the KatharaFramework repo that pyproject.toml lists for bug reports and
+// setup.html links for issues: update checks follow the builds, issues follow the upstream project.
+// Not a setting either — changing where this app is distributed from is a maintainer decision, not
+// a per-install preference.
 const REPO = "tcaiazzi/kathara-desktop";
 const RELEASES_LATEST_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 const FETCH_TIMEOUT_MS = 10_000;

@@ -4,7 +4,8 @@
  * Startup sequence — the window appears first and reports progress, so a slow or failing
  * prerequisite check is never a blank screen:
  *   1. show the status page
- *   2. preflight (Docker, Python, kathara-api, Kathara, uvicorn, bundled UI)
+ *   2. preflight (Docker, Python, kathara-api-rest, Kathara, uvicorn, its dependency closure,
+ *      the bundled UI)
  *   3. start the backend on a free loopback port, serving the bundled SPA
  *   4. load http://127.0.0.1:<port>/
  */
@@ -117,7 +118,7 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-/** Ordered boot phases. KEEP IN SYNC with the PHASE_COPY table in setup.html. */
+/** Ordered boot phases. KEEP IN SYNC with MAIN_PHASES and PHASE_LABEL in setup.html. */
 type BootPhase =
   | "environment"     // querying the login shell for PATH
   | "frontend"        // locating (and, under AppImage, copying) the bundled SPA

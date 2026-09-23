@@ -128,9 +128,10 @@ let orphanedBackend: { pid: number | null; baseUrl: string; token: string } | nu
 let orphanListener: ((info: { pid: number | null; baseUrl: string }) => void) | null = null;
 
 /** Consecutive failed sudo checks since the last correct password, and how long from now further
- * checks are refused without even running `sudo` — see SUDO_RATE_LIMIT_* above. Shared across both
- * IPC channels that can trigger a check (elevation:elevate, elevation:verify): they call the same
- * `verifySudoPassword`, so switching between them doesn't reset the count either. */
+ * checks are refused without even running `sudo` — see SUDO_RATE_LIMIT_* above. Shared across the
+ * three IPC channels that can trigger a check (elevation:elevate, elevation:verify,
+ * elevation:reclaim-labs-dir): they all funnel through `withSudoRateLimit`, so switching between
+ * them doesn't reset the count either. */
 let failedSudoAttempts = 0;
 let sudoLockedUntil = 0;
 
@@ -540,8 +541,9 @@ async function buildBackendCommand(
   fs.mkdirSync(labs, { recursive: true });
 
   const appEnv: Record<string, string> = {
-    // The app's default is 0.0.0.0 (src/kathara_api/config.py); a desktop app must not put its
-    // backend — which can execute commands in containers — on the LAN.
+    // src/kathara_api/config.py already defaults to loopback; this pins it regardless of a stray
+    // .env, as does --host on uvicorn's CLI below. A desktop app must not put its backend — which
+    // can execute commands in containers — on the LAN.
     KATHARA_API_HOST: "127.0.0.1",
     KATHARA_API_PORT: String(port),
     KATHARA_API_STATIC_DIR: staticDir,
@@ -692,10 +694,10 @@ async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok
 }
 
 /**
- * Shared gate for *every* "test a password against sudo" entry point — today `verifySudoPassword`
- * above and `reclaimLabsDirOwnershipWithPassword` below — so adding a new one never opens a second
- * password oracle alongside the one this already closes: they all count against, and are locked
- * out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
+ * Shared gate for *every* "test a password against sudo" entry point — `verifySudoPassword`,
+ * `reclaimLabsDirOwnershipWithPassword` and `verifyCanElevate`'s macOS/Windows branch — so adding
+ * a new one never opens a second password oracle alongside the one this already closes: they all
+ * count against, and are locked out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
  */
 async function withSudoRateLimit(
   attempt: () => Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }>,

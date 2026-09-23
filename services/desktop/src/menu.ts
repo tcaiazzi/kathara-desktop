@@ -2,7 +2,8 @@
  * The native application menu.
  *
  * Items that act on the UI don't reimplement anything: they send a "menu:action" to the
- * renderer, where useDesktopMenu maps each action onto the command the toolbar already runs.
+ * renderer, where DesktopCommandsProvider (frontend src/desktop/DesktopCommands.tsx) fans it out
+ * to whichever components registered that action through `useDesktopCommand`.
  * Items that act on the shell itself (logs, labs folder, DevTools) are handled here.
  */
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron";
