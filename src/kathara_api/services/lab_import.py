@@ -153,7 +153,10 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
     opt = OPTION_ALIASES.get(opt, opt)
     if opt not in INTERPRETED_OPTIONS:
         machine.metas[opt] = value
-        machine.unsupported.append(f'meta "{opt}" not recognized')
+        machine.unsupported.append(
+            f"{machine.name}[{opt}] (line {line_no}) — not a recognized option, "
+            "kept in lab.conf but not applied"
+        )
         return
 
     if opt == "image":

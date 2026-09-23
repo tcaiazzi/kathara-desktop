@@ -9,6 +9,12 @@ class Message(BaseModel):
     detail: str
 
 
+class HealthStatus(BaseModel):
+    """Liveness answer: fixed payload, so `status` is the whole contract."""
+
+    status: str
+
+
 class WipeResult(Message):
     """Outcome of a wipe: which labs (if any) could not be undeployed."""
 

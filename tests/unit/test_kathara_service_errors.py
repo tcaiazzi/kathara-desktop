@@ -144,11 +144,11 @@ def test_fs_list_directory_marks_symlink_to_directory_as_directory():
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
     entries = service.fs_list_directory("lab1", "pc1", "/")
-    by_name = {entry["name"]: entry for entry in entries}
+    by_name = {entry.name: entry for entry in entries}
 
-    assert by_name["bin"]["is_dir"] is True
-    assert by_name["etc"]["is_dir"] is True
-    assert by_name["hosts"]["is_dir"] is False
+    assert by_name["bin"].is_dir is True
+    assert by_name["etc"].is_dir is True
+    assert by_name["hosts"].is_dir is False
 
 
 def test_fs_list_directory_dereferences_a_symlinked_query_path():
@@ -168,7 +168,7 @@ def test_fs_list_directory_dereferences_a_symlinked_query_path():
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
     entries = service.fs_list_directory("lab1", "pc1", "/bin")
-    assert [entry["name"] for entry in entries] == ["ls"]
+    assert [entry.name for entry in entries] == ["ls"]
 
 
 def test_get_startup_log_returns_empty_string_when_file_does_not_exist_yet():

@@ -8,7 +8,7 @@ import threading
 from fastapi import APIRouter, BackgroundTasks, Depends
 
 from ..dependencies import get_service
-from ..schemas.common import Message, WipeResult
+from ..schemas.common import HealthStatus, Message, WipeResult
 from ..schemas.images import ImagePullProgress, ImagePullRequest, ImagePullResult
 from ..schemas.settings import SettingsUpdate, SettingsView, SystemInfo
 from ..services import image_pull
@@ -36,10 +36,10 @@ def _terminate_self() -> None:
     os.kill(pid, signal.SIGTERM)
 
 
-@router.get("/health")
-def health() -> dict:
+@router.get("/health", response_model=HealthStatus)
+def health() -> HealthStatus:
     """Liveness check. Does not touch the Kathara backend."""
-    return {"status": "ok"}
+    return HealthStatus(status="ok")
 
 
 @router.get("/system", response_model=SystemInfo)

@@ -19,9 +19,11 @@ every other blocking Docker call in the process, including the container lookup 
 The two pools must not be merged.
 
 The pool is sized from `ApiSettings`, which doubles as the concurrent-session cap enforced in
-`routers/exec.py`. It is rebuilt lazily if it has been shut down, because `create_app()` runs more
-than once per process in the test suite and a one-shot executor would leave every app instance
-after the first unable to schedule TTY work.
+`routers/exec.py`. It is built when the first session opens rather than at import, so the size
+comes from the settings singleton at point of use like every other read of it, and rebuilt the
+same way after a shutdown, because `create_app()` runs more than once per process in the test
+suite and a one-shot executor would leave every app instance after the first unable to schedule
+TTY work.
 
 The one-shot container lookup in `routers/exec.py` deliberately stays on the default executor: it
 returns promptly and is not a per-session thread.

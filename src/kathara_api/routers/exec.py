@@ -1,4 +1,11 @@
-"""Interactive TTY endpoint for a running device (websocket)."""
+"""Interactive TTY endpoint for a running device (websocket).
+
+The one router that is deliberately not thin. A websocket has no `errors.py` mapping to fall
+back on — an exception escaping the handler just drops the connection — so this file catches
+its own and reports through the protocol instead, and it is also the only router that touches
+Docker objects by hand (the container's low-level exec socket, see services/docker_tty.py).
+Both are exceptions to the rules the other routers follow, and neither belongs anywhere else.
+"""
 
 import asyncio
 import base64

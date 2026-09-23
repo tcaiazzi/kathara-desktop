@@ -8,6 +8,7 @@ import asyncio
 import io
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 from ..config import get_settings
 
@@ -17,27 +18,25 @@ from ..config import get_settings
 # threads for as long as it stays open (read() blocks in a loop), so without this isolation a
 # handful of open terminals can starve every other blocking Docker call in the process (see
 # docs/DESIGN-NOTES.md). Sized from settings so it doubles as the session cap enforced in
-# routers/exec.py:tty_live_ws.
+# routers/exec.py:tty_live_ws — read when the first session opens, not at import: the settings
+# singleton is read at point of use everywhere else precisely because it is mutable, and pinning
+# it here would also force it into existence before the process has finished configuring itself.
 #
-# Recreated lazily by `_get_tty_executor` if it has been shut down, rather than being a true
-# one-shot singleton: `create_app()` (and so this module's shutdown hook) can run more than once
-# per process — every test that builds its own app does — and a plain one-shot executor would
-# leave every app instance after the first unable to schedule any TTY work at all.
-_TTY_EXECUTOR = ThreadPoolExecutor(
-    max_workers=get_settings().tty_max_sessions, thread_name_prefix="kathara-tty"
-)
+# Built on demand, and rebuilt after a shutdown rather than being a true one-shot singleton:
+# `create_app()` (and so this module's shutdown hook) can run more than once per process — every
+# test that builds its own app does — and a one-shot executor would leave every app instance
+# after the first unable to schedule any TTY work at all. `None` is that "needs building" state.
+_TTY_EXECUTOR: Optional[ThreadPoolExecutor] = None
 _tty_executor_lock = threading.Lock()
-_tty_executor_shutdown = False
 
 
 def _get_tty_executor() -> ThreadPoolExecutor:
-    global _TTY_EXECUTOR, _tty_executor_shutdown
+    global _TTY_EXECUTOR
     with _tty_executor_lock:
-        if _tty_executor_shutdown:
+        if _TTY_EXECUTOR is None:
             _TTY_EXECUTOR = ThreadPoolExecutor(
                 max_workers=get_settings().tty_max_sessions, thread_name_prefix="kathara-tty"
             )
-            _tty_executor_shutdown = False
         return _TTY_EXECUTOR
 
 
@@ -48,10 +47,11 @@ def shutdown_tty_executor() -> None:
     be blocked in a read for as long as its terminal stays open, and the process is exiting
     anyway — there is nothing to gain from waiting for it.
     """
-    global _tty_executor_shutdown
+    global _TTY_EXECUTOR
     with _tty_executor_lock:
-        _TTY_EXECUTOR.shutdown(wait=False, cancel_futures=True)
-        _tty_executor_shutdown = True
+        if _TTY_EXECUTOR is not None:
+            _TTY_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+            _TTY_EXECUTOR = None
 
 
 SHELL_PATHS = {

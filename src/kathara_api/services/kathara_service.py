@@ -41,6 +41,7 @@ from Kathara.exceptions import (
 )
 from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
+from Kathara.model.Link import Link
 from Kathara.model.Machine import Machine
 from Kathara.setting.Setting import Setting
 from Kathara.utils import is_admin
@@ -1992,7 +1993,7 @@ class KatharaService:
             raise ApiError(f"{action_label} failed on `{machine_name}`: {err or f'exit code {exit_code}'}")
         return stdout, stderr
 
-    def fs_list_directory(self, lab_name: str, machine_name: str, path: str) -> list[dict[str, Any]]:
+    def fs_list_directory(self, lab_name: str, machine_name: str, path: str) -> list[FsEntry]:
         _, normalized = self._running_guest_path(lab_name, machine_name, path)
         quoted = shlex.quote(normalized)
         # `-H` dereferences `path` itself when it's a symlink (e.g. Debian/Ubuntu's merged-usr
@@ -2008,7 +2009,7 @@ class KatharaService:
             action_label=f"List directory `{normalized}`",
         )
 
-        entries: list[dict[str, Any]] = []
+        entries: list[FsEntry] = []
         for raw_line in stdout.decode("utf-8", errors="replace").splitlines():
             if not raw_line.strip():
                 continue
@@ -2016,26 +2017,28 @@ class KatharaService:
             if len(parts) != 6:
                 continue
             name, kind, target_kind, size_raw, mode, mtime_raw = parts
-            child_path = f"/{name}" if normalized == "/" else f"{normalized}/{name}"
-            entry: dict[str, Any] = {
-                "name": name,
-                "path": child_path,
-                # Treat symlinks to directories as directories for UI navigation.
-                "is_dir": kind == "d" or (kind == "l" and target_kind == "d"),
-                "mode": mode,
-            }
             try:
-                entry["size"] = int(size_raw)
+                size = int(size_raw)
             except ValueError:
-                entry["size"] = None
+                size = None
             try:
-                entry["mtime"] = float(mtime_raw)
+                mtime = float(mtime_raw)
             except ValueError:
-                entry["mtime"] = None
-            entries.append(entry)
+                mtime = None
+            entries.append(
+                FsEntry(
+                    name=name,
+                    path=f"/{name}" if normalized == "/" else f"{normalized}/{name}",
+                    # Treat symlinks to directories as directories for UI navigation.
+                    is_dir=kind == "d" or (kind == "l" and target_kind == "d"),
+                    size=size,
+                    mode=mode,
+                    mtime=mtime,
+                )
+            )
         # Same order as the offline tree and the host browser — directories first, then
         # case-insensitive by name — rather than whatever `find` happened to emit.
-        return sorted(entries, key=lambda e: (not e["is_dir"], e["name"].lower()))
+        return sorted(entries, key=lambda e: (not e.is_dir, e.name.lower()))
 
     # Exit code used to signal "path is a directory" from the combined test+cat below — distinct
     # from `cat`'s own exit codes (1 on error) and from a shell's own low-numbered exit codes.
@@ -2161,7 +2164,7 @@ class KatharaService:
 
     # -- links ----------------------------------------------------------------
 
-    def add_link(self, lab_name: str, link_name: str, external: Optional[list[str]] = None):
+    def add_link(self, lab_name: str, link_name: str, external: Optional[list[str]] = None) -> Link:
         # `lab`/`link` read *inside* the lock (see add_machine's comment on why), along with the
         # `link.external` model mutation — building it outside the lock is the same class of
         # issue as reading stale state: a concurrent operation on this lab could run in between.
