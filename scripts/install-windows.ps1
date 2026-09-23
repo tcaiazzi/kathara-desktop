@@ -86,7 +86,10 @@ if (PythonOk) {
 
 Say "Summary"
 if ($AllOk) {
-    Write-Host "All set. Run the desktop app with: cd services\desktop; npm start"
+    Write-Host "All set. The desktop app still needs its Node dependencies and a built UI:"
+    Write-Host "  npm --prefix services/frontend install; npm --prefix services/frontend run build"
+    Write-Host "  npm --prefix services/desktop install"
+    Write-Host "  npm --prefix services/desktop start"
     exit 0
 } else {
     Write-Host "Some steps need your attention — see the warnings above, then re-run this script."

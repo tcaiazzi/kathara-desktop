@@ -1,10 +1,11 @@
 # Build/package the Electron desktop app (services/desktop) and its frontend SPA
-# (services/frontend). Mirrors the CI pipeline in .github/workflows/build-desktop.yml so a
-# local `make dist` produces the same installers a workflow run would.
+# (services/frontend). The packaging targets mirror .github/workflows/build-desktop.yml, so a
+# local `make dist` produces the same installers a workflow run would; `make check` mirrors
+# .github/workflows/ci.yml, the workflow that gates pull requests.
 #
 # Full pipeline for a packaged installer:
 #   wheel -> fetch-python -> vendor-deps -> install -> dist.
-# For everyday dev work (no packaging) use `make build`.
+# For everyday dev work (no packaging) use `make build`, and `make check` before a PR.
 
 DESKTOP_DIR := services/desktop
 FRONTEND_DIR := services/frontend
@@ -44,6 +45,7 @@ endif
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
         wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell \
+        check lint typecheck test check-frontend check-desktop check-backend \
         clean clean-wheel clean-python clean-deps distclean
 
 all: build
@@ -57,6 +59,42 @@ install-frontend:
 
 install-desktop:
 	$(RUN_NODE) npm ci --prefix $(DESKTOP_DIR)
+
+## ---- checks (what ci.yml gates pull requests on) --------------------------
+## One target per CI job. `check` is all three, in the order the workflow runs them, and is the
+## thing to run before opening a PR. These assume dependencies are already installed:
+## `make install` for the two Node trees, `pip install -e '.[dev]'` for the backend.
+
+check: check-frontend check-desktop check-backend
+
+check-frontend:
+	$(RUN_NODE) npm run lint --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run typecheck --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run test --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run build --prefix $(FRONTEND_DIR)
+
+check-desktop:
+	$(RUN_NODE) npm run typecheck --prefix $(DESKTOP_DIR)
+	$(RUN_NODE) npm run build --prefix $(DESKTOP_DIR)
+
+# Markers, not a plain `pytest`: the docker/network suites need a daemon and the internet, so CI
+# skips them and so does this. Run them by hand when a change touches what they cover.
+check-backend:
+	ruff check src tests
+	pytest -m "not docker and not network"
+
+# Narrower entry points, for the loop you are actually in.
+lint:
+	$(RUN_NODE) npm run lint --prefix $(FRONTEND_DIR)
+	ruff check src tests
+
+typecheck:
+	$(RUN_NODE) npm run typecheck --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run typecheck --prefix $(DESKTOP_DIR)
+
+test:
+	$(RUN_NODE) npm run test --prefix $(FRONTEND_DIR)
+	pytest -m "not docker and not network"
 
 ## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----
 ## Only needed for `dist`; skip these for plain dev builds. `vendor-deps` needs `wheel` (it installs

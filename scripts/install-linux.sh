@@ -131,7 +131,10 @@ fi
 
 say "Summary"
 if [ "$ok" -eq 1 ]; then
-  echo "All set. Run the desktop app with: cd services/desktop && npm start"
+  echo "All set. The desktop app still needs its Node dependencies and a built UI:"
+  echo "  npm --prefix services/frontend install && npm --prefix services/frontend run build"
+  echo "  npm --prefix services/desktop install"
+  echo "  npm --prefix services/desktop start"
 else
   echo "Some steps need your attention — see the warnings above."
 fi

@@ -114,12 +114,16 @@ There is no auto-update: releases are installed manually.
 
 ### Desktop-only behaviour
 
-- A custom title bar with an HTML menu (File / Lab / View / Help), styled after VS Code.
+- A custom title bar with an HTML menu (File / View / Help), styled after VS Code. The native
+  menu stays registered for its keyboard accelerators, and on macOS it also keeps the system
+  menu bar's own *Edit* and *Window* entries.
 - Terminal pop-outs open as their own framed window.
-- Native dialogs for importing a lab, saving a download, *Open Labs Folder* and
-  reveal-in-file-manager.
-- **Open in system terminal** attaches to a device with `kathara connect` in the OS terminal
-  emulator (override it with `terminalCommand` in `preferences.json`).
+- Native dialogs for choosing the host directory of a device's `[volume]` bind mount, plus
+  *Open Labs Folder* and reveal-in-file-manager. Importing a lab uses the in-page upload modal
+  and downloading a file uses the browser's own download, on the desktop as in a browser.
+- **Open Terminal Here** opens the OS terminal emulator in a lab's directory — a plain shell, so
+  `kathara` commands run against the right lab without having to `cd` (override the emulator
+  with `terminalCommand` in `preferences.json`).
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one.
 - Quitting with labs still deployed asks first, and offers to undeploy them — their containers
   would otherwise keep running.
@@ -133,6 +137,23 @@ See [docs/DESKTOP.md](docs/DESKTOP.md) for the implementation behind each of the
 
 The backend and frontend can also run standalone, outside the desktop app — for contributors
 working on either of them, or for driving the API directly.
+
+### Make targets
+
+`make` drives the whole stack. These are the targets worth knowing; everything else in the
+Makefile is a step of one of them.
+
+| Target | What it does |
+|---|---|
+| `build` *(default)* | The everyday build: frontend SPA + Electron shell, no packaging |
+| `check` | Everything CI gates a PR on — see [Checks and tests](#checks-and-tests) |
+| `install` | `npm ci` in both Node trees (`install-frontend` / `install-desktop` for one) |
+| `frontend` / `shell` | Just one half of `build` |
+| `dist-linux` / `dist-mac` / `dist-win` | A full installer for that OS, from wheel to artifact |
+| `appimage` | Linux AppImage for the host arch only — faster than `dist-linux` |
+| `wheel` | The backend wheel the packaging steps consume |
+| `fetch-python` / `vendor-deps` | The bundled interpreter and its dependency closure (packaging only; `*-host` variants do the host arch alone) |
+| `clean` | Build output. `clean-wheel` / `clean-python` / `clean-deps` are narrower; `distclean` is all of it |
 
 ### With Docker Compose
 
@@ -179,10 +200,28 @@ Backend settings come from environment variables prefixed `KATHARA_API_` (or a `
 | `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override (e.g. `docker`) |
 | `KATHARA_API_DEFAULT_IMAGE` | *(Kathara default)* | Default device image |
 
-## Tests
+## Checks and tests
+
+`make check` runs everything `.github/workflows/ci.yml` gates a pull request on — the frontend's
+lint, typecheck, unit tests and build, the desktop shell's typecheck and build, then `ruff` and
+the backend test suite. Run it before opening a PR. It assumes the dependencies are installed:
+`make install` for the two Node trees, `pip install -e '.[dev]'` for the backend.
 
 ```bash
-pip install -e '.[dev]'
+make check          # all three CI jobs, in the order the workflow runs them
+make check-frontend # or one at a time: services/frontend
+make check-desktop  #                   services/desktop
+make check-backend  #                   ruff + pytest
+
+make lint           # across the stack, for the loop you are in
+make typecheck
+make test
+```
+
+The backend suite is marked, and `make check` runs only what CI does — the rest needs a Docker
+daemon or the internet:
+
+```bash
 pytest -m 'not docker and not network'   # unit tests only (what CI runs)
 pytest -m docker                         # integration tests (need a running Docker daemon)
 pytest -m network                        # integration tests (need internet: live gallery fetch)

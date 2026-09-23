@@ -71,10 +71,9 @@ the env sudo-prompt writes alongside it as `export KEY="value"`, from outside th
   value it reads back, since `preferences.json` is parsed without schema validation and is the one
   route that bypasses the handler.
 - **the interpreter path**, as resolved by `prereqs.ts`'s `pythonCandidates()`. There is no
-  user-chosen override any more: a packaged app has exactly one interpreter, the bundled one, and a
-  dev checkout tries the repo's `.venv` then `PATH`. (`preferences.json` once carried a `pythonPath`
-  and there was a `status:pick-python` channel to set it — both are gone.) Re-checked in
-  `runElevatedNative` before the command string is built.
+  user-chosen override: a packaged app has exactly one interpreter, the bundled one, and a dev
+  checkout tries the repo's `.venv` then `PATH` — so there is nothing for a preference to pick.
+  Re-checked in `runElevatedNative` before the command string is built.
 
 Both go through `safety.ts`'s `isPlainAbsolutePath`, which rejects shell metacharacters outright
 rather than trying to escape them — quoting a `.bat` line correctly is hard enough that "safe by
@@ -180,7 +179,7 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   double-click on the strip or a keyboard shortcut. `build/setup.html` and `build/splash.html`, which
   load before the SPA exists, prepend their own minimize/close pair for the same reason. The whole
   strip drags the window; interactive parts opt out with `.kt-titlebar-nodrag`.
-- **The menu (File / Lab / View / Help) is rendered in HTML** (`desktop/TitleBar.tsx`) and
+- **The menu (File / View / Help) is rendered in HTML** (`desktop/TitleBar.tsx`) and
   dispatches through the same command registry the native menu uses, so both paths run one
   implementation. The native `Menu` stays registered but its bar is hidden, because that `Menu`
   is what binds the keyboard accelerators; on macOS it remains in the system menu bar, where the
@@ -190,21 +189,19 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 - Terminal pop-outs keep an ordinary framed window (titled `Terminal: <device>`): they render only
   the terminal, with no strip of their own to drag or close by.
 - **Native dialogs** for choosing the host directory of a device's `[volume]` bind mount, plus
-  *Open Labs Folder* and reveal-in-file-manager. (Importing a lab and saving a download used to
-  have native pickers too; both were removed as dead code — the app has long used the in-page
-  upload modal and an ordinary browser download instead.) The volume one is desktop-only on
-  purpose (`integrations.ts`'s `pickHostDirectory`): the path names a
-  directory on the machine the *backend* runs on, and only this shell — which spawned that backend
+  *Open Labs Folder* and reveal-in-file-manager. Importing a lab goes through the in-page upload
+  modal and saving a file through the browser's own download, so neither needs a native picker.
+  The volume one is desktop-only on purpose (`integrations.ts`'s `pickHostDirectory`): the path
+  names a directory on the machine the *backend* runs on, and only this shell — which spawned it
   — can know the two are the same machine. It also spares the app from reimplementing per-OS path
   browsing, which on Windows means drive letters (there is no single root), backslash separators
   and UNC shares. The browser build renders that field as a plain text input.
 - **Open Terminal Here** opens the OS's own terminal emulator in a lab's directory — a plain
   shell, so `kathara` commands run against the right lab without the user having to `cd`. On Linux
   the first supported emulator on `PATH` wins; override it with `terminalCommand` in
-  `preferences.json`. That override still honours a `{cmd}` placeholder, but nothing passes a
-  command today: an "attach to this device with `kathara connect`" entry point existed, was never
-  reachable from the UI, and was removed as dead code — the `{cmd}` machinery was kept so wiring
-  one back up stays a one-liner.
+  `preferences.json`. That override honours a `{cmd}` placeholder that nothing currently fills:
+  `spawnTerminal` takes an optional command, and the only entry point — *Open Terminal Here* —
+  opens a plain shell. The placeholder is what an "attach to this device" entry point would use.
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one.
 - Quitting with labs still deployed asks first, and offers to undeploy them — their containers
   would otherwise keep running.

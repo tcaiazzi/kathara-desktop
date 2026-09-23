@@ -45,17 +45,18 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   directory (zip download/upload, restarts) without affecting the topology itself. An absent or
   unparseable file simply means "no fixed layout".
 - **Authentication (`dependencies.require_auth_token`)** — opt-in, off by default
-  (`ApiSettings.auth_token`, env `KATHARA_API_AUTH_TOKEN`). When set, every router except
-  `exec.py`'s WebSocket route requires it via `Depends(require_auth_token)`, as
-  `Authorization: Bearer <token>` **only**. Two deliberate exceptions, and only two:
-  `GET /labs/{lab}/stats/stream` uses `require_auth_token_or_query`, which also accepts `?token=`,
-  because a browser's native `EventSource` cannot attach a header; and `tty_live_ws` checks the
-  query-param token by hand, since a websocket scope has no `Request` for FastAPI's dependency
-  solver to inject. Everywhere else the token is refused from the URL on purpose — a query string
-  ends up in proxy logs, browser history and `Referer`, where a header does not. The desktop app
-  is the only caller that sets this today — a random value generated per launch
+  (`ApiSettings.auth_token`, env `KATHARA_API_AUTH_TOKEN`). When set, every `/api` route requires
+  it as `Authorization: Bearer <token>` **only**. Most get it from the router mount — `main.py`
+  passes `dependencies=[Depends(require_auth_token)]` to `include_router` — while two routers are
+  mounted without it and carry their own check on the route instead. Those two are the only
+  exceptions: `GET /labs/{lab}/stats/stream` declares `require_auth_token_or_query`, which also
+  accepts `?token=`, because a browser's native `EventSource` cannot attach a header; and
+  `tty_live_ws` checks the query-param token by hand, since a websocket scope has no `Request` for
+  FastAPI's dependency solver to inject. Everywhere else the token is refused from the URL on
+  purpose — a query string ends up in proxy logs, browser history and `Referer`, where a header
+  does not. The desktop app is the only caller that sets it — a random value generated per launch
   (`services/desktop/src/backend.ts`) pairs one backend process with its own Electron instance;
-  Docker Compose and plain dev runs leave it unset, unauthenticated as before.
+  Docker Compose and plain dev runs leave it unset, and so unauthenticated.
 - **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config,
   via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
   interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
@@ -65,9 +66,10 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   via pyfilesystem2), routed by path (`/lab.conf`, `/<machine>.startup`, `/<machine>/…`, or the lab
   root for anything else) — every path is normalized once on entry (`_clean_offline_path`), so
   `lab.conf` is recognized in any spelling (`./lab.conf`, `//lab.conf`, …) and always routed to the
-  validating apply rather than to a raw write — there is deliberately no separate in-memory cache of what's queued (an
-  earlier design kept one; it repeatedly drifted from disk, most visibly by silently losing content
-  on undeploy). A device that's already running when a write lands is marked "dirty"
+  validating apply rather than to a raw write — there is deliberately no separate in-memory cache
+  of what's queued, since a cache in front of these writes is the only thing that could drift from
+  disk, and what it would lose is content, silently, on the next undeploy. A device that's already
+  running when a write lands is marked "dirty"
   (`LabRegistry.mark_dirty`) so the next redeploy live-pushes exactly the machines that actually
   changed — not a blind push-on-every-redeploy, and not a no-op that would leave a live edit
   un-applied.
@@ -183,8 +185,8 @@ that `None` up instead of falling back to a sensible default.
 > limitation: an option this API parses but deliberately does *not* model — a non-integer
 > `[num_terms]` (see `lab_import._apply_conf_option`, which records it as a warning and leaves it
 > in the file) — is **not** carried through a round-trip, so a `MachineDetail` → `MachineUpdate`
-> submitted unchanged drops that line from `lab.conf`. `[volume]` used to be in this category too;
-> it no longer is, since it's now modeled from either source.
+> submitted unchanged drops that line from `lab.conf`. `[volume]` is not in this category: it is
+> modeled from either source, so it survives the round-trip.
 
 ## Live terminal — `/api/labs/{lab}/machines/{m}`
 
