@@ -101,7 +101,9 @@ export interface UseFsTree {
   data: FsNode[];
   loaded: boolean;
   busy: boolean;
-  /** The *primary* selected path — what rename/delete/new-file "default dir" target. */
+  /** The *primary* selected path, file or directory — what rename/delete/download act on, and
+   *  what `defaultDir()` resolves for new-file/new-folder/upload (the folder itself, or a selected
+   *  file's parent). */
   selected: string | null;
   /** The full current multi-selection; always contains `selected` when non-empty. */
   selectedPaths: string[];

@@ -105,9 +105,10 @@ def _ts_option_keywords(source: str) -> set[str]:
 
 @pytest.mark.skipif(not _EDITOR_LANGUAGE_TS.exists(), reason="frontend sources not present")
 def test_the_frontend_editor_vocabulary_matches_the_backend():
-    """`editorLanguage.ts:4-9` declares that it mirrors this parser, and the lab.conf linter and
-    autocomplete are built on it — but nothing checked it until now. An option added to one side
-    only means the editor either flags a valid line or waves through an invalid one.
+    """`editorLanguage.ts`'s header declares that its option vocabulary mirrors
+    ``INTERPRETED_OPTIONS``, and the lab.conf linter and autocomplete are built on it. An option
+    added to one side only means the editor either flags a valid line or waves through an invalid
+    one.
 
     Kept as a source-reading test rather than a generated file: one source of truth stays in
     Python, and the TypeScript stays readable on its own.

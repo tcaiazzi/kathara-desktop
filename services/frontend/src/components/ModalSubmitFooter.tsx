@@ -9,9 +9,12 @@ interface ModalSubmitFooterProps {
   onSubmit: () => void;
 }
 
-// Cancel + primary-submit footer shared by the create/upload lab modals. Cancel stays enabled
-// even while busy — `onCancel` is expected to abort the in-flight request (see useBusyAction's
-// `cancel`), not just be blocked until it resolves — and the submit button swaps to a busy label.
+// Cancel + primary-submit footer shared by the modals that submit one request: NewLabModal,
+// UploadLabModal, AddDeviceModal and MachineOptionsEditor. Cancel stays enabled even while busy, so
+// `onCancel` must abort the in-flight request (see useBusyAction's `cancel`) rather than leave the
+// user blocked until it resolves. MachineOptionsEditor is the one exception: `api.updateMachine`
+// takes no `AbortSignal`, so its Cancel confirms and closes without aborting anything. The submit
+// button swaps to a busy label.
 export function ModalSubmitFooter({
   onCancel,
   busy,

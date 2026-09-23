@@ -526,8 +526,9 @@ export function WorkspacePage() {
   const [labPickerOpen, setLabPickerOpen] = useState(false);
   const [detail, setDetail] = useState<LabDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
-  // Mirrors `detail` for onDockReady (stable `useCallback([])`, so it can't read fresh state from
-  // its own closure) to prune restored terminals against, without changing onDockReady's identity.
+  // Mirrors `detail` for the two stable `useCallback([])` consumers that can't read fresh state
+  // from their own closure: onDockReady (which prunes restored terminals against it, and must keep
+  // its identity) and the tour's select-first-device registration.
   const detailRef = useRef(detail);
   detailRef.current = detail;
   const [notFound, setNotFound] = useState(false);

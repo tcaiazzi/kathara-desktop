@@ -1,17 +1,22 @@
 // Single source of truth for the code editor's per-file language and the lab.conf vocabulary shared
 // by the syntax highlighter, autocomplete, and linter.
 //
-// The lab.conf rules here MIRROR the backend parser `src/kathara_api/services/lab_import.py`
-// (CONF_LINE_RE, the recognized-option set, RESERVED_NAMES, LAB_META_KEYS). Keep them in sync: if
-// the backend adds/removes a recognized option, update OPTION_KEYWORDS/MAPPED_OPTION_SET here too.
-// If the backend ever relaxes CONF_LINE_RE (e.g. to allow quotes inside a value), this file's
-// CONF_LINE_RE below must change in the same commit — the client linter would otherwise hard-error
-// on lines the backend accepts, blocking legitimate saves.
+// The option vocabulary here MIRRORS `src/kathara_api/lab_conf_options.py` (INTERPRETED_OPTIONS),
+// which is the single source of truth for every `machine[key]=value` name this API models: add or
+// remove one there and OPTION_KEYWORDS/MAPPED_OPTION_SET below change in the same commit.
+// tests/unit/test_lab_conf_options.py reads this file and fails when the two disagree.
+//
+// The syntax and name rules mirror the parser in `src/kathara_api/services/lab_import.py`
+// (CONF_LINE_RE, RESERVED_NAMES, LAB_META_KEYS), which nothing checks automatically. If the backend
+// relaxes CONF_LINE_RE (e.g. to allow quotes inside a value), this file's CONF_LINE_RE below must
+// change in the same commit — the client linter would otherwise hard-error on lines the backend
+// accepts, blocking legitimate saves.
 
 export type EditorLanguage = "labconf" | "shell" | "plaintext";
 
 // Pick a language from a path. Uses the basename so it also works for absolute runtime-FS paths
-// (e.g. "/etc/frr/frr.conf"). Mirrors LabExplorer's own file-kind conventions (STARTUP_RE, fileIcon).
+// (e.g. "/etc/frr/frr.conf"). Mirrors the extension buckets of `fileIcon` (services/labfs.ts);
+// LabExplorer's own `isStartupFilePath` is narrower, matching only a lab-root `.startup`.
 export function languageForPath(path: string | null | undefined): EditorLanguage {
   if (!path) return "plaintext";
   const base = path.split("/").pop() ?? path;

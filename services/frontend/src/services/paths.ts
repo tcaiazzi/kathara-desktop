@@ -1,4 +1,6 @@
-// Pure guest-path string helpers used by the runtime filesystem browser.
+// Pure path-string helpers shared by both filesystem trees (the lab's own on-disk tree in
+// LabExplorer, a running device's filesystem in RuntimeFilesystemEditor) — see services/fsTree.ts
+// for the model they feed.
 
 export function baseName(p: string): string {
   const parts = p.split("/").filter(Boolean);

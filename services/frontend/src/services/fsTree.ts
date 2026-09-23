@@ -53,7 +53,8 @@ export interface FsTreeScopeState {
   /** Bumped every time a search result is clicked; makes re-clicking the same line still ask the
    *  editor to re-scroll (a bare unchanged line number wouldn't retrigger its effect). */
   scrollSeq: number;
-  /** Bumped by every runSearch call; invalidates a still-in-flight one, same idea as `selectGen`. */
+  /** Bumped once per debounced search run in `useFsTree`'s search effect; invalidates a
+   *  still-in-flight one, same idea as `selectGen`. */
   searchGen: number;
 }
 
