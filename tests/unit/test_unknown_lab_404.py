@@ -1,10 +1,9 @@
-"""undeploy_lab, delete_lab and the three stats methods must 404 (LabNotFoundError) for a lab
-that was never created, exactly like every other per-lab method does via get_lab_or_reconstruct
-(see test_docker_offline.py's own test_unknown_lab_is_still_a_404).
+"""undeploy_lab, delete_lab and machines_stats_stream must 404 (LabNotFoundError) for a lab that
+was never created, exactly like every other per-lab method does via get_lab_or_reconstruct (see
+test_docker_offline.py's own test_unknown_lab_is_still_a_404).
 
-Without the check, undeploy_lab and delete_lab succeed silently, the stats snapshots return an
-empty result, and machine_stats_snapshot raises the wrong exception — a 409
-MachineNotRunningError instead of a 404.
+Without the check, undeploy_lab and delete_lab succeed silently and machines_stats_stream opens an
+empty SSE stream instead of answering 404.
 """
 
 import pytest

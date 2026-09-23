@@ -1,7 +1,7 @@
 """Generalized coverage for "unknown lab -> 404".
 
-test_unknown_lab_404.py is narrow, tied to five specific methods (undeploy_lab, delete_lab and
-the three stats methods). This file generalizes the same check to every other KatharaService
+test_unknown_lab_404.py is narrow, tied to three specific methods (undeploy_lab, delete_lab and
+machines_stats_stream). This file generalizes the same check to every other KatharaService
 method that looks up an existing lab by name, so a method that forgets the check fails a test
 instead of shipping silently.
 
@@ -84,14 +84,12 @@ CASES: list[tuple[str, tuple]] = [
 # Methods whose first parameter is `name`/`lab_name` but that are *not* part of this "does an
 # existing lab exist" family, with the reason each is excluded rather than silently missing:
 SKIPPED = {
-    "import_lab": "creates a lab under `name` — an unknown name is the success path, not a 404.",
-    "upload_lab": "same as import_lab: creates a lab, doesn't look one up.",
+    "upload_lab": "creates a lab under `name` — an unknown name is the success path, not a 404.",
     "exec_command": (
         "resolves straight through the Docker facade by container name "
         "(KatharaService.exec_command -> facade.exec), never via get_lab_or_reconstruct/the "
         "registry — a different lookup mechanism entirely, out of scope for this family."
     ),
-    "exec_stream": "same as exec_command.",
 }
 
 
@@ -109,6 +107,11 @@ def test_every_lab_lookup_method_is_covered():
     """Every KatharaService method whose first parameter (after self) is literally `name` or
     `lab_name` must appear in CASES or SKIPPED. A method that satisfies neither is a per-lab
     operation nobody has checked returns 404 for `never-existed`."""
+    # The walk below only sees methods that exist, so a SKIPPED entry for a deleted method would
+    # never fail — it would just sit there documenting nothing.
+    stale = sorted(name for name in SKIPPED if not hasattr(KatharaService, name))
+    assert stale == [], f"SKIPPED names method(s) that no longer exist: {stale}"
+
     covered = {name for name, _ in CASES} | set(SKIPPED)
     missing = []
     for method_name, method in inspect.getmembers(KatharaService, predicate=inspect.isfunction):
