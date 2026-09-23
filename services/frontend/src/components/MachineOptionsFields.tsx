@@ -190,7 +190,7 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
       <div className="mb-3">
         <Form.Label className="small mb-1">
           IPv6
-          <InfoTip text="Enable or disable IPv6 on this device, or leave it to the global Enable IPv6 setting." />
+          <InfoTip text="Whether this device sets ipv6 in lab.conf. Left derived, it follows the global Enable IPv6 setting instead." />
         </Form.Label>
         {/* Three options rather than a checkbox: the model is three-state, and the missing third
             state is what the device does when lab.conf says nothing — it follows Kathara's own
@@ -202,9 +202,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           disabled={disabled}
           onChange={(e) => set("ipv6", e.target.value === "inherit" ? null : e.target.value === "on")}
         >
-          <option value="inherit">Derived from settings</option>
-          <option value="on">Enabled</option>
-          <option value="off">Disabled</option>
+          <option value="inherit">Derived from default settings</option>
+          {/* Labelled as lab.conf spells them, since that is what these two write. */}
+          <option value="on">True</option>
+          <option value="off">False</option>
         </Form.Select>
       </div>
 
