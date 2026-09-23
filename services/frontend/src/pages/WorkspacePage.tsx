@@ -1,3 +1,15 @@
+// The Workspace screen and everything that arranges it: the dockview panel area, the panels'
+// thin wrappers around the real components, and the layout commands behind the Layout menu
+// (default, focus presets, terminal tiling, maximize).
+//
+// Most of this file is dockview bookkeeping rather than UI. dockview owns the panel tree
+// imperatively through a `DockviewApi`, not as React children, so adding, moving, closing and
+// measuring panels all happen in plain functions against that api — which is why they live at
+// module level here, taking the api as an argument, instead of inside the component.
+//
+// A saved layout is replayed from localStorage under `LS_LAYOUT`; see its own comment for the
+// one rule that keeps a stale one from outliving a redesign.
+
 import {
   DockviewDefaultTab,
   DockviewReact,

@@ -8,6 +8,7 @@ import { useToast } from "../context/ToastContext";
 import { desktop, isDesktop } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useAvailableImages } from "../hooks/useAvailableImages";
+import { useBusyAction } from "../hooks/useBusyAction";
 import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
 import type { SettingsView, SystemInfo } from "../services/types";
@@ -167,6 +168,7 @@ export function SettingsPage() {
   const toast = useToast();
   const availableImages = useAvailableImages();
   const requestDeployAuth = useDeployAuthorization();
+  const { run: runBusy } = useBusyAction();
 
   // The last settings known to be on disk — what a save is a *transition away from*. Compared
   // against on submit to decide whether `hosthome_mount` is being turned on right now (see
@@ -197,9 +199,8 @@ export function SettingsPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form) return;
-    setBusy(true);
     setLockedError(null);
-    try {
+    await runBusy(setBusy, "Update settings", async () => {
       // Mounting the operator's own $HOME into every future device is exactly the kind of thing a
       // lab's own host volumes already gate behind a password before a deploy — treated the same
       // way here, reusing that same check (verify-only; hosthome_mount needs no backend restart,
@@ -219,19 +220,23 @@ export function SettingsPage() {
       // app (see SettingsUpdate's own docstring) — the backend would 422 either back anyway, but
       // there is no reason to send fields the form only ever displays.
       const { last_checked: _lastChecked, remote_url: _remoteUrl, cert_path: _certPath, ...payload } = form;
-      const updated = await api.updateSettings(payload);
+      let updated: SettingsView;
+      try {
+        updated = await api.updateSettings(payload);
+      } catch (err) {
+        // The one error this page answers itself: a 409 means the backend has already initialized
+        // the setting being changed, which has its own inline alert above the form. Everything
+        // else is rethrown so `runBusy` reports it the way every other action does.
+        if (err instanceof ApiError && err.status === 409) {
+          setLockedError(err.message);
+          return;
+        }
+        throw err;
+      }
       setForm(updated);
       loadedRef.current = updated;
       toast.show("Settings saved.", "success");
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setLockedError(err.message);
-      } else {
-        toast.reportError("Update settings", err);
-      }
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   if (loadError) {

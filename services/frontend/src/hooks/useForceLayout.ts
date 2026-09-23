@@ -1,3 +1,15 @@
+// Imperative force-directed SVG topology engine (device + collision-domain nodes, edges =
+// interfaces), no charting library. The simulation/render loop manipulates SVG DOM attributes
+// directly every animation frame rather than going through React state: dozens of position
+// updates per second per node is not a good fit for React re-renders. This hook owns the whole
+// engine (physics, drag/pan/zoom, node DOM); the caller supplies callbacks for the low-frequency
+// events that need component-level context (building context-menu items, opening modals) rather
+// than the hook owning that state itself.
+//
+// Everything above the hook is module-level on purpose — the SVG element builder, the tooltip
+// markup and the viewport transform have no React state to hold, so they stay out of the hook
+// body and out of every re-render.
+
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { CATEGORY_ICON } from "../services/deviceIcon";
 import { deviceStateLabel, formatIface, formatPort, type TopoEdge, type TopoModel, type TopoNode } from "../services/topology";
@@ -144,13 +156,6 @@ function fitEngine(engine: Engine): void {
   applyTransform(engine);
 }
 
-// Imperative force-directed SVG topology engine (device + collision-domain nodes, edges =
-// interfaces), no charting library. The simulation/render loop manipulates SVG DOM attributes
-// directly every animation frame rather than going through React state: dozens of position
-// updates per second per node is not a good fit for React re-renders. This hook owns the whole
-// engine (physics, drag/pan/zoom, node DOM); the caller supplies callbacks for the low-frequency
-// events that need component-level context (building context-menu items, opening modals) rather
-// than the hook owning that state itself.
 export function useForceLayout(
   model: TopoModel,
   relayoutNonce: number,
