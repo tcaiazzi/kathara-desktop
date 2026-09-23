@@ -26,19 +26,20 @@ critical section contains the on-disk write itself and holding the global lock a
 **Fallback protection** (the `_mutate_lock` discipline): the primary check above has an
 inherent, unavoidable TOCTOU gap — a `deploy_lab` can start in the instant *after* a mutator
 passes the check but *before* it acquires `_mutate_lock`. `connect_machine`/`disconnect_machine`/
-`remove_machine`/`copy_files`/`add_link`/`remove_link` therefore read `lab`/`machine` — and, for
-connect/disconnect, decide their whole stopped-vs-running branch from `machine.api_object` —
-*inside* that lock, never before acquiring it, the same way `add_machine` documents. Reading
-before the lock leaves a mutator caught in the gap working from stale state once it does proceed;
-reading inside it keeps even a slipped-through mutator correct, merely not fast. The tests for
-this layer bypass `_check_not_transitioning` via monkeypatch specifically to force that gap and
-exercise the lock behavior underneath it, the same way a real race would.
+`remove_machine`/`copy_files`/`fs_upload_bytes`/`add_link`/`remove_link` therefore read
+`lab`/`machine` — and, for connect/disconnect, decide their whole stopped-vs-running branch from
+`machine.api_object` — *inside* that lock, never before acquiring it, the same way `add_machine`
+documents. Reading before the lock leaves a mutator caught in the gap working from stale state
+once it does proceed; reading inside it keeps even a slipped-through mutator correct, merely not
+fast. The tests for this layer bypass `_check_not_transitioning` via monkeypatch specifically to
+force that gap and exercise the lock behavior underneath it, the same way a real race would.
 """
 
 import collections
 import threading
 
 import pytest
+from Kathara.exceptions import MachineNotRunningError
 
 from kathara_api.errors import LabAlreadyRegisteredError, LabTransitioningError
 from kathara_api.schemas.lab import LabCreate
@@ -361,6 +362,69 @@ def test_remove_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_
     remove_thread.join(timeout=2)
     assert remove_done.is_set()
     assert facade.calls == ["undeploy_machine"]
+
+
+class _CopyRecordingFacade(FakeFacadeBase):
+    """Deploys for real, so a device ends up with an ``api_object``, and records every
+    ``copy_files`` so a test can tell whether the copy reached the facade at all."""
+
+    def __init__(self):
+        self.copied: list[object] = []
+
+    def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
+        for machine in lab.machines.values():
+            machine.api_object = object()
+
+    def copy_files(self, machine, guest_to_host):
+        self.copied.append(machine)
+
+
+def test_fs_upload_bytes_resolves_the_device_inside_the_lock(tmp_path, monkeypatch):
+    """The binary-upload path must resolve the device *inside* `_mutate_lock`, the same way
+    `copy_files` does and `fs_write_text` gets for free by delegating to it. Resolved before the
+    lock, the `Machine` it hands the facade can have been stopped by a concurrent undeploy while
+    it waited, and the copy then runs against an `api_object` nobody confirmed was still live.
+
+    `normalize_guest_path` is the pause point because it runs before the lock either way: the
+    question the test asks is whether the *device* has also been resolved by then.
+    """
+    service = KatharaService(store=LabStore(tmp_path / "labs"))
+    facade = _CopyRecordingFacade()
+    service._instance = facade
+    service.create_lab(LabCreate(name="testlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
+    service.deploy_lab("testlab")
+
+    in_window, release = threading.Event(), threading.Event()
+    real_normalize = service.normalize_guest_path
+
+    def pause_before_the_lock(path: str) -> str:
+        in_window.set()
+        assert release.wait(timeout=5), "the test never released the suspended upload"
+        return real_normalize(path)
+
+    monkeypatch.setattr(service, "normalize_guest_path", pause_before_the_lock)
+
+    outcome: list[object] = []
+
+    def run_upload():
+        try:
+            outcome.append(service.fs_upload_bytes("testlab", "pc1", "/tmp/x.bin", b"\x00\x01"))
+        except MachineNotRunningError as exc:
+            outcome.append(exc)
+
+    upload = threading.Thread(target=run_upload)
+    upload.start()
+    assert in_window.wait(timeout=2), "fs_upload_bytes never reached its pre-lock window"
+
+    # The device goes down while the upload sits in that window — `_mutate_lock` is still free,
+    # so this undeploy runs to completion before the upload ever asks for it.
+    service.undeploy_lab("testlab")
+
+    release.set()
+    upload.join(timeout=5)
+
+    assert facade.copied == [], "the copy ran against a device that had already been stopped"
+    assert isinstance(outcome[0], MachineNotRunningError)
 
 
 # -- lab creation races ---------------------------------------------------------------------

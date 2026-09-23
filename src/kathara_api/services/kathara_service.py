@@ -2092,8 +2092,13 @@ class KatharaService:
         return len(content.encode("utf-8"))
 
     def fs_upload_bytes(self, lab_name: str, machine_name: str, path: str, content: bytes) -> int:
-        machine, normalized = self._running_guest_path(lab_name, machine_name, path)
+        _, normalized = self._running_guest_path(lab_name, machine_name, path)
+        # Re-resolved inside the lock, for the reason `copy_files` spells out: the check above is
+        # the same early 409 every other fs_* method gives, not the one the copy can rely on. The
+        # binary twin of `fs_write_text`, which gets this shape for free by delegating to
+        # `copy_files` — not reusable here, since that method encodes its values as UTF-8 text.
         with self._mutate_lock:
+            machine = self._get_running_machine(lab_name, machine_name)
             self._facade().copy_files(machine, {normalized: io.BytesIO(content)})
         return len(content)
 
