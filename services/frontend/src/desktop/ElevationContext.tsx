@@ -60,8 +60,8 @@ const OK_LABELS: Record<Mode, string> = {
   privileged: "Continue",
   both: "Continue",
   volumes: "Continue",
-  // "Deploy" until this had a second caller: SettingsPage's hosthome_mount gate reuses this same
-  // mode/modal from outside any lab-deploy flow, so the label can no longer assume one.
+  // Deliberately not "Deploy": SettingsPage's hosthome_mount gate reuses this same mode/modal
+  // from outside any lab-deploy flow, so the label cannot assume there is a deploy to name.
   "volumes-no-shell": "Continue",
 };
 
@@ -127,9 +127,9 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
       const shell = desktop();
       if (!shell) {
         // Without a desktop shell there is no OS admin mechanism at all, on either path. A
-        // privileged device genuinely can't be deployed without elevation, same as before. A
-        // volume-only deploy has no OS identity to check outside the desktop app, so it degrades
-        // to a plain confirmation instead of being refused.
+        // privileged device genuinely can't be deployed without elevation. A volume-only deploy
+        // has no OS identity to check outside the desktop app, so it degrades to a plain
+        // confirmation instead of being refused.
         if (privileged) return "cancelled";
         return showModal("volumes-no-shell", machines, hosthome);
       }
@@ -174,7 +174,7 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // mode === "privileged" | "both": today's real elevation, unchanged.
+      // mode === "privileged" | "both": the real elevation path.
       const result = await shell.elevateBackend(isLinux ? password : undefined, resumeLabRef.current);
       if (result.ok) {
         // A reload is already in flight (the main process just navigated the window to the

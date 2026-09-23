@@ -36,10 +36,11 @@ function isStartupFilePath(path: string): boolean {
 //
 // Every read/write is a real call against the lab's real filesystem (services/api.ts's `fs*Offline`
 // methods) — there is no separate in-memory cache of what's queued, so nothing here can ever drift
-// from what's actually on disk (that was an earlier design; it repeatedly did). The tree/editor
-// machinery is shared with the Runtime Filesystem tab (hooks/useFsTree + FsTreePanel); what's specific to
-// this tab lives here: lab.conf is read/written through its own endpoint (it rebuilds the topology,
-// and is refused while the lab is deployed) and is watched for changes made elsewhere.
+// from what's actually on disk; putting a cache in front of these calls is the only way it could.
+// The tree/editor machinery is shared with the Runtime Filesystem tab (hooks/useFsTree +
+// FsTreePanel); what's specific to this tab lives here: lab.conf is read/written through its own
+// endpoint (it rebuilds the topology, and is refused while the lab is deployed) and is watched
+// for changes made elsewhere.
 export function LabExplorer({ labName, detail, onStructuralChange, onStartupFileSaved }: LabExplorerProps) {
   const toast = useToast();
 
@@ -155,8 +156,8 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
   // Read through refs so this effect doesn't re-run on every keystroke in the editor. Keyed off
   // `bufferPath` rather than `selected`: it's the file whose content `dirty`/`setBuffer` actually
   // act on, and the two can differ (e.g. a multi-selection moves `selected` without touching the
-  // buffer) — checking `selected` here asked the wrong question and could show/discard a conflict
-  // for whatever is merely highlighted, not what's actually loaded in the editor.
+  // buffer) — keying off `selected` asks the wrong question, and would show or discard a conflict
+  // for whatever is merely highlighted rather than what's actually loaded in the editor.
   const bufferPathRef = useRef(tree.bufferPath);
   bufferPathRef.current = tree.bufferPath;
   const dirtyRef = useRef(tree.dirty);

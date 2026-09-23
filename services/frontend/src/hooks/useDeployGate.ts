@@ -46,8 +46,8 @@ export function useDeployGate(): (req?: DeployGateRequest) => Promise<DeployAuth
 
       // No "is a prompt needed?" test here on purpose: `requestDeployAuthorization` already
       // short-circuits to "proceed" when nothing is privileged, no volumes are mounted and
-      // hosthome is off. Re-deriving that condition at each call site is what let the three
-      // copies drift in the first place.
+      // hosthome is off. No call site may re-derive it: a path that decides for itself whether a
+      // prompt is needed stops asking for exactly the deploys this gate exists to catch.
       return requestDeployAuth({
         privileged,
         // A device with no volumes of its own still reaches here when `hosthome_mount` alone

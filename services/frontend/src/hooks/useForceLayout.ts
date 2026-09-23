@@ -197,13 +197,13 @@ export function useForceLayout(
     const H = Math.max(canvas.clientHeight || 460, 300);
     const n = model.nodes.length;
     // Ideal (spring rest) distance between connected nodes, also the repulsion scale between every
-    // pair — kept modest (vs. the previous 160 cap) so an auto-laid-out graph stays compact: just
-    // enough room to read a node's label, not spread to fill whatever canvas/panel size is available.
+    // pair — capped deliberately low so an auto-laid-out graph stays compact: just enough room to
+    // read a node's label, not spread to fill whatever canvas/panel size is available.
     const k = Math.min(140, Math.max(66, 0.44 * Math.sqrt((W * H) / n)));
 
     // Seed positions: restore saved ones where available, else lay out on a jittered circle. A
-    // restored node is *pinned* (`fixed`): the physics never moves it, so adding one device can no
-    // longer nudge an arranged topology — the newcomer settles around the frozen graph instead.
+    // restored node is *pinned* (`fixed`): the physics never moves it, so adding one device cannot
+    // nudge an arranged topology — the newcomer settles around the frozen graph instead.
     const saved = optionsRef.current.initialPositions || {};
     let savedCount = 0;
     const byId: Record<string, TopoNode> = {};
@@ -483,9 +483,9 @@ export function useForceLayout(
         b.dy += uy * f;
       }
       for (const nd of nodes) {
-        // Stronger than before (was 0.06) — a lightly-connected node (e.g. a single edge into a
-        // domain everything else avoids) needs more than the spring force alone to keep it pulled in
-        // near the rest of the graph instead of drifting out to whatever the repulsion sum allows.
+        // Strong enough to matter on its own: a lightly-connected node (e.g. a single edge into a
+        // domain everything else avoids) needs more than the spring force to stay near the rest of
+        // the graph instead of drifting out to whatever the repulsion sum allows.
         // An edge-less node (no interfaces at all) has no spring pulling it in whatsoever — only
         // repulsion from every other node pushing it away — so it needs a markedly stronger pull or
         // it drifts out on its own, forcing fit-to-view to zoom out to include it.

@@ -52,8 +52,7 @@ function rowsToRecord(rows: KeyValueRow[]): Record<string, string> {
   return out;
 }
 
-// Blank slate for a device that doesn't exist yet — `image` defaults to Kathara's own base image,
-// matching the previous add-device form's default.
+// Blank slate for a device that doesn't exist yet — `image` defaults to Kathara's own base image.
 export function defaultOptionsFormState(): OptionsFormState {
   return {
     image: "kathara/base",

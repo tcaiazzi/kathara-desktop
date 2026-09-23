@@ -4,8 +4,9 @@ import { useShellDetection } from "./useShellDetection";
 import { api } from "../services/api";
 
 // One live terminal session: shell detection, the xterm/websocket wiring, and the auto-connect on
-// mount. Shared by the in-page dockview panel and the standalone popup window, which had the whole
-// thing — the same options literal, the same message switch, the same mount effect — twice.
+// mount. Shared by the in-page dockview panel and the standalone popup window: the options
+// literal, the message switch and the mount effect live here once, and neither surface keeps a
+// copy of its own.
 //
 // `labName` is a parameter rather than read from WorkspaceContext on purpose: the popup route is
 // mounted outside the provider, so anything shared here must not reach for that context.

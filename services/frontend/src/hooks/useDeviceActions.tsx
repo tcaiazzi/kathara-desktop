@@ -59,8 +59,7 @@ export function useDeviceActions({
   // on every one of those was strictly wasted work, and worse, it made `model` below settle in two
   // steps per refresh instead of one — `detail` changing recomputes it immediately with the *old*
   // `startups`, then this fetch resolving recomputes it *again* moments later, and each recompute
-  // is a full topology-canvas rebuild in TopologyGraph/useForceLayout (a real, visible flicker;
-  // camera-reset was the other half of that, fixed separately in useForceLayout).
+  // is a full topology-canvas rebuild in TopologyGraph/useForceLayout — a real, visible flicker.
   useEffect(() => {
     if (!labName) {
       setStartups({});
@@ -293,8 +292,8 @@ export function useDeviceActions({
     // Only ever requests the "volumes" case — never "both", even if this device happens to also
     // be privileged: that would need the same resume-after-reload machinery the full-lab deploy
     // has (see useLabLifecycleActions.ts), which a single device redeploy has no way to resume
-    // into. A privileged device deployed from here fails with the same unhandled PrivilegeError
-    // it would today — a pre-existing, narrower gap this doesn't widen.
+    // into. A privileged device deployed from here fails with an unhandled PrivilegeError either
+    // way, so asking only for "volumes" narrows nothing that isn't already narrow.
     const machine = detail?.machines.find((m) => m.name === deviceNode.name);
     // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
     const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });
@@ -393,7 +392,7 @@ export function useDeviceActions({
 
   // Only what a caller actually reads. The device/domain mutators live on in the context
   // menus built above (`deviceContextItems`/`domainContextItems`), which is how the UI
-  // reaches them — exposing them here as well just invited a second, unused surface.
+  // reaches them — exposing them here as well would be a second surface with no reader.
   return {
     model,
     startups,

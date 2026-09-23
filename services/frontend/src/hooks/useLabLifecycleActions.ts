@@ -135,7 +135,7 @@ export function useLabLifecycleActions() {
         // Ask about it first instead: the download becomes its own visible, consented step, and
         // by the time the deploy runs there is nothing left to fetch. An available *update* is
         // offered the same way Kathara's CLI offers it (see ImageDownloadContext), honouring the
-        // `image_update_policy` setting that until now had no effect in this app at all.
+        // `image_update_policy` setting, which nothing else in this app acts on.
         //
         // Before the elevation prompt below on purpose: there is no point asking for
         // administrator privileges and then spending three minutes downloading.

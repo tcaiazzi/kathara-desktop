@@ -45,7 +45,7 @@ export function RowListEditor<T extends object>({
   // either — a synthetic key per row *position*, kept stable across add/remove by this component's
   // own handlers below, is what actually stops AutocompleteInput's uncontrolled open/highlight
   // state (a plain useState local to it) from following the wrong row when one above it is
-  // removed, the way `key={index}` used to.
+  // removed, which is exactly what `key={index}` would do.
   const nextKeyRef = useRef(0);
   const makeKey = () => `row-${nextKeyRef.current++}`;
   const [rowKeys, setRowKeys] = useState<string[]>(() => rows.map(makeKey));

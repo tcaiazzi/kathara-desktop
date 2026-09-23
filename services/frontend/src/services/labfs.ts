@@ -1,7 +1,7 @@
 // Small shared helpers for the Lab Configuration / topology "startup script" display. The tree
-// itself (services/frontend/src/components/LabExplorer.tsx) is now built from real, lazily-
-// fetched directory listings (api.fsListOffline) rather than reconstructed here — there is no
-// separate in-memory model of the lab's files to build a "virtual fs" from anymore.
+// itself (services/frontend/src/components/LabExplorer.tsx) is built from real, lazily-fetched
+// directory listings (api.fsListOffline), not assembled here: there is no in-memory model of the
+// lab's files for a "virtual fs" to be built from.
 
 import { FileCog, FileText, Map as MapIcon, Terminal, type LucideIcon } from "lucide-react";
 
@@ -21,7 +21,7 @@ export function machineStartupText(m: MachineDetail, startupText?: string): stri
 // from startup scripts, which get a distinct icon from everything else). Returns an SVG
 // component rather than an emoji character: emoji rendering depends on an emoji font being
 // installed, which a minimal Linux install (in particular the Electron desktop app's host) may
-// not have — that showed up as blank "tofu" boxes in the tree instead of icons.
+// not have, leaving blank "tofu" boxes in the tree where the icons should be.
 export function fileIcon(name: string): LucideIcon {
   if (name === "lab.conf" || name === "lab.ext" || name === "lab.dep") return FileCog;
   if (name === "lab.layout") return MapIcon;

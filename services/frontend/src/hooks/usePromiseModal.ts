@@ -2,9 +2,9 @@ import { useCallback, useRef } from "react";
 
 /** The promise plumbing behind a modal a caller can `await`.
  *
- * Four providers had their own copy of it — confirm, prompt, the labs-dir reclaim prompt and the
- * deploy-authorization prompt — differing only in the result type and what "the user gave up"
- * means for each.
+ * The single source of that plumbing for confirm, prompt, the labs-dir reclaim prompt and the
+ * deploy-authorization prompt. They differ only in the result type and in what "the user gave
+ * up" resolves to, both of which are parameters here — a provider must not grow its own copy.
  *
  * `ImageDownloadContext` deliberately does not use this: its guard fires, then it awaits a
  * progress fetch, and only then creates the promise, so the two halves cannot be one call.

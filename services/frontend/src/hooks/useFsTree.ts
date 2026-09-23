@@ -773,9 +773,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         toast.show(`Moved ${sourcePath} → ${destPath}.`, "success");
         await Promise.all([refreshDir(parentOf(sourcePath)), refreshDir(destDir)]);
 
-        // Rewrite the selection/buffer, following into a renamed *directory* too — not just an
-        // exact match on `sourcePath` itself, which is what let the editor keep pointing at a
-        // path that no longer existed after a folder rename.
+        // Rewrite the selection/buffer, following into a renamed *directory* too — an exact match
+        // on `sourcePath` alone leaves the editor pointing at a path a folder rename has just
+        // taken out from under it.
         const remappedSelected = scoped.current.selected && remapPath(scoped.current.selected, sourcePath, destPath);
         if (remappedSelected) setSelected(remappedSelected);
         const remappedPaths = scoped.current.selectedPaths.map((p) => remapPath(p, sourcePath, destPath) ?? p);

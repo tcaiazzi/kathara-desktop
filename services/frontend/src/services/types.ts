@@ -47,8 +47,8 @@ export interface SettingsView {
   shared_mount?: boolean;
   image_update_policy?: string;
   shared_cds?: number;
-  // Read-only: the backend schema (SettingsUpdate) no longer accepts either on write. Redirecting
-  // this backend's Docker client to an arbitrary daemon has no legitimate runtime use case here —
+  // Read-only: the backend schema (SettingsUpdate) rejects both on write. Redirecting this
+  // backend's Docker client to an arbitrary daemon has no legitimate runtime use case here —
   // changing it means editing Kathara's own settings file and restarting.
   remote_url?: string | null;
   cert_path?: string | null;

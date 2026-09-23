@@ -44,7 +44,7 @@ function applyTheme(theme: ThemeMode, persist = true): void {
  * toggle) observes the same live value and re-renders together when any one of them calls
  * `toggle()`, instead of drifting out of sync with each other (and with the CSS custom properties,
  * which are always live since the browser applies them regardless of React's render state) until a
- * full reload — that mismatch is what left navbar text unreadable after toggling from Settings.
+ * full reload — a mismatch that shows up as unreadable navbar text after a toggle from Settings.
  */
 export function useTheme() {
   const [theme, setTheme] = useState<ThemeMode>(() => {

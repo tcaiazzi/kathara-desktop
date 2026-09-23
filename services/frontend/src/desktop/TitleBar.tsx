@@ -1,6 +1,7 @@
 // The app-drawn title bar used in the Electron shell: one strip carrying the brand, an HTML menu
-// bar, the window title and the status cluster. Replaces the stacked native
-// title-bar-plus-menu-bar pair. On Windows/Linux it also draws its own minimize/maximize/close
+// bar, the window title and the status cluster. The native pair it stands in for is switched off
+// in the shell (`titleBarStyle: "hidden"` plus `setMenuBarVisibility(false)`, see
+// services/desktop/src/windows.ts). On Windows/Linux it also draws its own minimize/maximize/close
 // buttons at the far right (see the caption-buttons cluster below) — Chromium's own Window
 // Controls Overlay only lets a page tint those buttons' background, not restyle their icons,
 // which is exactly what looked out of place; on macOS the native traffic lights are left alone

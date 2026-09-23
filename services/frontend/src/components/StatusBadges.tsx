@@ -6,8 +6,8 @@ import { useIsAdmin } from "../hooks/useIsAdmin";
 // they cannot drift apart in wording or colour. Each owns its own probe rather than taking a prop:
 // neither bar needs the value for anything else, and only one of the two is ever mounted.
 //
-// Two components rather than one, so the desktop title bar can keep its own docker badge in the
-// middle, where it has always been.
+// Two components rather than one, so the desktop title bar can place its docker badge in the
+// middle of the strip, apart from the rest of the cluster.
 
 /** Shown only when the local backend is running as root — an unusual state worth surfacing. */
 export function PrivilegedBadge() {

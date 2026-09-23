@@ -5,7 +5,7 @@ import { Badge, Button, Form } from "react-bootstrap";
 // `variant` is the only thing that differs visually between the two hosts — the dockview panel is
 // compact and uses the panel stylesheet, the standalone window is full size. The *behaviour* needs
 // no variant: with `running` left at its default the panel's own logic collapses exactly onto what
-// the window did (the connect button's stopped-device guard and the badge's fourth state both
+// the window needs (the connect button's stopped-device guard and the badge's fourth state both
 // disappear), so there is one implementation rather than two that have to be kept in step.
 
 const SHELL_FALLBACK = ["bash", "sh", "ash", "zsh"];

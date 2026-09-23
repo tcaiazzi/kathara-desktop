@@ -1,9 +1,9 @@
 // Polls the shell's on-demand Docker probe (services/desktop/src/main.ts's "docker:check") so the
 // SPA can warn about a stopped-but-installed daemon from inside the workspace instead of never
-// getting there — main.ts's Preflight.canStart now boots the app anyway in that case (a check
-// with severity: "advisory") and hands the initial reading over on the "ready" status, but that
-// status isn't exposed to the renderer today, so this provider's own first probe is what actually
-// seeds the badge/banner; a restart-triggering reload (elevation, retry, labs-dir change) just
+// getting there — main.ts's Preflight.canStart boots the app anyway in that case (a check with
+// severity: "advisory") and hands the initial reading over on the "ready" status, but nothing
+// exposes that status to the renderer, so this provider's own first probe is what actually seeds
+// the badge/banner; a restart-triggering reload (elevation, retry, labs-dir change) just
 // remounts this provider and gets a fresh one immediately.
 //
 // A no-op in the browser build: desktop() is null there, so `status` stays null forever and

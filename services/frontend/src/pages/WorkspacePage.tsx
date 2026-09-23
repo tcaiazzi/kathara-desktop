@@ -184,8 +184,8 @@ const TOUR_TAB_ID: Record<string, string> = {
 // Tab renderer for every panel: the close button appears only on the panels that are actually
 // closable. Wired as dockview's `defaultTabComponent` rather than per-panel, so it also governs a
 // layout restored from localStorage — a saved layout replays each panel's own `tabComponent`, so
-// a per-panel opt-in could never reach a panel that was already persisted without one (which is
-// how "Device Information" ended up with a close button while its siblings had none).
+// a per-panel opt-in could never reach a panel that was already persisted without one, leaving
+// it with a close button its siblings lack.
 function DockTab(props: IDockviewPanelHeaderProps) {
   return (
     <DockviewDefaultTab
@@ -240,15 +240,10 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
   );
 }
 
-// v7: default arrangement flipped again — topology is now a full-width row on top, with the
-// inspector, tool panels and every terminal sharing one tab group below it.
-// v6: renamed several tab titles (Node info -> Device Information, Devices -> Lab Details,
-// Runtime FS -> Runtime Filesystem, Stats -> Statistics). dockview persists each panel's title in
-// the saved layout, so without a version bump a restored layout would keep showing the old names.
-// v5: default arrangement flipped — topology is now its own full-height column on the right, with
-// the inspector, tool panels and every terminal sharing one tab group on the left. Ignore older
-// saved layouts (v4 node info out of the topology, v3 core tabs, v2 closable core tabs, v1 removed
-// "terminals" panel) so the new default applies.
+// dockview replays a saved layout wholesale — the arrangement and each panel's persisted title —
+// and onDockReady below accepts anything that parses, with no schema check beyond this key. Bump
+// the version suffix whenever the default arrangement changes or a persisted panel title changes,
+// or everyone with a saved layout keeps both the old arrangement and the old tab names for good.
 const LS_LAYOUT = "kt-ws-layout-v7";
 const LS_RAIL = "kt-ws-rail-open";
 const LS_RAIL_W = "kt-ws-rail-width";
@@ -265,10 +260,9 @@ const RAIL_DEFAULT_W = 300;
 // clicking it again (or its header strip) restores it to a usable height.
 const COLLAPSED_GROUP_HEIGHT = 35;
 const RESTORE_GROUP_HEIGHT = 280;
-// The layout presets, in menu order. One list, rendered by both header variants — each used to
-// carry its own copy, and they had already drifted apart: the compact menu said "Focus Topology"
-// where the wide one said "Focus topology". The wide spelling wins here because a normal window
-// shows that branch, so it is the wording most users already know.
+// The layout presets, in menu order. One list, rendered by both header variants, so the compact
+// and the wide menu cannot drift apart on a label's spelling. The wording is the wide branch's,
+// because a normal window shows that branch and it is what most users already know.
 const LAYOUT_PRESETS = [
   { key: "default", label: "Default" },
   { key: "topology", label: "Focus topology" },
@@ -384,9 +378,9 @@ function seedTermCounterFromPanels(api: DockviewApi, termCounter: Record<string,
   }
 }
 
-// Close any terminal panel whose device no longer exists in this lab (matches the old grid
-// behavior). Shared by the effect below (reacts to a later `detail` change) and `onDockReady`
-// (handles a lab already loaded by the time a restored layout's terminals first appear).
+// Close any terminal panel whose device no longer exists in this lab. Shared by the effect below
+// (reacts to a later `detail` change) and `onDockReady` (handles a lab already loaded by the
+// time a restored layout's terminals first appear).
 function pruneOrphanTerminals(api: DockviewApi, machineNames: Set<string>) {
   for (const p of terminalPanelsOf(api)) {
     const machine = (p.params as { machine?: string } | undefined)?.machine;
@@ -510,8 +504,9 @@ function focusTerminals(api: DockviewApi) {
   terms[0].api.setActive();
 }
 
-// Experimental integrated "IDE" view: left rail (labs + devices) + a dockview panel area (topology,
-// devices, files, runtime-fs, terminals, stats) whose layout can be freely rearranged by dragging.
+// The Workspace (see App.tsx's routes): left rail (labs + devices) + a dockview panel area
+// (topology, devices, files, runtime-fs, terminals, stats) whose layout is freely rearrangeable
+// by dragging.
 export function WorkspacePage() {
   const { name = "" } = useParams();
   const navigate = useNavigate();
@@ -643,16 +638,15 @@ export function WorkspacePage() {
     reloadLabs();
   }, [reloadLabs]);
 
-  // Docker being installed-but-stopped no longer makes those fetches fail: the backend now answers
-  // them from the on-disk model with nothing marked running (KatharaService._facade_or_offline), so
-  // the workspace opens and everything that doesn't need a daemon still works. What it *can't*
-  // report is live state, so a lab that comes up while the app is open would keep showing as
-  // stopped. The health badge only proves the FastAPI process is alive, not that Docker answers, so
-  // it never signals this; useDockerStatus() is the one thing that polls real Docker readiness, so
-  // reload on recovery to pick up the live state (and to recover the genuinely failed loads from a
-  // backend older than that change, or any other error). Only a genuine
-  // "stopped"/"missing" -> "ok" transition qualifies — the initial `null` -> "ok" resolution on a
-  // normal startup would just duplicate the mount-time fetch above.
+  // Docker being installed-but-stopped doesn't make those fetches fail: the backend answers them
+  // from the on-disk model with nothing marked running (KatharaService._facade_or_offline), so the
+  // workspace opens and everything that doesn't need a daemon still works. What it *can't* report
+  // is live state, so a lab that comes up while the app is open would keep showing as stopped. The
+  // health badge only proves the FastAPI process is alive, not that Docker answers, so it never
+  // signals this; useDockerStatus() is the one thing that polls real Docker readiness, so reload
+  // on recovery to pick up the live state (and to recover any genuinely failed load). Only a
+  // genuine "stopped"/"missing" -> "ok" transition qualifies — the initial `null` -> "ok"
+  // resolution on a normal startup would just duplicate the mount-time fetch above.
   const prevDockerState = useRef<DesktopDockerStatus["state"] | null>(null);
   const dockerStatus = useDockerStatus();
   useEffect(() => {
@@ -865,9 +859,9 @@ export function WorkspacePage() {
   const { deviceContextItems, findDeviceNode, domainContextItems, findDomainNode, actionConfig, setActionConfig } =
     deviceActions;
 
-  // Close terminal panels whose device no longer exists in the lab (matches the old grid behavior).
-  // Handles every *later* `detail` change; onDockReady below handles the lab already loaded by the
-  // time the dock first mounts, which this effect alone would miss (see its own comment).
+  // Close terminal panels whose device no longer exists in the lab. Handles every *later* `detail`
+  // change; onDockReady below handles the lab already loaded by the time the dock first mounts,
+  // which this effect alone would miss (see its own comment).
   useEffect(() => {
     const dockApi = dockApiRef.current;
     if (!dockApi || !detail) return;

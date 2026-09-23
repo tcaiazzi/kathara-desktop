@@ -80,8 +80,8 @@ export function FsTreePanel({
   const { selected, selectedPaths, selectedIsDir, isBinary, bufferPath, busy } = tree;
   // `selected !== bufferPath` covers the window where the tree highlight has moved (a
   // multi-selection collapsed back to one row) but that file's content hasn't been loaded into
-  // the editor yet — without it, the editor showed a stale buffer as if it were the new file's,
-  // enabled and ready to overwrite it on the next save.
+  // the editor yet — without it, the editor would show a stale buffer as if it were the new
+  // file's, enabled and ready to overwrite it on the next save.
   const disabled =
     !selected || selected !== bufferPath || selectedIsDir || isBinary || editorReadOnly || selectedPaths.length > 1;
 
