@@ -189,8 +189,11 @@ class KatharaService:
         *then* writes, holding nothing in between, lets two concurrent creates of the same name
         both pass the check and both write — the loser's rollback then deletes the winner's
         freshly created directory, leaving the winner with its 201 and its registry entry and no
-        files on disk. All five creation paths hold this instead. ``rename_lab`` has the same
-        check-then-write shape, done entirely inside ``_mutate_lock``.
+        files on disk. Every path that claims or releases a name holds this instead: the four
+        creation paths (``create_lab``, ``upload_lab``, and ``install_example`` and
+        ``install_gallery_lab`` through ``_install_from``), ``rename_lab`` for the name it moves to,
+        and ``delete_lab`` — unregistering and removing the directory are what *release* a name, so
+        they race a concurrent create of it.
 
         Deliberately *not* ``_mutate_lock``, which every other mutator uses: the critical section
         here contains the on-disk write itself — extracting a large .zip, ``copytree``-ing a

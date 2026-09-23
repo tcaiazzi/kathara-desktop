@@ -1,14 +1,14 @@
 """Parse a standard Kathara lab directory (lab.conf/.startup/folders) into a LabCreate.
 
-Every device file/``<machine>.startup``/``lab.conf`` a real import or upload writes lands on disk
-verbatim (see ``KatharaService.import_lab``/``upload_lab``) — this module only needs to translate
-that directory into the structural ``LabCreate`` (machines, interfaces, links). It deliberately
-keeps no in-memory file/dir tracking structure of its own: a second copy of that state goes stale
-relative to what is actually on disk. A top-level ``shared/`` folder
-needs no translation here: it isn't a per-machine concept, so there's nothing to fold into any
-``MachineCreate``. It lands on disk verbatim like every other file, and Kathara's own ``deploy()``
-(``Lab.create_shared_folder`` + a bind mount to ``/shared`` on every container) picks it up natively
-from there — see ``KatharaService.deploy_lab``.
+Every device file/``<machine>.startup``/``lab.conf`` a real upload or install writes lands on disk
+verbatim (see ``KatharaService._adopt_populated_dir``, which ``upload_lab`` and both installs
+share) — this module only needs to translate that directory into the structural ``LabCreate`` (machines,
+interfaces, links). It deliberately keeps no in-memory file/dir tracking structure of its own: a
+second copy of that state goes stale relative to what is actually on disk. A top-level ``shared/``
+folder needs no translation here: it isn't a per-machine concept, so there's nothing to fold into
+any ``MachineCreate``. It lands on disk verbatim like every other file, and Kathara's own
+``deploy()`` (``Lab.create_shared_folder`` + a bind mount to ``/shared`` on every container) picks
+it up natively from there — see ``KatharaService.deploy_lab``.
 """
 
 import re

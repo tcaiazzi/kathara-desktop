@@ -11,10 +11,10 @@ menu is gated by the same `busy` flag that disables Deploy/Undeploy, so a user c
 and, before it returns, right-click the same device and connect/disconnect/remove it, or switch to
 the Lab Configuration tab and save an edit.
 
-**Lab creation** is a third, separate race, added below (`test_*_create*`): the five creation
-paths (`create_lab`/`import_lab`/`upload_lab`/`install_example`/`install_gallery_lab`) each
-checked "is this name free?" and only *then* wrote to disk, with nothing held in between — so two
-concurrent creates of the same name both passed the check and both wrote. The observed damage was
+**Lab creation** is a third, separate race, added below (`test_*_create*`): the four creation
+paths (`create_lab`/`upload_lab`/`install_example`/`install_gallery_lab`) each checked "is this
+name free?" and only *then* wrote to disk, with nothing held in between — so two concurrent
+creates of the same name both passed the check and both wrote. The observed damage was
 not a merely theoretical interleaving: the loser's rollback deleted the *winner's* freshly written
 directory (the winner keeping its 201 and its registry entry, with no files left on disk), or the
 loser's swap replaced the winner's files while the registry kept the winner's model — and an N-way

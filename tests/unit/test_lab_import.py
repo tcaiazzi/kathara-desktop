@@ -91,7 +91,7 @@ def test_translate_lab_files_never_makes_shared_a_machine():
     # `shared` is a RESERVED_NAME: neither a top-level `shared/` folder nor a `shared.startup`
     # may be mistaken for a device, which is exactly what the folder-fallback path below would
     # otherwise do with them. Nothing to translate and nothing to complain about either — the
-    # files land on disk verbatim (KatharaService.upload_lab/import_lab) and Kathara's own
+    # files land on disk verbatim (KatharaService._adopt_populated_dir) and Kathara's own
     # deploy() picks the folder up natively, so this is silent rather than a warning.
     files = {
         **_example_files(),
