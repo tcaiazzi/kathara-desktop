@@ -10,7 +10,7 @@ interface LabExplorerProps {
   labName: string;
   detail: LabDetail;
   onStructuralChange?: () => Promise<void>;
-  /** Called after a device's own `<name>.startup` is saved, so the Node Info panel's startup
+  /** Called after a device's own `<name>.startup` is saved, so the Device Information panel's startup
    *  preview (fed by useDeviceActions' `startups`, fetched independently of this tab) picks it up. */
   onStartupFileSaved?: () => Promise<void>;
 }
@@ -37,7 +37,7 @@ function isStartupFilePath(path: string): boolean {
 // Every read/write is a real call against the lab's real filesystem (services/api.ts's `fs*Offline`
 // methods) — there is no separate in-memory cache of what's queued, so nothing here can ever drift
 // from what's actually on disk (that was an earlier design; it repeatedly did). The tree/editor
-// machinery is shared with the Runtime FS tab (hooks/useFsTree + FsTreePanel); what's specific to
+// machinery is shared with the Runtime Filesystem tab (hooks/useFsTree + FsTreePanel); what's specific to
 // this tab lives here: lab.conf is read/written through its own endpoint (it rebuilds the topology,
 // and is refused while the lab is deployed) and is watched for changes made elsewhere.
 export function LabExplorer({ labName, detail, onStructuralChange, onStartupFileSaved }: LabExplorerProps) {

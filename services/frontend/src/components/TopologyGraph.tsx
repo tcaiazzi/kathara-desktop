@@ -57,9 +57,9 @@ interface TopologyGraphProps extends DeviceActionsProps {
   // where the component tracks the selected node itself.
   selectedId?: string | null;
   onSelectId?: (id: string | null) => void;
-  // DOM node of the "Node info" dock panel. When set, the inspector is portaled into it (so it can
-  // be dragged/closed like any dock panel); when null (panel closed) the inspector is hidden and the
-  // canvas takes the full width.
+  // DOM node of the "Device Information" dock panel. When set, the inspector is portaled into it
+  // (so it can be dragged/closed like any dock panel); when null (panel closed) the inspector is
+  // hidden and the canvas takes the full width.
   nodeInfoHost?: HTMLElement | null;
 }
 
@@ -649,7 +649,7 @@ export function TopologyGraph({
                       </Dropdown.Item>
                       <Dropdown.Item onClick={() => openRuntimeFs(selectedNode)}>
                         <FolderOpen size={14} className="me-2" />
-                        Show runtime FS
+                        Show Runtime Filesystem
                       </Dropdown.Item>
                       <Dropdown.Divider />
                     </>

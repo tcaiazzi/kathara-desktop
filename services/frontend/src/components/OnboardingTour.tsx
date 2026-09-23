@@ -12,11 +12,12 @@ interface TourStep {
   /** Dockview panel id to bring to the front of its tab group before this step is highlighted
    *  (see `groupElement` — those panels' *content* only exists behind whichever tab is active). */
   tourPanel?: string;
-  /** "Node info" is blank until a device is selected — this step picks the first one first. */
+  /** "Device Information" is blank until a device is selected — this step picks the first one first. */
   tourSelectFirstDevice?: boolean;
 }
 
-// Node info/Devices/Lab Configuration/Runtime FS/Stats share one dockview group: one tab strip
+// Device Information/Lab Details/Lab Configuration/Runtime Filesystem/Statistics share one
+// dockview group: one tab strip
 // (dockview-core's `.dv-tab` per tab, see DockTab in WorkspacePage.tsx) sitting on one shared
 // content area below it (`.dv-groupview` wraps both — see dockviewGroupPanelModel.js's
 // `container.append(tabsContainer.element, contentContainer.element)`). The whole panel — tab
@@ -58,7 +59,7 @@ const STEPS: TourStep[] = [
     tourSelectFirstDevice: true,
     popover: {
       title: "Device Information",
-      description: "Click any device — in the topology or the Devices list — to see its details here: interfaces, image, running state.",
+      description: "Click any device — in the topology or the Lab Details list — to see its details here: interfaces, image, running state.",
     },
   },
   {
@@ -184,7 +185,7 @@ export function OnboardingTour() {
         onHighlightStarted: (element, driveStep) => {
           const step = driveStep as TourStep;
 
-          // "Node info" is blank until a device is selected — pick the first one so this step
+          // "Device Information" is blank until a device is selected — pick the first one so this step
           // has real content to point at, same as any user clicking a device would trigger.
           if (step.tourSelectFirstDevice) selectFirstDevice();
 

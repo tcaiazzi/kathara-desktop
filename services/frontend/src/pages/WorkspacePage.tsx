@@ -185,7 +185,7 @@ const TOUR_TAB_ID: Record<string, string> = {
 // closable. Wired as dockview's `defaultTabComponent` rather than per-panel, so it also governs a
 // layout restored from localStorage — a saved layout replays each panel's own `tabComponent`, so
 // a per-panel opt-in could never reach a panel that was already persisted without one (which is
-// how "Node info" ended up with a close button while its siblings had none).
+// how "Device Information" ended up with a close button while its siblings had none).
 function DockTab(props: IDockviewPanelHeaderProps) {
   return (
     <DockviewDefaultTab
@@ -302,7 +302,7 @@ const TERMINAL_ID_RE = /^terminal:(.*):(\d+)$/;
 function buildDefaultLayout(api: DockviewApi) {
   // Topology first: its own full-width row on top, with nothing else yet so it fills the canvas.
   api.addPanel({ id: "topology", component: "topology", title: "Topology" });
-  // One shared tab group below it: the inspector plus every tool panel. Node info goes in first
+  // One shared tab group below it: the inspector plus every tool panel. Device Information goes in first
   // so it lands as the left-most tab.
   api.addPanel({
     id: "node-info",
@@ -320,7 +320,8 @@ function buildDefaultLayout(api: DockviewApi) {
   api.getPanel("devices")?.api.setActive();
 }
 
-// Re-open the Node info panel if it was closed (as a tab alongside Devices/Lab Configuration/…).
+// Re-open the Device Information panel if it was closed (as a tab alongside Lab Details/Lab
+// Configuration/…).
 // No-op if it already exists. Doesn't foreground it when it's sharing a tab group with Topology —
 // e.g. dragged there manually — since that would hide the topology view a selection likely just
 // came from; the node-info content itself is a portal (NodeInfoPanel) that updates regardless of
@@ -581,8 +582,9 @@ export function WorkspacePage() {
 
   const dockApiRef = useRef<DockviewApi | null>(null);
 
-  // Selecting a node (topology graph or sidebar rail) should bring its details forward — Node
-  // info might be a background tab behind Devices/Lab Configuration/… or closed entirely.
+  // Selecting a node (topology graph or sidebar rail) should bring its details forward — the
+  // Device Information tab might be sitting behind Lab Details/Lab Configuration/… or be closed
+  // entirely.
   const selectNode = useCallback((id: string | null) => {
     setSelectedId(id);
     if (id !== null && dockApiRef.current) showNodeInfo(dockApiRef.current);
@@ -699,12 +701,12 @@ export function WorkspacePage() {
       requestTour({ auto: true });
     }
   }, [detail, requestTour, isAdmin]);
-  // "Devices" and "Lab Configuration" share one tab group (see buildDefaultLayout) — only one is
+  // "Lab Details" and "Lab Configuration" share one tab group (see buildDefaultLayout) — only one is
   // ever visually on top, so the tour brings the right one forward as it reaches each step.
   useEffect(() => {
     registerTourFocusPanel((panelId) => dockApiRef.current?.getPanel(panelId)?.api.setActive());
   }, [registerTourFocusPanel]);
-  // "Node info" shows nothing until a device is selected — the tour picks the first one so that
+  // "Device Information" shows nothing until a device is selected — the tour picks the first one so that
   // step has real content to point at.
   useEffect(() => {
     registerTourSelectFirstDevice(() => {
@@ -752,10 +754,10 @@ export function WorkspacePage() {
     dockApiRef.current?.getPanel("runtime-fs")?.api.setActive();
   }, []);
 
-  // Keep the Runtime FS device selector coherent with whatever node is selected elsewhere
+  // Keep the Runtime Filesystem device selector coherent with whatever node is selected elsewhere
   // (topology graph or sidebar) — without stealing focus onto the runtime-fs panel itself (unlike
   // openRuntimeFsPanel above, this never calls .setActive()). Collision domains and deselection
-  // have no Runtime FS equivalent, so they're left alone.
+  // have no Runtime Filesystem equivalent, so they're left alone.
   useEffect(() => {
     if (selectedId?.startsWith("dev:")) setRuntimeFsPreferredMachine(selectedId.slice(4));
   }, [selectedId]);
@@ -1098,8 +1100,9 @@ export function WorkspacePage() {
 
   // Unlike `ctxValue` above (rebuilt fresh every render because it bundles the genuinely-volatile
   // `deviceActions`), every field here is independently stable across unrelated re-renders — so
-  // `useMemo` actually keeps this object's identity stable for the tree-heavy Files/Runtime FS
-  // panels, instead of them re-rendering on every unrelated workspace interaction.
+  // `useMemo` actually keeps this object's identity stable for the tree-heavy Lab Configuration
+  // and Runtime Filesystem panels, instead of them re-rendering on every unrelated workspace
+  // interaction.
   const coreCtxValue = useMemo(
     () =>
       currentDetail

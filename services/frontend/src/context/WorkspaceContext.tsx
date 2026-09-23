@@ -19,8 +19,9 @@ export interface WorkspaceCtx {
   openRuntimeFsPanel: (machine: string) => void;
   /** The machine the Runtime Filesystem panel should preselect (set by openRuntimeFsPanel). */
   runtimeFsPreferredMachine: string | null;
-  /** DOM node of the "Node info" dock panel, or null when that panel is closed. The topology
-   *  portals its inspector into it, so node info lives in a draggable/closable dock panel. */
+  /** DOM node of the "Device Information" dock panel, or null when that panel is closed. The
+   *  topology portals its inspector into it, so the inspector lives in a draggable/closable dock
+   *  panel. */
   nodeInfoHost: HTMLElement | null;
   setNodeInfoHost: (el: HTMLElement | null) => void;
   /** The single useDeviceActions instance for this workspace, shared by the topology canvas and

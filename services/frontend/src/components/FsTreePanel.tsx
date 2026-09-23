@@ -35,7 +35,7 @@ const RowActionsCtx = createContext<FsRowActions | null>(null);
 
 interface FsTreePanelProps {
   tree: UseFsTree;
-  /** Above the toolbar — the Runtime FS device picker. */
+  /** Above the toolbar — the Runtime Filesystem device picker. */
   headerSlot?: ReactNode;
   /** Replaces the whole tree side when there is nothing to browse ("no running devices"). */
   emptySlot?: ReactNode;
@@ -47,7 +47,7 @@ interface FsTreePanelProps {
   editorReadOnly?: boolean;
   /** Shown instead of the default when `editorReadOnly` is what disabled the editor. */
   readOnlyPlaceholder?: string;
-  /** Remounts the tree wholesale (Runtime FS keys it by device). */
+  /** Remounts the tree wholesale (Runtime Filesystem keys it by device). */
   treeKey?: string;
   onReload: () => void;
 }
@@ -287,7 +287,7 @@ export function FsTreePanel({
               : isBinary
                 ? tree.hasDownload
                   ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
-                  : "This file is binary and can't be displayed here. Delete to remove it, or edit it via the Runtime FS tab once the device is running."
+                  : "This file is binary and can't be displayed here. Delete to remove it, or edit it via the Runtime Filesystem tab once the device is running."
                 : editorReadOnly
                   ? readOnlyPlaceholder
                   : selected

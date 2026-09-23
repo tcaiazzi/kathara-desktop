@@ -8,7 +8,7 @@ interface PanelProps {
 }
 
 // Shared `.card`/`.card-body` wrapper. When `headerExtra` is given, the title moves into a flex
-// row alongside it (e.g. Stats' Start/Stop button); without it, a plain `.card-title` is used so
+// row alongside it (e.g. Statistics' Start/Stop button); without it, a plain `.card-title` is used so
 // Bootstrap's default heading margin isn't stripped from panels that don't need a header row.
 export function Panel({ title, headerExtra, className, children }: PanelProps) {
   return (

@@ -28,7 +28,7 @@ interface OnboardingTourInternal extends OnboardingTourApi {
   focusPanel: (panelId: string) => void;
   /** WorkspacePage-only: wires `focusPanel` to its own dockview API instance. */
   registerFocusPanel: (fn: (panelId: string) => void) => void;
-  /** OnboardingTour.tsx-only: selects the lab's first device so the "Node info" step has
+  /** OnboardingTour.tsx-only: selects the lab's first device so the "Device Information" step has
    *  something to actually show — that panel renders nothing until a device is selected. A
    *  no-op until WorkspacePage registers the real implementation. */
   selectFirstDevice: () => void;
@@ -121,7 +121,7 @@ export function useOnboardingTourFocusPanel(): (fn: (panelId: string) => void) =
   return ctx.registerFocusPanel;
 }
 
-/** WorkspacePage-only: lets the tour select the lab's first device (so "Node info" has something
+/** WorkspacePage-only: lets the tour select the lab's first device (so "Device Information" has something
  *  to show) before that step is highlighted. */
 export function useOnboardingTourSelectFirstDevice(): (fn: () => void) => void {
   const ctx = useContext(OnboardingTourCtx);

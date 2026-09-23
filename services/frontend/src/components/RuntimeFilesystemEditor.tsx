@@ -41,7 +41,7 @@ export function RuntimeFilesystemEditor({
   }, [machine, runningMachines]);
 
   // Tracks the last `preferredMachine` value actually applied, so this effect only fires again
-  // when the *value* changes (a fresh "Show runtime filesystem" click) — not on every re-render
+  // when the *value* changes (a fresh "Show Runtime Filesystem" click) — not on every re-render
   // where `runningMachines` merely gets a new array identity (it's recomputed from `detail.machines`
   // on every lab refresh, even when the running-machine set is unchanged). Without this guard, a
   // manual device switch via the dropdown below (which never updates `preferredMachine`) would get
