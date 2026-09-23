@@ -232,7 +232,7 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # something already on disk of the wrong kind, or that isn't there when a read expects it —
     # a real but non-malicious input error, not a server bug. Other FSError siblings not listed
     # here (PermissionDenied, OperationTimeout, ResourceLocked, ...) are left to the catch-all 500
-    # on purpose: nothing today reaches them without a filesystem-level fault outside the caller's
+    # on purpose: nothing reaches them without a filesystem-level fault outside the caller's
     # control.
     fs.errors.ResourceNotFound: status.HTTP_404_NOT_FOUND,
     fs.errors.FileExpected: status.HTTP_400_BAD_REQUEST,

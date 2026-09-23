@@ -123,9 +123,9 @@ class KatharaService:
 
     # How long a failed `Kathara.get_instance()` is remembered before the next call retries the
     # connection. Deliberately short: it exists so that opening the app costs *one* connection
-    # attempt instead of one per read (nothing cached a failure before — see `_facade`), not to
-    # latch the process into an offline mode. Anything longer would keep reporting a lab as
-    # not-running for that long after the user starts Docker.
+    # attempt instead of one per read (see `_facade`), not to latch the process into an offline
+    # mode. Anything longer would keep reporting a lab as not-running for that long after the
+    # user starts Docker.
     _FACADE_FAILURE_TTL = 3.0
 
     def __init__(self, store: Optional[LabStore] = None) -> None:
@@ -231,8 +231,8 @@ class KatharaService:
                     # client with `timeout=None` (DockerManager.__init__), so a daemon that accepts
                     # the connection but never answers — Docker Desktop mid-start, or systemd
                     # socket activation with docker.service stopped — makes this call hang with no
-                    # bound. Caching only success meant every single read paid that again; the TTL
-                    # is what still lets a recovered daemon be picked up.
+                    # bound. Caching only success would make every read pay that again; the TTL is
+                    # what still lets a recovered daemon be picked up.
                     cached = self._facade_error
                     if cached is not None:
                         if time.monotonic() - self._facade_error_at < self._FACADE_FAILURE_TTL:
@@ -254,10 +254,10 @@ class KatharaService:
         """The facade, or ``None`` when the Docker daemon can't be reached. **Reads only.**
 
         A lab's configuration lives on disk and needs no daemon to be described, so a stopped
-        Docker should cost the live "what is running?" overlay — not the whole response. Before
-        this, the three read paths turned a stopped daemon into a 503 that left the UI with nothing
+        Docker should cost the live "what is running?" overlay — not the whole response. Without
+        this, the three read paths turn a stopped daemon into a 503 that leaves the UI with nothing
         at all: the frontend's whole dock area only mounts once a lab detail loads, so `lab.conf`,
-        the file editor and the topology — none of which involve Docker — were unreachable too.
+        the file editor and the topology — none of which involve Docker — go down with it.
 
         Everything that genuinely needs Docker (deploy/undeploy, exec, stats, the runtime
         filesystem, image pulls) keeps calling `_facade` directly and keeps failing loudly with
@@ -369,9 +369,9 @@ class KatharaService:
         with self._images_cache_lock:
             if self._images_cache is not None and time.monotonic() - self._images_cache_at < self._IMAGES_CACHE_TTL:
                 # A copy, not the cached list itself: a caller that mutated it in place would
-                # corrupt the cache for everyone else. Today's only caller (routers/system.py)
-                # is serialized through Pydantic before it ever reaches this list, so this only
-                # protects a future direct caller.
+                # corrupt the cache for everyone else. The sole caller (routers/system.py) is
+                # serialized through Pydantic before it ever reaches this list, so this only
+                # protects a direct one.
                 return list(self._images_cache)
         images = DockerHubApi.get_tagged_images()
         with self._images_cache_lock:
@@ -571,13 +571,13 @@ class KatharaService:
 
         Every method in the offline family runs its argument through this *first*, so the
         `lab.conf` guards below — and `_offline_fs_owner`/`_dirty_target_for`, which both split on
-        "/" — all see one spelling of any given file. Without it the guards compared the raw
-        string: "/lab.conf" was routed to `update_lab_conf` (parse validation, the
-        409-while-deployed gate, the registry rebuild) while "./lab.conf" slipped past all three
-        and overwrote lab.conf with unvalidated text, leaving the registry on the old model.
+        "/" — all see one spelling of any given file. Without it the guards compare the raw
+        string: "/lab.conf" routes to `update_lab_conf` (parse validation, the
+        409-while-deployed gate, the registry rebuild) while "./lab.conf" slips past all three
+        and overwrites lab.conf with unvalidated text, leaving the registry on the old model.
 
         Back-references are left to `fs.path.normpath`, which resolves an interior one
-        ("pc1/../lab.conf" really does denote lab.conf, and now reaches it through the validated
+        ("pc1/../lab.conf" really does denote lab.conf, and reaches it through the validated
         path) and raises `IllegalBackReference` for one that climbs out of the lab — already
         mapped to a clean 400 in errors.py, and asserted by
         test_fs_list_offline_back_reference_path_raises_illegal_back_reference.
@@ -597,8 +597,8 @@ class KatharaService:
     def _is_lab_root(owner: str, guest: str) -> bool:
         """Whether ``(owner, guest)`` resolves to the lab's own root directory.
 
-        Extracted from `fs_delete_offline`, which was the only method that had this check — it is
-        just as wrong to move a lab's root away or copy something over it.
+        Shared by every offline-fs mutator that can displace an entry: moving a lab's root away
+        or copying something over it is as wrong as deleting it.
         """
         return owner == ROOT_MACHINE and fs.path.normpath(guest) in ("", "/")
 
@@ -803,9 +803,9 @@ class KatharaService:
         ``lab.conf``. Rebuilding from disk instead keeps offline (lab.conf) edits isolated from
         runtime ones. Returns None if the lab has no on-disk directory (reconstruct-only labs).
 
-        Used only as the folder-based-import bootstrap in ``_lab_conf_base_text`` now — every
-        other offline edit works on the stored ``lab.conf`` *text* directly (``lab_conf_edit``),
-        never through this model round trip.
+        Its one use is the folder-based-import bootstrap in ``_lab_conf_base_text`` — every other
+        offline edit works on the stored ``lab.conf`` *text* directly (``lab_conf_edit``), never
+        through this model round trip.
         """
         t = self._translate_lab_dir(name)
         if t is None:
@@ -898,7 +898,8 @@ class KatharaService:
         Shared tail of ``upload_lab`` and ``install_example`` — they differ only in *how* the
         directory got populated (zip extraction vs. a verbatim copy of a bundled example), never
         in how the populated directory becomes a registered Lab. Rolls the directory back if
-        parsing or registration fails, same as both callers did before this was factored out.
+        parsing or registration fails, so neither caller has to: a half-populated directory must
+        never outlive the request that created it.
         """
         lab_dir = self.store.lab_dir(clean_name)
         try:
@@ -1212,10 +1213,10 @@ class KatharaService:
     def fs_upload_bytes_offline(self, lab_name: str, path: str, content: bytes) -> int:
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
-            # Routed exactly like fs_write_text_offline's, and for the same reasons — this method
-            # had no lab.conf guard at all, so uploading to the *literal* path "lab.conf" wrote
-            # raw bytes straight over it: no parse validation, no 409 while the lab was deployed,
-            # no registry rebuild, and (being bytes) not even a guarantee the file was still text.
+            # Routed exactly like fs_write_text_offline's, and for the same reasons. Unguarded, an
+            # upload to the *literal* path "lab.conf" writes raw bytes straight over it: no parse
+            # validation, no 409 while the lab is deployed, no registry rebuild, and (being bytes)
+            # not even a guarantee the file is still text.
             try:
                 text = content.decode("utf-8")
             except UnicodeDecodeError as exc:
@@ -1602,7 +1603,7 @@ class KatharaService:
                     try:
                         files[file_path] = machine.fs.readtext(file_path)
                     except UnicodeDecodeError:
-                        continue  # binary — this live-push path is text-only, same as before
+                        continue  # binary — this live-push path is text-only
 
             boot_script = self._boot_script(lab, machine)
             has_startup = bool(boot_script.strip())
@@ -1714,8 +1715,8 @@ class KatharaService:
                 # A lab's directory is plain disk I/O and needs no daemon to remove — and with no
                 # daemon reachable, there is nothing that could still be running to undeploy first.
                 # Any other failure here (the daemon *is* up but the undeploy itself fails) must
-                # keep propagating: deleting the directory out from under live containers would be
-                # worse than the bug this is fixing.
+                # keep propagating: deleting the directory out from under live containers is worse
+                # than leaving the lab undeleted.
                 logger.warning("Docker daemon unreachable while deleting lab `%s`; skipping undeploy", name)
         # Claimed like a create does: unregistering and removing the directory are what *release*
         # the name, and without the lock they can land in the middle of a concurrent import of the
@@ -1830,8 +1831,9 @@ class KatharaService:
             # link_names=None means "check every link in the lab" to _clear_undeployed_state, so a
             # kept link set must be the empty set (not None) to mean "check none of them".
             self._clear_undeployed_state(lab, {machine_name}, set() if keep_links else link_names)
-            # The facade only undeploys — it leaves the device in the model, so it kept reappearing
-            # in the topology/devices forever. Actually drop it from the Lab (and its on-disk files).
+            # The facade only undeploys — it leaves the device in the model, where it would keep
+            # reappearing in the topology/devices forever. Drop it from the Lab too (and its
+            # on-disk files).
             # Guard against None interface slots (a known upstream disconnect bug can leave them, and
             # Lab.remove_machine dereferences interface.link without a None check).
             self._compact_interfaces(machine)
@@ -1938,7 +1940,7 @@ class KatharaService:
 
     def copy_files(self, lab_name: str, machine_name: str, files: dict[str, str]) -> None:
         guest_to_host = {path: io.BytesIO(content.encode("utf-8")) for path, content in files.items()}
-        # `_get_running_machine` (lab/machine lookup + the running check) moved inside the lock —
+        # `_get_running_machine` (lab/machine lookup + the running check) belongs inside the lock:
         # checked outside it, a concurrent undeploy_lab/remove_machine could stop the device
         # between the check and the copy, so `self._facade().copy_files` would run against a
         # machine whose `api_object` this call never actually confirmed was still live.

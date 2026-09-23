@@ -14,12 +14,12 @@ own result and refuses to return text that would not load back — see ``validat
 
 The module intentionally exposes the *complete* set of lab.conf edits, not just the subset the
 API currently issues: ``set_meta``/``unset_meta``/``set_lab_metadata``/``renumber_interfaces`` and
-the read helpers ``device_names``/``interface_links`` have no caller in ``kathara_service`` today
-and are exercised by ``tests/unit/test_lab_conf_edit.py`` alone (``next_interface_number``, the
-other read helper, is additionally used by ``KatharaService.connect_machine``). They are kept — and tested — because
-a partial editing
-surface is what pushed earlier code back into "rebuild the whole file from the model", which is
-exactly the lossy behaviour this module exists to replace.
+the read helpers ``device_names``/``interface_links`` have no caller in ``kathara_service`` and
+are exercised by ``tests/unit/test_lab_conf_edit.py`` alone (``next_interface_number``, the other
+read helper, is additionally used by ``KatharaService.connect_machine``). They are kept — and
+tested — because a partial editing surface leaves a caller no way to make the edit it needs
+except "rebuild the whole file from the model", which is exactly the lossy behaviour the first
+paragraph rules out.
 """
 
 from dataclasses import dataclass

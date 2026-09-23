@@ -93,7 +93,7 @@ class SettingsUpdate(BaseModel):
     ``last_checked`` is also absent: it is this project's own bookkeeping of when it last polled
     GitHub for a release, and the frontend already never sends it back (see the comment in
     ``SettingsPage.tsx``'s submit handler) — modeling it here as a writable field would just be an
-    invitation nothing currently uses correctly.
+    invitation no caller has a correct use for.
 
     ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` are the odd ones out: they
     are not Kathara settings at all, but this project's own upload/import caps (``ApiSettings`` in

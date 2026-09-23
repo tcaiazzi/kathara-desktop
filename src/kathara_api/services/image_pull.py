@@ -209,8 +209,8 @@ class _Pull:
         """Whether a layer is being unpacked *right now*.
 
         Derived per layer rather than latched on the first `Extracting` line: Docker interleaves
-        extraction with the remaining downloads, so a single sticky flag claimed "extracting" for
-        the rest of a multi-layer pull and hid the byte counter behind it.
+        extraction with the remaining downloads, so a single sticky flag would claim "extracting"
+        for the rest of a multi-layer pull and hide the byte counter behind it.
         """
         return any(layer.extracting for layer in self.layers.values())
 
@@ -473,7 +473,7 @@ def pull_images(manager: Any, images: list[str]) -> list[str]:
     with track(images):
         for position, name in enumerate(images):
             start_image(name, position)
-            # Surfaces a nonexistent reference as a clean error now, rather than mid-stream.
+            # Surfaces a nonexistent reference as a clean error up front, rather than mid-stream.
             docker_image.get_remote(name)
             for line in client.api.pull(name, stream=True, decode=True):
                 if not isinstance(line, dict):

@@ -50,7 +50,7 @@ LAYOUT_FILENAME = "lab.layout"
 # generated or legitimately-imported file could ever approach.
 MAX_LAB_CONF_BYTES = 1 << 20
 
-# The scalar render order and the "already has a home" set both come from `lab_conf_options` now —
+# The scalar render order and the "already has a home" set both come from `lab_conf_options` —
 # see that module for why they are not spelled out here. Everything in `device.meta` that is *not*
 # in MODELED_META_KEYS is a pass-through option (see `lab_builder.apply_options`) and gets its own
 # `name[key]="value"` line, sorted for stability.
@@ -530,9 +530,9 @@ class LabStore:
     def _new_scratch_dir(self, name: str) -> Path:
         """A private, uniquely-named scratch directory for one in-flight write of ``name``.
 
-        Unique rather than a single ``.<name>.tmp`` per lab: with the shared spelling, two
-        concurrent writes of the same lab tore each other's tree down (each one began by
-        ``rmtree``-ing whatever was already there) and then collided on ``mkdir``, surfacing to
+        Unique rather than a single ``.<name>.tmp`` per lab: with a shared spelling, two
+        concurrent writes of the same lab tear each other's tree down (each one begins by
+        ``rmtree``-ing whatever is already there) and then collide on ``mkdir``, surfacing to
         the client as a 500 with the absolute host path in it. ``mkdtemp`` also creates the
         directory atomically, so there is no exists-then-create window left to lose. The leading
         dot keeps it invisible to ``lab_names()``, which filters dotfiles.
@@ -546,9 +546,9 @@ class LabStore:
 
         Every caller is a lab-*creation* path, and the service asserts the name is free under its
         per-lab-name lock before calling in — so a ``final`` that exists here means a concurrent
-        create won the race for this name, and the directory is *that lab's*. This used to
-        ``rmtree(final)`` unconditionally, which is precisely how a completed import lost every
-        one of its files to a racer that went on to fail with a 409 anyway.
+        create won the race for this name, and the directory is *that lab's*. Clobbering it —
+        ``rmtree(final)`` before the replace — is precisely how a completed import loses every
+        one of its files to a racer that goes on to fail with a 409 anyway.
         """
         if final.exists():
             raise LabAlreadyRegisteredError(f"Lab `{name}` already exists.")

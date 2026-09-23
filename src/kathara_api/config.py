@@ -90,7 +90,7 @@ class ApiSettings(BaseSettings):
 
     # Shared secret pairing a single launched backend with its own frontend (the desktop app
     # generates one per launch — see services/desktop/src/backend.ts). Unset by default: every
-    # other deployment (Docker Compose, dev) keeps today's no-auth behavior untouched (see
+    # other deployment (Docker Compose, dev) keeps the no-auth default untouched (see
     # dependencies.require_auth_token).
     auth_token: Optional[str] = None
 

@@ -124,7 +124,7 @@ def _parse_volume(value: str) -> Optional[VolumeMount]:
     defaults ``mode`` to ``"ro"``) — so a lab.conf parsed by this API behaves like one parsed by
     the Kathara CLI itself. Routed through ``VolumeMount`` rather than applied as a raw string so
     it picks up the same validation the JSON path already has (absolute paths, no quotes) for
-    free — necessary here too, since this now gets written back into lab.conf same as a
+    free — necessary here too, since this gets written back into lab.conf same as a
     JSON-supplied volume.
     """
     parts = [p for p in value.split("|") if p]

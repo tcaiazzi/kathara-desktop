@@ -52,8 +52,8 @@ async def tty_live_ws(
 ):
     """Interactive websocket TTY bridge for a running machine.
 
-    This endpoint currently targets Docker-backed machines through the backend
-    container API object and a low-level exec socket.
+    This endpoint targets Docker-backed machines through the backend container API object and a
+    low-level exec socket.
 
     Client messages:
       - {"type": "input", "data": "..."}

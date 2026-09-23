@@ -24,7 +24,7 @@ def _request_token(request: Request, *, allow_query: bool) -> str | None:
     The `Authorization` header covers every plain fetch, whatever its method (see
     services/frontend/src/services/api.ts). ``allow_query=True`` additionally accepts ``?token=``,
     needed only where a browser's native ``EventSource`` can't set custom headers on its handshake —
-    ``statsStreamUrl`` is the sole caller of that shape today (``/tty/ws`` is a native ``WebSocket``
+    ``statsStreamUrl`` is the sole caller of that shape (``/tty/ws`` is a native ``WebSocket``
     with the same constraint, but it checks its token by hand rather than through this dependency —
     see routers/exec.py). Every other route only ever needs the header, so accepting ``?token=``
     there too would just widen the token's exposure (query strings end up in proxy/access logs,
@@ -54,7 +54,7 @@ def require_auth_token(request: Request) -> None:
 
     A no-op when no token is configured, which is the default for every deployment except the
     desktop app (services/desktop/src/backend.ts generates one per launch) — Docker Compose and
-    plain dev runs keep today's no-auth behavior untouched.
+    plain dev runs keep the no-auth default untouched.
     """
     _check_token(request, allow_query=False)
 

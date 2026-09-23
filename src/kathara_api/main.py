@@ -184,7 +184,8 @@ def run() -> None:
 
 # Deliberately no module-level `app = create_app()`. Every entry point uses the factory instead
 # (`run()` above, Dockerfile.dev's CMD, services/desktop/src/backend.ts — all pass
-# `kathara_api.main:create_app --factory`). With one here, importing this module built an app as
-# a side effect and uvicorn then built a second one from the factory, so `apply_startup_settings`
-# ran twice against the process-wide KatharaService singleton (dependencies.py) — and any startup
-# error, e.g. mount_spa's RuntimeError, surfaced at import time rather than from uvicorn.
+# `kathara_api.main:create_app --factory`). With one here, importing this module would build an
+# app as a side effect and uvicorn would build a second one from the factory, so
+# `apply_startup_settings` would run twice against the process-wide KatharaService singleton
+# (dependencies.py) — and any startup error, e.g. mount_spa's RuntimeError, would surface at
+# import time rather than from uvicorn.
