@@ -4,12 +4,9 @@
 //
 // These rules MIRROR the backend parser `lab_import.py` (parse_lab_conf + _apply_conf_option + the
 // sequential-interface check) so what is shown here matches what `PUT /api/labs/{lab}/lab-conf`
-// will accept.
-//
-// The binding rule for severity: if the backend appends to its `errors` list (rejecting the
-// import/save), this linter must show an error; if the backend only warns (accepts, but the
-// option is preserved-not-applied or not interpreted), this linter shows a warning, never an
-// error — a client-side error the backend would accept blocks a legitimate save.
+// will accept — and they may only be *stricter* than it where the backend itself rejects. That
+// asymmetry is the rule to read before changing a severity: docs/DESIGN-NOTES.md, "The editor's
+// lint severity is one-way".
 
 import { CONF_LINE_RE, LAB_GLOBAL_SET, MAPPED_OPTION_SET, RESERVED_MACHINE_NAMES } from "../services/editorLanguage";
 

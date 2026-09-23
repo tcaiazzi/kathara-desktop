@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
-import { api } from "../services/api";
+import { api, isAbortError } from "../services/api";
 import type { LabConfView, LabDetail } from "../services/types";
 import { FsTreePanel } from "./FsTreePanel";
 
@@ -102,6 +102,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
       search: (path, query, caseSensitive, signal) =>
         api.fsSearchOffline(labName, path, query, caseSensitive, signal),
       canModify,
+      cannotModifyReason: "lab.conf can't be modified here.",
       labels: {
         openFile: "Open file",
         saveFile: "Save file",
@@ -167,11 +168,10 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
   // Keep lab.conf in step with what's on disk. If the file changed underneath an edit in progress,
   // don't clobber the buffer — surface the conflict and let the user decide.
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
       try {
-        const conf = await api.getLabConf(labName);
-        if (cancelled) return;
+        const conf = await api.getLabConf(labName, controller.signal);
         const editing = bufferPathRef.current === LAB_CONF_PATH;
         const changed = conf.content !== serverConfRef.current;
         if (editing && dirtyRef.current && changed) {
@@ -183,12 +183,12 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
         }
         setLabConf(conf);
       } catch (e) {
-        if (!cancelled) toast.reportError("Load lab.conf", e);
+        if (!isAbortError(e)) toast.reportError("Load lab.conf", e);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    // Aborts the fetch rather than ignoring its result: switching labs quickly would otherwise
+    // leave the previous lab's read running, and it is the one that answers into a dead effect.
+    return () => controller.abort();
   }, [labName, detail, confReloadKey, setBuffer, toast]);
 
   function acceptConfConflict() {

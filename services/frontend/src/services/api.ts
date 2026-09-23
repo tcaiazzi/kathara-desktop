@@ -55,6 +55,13 @@ function authHeaders(): Record<string, string> {
 // way this is a same-origin, relative call, with no base URL to configure.
 const API_BASE = "/api";
 
+/** Whether a rejection is "the caller gave up", not a failure: what an aborted `fetch` throws.
+ *  Every `api.*` that takes an `AbortSignal` can reject this way, so a caller that passes one
+ *  and reports errors has to tell the two apart. */
+export function isAbortError(e: unknown): boolean {
+  return e instanceof DOMException && e.name === "AbortError";
+}
+
 export class ApiError extends Error {
   errorType: string;
   status: number;
@@ -142,8 +149,8 @@ async function requestBlob(path: string, signal?: AbortSignal): Promise<Blob> {
 }
 
 export const api = {
-  health: () => request<{ status: string }>("GET", "/health"),
-  systemInfo: () => request<SystemInfo>("GET", "/system"),
+  health: (signal?: AbortSignal) => request<{ status: string }>("GET", "/health", undefined, signal),
+  systemInfo: (signal?: AbortSignal) => request<SystemInfo>("GET", "/system", undefined, signal),
   getSettings: () => request<SettingsView>("GET", "/settings"),
   updateSettings: (payload: SettingsUpdate) => request<SettingsView>("PUT", "/settings", payload),
   // Force-undeploys every lab kathara-desktop has deployed, not just the currently open one — scopes
@@ -173,21 +180,22 @@ export const api = {
   // on the welcome screen's "start from an example" list. An older backend without this route
   // answers 404 — callers should treat a failed list as "no examples section" rather than an
   // error to surface.
-  listExampleLabs: () => request<ExampleLab[]>("GET", "/labs/examples"),
+  listExampleLabs: (signal?: AbortSignal) => request<ExampleLab[]>("GET", "/labs/examples", undefined, signal),
   createExampleLab: (id: string, name?: string) =>
     request<LabImportResult>("POST", "/labs/examples", name ? { id, name } : { id }),
 
   // The upstream Kathara-Labs gallery (backend services/lab_gallery.py) shown in the "Browse
   // Kathara Labs" modal. Cached server-side; `refresh` bypasses that cache (the modal's Refresh
   // button).
-  listGalleryLabs: (refresh?: boolean) =>
-    request<GalleryCatalog>("GET", refresh ? "/labs/gallery?refresh=true" : "/labs/gallery"),
+  listGalleryLabs: (refresh?: boolean, signal?: AbortSignal) =>
+    request<GalleryCatalog>("GET", refresh ? "/labs/gallery?refresh=true" : "/labs/gallery", undefined, signal),
   createGalleryLab: (id: string, name?: string) =>
     request<LabImportResult>("POST", "/labs/gallery", name ? { id, name } : { id }),
 
   // The lab's real on-disk lab.conf (verbatim: comments/quoting/unmapped options intact).
   // `exists: false` + empty content means the lab has no lab.conf on disk yet; PUT creates it.
-  getLabConf: (name: string) => request<LabConfView>("GET", `/labs/${encodeURIComponent(name)}/lab-conf`),
+  getLabConf: (name: string, signal?: AbortSignal) =>
+    request<LabConfView>("GET", `/labs/${encodeURIComponent(name)}/lab-conf`, undefined, signal),
   // Apply an edited lab.conf to a non-deployed lab (rebuilds its topology). 409 if deployed.
   // The submitted text is stored verbatim — a follow-up getLabConf should return it unchanged.
   updateLabConf: (name: string, content: string) =>
@@ -337,7 +345,8 @@ export const api = {
   // authoritative completion signal.
   pullImages: (images: string[]) =>
     request<ImagePullResult>("POST", "/images/pull", { images }),
-  getImagePullProgress: () => request<ImagePullProgress>("GET", "/images/pull/progress"),
+  getImagePullProgress: (signal?: AbortSignal) =>
+    request<ImagePullProgress>("GET", "/images/pull/progress", undefined, signal),
 
   // Shells actually available in a running device (for the live-terminal picker).
   listShells: (labName: string, machineName: string) =>

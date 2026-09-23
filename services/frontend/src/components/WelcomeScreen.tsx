@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import { useCatalogInstall } from "../hooks/useCatalogInstall";
+import { useCatalogList } from "../hooks/useCatalogList";
 import { CatalogInstallButton } from "./CatalogInstallButton";
 import { Button } from "react-bootstrap";
 import { Globe, Plus, Upload } from "lucide-react";
@@ -32,25 +32,12 @@ interface WelcomeScreenProps {
 export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCreated, onDismiss }: WelcomeScreenProps) {
   const { dark } = useTheme();
 
-  const [examples, setExamples] = useState<ExampleLab[] | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listExampleLabs()
-      .then((list) => {
-        if (!cancelled) setExamples(list);
-      })
-      .catch(() => {
-        // An older backend without this route (or one with none bundled) 404s — that's "no
-        // examples section", not an error worth a toast on a screen whose whole point is to be
-        // welcoming.
-        if (!cancelled) setExamples([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const { items: examples } = useCatalogList<ExampleLab>({
+    fetch: (_refresh, signal) => api.listExampleLabs(signal),
+    // A backend without this route (or with no examples bundled) 404s — that's "no examples
+    // section", not an error worth surfacing on a screen whose whole point is to be welcoming.
+    errorMessage: () => null,
+  });
 
   const { busyId, install } = useCatalogInstall<ExampleLab>({
     install: (example) => api.createExampleLab(example.id),

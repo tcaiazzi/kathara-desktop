@@ -23,24 +23,26 @@ export function useImagePullProgress(active: boolean): ImagePullProgress | null 
     // renders the *old* download's bytes for a frame (jumping from ~96% back to 0%), and worse, a
     // download adopted from another window is declared finished off the stale terminal frame.
     setProgress(null);
-    let cancelled = false;
+    const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // The controller stops the request in flight; `signal.aborted` is what stops the *next* tick
+    // being scheduled, since clearTimeout alone can't reach a poll that is mid-request.
     const poll = () => {
       api
-        .getImagePullProgress()
+        .getImagePullProgress(controller.signal)
         .then((next) => {
-          if (cancelled) return;
+          if (controller.signal.aborted) return;
           setProgress(next);
           timer = setTimeout(poll, POLL_MS);
         })
         .catch(() => {
-          if (cancelled) return;
+          if (controller.signal.aborted) return;
           timer = setTimeout(poll, POLL_MS);
         });
     };
     poll();
     return () => {
-      cancelled = true;
+      controller.abort();
       if (timer) clearTimeout(timer);
     };
     // `active` only: the endpoint is global (images aren't scoped to a lab), so there is nothing

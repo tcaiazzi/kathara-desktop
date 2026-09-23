@@ -4,7 +4,9 @@
 // The option vocabulary here MIRRORS `src/kathara_api/lab_conf_options.py` (INTERPRETED_OPTIONS),
 // which is the single source of truth for every `machine[key]=value` name this API models: add or
 // remove one there and OPTION_KEYWORDS/MAPPED_OPTION_SET below change in the same commit.
-// tests/unit/test_lab_conf_options.py reads this file and fails when the two disagree.
+// tests/unit/test_lab_conf_options.py reads this file and fails when the two disagree. Why the
+// vocabulary lives on the backend and is mirrored here rather than generated: docs/DESIGN-NOTES.md,
+// "One vocabulary for `lab.conf`, mirrored once in the frontend".
 //
 // The syntax and name rules mirror the parser in `src/kathara_api/services/lab_import.py`
 // (CONF_LINE_RE, RESERVED_NAMES, LAB_META_KEYS), which nothing checks automatically. If the backend

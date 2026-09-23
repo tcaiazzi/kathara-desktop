@@ -82,7 +82,7 @@ import { useElementSize } from "../hooks/useElementSize";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
-import { api, ApiError } from "../services/api";
+import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
@@ -632,7 +632,7 @@ export function WorkspacePage() {
       setDetail(nextDetail);
       setNotFound(false);
     } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") return;
+      if (isAbortError(e)) return;
       if (loadGenRef.current !== gen) return;
       if (e instanceof ApiError && e.status === 404) {
         setDetail(null);
@@ -871,9 +871,6 @@ export function WorkspacePage() {
   const { deviceContextItems, findDeviceNode, domainContextItems, findDomainNode, actionConfig, setActionConfig } =
     deviceActions;
 
-  // Close terminal panels whose device no longer exists in the lab. Handles every *later* `detail`
-  // change; onDockReady below handles the lab already loaded by the time the dock first mounts,
-  // which this effect alone would miss (see its own comment).
   useEffect(() => {
     const dockApi = dockApiRef.current;
     if (!dockApi || !detail) return;

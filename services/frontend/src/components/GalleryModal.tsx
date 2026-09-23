@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useCatalogInstall } from "../hooks/useCatalogInstall";
+import { useCatalogList } from "../hooks/useCatalogList";
 import { CatalogInstallButton } from "./CatalogInstallButton";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
@@ -44,51 +45,20 @@ function matches(lab: GalleryLab, query: string): boolean {
 // example" list, scaled up to a full searchable catalog (~70 labs across ~9 categories).
 export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
 
-  const [catalog, setCatalog] = useState<GalleryLab[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const {
+    items: catalog,
+    loading,
+    refreshing,
+    error,
+    reload: load,
+  } = useCatalogList<GalleryLab>({
+    enabled: show,
+    fetch: async (refresh, signal) => (await api.listGalleryLabs(refresh, signal)).labs,
+    errorMessage: (e) => (e instanceof ApiError ? e.message : "Could not reach the lab gallery."),
+  });
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
-  const loadIdRef = useRef(0);
-
-  // A request ID rather than a per-call `cancelled` flag: the Refresh/Retry buttons below call
-  // this directly too, outside the mount effect, so a single shared guard is what lets the
-  // effect's cleanup invalidate a fetch a button started, not just the one it started itself.
-  function load(refresh: boolean) {
-    const id = ++loadIdRef.current;
-    (refresh ? setRefreshing : setLoading)(true);
-    setError(null);
-    api
-      .listGalleryLabs(refresh)
-      .then((result) => {
-        if (loadIdRef.current !== id) return;
-        setCatalog(result.labs);
-      })
-      .catch((e) => {
-        if (loadIdRef.current !== id) return;
-        setError(e instanceof ApiError ? e.message : "Could not reach the lab gallery.");
-      })
-      .finally(() => {
-        if (loadIdRef.current === id) {
-          setLoading(false);
-          setRefreshing(false);
-        }
-      });
-  }
-
-  useEffect(() => {
-    if (!show) return;
-    load(false);
-    // loadIdRef is a request counter, not a DOM node ref — incrementing it here on
-    // purpose invalidates whatever load() (this effect's or a Refresh/Retry click's) is
-    // still in flight when the modal closes or unmounts.
-    return () => {
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      loadIdRef.current++;
-    };
-  }, [show]);
 
   const groups = useMemo(() => {
     const labs = catalog ?? [];
@@ -129,7 +99,7 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
             variant="outline-secondary"
             size="sm"
             disabled={loading || refreshing}
-            onClick={() => load(true)}
+            onClick={() => void load(true)}
             title="Refresh catalog"
           >
             {refreshing ? <Loader2 size={14} className="kt-explorer-spin" /> : <RefreshCw size={14} />}
@@ -146,7 +116,7 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
         {!loading && error && (
           <div className="kt-gallery-status kt-gallery-error">
             {error}
-            <Button variant="outline-secondary" size="sm" className="ms-2" onClick={() => load(false)}>
+            <Button variant="outline-secondary" size="sm" className="ms-2" onClick={() => void load(false)}>
               Retry
             </Button>
           </div>

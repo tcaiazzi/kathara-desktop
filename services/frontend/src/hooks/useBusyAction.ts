@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useToast } from "../context/ToastContext";
-
-function isAbortError(e: unknown): boolean {
-  return e instanceof DOMException && e.name === "AbortError";
-}
+import { isAbortError } from "../services/api";
 
 // Wraps the busy/try/catch/toast-on-error/finally shell repeated across nearly every async
 // action handler in this app. Success feedback stays with each caller (the wording varies too

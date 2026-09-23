@@ -54,9 +54,9 @@ interface FsTreePanelProps {
 
 // The left tree + right editor shared by both filesystem panels (the lab's own directory, a
 // running device's filesystem): a VS Code-style react-arborist tree — virtualized rows,
-// drag-and-drop, keyboard nav, inline rename via double-click/F2 — and a CodeMirror editor. All
-// behaviour lives in `useFsTree`; this file is only presentation plus the slots for the handful of
-// things that genuinely differ between the two surfaces.
+// drag-and-drop, keyboard nav, inline rename via double-click/F2 — and a CodeMirror editor. The
+// behaviour, and what may differ between the two surfaces, is `useFsTree`'s (see its
+// `FsTreeSource`); this file is presentation plus the slots that feed it.
 export function FsTreePanel({
   tree,
   headerSlot,
@@ -401,7 +401,7 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
     if (!node.isSelected) node.select();
     const targets = node.isSelected ? Array.from(node.tree.selectedIds) : [path];
     const modifiable = targets.every(rowActions.canModify);
-    const lockedTitle = modifiable ? undefined : "lab.conf can't be modified here.";
+    const lockedTitle = modifiable ? undefined : rowActions.cannotModifyReason;
 
     const items: ContextMenuItem[] = [];
     if (node.data.dir) {

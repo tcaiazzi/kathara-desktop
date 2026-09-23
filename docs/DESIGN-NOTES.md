@@ -84,5 +84,5 @@ matters in one direction only: stricter-in-the-editor is a bug, laxer is not.
 The rules are a pure function over lines, with no CodeMirror or DOM import, so they can be unit
 tested in the DOM-less vitest run; `editor/labConfLint.ts` is only the CodeMirror binding on top.
 
-Applies to: `services/frontend/src/editor/labConfRules.ts`, `editor/labConfLint.ts`,
-`services/lab_import.py`.
+Applies to: `services/frontend/src/editor/labConfRules.ts`,
+`services/frontend/src/editor/labConfLint.ts`, `services/lab_import.py`.

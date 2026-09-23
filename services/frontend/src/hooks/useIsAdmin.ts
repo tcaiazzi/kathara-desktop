@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../services/api";
+import { api, isAbortError } from "../services/api";
 
 /**
  * One-shot check of whether the local Kathara API is currently running as root/admin — see
@@ -20,20 +20,19 @@ export function useIsAdmin(): boolean | undefined {
   const [isAdmin, setIsAdmin] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
       try {
-        const info = await api.systemInfo();
-        if (!cancelled) setIsAdmin(info.is_admin);
-      } catch {
+        const info = await api.systemInfo(controller.signal);
+        setIsAdmin(info.is_admin);
+      } catch (e) {
         // Backend unreachable — assume not privileged rather than leaving callers stuck on
-        // "still checking" forever over a transient/permanent failure to ask.
-        if (!cancelled) setIsAdmin(false);
+        // "still checking" forever over a transient/permanent failure to ask. An abort is not
+        // that: the asker is gone, so there is nobody left to answer.
+        if (!isAbortError(e)) setIsAdmin(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, []);
 
   return isAdmin;

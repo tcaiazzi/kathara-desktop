@@ -16,7 +16,7 @@ import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { useForceLayout, type NodePositions } from "../hooks/useForceLayout";
-import { api } from "../services/api";
+import { api, isAbortError } from "../services/api";
 import { machineStartupText } from "../services/labfs";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
 import { deviceStateLabel, formatIface, formatPort } from "../services/topology";
@@ -352,7 +352,7 @@ export function TopologyGraph({
           if (!status.finished) timer = setTimeout(poll, 1500);
         })
         .catch((e) => {
-          if (e instanceof DOMException && e.name === "AbortError") return;
+          if (isAbortError(e)) return;
           timer = setTimeout(poll, 1500);
         });
     };

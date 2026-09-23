@@ -3,7 +3,7 @@ import type { NodeApi, TreeApi } from "react-arborist";
 import { useConfirm } from "../context/ConfirmContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
-import { ApiError } from "../services/api";
+import { ApiError, isAbortError } from "../services/api";
 import { saveBlob } from "../services/download";
 import {
   entryToNode,
@@ -48,6 +48,9 @@ export interface FsTreeSource {
   ): Promise<{ matches: FsSearchMatch[]; truncated: boolean }>;
   /** Paths that can never be renamed, moved or deleted. Default: everything can. */
   canModify?(path: string): boolean;
+  /** Tooltip on the actions `canModify` disables, saying why. Required only when `canModify`
+   * refuses something — the reason is the caller's to give, not this hook's to guess. */
+  cannotModifyReason?: string;
   labels: FsTreeLabels;
 }
 
@@ -179,6 +182,7 @@ export interface FsRowActions {
   onCut: (paths: string[]) => void;
   onPaste: (destDir: string) => void;
   canModify: (path: string) => boolean;
+  cannotModifyReason?: string;
   /** Whether the clipboard currently holds anything to paste. */
   canPaste: boolean;
   isLoading: (path: string) => boolean;
@@ -308,7 +312,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         setTree((prev) => mergeNodeList(prev, entries.map(entryToNode)));
         setLoaded(true);
       } catch (e) {
-        if (e instanceof DOMException && e.name === "AbortError") return;
+        if (isAbortError(e)) return;
         toast.reportError(sourceRef.current.labels.openFile, e);
       }
     })();
@@ -346,7 +350,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           setSearchTruncated(truncated);
         })
         .catch((e) => {
-          if (e instanceof DOMException && e.name === "AbortError") return;
+          if (isAbortError(e)) return;
           if (scoped.current.searchGen !== gen) return;
           toast.reportError("Search", e);
           setSearchResults([]);
@@ -901,12 +905,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       onCut: (paths) => handleCut(paths),
       onPaste: (destDir) => void handlePaste(destDir),
       canModify,
+      cannotModifyReason: source.cannotModifyReason,
       canPaste: clipboard !== null,
       isLoading: (path) => path === loadingPath,
       isCutPending,
     }),
     [
       canModify,
+      source.cannotModifyReason,
       clipboard,
       handleCopy,
       handleCut,

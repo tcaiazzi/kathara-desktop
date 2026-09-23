@@ -1,10 +1,10 @@
-import { useEffect, useId, useState } from "react";
+import { useId } from "react";
 import { FolderOpen, Info } from "lucide-react";
 import { Button, Form, OverlayTrigger, Tooltip } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
 import { desktop } from "../desktop/bridge";
 import { useAvailableImageSections } from "../hooks/useAvailableImages";
-import { api } from "../services/api";
+import { useNetSysctls } from "../hooks/useNetSysctls";
 import type { MachineDetail, MachineOptionsPayload, PortMapping, Ulimit, VolumeMount } from "../services/types";
 import { AutocompleteInput } from "./AutocompleteInput";
 import { RowListEditor } from "./RowListEditor";
@@ -145,14 +145,9 @@ interface MachineOptionsFieldsProps {
 // MachineOptionsEditor and the add-device modal's "Advanced options" section so the two forms
 // can't drift apart.
 export function MachineOptionsFields({ form, disabled, onChange }: MachineOptionsFieldsProps) {
-  const [netSysctls, setNetSysctls] = useState<string[]>([]);
   const toast = useToast();
   const imageSections = useAvailableImageSections();
-
-  useEffect(() => {
-    api.listNetSysctls().then(setNetSysctls).catch((e) => toast.reportError("List sysctls", e));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const netSysctls = useNetSysctls();
 
   function set<K extends keyof OptionsFormState>(key: K, value: OptionsFormState[K]) {
     onChange(key, value);

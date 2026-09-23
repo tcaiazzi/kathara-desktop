@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../services/api";
+import { api, isAbortError } from "../services/api";
 
 type Health = "checking" | "ok" | "down";
 
@@ -8,18 +8,18 @@ export function useHealth(): Health {
   const [health, setHealth] = useState<Health>("checking");
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
     (async () => {
       try {
-        await api.health();
-        if (!cancelled) setHealth("ok");
-      } catch {
-        if (!cancelled) setHealth("down");
+        await api.health(controller.signal);
+        setHealth("ok");
+      } catch (e) {
+        // An abort is this component going away, not an unreachable backend — reporting "down"
+        // for it would be a badge reacting to its own unmount.
+        if (!isAbortError(e)) setHealth("down");
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => controller.abort();
   }, []);
 
   return health;

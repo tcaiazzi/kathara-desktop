@@ -10,8 +10,8 @@ interface StatsPanelProps {
   deployed: boolean;
 }
 
-// Live device statistics. stats/stream is a GET endpoint, so the browser's native EventSource
-// can be used directly (no manual SSE body-parsing needed here).
+// Live device statistics, streamed over a native EventSource — see `api.statsStreamUrl` for why
+// that works without any SSE parsing here.
 export function StatsPanel({ labName, deployed }: StatsPanelProps) {
   const [rows, setRows] = useState<Record<string, MachineStats>>({});
   const [streaming, setStreaming] = useState(false);
