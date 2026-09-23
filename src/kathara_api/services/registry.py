@@ -8,9 +8,10 @@ in the registry (e.g. after an API restart) fall back to reconstruction via the 
 The registry also tracks, per lab, which devices have been written to (via the offline lab
 filesystem, ``services.kathara_service``'s ``fs_*_offline`` methods) since their last (re)deploy —
 just *which* machines changed, never their content. A machine's actual queued files/dirs/startup
-live only on the real on-disk filesystem (``lab.fs``/``machine.fs``); there is deliberately no
-second, in-memory copy of that content to keep in sync (an earlier design did keep one, and it
-repeatedly drifted from disk — see the "ROOT_MACHINE" history in kathara_service.py).
+live only on the real on-disk filesystem (``lab.fs``/``machine.fs``): a second, in-memory copy would
+have to be kept in sync with every write, and drifts silently the moment one is missed, so there
+deliberately is none. Reads resolve through ``KatharaService._offline_fs_owner`` and ``_fs_for``
+instead.
 
 The registry is process-local; the server therefore must run with a single worker.
 """

@@ -21,15 +21,14 @@ def get_service() -> KatharaService:
 def _request_token(request: Request, *, allow_query: bool) -> str | None:
     """Pull a caller-supplied token from wherever this request could have put one.
 
-    The `Authorization` header covers every plain fetch (see services/frontend/src/services/
-    api.ts), including the POST-based ``/exec/stream``. ``allow_query=True`` additionally
-    accepts ``?token=``, needed only where a browser's native ``EventSource`` can't set custom
-    headers on its handshake — ``statsStreamUrl`` is the sole caller of that shape today
-    (``/tty/ws`` is a native ``WebSocket`` with the same constraint, but it checks its token by
-    hand rather than through this dependency — see routers/exec.py). Every other route only
-    ever needs the header, so accepting ``?token=`` there too would just widen the token's
-    exposure (query strings end up in proxy/access logs, browser history, `Referer` headers)
-    for no functional reason.
+    The `Authorization` header covers every plain fetch, whatever its method (see
+    services/frontend/src/services/api.ts). ``allow_query=True`` additionally accepts ``?token=``,
+    needed only where a browser's native ``EventSource`` can't set custom headers on its handshake —
+    ``statsStreamUrl`` is the sole caller of that shape today (``/tty/ws`` is a native ``WebSocket``
+    with the same constraint, but it checks its token by hand rather than through this dependency —
+    see routers/exec.py). Every other route only ever needs the header, so accepting ``?token=``
+    there too would just widen the token's exposure (query strings end up in proxy/access logs,
+    browser history, `Referer` headers) for no functional reason.
     """
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):

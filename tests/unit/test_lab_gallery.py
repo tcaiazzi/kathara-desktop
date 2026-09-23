@@ -508,7 +508,7 @@ def test_install_gallery_lab_rolls_back_directory_on_parse_error(tmp_path, monke
 
 
 def test_install_gallery_lab_enforces_the_file_count_cap(tmp_path, monkeypatch):
-    # The cap lives on ApiSettings (shared with the JSON-import/zip-upload paths), not on a
+    # The cap lives on ApiSettings (shared with the .zip-upload path), not on a
     # module constant of lab_gallery's own — set it on the fake settings double that
     # _install_fake_repo wires in, not the real process-global singleton.
     settings = _FakeSettings()

@@ -43,12 +43,6 @@ from ..config import format_mb, get_settings
 from ..errors import GalleryLabNotFoundError, GalleryUnavailableError
 from ..lab_conf_options import LAB_CONF_FILENAME
 
-# What a single lab is allowed to be — shared with the JSON-import and .zip-upload paths (see
-# ApiSettings.max_files_per_lab and friends in config.py) rather than a copy of the same three
-# numbers kept here: a mis-set gallery_repo (or a hostile fork) turning one click into a
-# disk-filling download is the same failure mode as an oversized upload, just from a different
-# source.
-
 # Enough for a cold GitHub tree of a few thousand entries, short enough that a hung upstream
 # doesn't hold a request open indefinitely.
 TREE_TIMEOUT = 20.0
@@ -391,6 +385,10 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
     ``LabStore.write_lab`` takes either. Keys come from the repo tree, and are written through
     ``LabStore._safe_join``, so they cannot escape the lab directory.
     """
+    # What a single lab is allowed to be, read from ApiSettings (config.py) rather than kept as a
+    # copy of the same three numbers here: a mis-set gallery_repo (or a hostile fork) turning one
+    # click into a disk-filling download is the same failure mode as an oversized .zip upload, just
+    # from a different source, so both paths answer to the same caps.
     settings = get_settings()
     if entry.n_files > settings.max_files_per_lab:
         raise GalleryUnavailableError(

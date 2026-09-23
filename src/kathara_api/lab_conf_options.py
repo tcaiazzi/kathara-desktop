@@ -6,12 +6,13 @@ depend on it without a cycle. (``schemas.machine`` and ``services.lab_store`` bo
 ``schemas.machine``, so hosting the vocabulary there would close a loop. Same reasoning, and same
 shape, as ``services/desktop/scripts/python-version.mjs``.)
 
-Five layers derive their names from here instead of spelling them out: the parser's dispatch
-chain, the lab.conf renderer's scalar order, the in-place editor's "which lines do we own", the
-request schema's reserved-key set, and the frontend's editor vocabulary. A local copy in any of
-them drifts, and the drift is silent — an option the parser interprets but the schema fails to
-reserve is accepted as a ``metas`` pass-through, written to disk verbatim, and comes back as the
-real option on the next load (``cpu`` reaching ``cpus`` is the case that bites).
+Six layers derive their names from here instead of spelling them out: the parser's dispatch chain,
+the lab.conf renderer's scalar order, the in-place editor's "which lines do we own", the
+serializer's ``metas`` filter, the request schema's reserved-key set, and the frontend's editor
+vocabulary. A local copy in any of them drifts, and the drift is silent — an option the parser
+interprets but the schema fails to reserve is accepted as a ``metas`` pass-through, written to disk
+verbatim, and comes back as the real option on the next load (``cpu`` reaching ``cpus`` is the case
+that bites).
 """
 
 import re

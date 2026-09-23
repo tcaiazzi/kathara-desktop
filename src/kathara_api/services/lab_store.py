@@ -144,9 +144,12 @@ def gen_lab_conf(lab: Lab) -> str:
     are emitted, and container-typed metas (envs/sysctls/ports/ulimits/volumes/exec) are expanded
     into their proper one-line-each directives.
 
-    The only remaining caller of this generator is ``create_lab`` (a JSON-described lab has no
-    source ``lab.conf`` to preserve). Every other path — import, upload, editor save, structural
-    edits — persists the lab's ``lab.conf`` verbatim instead; see ``LabStore.write_lab_conf_text``.
+    Generating is only ever done where there is no user text to preserve, which is two callers:
+    ``LabStore.write_lab_conf`` for a JSON-described lab (``create_lab``), and
+    ``KatharaService._lab_conf_base_text`` for a folder-based import whose directory carries no
+    ``lab.conf`` — that lab gains a real one on its first edit. Every other path, structural edits
+    included, builds on the stored text and persists it verbatim; see
+    ``LabStore.write_lab_conf_text``.
     """
     lines: list[str] = []
 
@@ -397,10 +400,10 @@ class LabStore:
         directory actually contains ``lab.conf``, so *paths* may shift even though every file's
         *bytes* never do.
 
-        Bounded against a zip bomb at every level (ApiSettings, config.py — the same caps a
-        gallery install and a JSON import enforce): the raw upload, the member count, and each
-        member's declared size (the realistic zip-bomb shape: an honest but highly compressible
-        payload) — plus, in ``_copy_with_cap``, the actual bytes written, as defense in depth.
+        Bounded against a zip bomb at every level (ApiSettings, config.py — the same caps a gallery
+        install enforces): the raw upload, the member count, and each member's declared size (the
+        realistic zip-bomb shape: an honest but highly compressible payload) — plus, in
+        ``_copy_with_cap``, the actual bytes written, as defense in depth.
         """
         settings = get_settings()
         name = sanitize_lab_name(name)
