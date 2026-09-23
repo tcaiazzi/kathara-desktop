@@ -1,6 +1,7 @@
 """FastAPI application factory and entry point."""
 
 import logging
+import signal
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -35,6 +36,10 @@ async def _lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Build and configure the FastAPI application."""
+    # macOS's admin-privileges launch can hand us these blocked, which defeats uvicorn's handler.
+    if hasattr(signal, "pthread_sigmask"):
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM, signal.SIGINT})
+
     app = FastAPI(
         title="Kathara REST API",
         version=__version__,

@@ -88,7 +88,8 @@ const GRACEFUL_SHUTDOWN_TIMEOUT_S = 5;
 /** How long `waitForDeath` polls `/api/health` after a shutdown request before giving up on a
  * backend with no process handle to confirm exit against. Kept comfortably above
  * `GRACEFUL_SHUTDOWN_TIMEOUT_S` (plus HTTP/poll-interval slack) so this doesn't time out just
- * before uvicorn's own bounded shutdown would have finished. */
+ * before uvicorn's own bounded shutdown would have finished. Must also stay above
+ * SHUTDOWN_HARD_EXIT_S in src/kathara_api/routers/system.py. */
 const SHUTDOWN_DEATH_POLL_MS = 8_000;
 /** Bounds the credentials-only `sudo -v` probe below. Generous — it's a local PAM call that
  * normally answers instantly — but finite, so a wedged PAM module can't hang the IPC call
@@ -1069,11 +1070,18 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     let reason: ElevateFailureReason = "error";
     if (failedToLaunch) reason = "cancelled";
     else if (message.includes("did not become healthy")) reason = "timeout";
+    // On macOS, "Command failed:" means the prompt was authorized and the backend then crashed.
+    let userMessage = message;
+    if (process.platform === "darwin" && failedToLaunch && message.startsWith("Command failed:")) {
+      reason = "error";
+      const lines = message.split("\n").map((l) => l.trim()).filter(Boolean);
+      userMessage = lines.length > 1 ? `the elevated backend exited during startup — ${lines[lines.length - 1]}` : message;
+    }
     log(`elevated backend start failed (${reason}): ${message}`);
 
     // No recovery start: the backend that was running before this attempt still is, on the same
     // port, so the renderer's origin is untouched.
-    return { ok: false, reason, message, restarted: false };
+    return { ok: false, reason, message: userMessage, restarted: false };
   }
 }
 

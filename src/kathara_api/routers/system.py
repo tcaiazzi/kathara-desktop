@@ -1,7 +1,9 @@
 """System, health, and settings endpoints."""
 
+import logging
 import os
 import signal
+import threading
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 
@@ -13,6 +15,25 @@ from ..services import image_pull
 from ..services.kathara_service import KatharaService
 
 router = APIRouter(tags=["system"])
+
+logger = logging.getLogger("kathara_api")
+
+# Must stay below SHUTDOWN_DEATH_POLL_MS in services/desktop/src/backend.ts.
+SHUTDOWN_HARD_EXIT_S = 3.0
+
+
+def _terminate_self() -> None:
+    """SIGTERM this process, forcing `os._exit` if that hasn't ended it in time."""
+    pid = os.getpid()
+    timer = threading.Timer(SHUTDOWN_HARD_EXIT_S, os._exit, args=(0,))
+    timer.daemon = True
+    timer.start()
+    logger.info(
+        "shutdown requested (pid %d), SIGTERM sent; forcing exit in %ss if still running",
+        pid,
+        SHUTDOWN_HARD_EXIT_S,
+    )
+    os.kill(pid, signal.SIGTERM)
 
 
 @router.get("/health")
@@ -40,7 +61,7 @@ def shutdown(background_tasks: BackgroundTasks) -> Message:
     ASGI for writing, not before: sending it inline here would race the response against the
     process's own shutdown.
     """
-    background_tasks.add_task(os.kill, os.getpid(), signal.SIGTERM)
+    background_tasks.add_task(_terminate_self)
     return Message(detail="Shutting down.")
 
 
