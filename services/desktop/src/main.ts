@@ -52,7 +52,7 @@ import { handleIpc } from "./ipc";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
 import { crashDumpsDir, defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
-import { isPlainAbsolutePath } from "./safety";
+import { isBoundedString, isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
 import {
   checkDockerStatus,
@@ -438,6 +438,32 @@ function senderWindow(event: IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(event.sender);
 }
 
+// Ceilings for the renderer-supplied strings below. Generous — none of these is a real policy
+// limit, they just stop an argument from being unbounded (see safety.ts's isBoundedString).
+const MAX_PASSWORD_LENGTH = 1024;
+// Longer than any filesystem allows for a single name, since the backend is what actually
+// judges a lab name (see `labDirectory`, which asks it rather than deriving a path here).
+const MAX_LAB_NAME_LENGTH = 512;
+
+/**
+ * Narrow one renderer-supplied string argument, or refuse the call.
+ *
+ * Every `ipcMain.handle` argument is untrusted and its type annotation is erased at runtime, so
+ * this is the first place an argument's shape is actually established — the same rule
+ * `setLabsDir` states for its own path. A refusal throws, which reaches the renderer as a
+ * rejected `invoke`.
+ */
+function requireString(value: unknown, label: string, maxLength: number): string {
+  if (isBoundedString(value, maxLength)) return value;
+  log(`refused ${label}: not a string of at most ${maxLength} characters`);
+  throw new Error(`${label} must be a string of at most ${maxLength} characters.`);
+}
+
+/** `requireString` for the arguments that are genuinely optional: only `undefined` is let past. */
+function optionalString(value: unknown, label: string, maxLength: number): string | undefined {
+  return value === undefined ? undefined : requireString(value, label, maxLength);
+}
+
 function registerIpc(): void {
   handleIpc("status:get", () => status);
 
@@ -479,10 +505,12 @@ function registerIpc(): void {
   // must not depend on a success response here.
   handleIpc(
     "elevation:elevate",
-    async (_e, password?: string, resumeLab?: string): Promise<ElevateOutcome> =>
+    async (_e, passwordArg: unknown, resumeLabArg: unknown): Promise<ElevateOutcome> => {
+      const password = optionalString(passwordArg, "elevation password", MAX_PASSWORD_LENGTH);
+      const resumeLab = optionalString(resumeLabArg, "lab name", MAX_LAB_NAME_LENGTH);
       // Must not run alongside an in-flight startup()/elevation:drop — both stop/start the same
       // backend, so a concurrent pair races on which spawned process actually gets tracked.
-      runExclusiveBootOp(async () => {
+      return runExclusiveBootOp(async () => {
         const python = lastPreflight?.python;
         const staticDir = resolveStaticDir();
         if (!python || !staticDir) {
@@ -523,16 +551,16 @@ function registerIpc(): void {
           await win.loadURL(url.toString());
         }
         return toElevateOutcome(result);
-      }),
+      });
+    },
   );
 
   // Driven from the same elevation prompt, but for a deploy that only mounts a host volume — a
   // volume doesn't need this *process* to be root (unlike a privileged device), only proof the
   // user could authorize it. Unlike elevation:elevate above, this never touches the backend: no
   // restart, no new port, no reload — the caller just gets ok/not-ok back synchronously.
-  handleIpc(
-    "elevation:verify",
-    (_e, password?: string): ReturnType<typeof verifyCanElevate> => verifyCanElevate(password),
+  handleIpc("elevation:verify", (_e, passwordArg: unknown): ReturnType<typeof verifyCanElevate> =>
+    verifyCanElevate(optionalString(passwordArg, "elevation password", MAX_PASSWORD_LENGTH)),
   );
 
   // Driven after a successful undeploy (see useLabLifecycleActions.ts): least-privilege — an
@@ -546,13 +574,17 @@ function registerIpc(): void {
     "elevation:drop",
     async (
       _e,
-      openLab?: string,
-      skipReclaimCheck?: boolean,
-    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> =>
+      openLabArg: unknown,
+      skipReclaimCheckArg: unknown,
+    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> => {
+      const openLab = optionalString(openLabArg, "lab name", MAX_LAB_NAME_LENGTH);
+      // Strict `=== true`, not truthiness: this flag skips the root-owned-file check and the
+      // prompt that goes with it, so anything that merely looks truthy must not be able to.
+      const skipReclaimCheck = skipReclaimCheckArg === true;
       // Must not run alongside an in-flight startup()/elevation:elevate — see the same comment on
       // elevation:elevate above; this handler's own stopBackend()+startup() is exactly the kind of
       // call that race would hit.
-      runExclusiveBootOp(async () => {
+      return runExclusiveBootOp(async () => {
         const baseUrl = backendUrl();
         if (!baseUrl) return { dropped: false };
         try {
@@ -614,7 +646,8 @@ function registerIpc(): void {
         // refers to.
         await runStartup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
         return { dropped: true };
-      }),
+      });
+    },
   );
 
   // Linux-only companion to elevation:drop above: collects the password its own in-app modal
@@ -624,8 +657,11 @@ function registerIpc(): void {
   // hasn't been touched since, so nothing here has changed.
   handleIpc(
     "elevation:reclaim-labs-dir",
-    (_e, password: string): ReturnType<typeof reclaimLabsDirOwnershipWithPassword> =>
-      reclaimLabsDirOwnershipWithPassword(password, labsDir()),
+    (_e, passwordArg: unknown): ReturnType<typeof reclaimLabsDirOwnershipWithPassword> =>
+      reclaimLabsDirOwnershipWithPassword(
+        requireString(passwordArg, "elevation password", MAX_PASSWORD_LENGTH),
+        labsDir(),
+      ),
   );
 
   handleIpc("shell:show-log", () => shell.openPath(backendLogPath()));
@@ -685,12 +721,17 @@ function registerIpc(): void {
   // Every window:* handler below acts on `senderWindow(e)`, not on the module-level `win`: a
   // terminal popup carries the same preload and the same React tree as the main window, so a
   // handler that reached for `win` would let a popup minimize — or close — the window behind it.
-  handleIpc("window:zoom", (e, direction: "in" | "out" | "reset") => {
+  handleIpc("window:zoom", (e, direction: unknown) => {
+    // Matched exhaustively rather than defaulting: with a fall-through, every value the union
+    // doesn't cover — including `undefined` — quietly meant "zoom out". Refusing is cheaper to
+    // explain than a window that shrinks for no reason.
+    if (direction !== "in" && direction !== "out" && direction !== "reset") {
+      log(`refused window:zoom for ${JSON.stringify(direction)}`);
+      return;
+    }
     const contents = e.sender;
     const current = contents.getZoomLevel();
-    contents.setZoomLevel(
-      direction === "reset" ? 0 : direction === "in" ? current + 0.5 : current - 0.5,
-    );
+    contents.setZoomLevel(direction === "reset" ? 0 : direction === "in" ? current + 0.5 : current - 0.5);
   });
 
   handleIpc("window:toggle-full-screen", (e) => {
@@ -716,15 +757,21 @@ function registerIpc(): void {
   handleIpc("window:is-fullscreen", (e) => senderWindow(e)?.isFullScreen() ?? false);
 
   // The host side of a device's [volume] bind mount — see MachineOptionsFields.tsx's Volumes rows.
-  handleIpc("fs:pick-host-dir", (_e, current?: string) => pickHostDirectory(win, current));
+  // `current` only preselects a folder in the dialog, so an unusable one is dropped rather than
+  // refused — the dialog still opens, just at the default location.
+  handleIpc("fs:pick-host-dir", (_e, current: unknown) =>
+    pickHostDirectory(win, isPlainAbsolutePath(current) ? current : undefined),
+  );
   handleIpc("fs:open-labs-folder", () => openLabsDir());
 
-  handleIpc("fs:reveal-lab", async (_e, labName: string) => {
-    revealPath(await labDirectory(labName));
+  // `labDirectory` asks the backend to resolve the name rather than building a path here, so the
+  // name itself is judged there; this only establishes that what arrived is a string at all.
+  handleIpc("fs:reveal-lab", async (_e, labName: unknown) => {
+    revealPath(await labDirectory(requireString(labName, "lab name", MAX_LAB_NAME_LENGTH)));
   });
 
-  handleIpc("terminal:open-here", async (_e, labName: string) => {
-    await openTerminalHere(await labDirectory(labName));
+  handleIpc("terminal:open-here", async (_e, labName: unknown) => {
+    await openTerminalHere(await labDirectory(requireString(labName, "lab name", MAX_LAB_NAME_LENGTH)));
   });
 
   handleIpc("labs:get-dir", () => labsDir());

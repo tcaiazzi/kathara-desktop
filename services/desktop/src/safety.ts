@@ -51,6 +51,25 @@ export function isPlainAbsolutePath(
 }
 
 /**
+ * Whether `value` is a string short enough to pass on, for the arguments where *any* text is
+ * legitimate — a password, a lab name — and the only thing to establish is that it is text at
+ * all and not unbounded.
+ *
+ * Deliberately not `isPlainAbsolutePath`: that one rejects shell metacharacters, which a password
+ * is entitled to contain. What this rules out is the other half of the same problem — a renderer
+ * sending a number, an object or nothing where a string is declared, since the annotation on an
+ * `ipcMain.handle` argument is erased at runtime. An object reaching a template literal becomes
+ * "[object Object]" rather than failing, which is how a wrong shape turns into a silently wrong
+ * value instead of an error.
+ *
+ * The ceiling is per-call because what counts as absurd differs: a password is short, a path is
+ * not. It is a sanity bound, not a policy — the real limits live with whoever consumes the value.
+ */
+export function isBoundedString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length <= maxLength;
+}
+
+/**
  * Quote one argument for the single command string `sudo-prompt` requires.
  *
  * POSIX: single quotes, which suppress every expansion, with the standard `'\''` dance for an
