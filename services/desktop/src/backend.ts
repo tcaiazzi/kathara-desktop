@@ -83,7 +83,7 @@ const SHUTDOWN_HTTP_TIMEOUT_MS = 2_000;
 /** Passed to uvicorn as `--timeout-graceful-shutdown` (see `buildBackendCommand`): bounds how
  * long a SIGTERM'd backend will wait for in-flight requests/tasks (e.g. another lab's open
  * stats SSE stream or exec WebSocket) before it force-exits. Without this, uvicorn's default is
- * to wait indefinitely, which is what let a backend outlive `stopBackend()`'s poll entirely. */
+ * to wait indefinitely, which lets a backend outlive `stopBackend()`'s poll entirely. */
 const GRACEFUL_SHUTDOWN_TIMEOUT_S = 5;
 /** How long `waitForDeath` polls `/api/health` after a shutdown request before giving up on a
  * backend with no process handle to confirm exit against. Kept comfortably above
@@ -285,8 +285,8 @@ function markOrphaned(pid: number | null | undefined, baseUrl: string | undefine
  * backend orphaned on that path has no PID at all — `markOrphaned` there can only pass `null`.
  * `lsof` can still resolve one from the outside: reading which process owns a listening socket
  * doesn't require matching its UID, unlike signaling it. Best-effort — any failure (lsof
- * missing, port already freed, ambiguous output) just leaves the PID unresolved, same as before
- * this existed; callers already treat a `null` pid as "unknown". */
+ * missing, port already freed, ambiguous output) just leaves the PID unresolved; callers already
+ * treat a `null` pid as "unknown". */
 async function resolvePidForPort(port: number): Promise<number | null> {
   if (process.platform !== "darwin" || !Number.isFinite(port)) return null;
   return new Promise((resolve) => {
@@ -491,8 +491,8 @@ interface BackendCommand {
  * probing a packaged app's interpreter without PYTHONPATH would report every backend import as
  * missing.
  *
- * path.delimiter, not ":" — on Windows the separator is ";", so a machine that already had a
- * PYTHONPATH set produced one unparseable entry and the repo's src/ silently dropped out.
+ * path.delimiter, not ":" — on Windows the separator is ";", so joining with ":" on a machine
+ * that already has a PYTHONPATH set yields one unparseable entry and drops the repo's src/.
  *
  * `overrides` exists for the elevated start paths, which differ on both counts. They must not
  * write bytecode into the ordinary cache — those files would come out root-owned and every later
@@ -683,8 +683,8 @@ function sudoEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
  * first makes the overwhelmingly common failure a no-op: nothing is stopped, nothing moves, and
  * the prompt can just say the password was wrong.
  *
- * Deliberately not registered with `trackChild` — it is not a backend, and treating it as one is
- * what made a typo present itself as "The Kathara API stopped unexpectedly".
+ * Deliberately not registered with `trackChild` — it is not a backend, and treating it as one
+ * makes a mistyped password present itself as "The Kathara API stopped unexpectedly".
  *
  * Gated by a lockout (see `failedSudoAttempts`/`sudoLockedUntil`): during a cooldown this returns
  * "rate-limited" without spawning `sudo` at all, so the actual check below never doubles as the

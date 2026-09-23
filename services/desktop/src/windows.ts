@@ -9,8 +9,8 @@ const PRELOAD = path.join(__dirname, "preload.js");
 /**
  * The colour Chromium paints before the page has any of its own, matched to the theme the page is
  * about to choose: setup.html follows the OS scheme, and so does the SPA when the user has never
- * picked a theme explicitly (services/frontend/index.html). Hardcoding the dark value made every
- * light-theme launch start with a dark rectangle.
+ * picked a theme explicitly (services/frontend/index.html). Hardcoding the dark value would make
+ * every light-theme launch start with a dark rectangle.
  *
  * Read at window-creation time, not tracked: someone who *has* explicitly chosen the theme
  * opposite to their OS still gets one mismatched frame here, because only the renderer knows
@@ -66,8 +66,8 @@ function openExternally(url: string): void {
 /**
  * Applied to *every* WebContents the app ever creates, via web-contents-created — not just the
  * main window. Popups created through the handler below (the terminal windows) are themselves
- * full windows that can call window.open and navigate; wiring the policy per-window left those
- * children unguarded, so an external URL opened from a terminal window bypassed it entirely.
+ * full windows that can call window.open and navigate; wiring the policy per-window leaves those
+ * children unguarded, and an external URL opened from a terminal window bypasses it entirely.
  */
 export function installNavigationPolicy(origin: () => string | null): void {
   app.on("web-contents-created", (_event, contents) => {

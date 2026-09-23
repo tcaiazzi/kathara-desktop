@@ -57,7 +57,7 @@ async function resolvePathEnv(): Promise<void> {
     }
   } catch (err) {
     // Best effort: if the login shell can't be queried, fall back to whatever PATH Electron
-    // already has — the checks below just report what's missing, same as before this existed.
+    // already has: the checks below then report whatever isn't reachable on it.
     log(`could not resolve login shell PATH via ${shell}: ${err instanceof Error ? err.message : err}`);
   }
 }

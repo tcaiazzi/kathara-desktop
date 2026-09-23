@@ -5,7 +5,7 @@
  * machine. Python is the opposite — a packaged build ships a complete, ready-to-run environment:
  * its own interpreter (bundledPythonPath()) plus the entire backend dependency closure installed
  * for that exact platform at build time (bundledSitePackages()). So in a packaged app these
- * checks no longer decide *which* Python to use, and never install anything: there is exactly one
+ * checks do not decide *which* Python to use, and never install anything: there is exactly one
  * interpreter, it needs no network, and a failure here means the installation is damaged rather
  * than incomplete.
  *
@@ -52,9 +52,9 @@ export interface Preflight {
   checks: Check[];
   /**
    * Every *blocking* check passed — the app can boot, even if `advisories` below is non-empty
-   * (today, only ever a Docker daemon that's installed but not running). main.ts gates startup on
-   * this, not on `ok`: `ok` still means "every check, no exceptions" for the setup page, which
-   * cares about the literal all-green state.
+   * (the only advisory raised is a Docker daemon installed but not running). main.ts gates
+   * startup on this, not on `ok`: `ok` still means "every check, no exceptions" for the setup
+   * page, which cares about the literal all-green state.
    */
   canStart: boolean;
   /** The checks that failed but didn't block startup (severity: "advisory"), for the renderer to
@@ -108,8 +108,8 @@ const DOCKER_URL = "https://docs.docker.com/get-docker/";
 const KATHARA_URL = "https://www.kathara.org/download.html";
 
 /** "Docker Desktop" on macOS/Windows, "Docker Engine" on Linux — the two are installed and
- * started differently enough that naming both every time (the old wording) just made the reader
- * find the sentence that actually applies to them. */
+ * started differently enough that naming both every time would just make the reader hunt for the
+ * sentence that actually applies to them. */
 const DOCKER_PRODUCT_NAME =
   process.platform === "darwin" || process.platform === "win32" ? "Docker Desktop" : "Docker Engine";
 
@@ -186,16 +186,17 @@ function dockerCheck(status: DockerStatus): Check {
  * touches src/kathara_api/__init__.py (a version string), while uvicorn imports
  * `kathara_api.main`, which drags in the whole dependency closure — fastapi, Kathara, fs,
  * chardet, httpx. Those two come apart on any environment installed before a dependency was
- * declared: the package imports, the app doesn't, and without this the app passed preflight and
- * then died with a bare ModuleNotFoundError traceback in the log.
+ * declared: the package imports, the app doesn't, and without this last entry the app passes
+ * preflight and then dies with a bare ModuleNotFoundError traceback in the log.
  *
  * `import docker` is named explicitly in that last entry even though it is Kathara's dependency,
  * not this app's, because Kathara's manager imports it *lazily* — so `kathara_api.main` succeeds
  * without it and the failure surfaces later, as an ImportError on the first API call that touches
- * Docker rather than as anything preflight can explain. That is not hypothetical: on Windows the
- * docker SDK reaches Docker Desktop over a named pipe via pywin32, whose .pth-driven bootstrap the
- * packaged layout initially skipped (see vendor-python-deps.mjs's SITECUSTOMIZE), and every
- * Docker-touching call failed with a bare `ImportError` while preflight reported all-green.
+ * Docker rather than as anything preflight can explain. Not hypothetical: on Windows the docker
+ * SDK reaches Docker Desktop over a named pipe via pywin32, whose .pth-driven bootstrap a
+ * packaged layout has to reproduce by hand (see vendor-python-deps.mjs's SITECUSTOMIZE) — skip
+ * it and every Docker-touching call fails with a bare `ImportError` while preflight reports
+ * all-green.
  */
 const PROBE = `
 import json, sys

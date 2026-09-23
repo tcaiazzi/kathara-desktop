@@ -156,7 +156,7 @@ const api = {
 };
 
 // No exported type for `api` on purpose: the renderer is a separate npm package and cannot import
-// from here, so `services/frontend/src/desktop/bridge.ts` declares the same shape by hand. One was
-// exported for a while and nothing ever imported it.
+// from here, so `services/frontend/src/desktop/bridge.ts` declares the same shape by hand. An
+// export here would have no possible consumer.
 
 contextBridge.exposeInMainWorld("katharaDesktop", api);

@@ -7,7 +7,7 @@
 import { app } from "electron";
 import { log } from "./logger";
 
-// The repo release.yml actually publishes to today (see its tag_name: v<package.json version>).
+// The repo release.yml actually publishes to (see its tag_name: v<package.json version>).
 // Deliberately not the KatharaFramework repo that pyproject.toml lists for bug reports and
 // setup.html links for issues: update checks follow the builds, issues follow the upstream project.
 // Not a setting either — changing where this app is distributed from is a maintainer decision, not

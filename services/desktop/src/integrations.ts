@@ -127,7 +127,7 @@ export async function openTerminalHere(labDir: string): Promise<void> {
   await spawnTerminal(labDir);
 }
 
-// `command` currently has no caller — the only entry point is `openTerminalHere`, which opens a
+// `command` has no caller — the only entry point is `openTerminalHere`, which opens a
 // plain shell. It is kept, with the per-platform branches that serve it, because it is the whole
 // reason `terminalCommand`'s "{cmd}" placeholder exists, and because the macOS throwaway-script
 // path (mkdtemp + "wx" + cleanup) is deliberate in every detail and would be worse to re-derive

@@ -1,6 +1,6 @@
 /**
  * The one door every `ipcMain` channel goes through, so that "which page is calling?" is answered
- * in a single place instead of being each handler's own business — or, as it was, nobody's.
+ * in a single place instead of being each handler's own business.
  *
  * Nothing about `ipcMain.handle` says who sent the message. Every handler in main.ts hands out
  * something the renderer could not do for itself: restart the backend as root, move the lab
@@ -27,9 +27,10 @@ function appPages(): string[] {
  *
  * Two conditions, and the first is the one that carries the weight: the sender must be a **top**
  * frame. No page this app loads is ever a subframe, so anything arriving from one is by
- * definition not the app asking — today that is unreachable (the frontend embeds no iframe, and
- * a sandboxed preload isn't injected into subframes anyway), which is precisely why it should be
- * enforced now rather than after someone adds an iframe or flips `nodeIntegrationInSubFrames`.
+ * definition not the app asking. No route into that branch exists (the frontend embeds no iframe,
+ * and a sandboxed preload isn't injected into subframes anyway), which is precisely why the check
+ * belongs here rather than in whatever change first adds an iframe or flips
+ * `nodeIntegrationInSubFrames`.
  */
 function isTrustedSender(event: IpcMainInvokeEvent): boolean {
   try {

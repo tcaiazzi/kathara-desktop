@@ -46,7 +46,7 @@ function frontendDir(): string | null {
  * Vite fingerprints every asset's filename into the script/link tags `index.html` references, so
  * any real change to the build changes this file's bytes too — a version bump reliably causes
  * one anyway, but keying on content instead also self-invalidates a rebuild that ships under the
- * *same* version (e.g. a local dev/test cycle), which version-only keying silently kept serving
+ * *same* version (e.g. a local dev/test cycle) — the case a version-only key would go on serving
  * a stale copy for. Recomputed on every launch.
  */
 export function resolveStaticDir(): string | null {
@@ -172,11 +172,11 @@ export function devVenvPython(): string | null {
  * build, fetched at CI build time by scripts/fetch-python.mjs and shipped as an arch-scoped
  * extraResource — see electron-builder.yml).
  *
- * In a packaged app this is now the *only* interpreter, on every OS: prereqs.ts's
+ * In a packaged app this is the *only* interpreter, on every OS: prereqs.ts's
  * pythonCandidates() offers nothing else, there is no system-Python fallback and no private venv.
  * Its dependencies are shipped beside it (bundledSitePackages()) rather than installed at first
  * launch, so a packaged app needs neither a system Python nor a network. Packaged only: a dev
- * checkout keeps using devVenvPython()/PATH, same as before.
+ * checkout goes on using devVenvPython()/PATH.
  */
 export function bundledPythonPath(): string | null {
   const root = bundledPythonDir();
@@ -226,7 +226,7 @@ export function pycacheDir(): string {
 }
 
 /** Where Crashpad writes minidumps for a native crash (renderer OOM, V8 crash, GPU process gone —
- * see main.ts's crashReporter.start()). Nothing consumes these automatically today; it's pure
+ * see main.ts's crashReporter.start()). Nothing reads them automatically; they are pure
  * diagnostic infrastructure for whoever investigates a crash report by hand. */
 export function crashDumpsDir(): string {
   return path.join(app.getPath("userData"), "crashDumps");

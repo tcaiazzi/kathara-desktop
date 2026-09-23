@@ -93,8 +93,8 @@ app.commandLine.appendSwitch("disable-features", "OverscrollHistoryNavigation");
 // the labs-directory setting itself.
 app.setPath("userData", path.join(app.getPath("appData"), "kathara-desktop"));
 
-// Local-only crash reporting: no uploadToServer, no submitURL, nothing consumes these dumps
-// automatically today. Pure diagnostic infrastructure for a native crash (renderer OOM, V8 crash)
+// Local-only crash reporting: no uploadToServer, no submitURL, nothing reads these dumps
+// automatically. Pure diagnostic infrastructure for a native crash (renderer OOM, V8 crash)
 // that would otherwise leave nothing but the log line the handlers below already write. Must run
 // before app.whenReady(), same as userData above — a crash can happen before any window exists.
 app.setPath("crashDumps", crashDumpsDir());
@@ -142,8 +142,8 @@ type Status =
     }
   | { state: "prereq-failed"; checks: Check[]; notice?: string }
   | { state: "backend-failed"; checks: Check[]; error: string; logTail: string }
-  // `advisories` carries forward whichever checks didn't block this boot (today, only ever a
-  // stopped Docker daemon) — see prereqs.ts's Preflight.advisories — so the renderer can warn
+  // `advisories` carries forward whichever checks didn't block this boot (the only one raised is
+  // a stopped Docker daemon) — see prereqs.ts's Preflight.advisories — so the renderer can warn
   // about it without waiting on its own first "docker:check" round trip.
   | { state: "ready"; advisories: Check[] }
   // Shown once, on this machine's very first successful boot attempt (see isFirstRun()), right
@@ -684,7 +684,7 @@ function registerIpc(): void {
 
   // Every window:* handler below acts on `senderWindow(e)`, not on the module-level `win`: a
   // terminal popup carries the same preload and the same React tree as the main window, so a
-  // handler that reached for `win` let a popup minimize — or close — the window behind it.
+  // handler that reached for `win` would let a popup minimize — or close — the window behind it.
   handleIpc("window:zoom", (e, direction: "in" | "out" | "reset") => {
     const contents = e.sender;
     const current = contents.getZoomLevel();
@@ -960,7 +960,7 @@ if (!app.requestSingleInstanceLock()) {
     // Everything before the window is pure in-memory registration — handleIpc (ipc.ts),
     // app.on("web-contents-created"), Menu.setApplicationMenu — so nothing here can delay the
     // first paint. Anything that shells out (the login shell's PATH, the Docker and Python
-    // probes) now happens inside startup(), below, with the window already up reporting it.
+    // probes) happens inside startup(), below, with the window already up reporting it.
     //
     // registerIpc() first of all: setup.html calls status:get as soon as it loads.
     registerIpc();

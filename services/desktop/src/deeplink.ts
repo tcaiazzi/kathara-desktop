@@ -1,8 +1,8 @@
 /**
  * kathara:// deep links.
  *
- * Only "kathara://lab/<name>" is understood today; anything else is ignored rather than
- * guessed at. The URL arrives differently per platform — in argv on Windows/Linux (via the
+ * Only "kathara://lab/<name>" is understood; anything else is ignored rather than guessed at.
+ * The URL arrives differently per platform — in argv on Windows/Linux (via the
  * single-instance "second-instance" event, or the initial argv on a cold start) and through
  * "open-url" on macOS — so all three paths funnel into handleDeepLink.
  */
