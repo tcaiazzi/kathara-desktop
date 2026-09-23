@@ -557,9 +557,14 @@ def replace_device_options(text: str, device: str, spec: MachineUpdate) -> str:
     # `conf_value`'s conditional quoting, which would leave an image name with no whitespace
     # unquoted and diverge from what a freshly created device's block looks like). Every other
     # scalar is omitted entirely when falsy, mirroring `gen_device_lines`' `value not in (None,
-    # "", False)` guard: a boolean like `bridged`/`privileged`/`ipv6` set to False is
-    # indistinguishable from "never set" in this project's own generator, so writing it explicitly
-    # would be inconsistent with a freshly created device.
+    # "", False)` guard: `bridged`/`privileged` are plain `bool`, so False *is* "never set" for
+    # them, and writing it would be inconsistent with a freshly created device.
+    #
+    # `ipv6` is passed through as-is instead, because it is `Optional[bool]` and its three states
+    # mean three different things: True enables it, False disables it, and absent leaves the
+    # device on Kathara's own `enable_ipv6` setting (see lab_builder, which only passes the kwarg
+    # when it is not None). Collapsing False to absent here silently moved a device from
+    # "disabled" to "whatever the setting says" on the next save of any other field.
     doc.set_meta(device, IMAGE_KEY, spec.image or DEFAULT_IMAGE, '"')
     _set_scalar(doc, device, "mem", spec.mem)
     _set_scalar(doc, device, "cpus", spec.cpus)
@@ -569,7 +574,7 @@ def replace_device_options(text: str, device: str, spec: MachineUpdate) -> str:
     _set_scalar(doc, device, "args", spec.args)
     _set_scalar(doc, device, "bridged", True if spec.bridged else None)
     _set_scalar(doc, device, "privileged", True if spec.privileged else None)
-    _set_scalar(doc, device, "ipv6", True if spec.ipv6 else None)
+    _set_scalar(doc, device, "ipv6", spec.ipv6)
 
     groups = {
         "exec": list(spec.exec_commands),

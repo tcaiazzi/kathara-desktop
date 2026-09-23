@@ -112,7 +112,13 @@ def gen_device_lines(device) -> list[str]:
 
     for key in SCALAR_OPTIONS:
         value = meta.get(key)
-        if value not in (None, "", False):
+        # A falsy scalar is normally indistinguishable from an absent one and is left out.
+        # `ipv6` is the exception: it is three-state, so False means "off" rather than "never
+        # set" and has to be written (see lab_conf_edit.replace_device_options, which keeps the
+        # same distinction on the edit path — a device created as disabled and one that follows
+        # the global setting must not render the same).
+        absent = (None, "") if key == "ipv6" else (None, "", False)
+        if value not in absent:
             lines.append(f'{name}[{key}]={conf_value(value)}')
 
     for (host_port, protocol), guest_port in meta.get("ports", {}).items():

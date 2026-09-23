@@ -11,6 +11,7 @@ from Kathara.exceptions import MachineAlreadyExistsError, MachineCollisionDomain
 from kathara_api.errors import ApiError
 from kathara_api.schemas.machine import MachineCreate, MachineUpdate, PortMapping, Ulimit
 from kathara_api.services import lab_conf_edit as lce
+from kathara_api.services import lab_import
 
 # A deliberately hostile lab.conf: comments, unusual interface ordering, single quotes,
 # [num_terms]/[entrypoint]/[args], an unknown meta, a trailing comment on a line that will later be
@@ -278,6 +279,44 @@ def test_replace_device_options_rewrites_only_the_target_device():
     assert "r1[frobnicate]=yes" in result
     assert "r1[mem]=256m                         # r1 again, interleaved into pc1's block on purpose" in result
     lce.validate(result)
+
+
+def test_an_explicit_ipv6_false_survives_a_device_options_save():
+    """`ipv6` is three-state on the model (`Optional[bool]`), unlike `bridged`/`privileged`
+    beside it, and the topology inspector renders all three. So "off" is a value a lab.conf can
+    carry, not a synonym for "absent": a save that resubmits it must write it back, or the line
+    disappears the first time the user edits any other field on that device.
+    """
+    text = 'pc1[image]="kathara/base"\npc1[ipv6]=false\n'
+    parsed = lab_import.parse_lab_conf(text)
+    assert parsed.machines["pc1"].ipv6 is False, "precondition: the parser reads an explicit false"
+
+    result = lce.replace_device_options(text, "pc1", MachineUpdate(image="kathara/base", ipv6=False))
+
+    assert lab_import.parse_lab_conf(result).machines["pc1"].ipv6 is False
+
+
+def test_a_device_added_with_ipv6_disabled_is_written_as_disabled():
+    """The creation path has to keep the same distinction as the edit path, or the three states
+    the options form offers collapse back to two the moment a device is added rather than
+    edited: "disabled" would render identically to "follow the global setting".
+    """
+    text = lce.add_device('pc1[image]="kathara/base"\n', MachineCreate(name="pc2", ipv6=False))
+    assert lab_import.parse_lab_conf(text).machines["pc2"].ipv6 is False
+
+
+def test_a_device_added_without_ipv6_carries_no_ipv6_line():
+    """...and the absent state still renders as absent, so the device follows the setting."""
+    text = lce.add_device('pc1[image]="kathara/base"\n', MachineCreate(name="pc2"))
+    assert "pc2[ipv6]" not in text
+
+
+def test_an_unset_ipv6_stays_unset_after_a_device_options_save():
+    """The other half of the same contract: `None` still means "no line", so a device that never
+    mentioned ipv6 doesn't acquire it."""
+    text = 'pc1[image]="kathara/base"\n'
+    result = lce.replace_device_options(text, "pc1", MachineUpdate(image="kathara/base", ipv6=None))
+    assert "ipv6" not in result
 
 
 def test_replace_device_options_clears_options_not_resubmitted():

@@ -30,7 +30,8 @@ export interface OptionsFormState {
   args: string;
   privileged: boolean;
   bridged: boolean;
-  ipv6: boolean;
+  /** Three-state, like the model: on, off, or absent (inherit the global setting). */
+  ipv6: boolean | null;
   envs: KeyValueRow[];
   sysctls: KeyValueRow[];
   ulimits: Ulimit[];
@@ -64,7 +65,7 @@ export function defaultOptionsFormState(): OptionsFormState {
     args: "",
     privileged: false,
     bridged: false,
-    ipv6: false,
+    ipv6: null,
     envs: [],
     sysctls: [],
     ulimits: [],
@@ -86,7 +87,7 @@ export function optionsFormStateFromMachine(machine: MachineDetail): OptionsForm
     args: machine.args ?? "",
     privileged: machine.privileged,
     bridged: machine.bridged,
-    ipv6: !!machine.ipv6,
+    ipv6: machine.ipv6,
     envs: recordToRows(machine.envs),
     sysctls: recordToRows(machine.sysctls),
     ulimits: machine.ulimits.map((u) => ({ ...u })),
@@ -108,7 +109,7 @@ export function optionsFormStateToPayload(form: OptionsFormState): MachineOption
     args: form.args.trim() || null,
     privileged: form.privileged,
     bridged: form.bridged,
-    ipv6: form.ipv6 ? true : null,
+    ipv6: form.ipv6,
     envs: rowsToRecord(form.envs),
     sysctls: rowsToRecord(form.sysctls),
     ulimits: form.ulimits.filter((u) => u.name.trim()),
@@ -184,18 +185,27 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
           disabled={disabled}
           onChange={(e) => set("privileged", e.target.checked)}
         />
-        <Form.Check
-          type="checkbox"
-          label={
-            <>
-              IPv6
-              <InfoTip text="Enable or disable IPv6 on this device." />
-            </>
-          }
-          checked={form.ipv6}
+      </div>
+
+      <div className="mb-3">
+        <Form.Label className="small mb-1">
+          IPv6
+          <InfoTip text="Enable or disable IPv6 on this device, or leave it to the global Enable IPv6 setting." />
+        </Form.Label>
+        {/* Three options rather than a checkbox: the model is three-state, and the missing third
+            state is what the device does when lab.conf says nothing — it follows Kathara's own
+            `enable_ipv6` setting. A checkbox can only offer two of the three, and its unchecked
+            position had to stand for both "off" and "unset". */}
+        <Form.Select
+          size="sm"
+          value={form.ipv6 === null ? "inherit" : form.ipv6 ? "on" : "off"}
           disabled={disabled}
-          onChange={(e) => set("ipv6", e.target.checked)}
-        />
+          onChange={(e) => set("ipv6", e.target.value === "inherit" ? null : e.target.value === "on")}
+        >
+          <option value="inherit">Derived from settings</option>
+          <option value="on">Enabled</option>
+          <option value="off">Disabled</option>
+        </Form.Select>
       </div>
 
       <div className="row g-2 mb-3">
