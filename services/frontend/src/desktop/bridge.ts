@@ -3,7 +3,8 @@
 // browser through Vite's dev server, where `desktop()` returns null
 // and every desktop-only affordance is simply not rendered.
 
-/** Menu commands the shell can send. Mirrors MenuAction in services/desktop/src/menu.ts. */
+/** Menu commands the shell can send. Mirrors MenuAction in services/desktop/src/menu.ts, which
+ *  this package cannot import (separate npm package), so the two are kept in sync by hand. */
 export type DesktopMenuAction =
   | "lab:new"
   | "lab:import"

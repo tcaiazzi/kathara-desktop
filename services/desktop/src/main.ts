@@ -556,7 +556,10 @@ function registerIpc(): void {
         const baseUrl = backendUrl();
         if (!baseUrl) return { dropped: false };
         try {
-          const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders() }).then((r) => r.json());
+          const info = await fetch(`${baseUrl}/api/system`, {
+            headers: authHeaders(),
+            signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
+          }).then((r) => r.json());
           if (!info.is_admin) return { dropped: false };
         } catch {
           return { dropped: false };

@@ -10,7 +10,9 @@ import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from
 import { backendLogPath } from "./backend";
 import { openLabsDir } from "./integrations";
 
-/** Kept in sync with the renderer's DesktopMenuAction union (frontend src/desktop/bridge.ts). */
+/** The shell's copy, imported as a type by preload.ts. Kept in sync by hand with the renderer's
+ *  own DesktopMenuAction (frontend src/desktop/bridge.ts), which is a separate npm package and so
+ *  cannot import this one — see preload.ts's closing comment. */
 export type MenuAction =
   | "lab:new"
   | "lab:import"

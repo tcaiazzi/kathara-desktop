@@ -7,18 +7,8 @@
  */
 import { contextBridge, ipcRenderer } from "electron";
 import type { ElevateFailureReason, ElevateOutcome } from "./backend";
+import type { MenuAction } from "./menu";
 import type { DockerStatus } from "./prereqs";
-
-export type MenuAction =
-  | "lab:new"
-  | "lab:import"
-  | "lab:browse"
-  | "lab:save"
-  | "lab:deploy"
-  | "lab:undeploy"
-  | "lab:reload"
-  | "view:settings"
-  | "help:tour";
 
 /** Subscribe and return an unsubscribe, so React effects can clean up properly. */
 function subscribe<T>(channel: string, cb: (value: T) => void): () => void {
