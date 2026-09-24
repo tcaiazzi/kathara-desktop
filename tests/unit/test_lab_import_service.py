@@ -143,6 +143,26 @@ def test_redeploy_of_already_running_machine_pushes_live_update_once(tmp_path):
     assert facade.exec_calls == [("r1", "sh /tmp/.kathara_boot.sh", False)]
 
 
+def test_live_push_recreates_device_dirs_and_pushes_text_files_only(tmp_path):
+    """The file half of a live push: the running device's folder is walked, every directory is
+    created in the container first, then every *text* file is copied in. A binary file is skipped
+    (this path copies text only), and a device with nothing to boot gets no boot script exec."""
+    service = _service(tmp_path)
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF}, [])
+    service.deploy_lab("lab1")
+
+    service.fs_write_text_offline("lab1", "/r1/etc/frr/frr.conf", "hostname r1\n")
+    service.fs_upload_bytes_offline("lab1", "/r1/opt/blob.bin", b"\xff\xfe\x00")
+    service.deploy_lab("lab1")
+
+    facade = service._instance
+    [(machine, command, wait)] = facade.exec_calls
+    assert (machine, wait) == ("r1", True)
+    assert command.startswith("mkdir -p ")
+    assert set(command.split()[2:]) == {"/etc", "/etc/frr", "/opt"}
+    assert facade.copied == [("r1", {"/etc/frr/frr.conf": "hostname r1\n"})]
+
+
 def test_offline_fs_writes_accumulate_without_clobbering(tmp_path):
     service = _service(tmp_path)
     make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\n"}, [])

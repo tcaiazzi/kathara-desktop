@@ -11,7 +11,7 @@ front of these writes would have to survive.
 import fs.errors
 import pytest
 
-from kathara_api.errors import ApiError, LabConfLockedError, PathNotFoundError
+from kathara_api.errors import ApiError, BinaryFileError, LabConfLockedError, PathNotFoundError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import ROOT_MACHINE, KatharaService
@@ -716,3 +716,85 @@ def test_offline_fs_owner_only_ever_names_a_registered_device(tmp_path):
         assert owner == ROOT_MACHINE or owner in lab.machines, (
             f"`{raw}` resolved to owner `{owner}`, which is neither the lab root nor a device"
         )
+
+
+# -- refusals and edge cases ----------------------------------------------------------------
+
+
+def test_fs_list_offline_on_a_file_is_refused(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    with pytest.raises(ApiError, match="is a file, not a directory"):
+        service.fs_list_offline("testlab", "/pc1/etc/motd")
+
+
+def test_reading_a_directory_offline_is_refused(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline("testlab", "/pc1/etc")
+
+    with pytest.raises(ApiError, match="is a directory"):
+        service.fs_read_text_offline("testlab", "/pc1/etc")
+
+
+@pytest.mark.parametrize("path", ["/pc1/nope", "/pc2/anything"])
+def test_reading_a_missing_path_offline_is_not_found(tmp_path, path):
+    """`/pc2/anything` is under a device with no folder on disk at all, not just a missing file."""
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline("testlab", "/pc1/etc")
+
+    with pytest.raises(PathNotFoundError):
+        service.fs_read_bytes_offline("testlab", path)
+
+
+def test_binary_upload_creates_parents_reads_back_as_bytes_and_marks_the_device_dirty(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+
+    size = service.fs_upload_bytes_offline("testlab", "/pc1/opt/deep/blob.bin", b"\xff\xfe\x00")
+
+    assert size == 3
+    assert (store.lab_dir("testlab") / "pc1" / "opt" / "deep" / "blob.bin").read_bytes() == b"\xff\xfe\x00"
+    assert service.fs_read_bytes_offline("testlab", "/pc1/opt/deep/blob.bin") == b"\xff\xfe\x00"
+    with pytest.raises(BinaryFileError):
+        service.fs_read_text_offline("testlab", "/pc1/opt/deep/blob.bin")
+    assert service.registry.pop_dirty_machines("testlab", {"pc1", "pc2"}) == {"pc1"}
+
+
+@pytest.mark.parametrize("path", ["/pc1/nope", "/pc2/anything"])
+def test_deleting_a_missing_path_offline_is_not_found(tmp_path, path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline("testlab", "/pc1/etc")
+
+    with pytest.raises(PathNotFoundError):
+        service.fs_delete_offline("testlab", path)
+
+
+@pytest.mark.parametrize("operation", ["fs_move_offline", "fs_copy_offline"])
+def test_moving_or_copying_a_missing_source_offline_is_not_found(tmp_path, operation):
+    service, store = _two_machine_lab(tmp_path)
+
+    with pytest.raises(PathNotFoundError):
+        getattr(service, operation)("testlab", "/pc1/nope", "/pc2/nope")
+    assert not (store.lab_dir("testlab") / "pc2" / "nope").exists()
+
+
+def test_move_dir_within_the_same_device(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+
+    service.fs_move_offline("testlab", "/pc1/etc", "/pc1/etc2")
+
+    pc1 = store.lab_dir("testlab") / "pc1"
+    assert not (pc1 / "etc").exists()
+    assert (pc1 / "etc2" / "motd").read_text() == "hi\n"
+
+
+def test_fs_search_offline_skips_binary_files(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/a.txt", "needle\n")
+    service.fs_upload_bytes_offline("testlab", "/pc1/b.bin", b"needle\xff\xfe")
+
+    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+
+    assert [m.path for m in matches] == ["/pc1/a.txt"]
+    assert truncated is False

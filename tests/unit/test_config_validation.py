@@ -42,6 +42,46 @@ def test_gallery_section_rejects_traversal(section):
         ApiSettings(gallery_section=section).gallery_section_path()
 
 
+# -- gallery repo ----------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("repo", "expected"),
+    [("KatharaFramework/Kathara-Labs", "KatharaFramework/Kathara-Labs"), (" /me/my.labs_v2/ ", "me/my.labs_v2")],
+)
+def test_gallery_repo_accepts_owner_slash_repo(repo, expected):
+    assert ApiSettings(gallery_repo=repo).gallery_slug() == expected
+
+
+@pytest.mark.parametrize(
+    "repo", ["owner", "owner/repo/extra", "owner/repo?x=1", "owner/repo#frag", "own er/repo", "", "a/" + "b" * 101]
+)
+def test_gallery_repo_rejects_anything_but_a_single_owner_and_repo(repo):
+    # Interpolated into the GitHub API and raw.githubusercontent URLs, so an extra segment or a
+    # query string would point the fetcher at something other than a repository root.
+    with pytest.raises(ValueError, match="must be `owner/repo`"):
+        ApiSettings(gallery_repo=repo).gallery_slug()
+
+
+# -- examples catalog and Kathara overrides --------------------------------------------------
+
+def test_examples_dir_override_is_expanded_and_resolved(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert ApiSettings(examples_dir=" ~/course/../labs ").examples_dir_path() == tmp_path / "labs"
+
+
+def test_examples_dir_defaults_to_the_bundled_catalog():
+    path = ApiSettings(examples_dir="  ").examples_dir_path()
+    assert path.name == "examples" and path.parent.name == "kathara_api"
+
+
+def test_kathara_overrides_forward_only_the_settings_that_are_set():
+    assert ApiSettings().kathara_overrides() == {}
+    assert ApiSettings(manager_type="docker", default_image="kathara/frr").kathara_overrides() == {
+        "manager_type": "docker",
+        "image": "kathara/frr",
+    }
+
+
 # -- CORS ------------------------------------------------------------------------------------
 
 def _cors_headers(monkeypatch, origins):
