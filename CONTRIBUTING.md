@@ -10,9 +10,9 @@ By participating, you are expected to uphold this code. Please report unacceptab
 #### **Getting the app running locally**
 
 Kathará Desktop is made of three parts: the Electron shell (`services/desktop`), the FastAPI backend
-(`src/kathara_api`) and the React frontend (`services/frontend`). See the **Development** section of the
-[README](README.md) for how to run them from a checkout, and **Checks and tests** for `make check`,
-which runs exactly what CI gates a pull request on.
+(`src/kathara_api`) and the React frontend (`services/frontend`). See
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for how to run them from a checkout, and its **Checks and
+tests** section for `make check`, which runs exactly what CI gates a pull request on.
 
 #### **Did you find a bug?**
 

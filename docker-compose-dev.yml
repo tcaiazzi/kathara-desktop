@@ -1,7 +1,7 @@
 # Hot-reload local stack: backend runs uvicorn --reload against a bind-mounted ./src, frontend
 # runs the plain Vite dev server. No reverse-proxy — the Vite dev server's own /api proxy
 # (vite.config.ts) plays that role, exactly like running both directly on the host (see
-# README's "Running" section); this just containerizes that same flow.
+# docs/DEVELOPMENT.md); this just containerizes that same flow.
 #
 # Usage:
 #   docker compose -f docker-compose-dev.yml up --build

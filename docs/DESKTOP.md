@@ -1,6 +1,6 @@
 # Kathara Desktop — App internals
 
-Implementation notes for the Electron shell (`services/desktop`). See the [README](../README.md)
+Implementation notes for the Electron shell (`services/desktop`). See [DEVELOPMENT.md](DEVELOPMENT.md)
 for how to run and build it; this document covers the "why" behind its behaviour.
 
 ## Startup sequence

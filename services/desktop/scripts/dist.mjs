@@ -4,7 +4,7 @@
 // Its reason to exist is the environment it sets up: ELECTRON_BUILDER_7Z_FILTER has to be BCJ2 for
 // every Windows build, and there is no way to express that in electron-builder.yml. It used to be
 // declared by each caller instead — the two GitHub workflows and the Makefile's `dist-win` — which
-// left `npm run dist:win` (the command README.md and docs/DESKTOP.md tell a maintainer to run, and
+// left `npm run dist:win` (the command docs/DEVELOPMENT.md tells a maintainer to run, and
 // what a bare `make dist` resolves to on a Windows host) as the one entrance without it, silently
 // shipping a broken arm64 installer. Setting it here means every caller inherits it, so there is
 // one place to get it right instead of four.
