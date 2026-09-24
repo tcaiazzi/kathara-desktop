@@ -4,11 +4,79 @@ A desktop app for the [Kathara](https://www.kathara.org) network-emulation frame
 lab topologies, edit device configs and files, deploy them as containers, and attach to
 interactive shells — from a native app, with no browser tab or server to manage.
 
-It's built from three parts:
+## Install
+
+Download the installer for your platform from the
+[latest release](https://github.com/KatharaFramework/kathara-desktop/releases/latest):
+
+| Platform | File |
+|---|---|
+| Linux x86_64 | `Kathara-Desktop-<version>.AppImage`, or `kathara-desktop_<version>_amd64.deb` / `kathara-desktop-<version>.x86_64.rpm` |
+| Linux ARM64 | `Kathara-Desktop-<version>-arm64.AppImage`, or the `_arm64.deb` / `.aarch64.rpm` of the same version |
+| macOS, Apple Silicon | `Kathara-Desktop-<version>-arm64.dmg` |
+| macOS, Intel | `Kathara-Desktop-<version>.dmg` |
+| Windows | `Kathara-Desktop-Setup-<version>-x64.exe`, or `-arm64.exe` |
+
+The only prerequisite is **[Docker](https://docs.docker.com/get-docker/)** — Kathara deploys each
+device as a container through the host Docker socket. On Windows that means Docker Desktop with the
+WSL2 backend.
+
+Everything else is inside the installer. A packaged build **bundles a complete Python environment**:
+its own interpreter plus `kathara-api-rest`, Kathara, uvicorn and their whole dependency closure,
+installed for that exact platform at build time. So the first launch **downloads nothing and
+installs nothing**, needs no system Python, and works offline — on every OS identically. Docker is
+the one thing it does *not* bundle: that it drives from what is installed on the machine. On startup
+it still runs a preflight (Docker, Python, `kathara-api-rest`, Kathara, uvicorn, its dependency
+closure, the bundled UI), but to *verify* rather than to repair — anything wrong it explains instead
+of showing a blank window.
+
+Labs live outside the app, per user: `~/.config/kathara-desktop/labs` on Linux.
+
+Worth skimming before you start: [Not supported yet](#not-supported-yet), which lists the current
+limitations.
+
+### First launch
+
+Installers are **unsigned**, so the first launch needs a manual override:
+
+| Platform | What you see | What to do |
+|---|---|---|
+| Windows | SmartScreen warning | *More info* → *Run anyway* |
+| macOS | Gatekeeper refuses to open it | Right-click → *Open*, or `xattr -dr com.apple.quarantine "/Applications/Kathara-Desktop.app"` |
+| Linux | nothing | — |
+
+There is no auto-update: the app checks GitHub once per launch and points you at a newer release if
+there is one, but releases are downloaded and installed manually.
+
+## Desktop-only behaviour
+
+- A custom title bar with an HTML menu (File / View / Help), styled after VS Code. The native
+  menu stays registered for its keyboard accelerators, and on macOS it also keeps the system
+  menu bar's own *Edit* and *Window* entries.
+- Terminal pop-outs open as their own framed window.
+- Native dialogs for choosing the host directory of a device's `[volume]` bind mount, plus
+  *Open Labs Folder* and reveal-in-file-manager. Importing a lab uses the in-page upload modal
+  and downloading a file uses the browser's own download, on the desktop as in a browser.
+- **Open Terminal Here** opens the OS terminal emulator in a lab's directory — a plain shell, so
+  `kathara` commands run against the right lab without having to `cd` (override the emulator
+  with `terminalCommand` in `preferences.json`).
+- **`kathara://lab/<name>`** opens that lab, in the running instance if there is one.
+- Quitting with labs still deployed asks first, and offers to undeploy them — their containers
+  would otherwise keep running.
+- The backend is bound to `127.0.0.1` only and paired with this one launch via a random token
+  (see [Security](#security)); the renderer runs sandboxed and context-isolated with no Node
+  access, reaching the shell only through an explicit bridge.
+
+See [docs/DESKTOP.md](docs/DESKTOP.md) for the implementation behind each of these.
+
+## How it's built
+
+Three parts, in one repo:
 
 - **Desktop app** — an Electron shell (`services/desktop`) that is the shipped product: it
   starts a local backend itself and renders the UI in a native window, adding native menus,
-  file dialogs, a system terminal and `kathara://` links. See [Desktop app](#desktop-app).
+  file dialogs, a system terminal and `kathara://` links. See
+  [docs/DESKTOP.md](docs/DESKTOP.md).
 - **Backend** — a FastAPI service (`src/kathara_api`) that wraps the Kathara Python API and
   exposes it over HTTP. The desktop app drives it directly; it can also be run standalone
   for development. Labs are persisted on disk as real Kathara lab directories, so they
@@ -18,14 +86,19 @@ It's built from three parts:
   devices. Built once and served by the desktop app; also runnable with a dev server against
   the standalone backend.
 
-## Requirements
+## Development
 
-- [Docker](https://docs.docker.com/get-docker/) (Kathara deploys each device as a container
-  via the host Docker socket)
-- Python 3.10+ and Node 24 (the version in `.nvmrc`, which CI, the Makefile and the Compose dev
-  stack all follow) — only for running outside Docker. Node 22.12+ is the real floor, imposed by
-  Electron's own install/build tooling for `services/desktop`; the repo pins one version above it
-  rather than tracking two.
+Everything from here on is for working on the app itself: running it from a checkout, building
+the installers, and running the backend and frontend standalone — outside the desktop shell — for
+contributors working on either of them, or for driving the API directly.
+
+### Requirements
+
+A checkout needs [Docker](https://docs.docker.com/get-docker/), plus Python 3.10+ and Node 24 (the
+version in `.nvmrc`, which CI, the Makefile and the Compose dev stack all follow). Node 22.12+ is
+the real floor, imposed by Electron's own install/build tooling for `services/desktop`; the repo
+pins one version above it rather than tracking two. None of this is needed to *run* a packaged
+build — see [Install](#install).
 
 To install Docker, Python and Kathara in one step (into this checkout's own `.venv`, which
 both the backend and the desktop app already look for first), run the script for your OS:
@@ -41,22 +114,7 @@ scripts\install-windows.ps1  # needs winget (built into Windows 10 1809+/11)
 Docker Desktop's own first-run setup (license, WSL2 on Windows) isn't scriptable — the script
 starts it and tells you when a manual step is needed. Safe to re-run after finishing one.
 
-## Desktop app
-
-An Electron shell in `services/desktop`. It supervises a local backend and loads its UI, so
-there is no Compose stack to start and no browser tab to keep track of.
-
-A packaged build **bundles a complete Python environment**: its own interpreter (fetched at build
-time by `services/desktop/scripts/fetch-python.mjs`) plus `kathara-api-rest`, Kathara, uvicorn and
-their whole dependency closure, installed for that exact platform at build time by
-`services/desktop/scripts/vendor-python-deps.mjs`. So first launch **downloads nothing and installs
-nothing**, needs no system Python, and works offline — on every OS identically. Docker is **not**
-bundled: that one it drives from what is installed on the machine. On startup it still runs a
-preflight (Docker, Python 3.10+, `kathara-api-rest`, Kathara, uvicorn, its dependency closure, the
-bundled UI), but now to *verify* rather than to repair — anything wrong it explains instead of
-showing a blank window. The lab storage is per user (`~/.config/kathara-desktop/labs` on Linux).
-
-### Running from a checkout
+### Running the desktop app from a checkout
 
 ```bash
 npm --prefix services/frontend install && npm --prefix services/frontend run build
@@ -92,6 +150,7 @@ npm --prefix services/desktop run dist:win     # NSIS installer
 
 Artifacts land in `services/desktop/release/`. Each target must be built on its own platform
 (`.dmg` requires macOS, `.deb` an x86_64 host) — see [docs/DESKTOP.md](docs/DESKTOP.md) for why.
+They are unsigned; [First launch](#first-launch) is what a user has to do about that.
 
 `make dist-linux` / `dist-mac` / `dist-win` does the whole sequence above in one step — installing
 the npm dependencies, building the backend wheel, fetching the interpreter and vendoring the
@@ -101,42 +160,6 @@ specifically want to repackage without rebuilding the wheel.
 `services/desktop/resources/icon.png` is generated from the frontend's Kathara logo by
 `services/desktop/scripts/make-icon.py` (standard library only — no Pillow or ImageMagick
 needed); re-run it from `services/desktop` if the logo changes.
-
-Installers are **unsigned**, so first launch needs a manual override:
-
-| Platform | What the user sees | Workaround |
-|---|---|---|
-| Windows | SmartScreen warning | *More info* → *Run anyway* |
-| macOS | Gatekeeper refuses to open it | Right-click → *Open*, or `xattr -dr com.apple.quarantine "/Applications/Kathara-Desktop.app"` |
-| Linux | nothing | — |
-
-There is no auto-update: releases are installed manually.
-
-### Desktop-only behaviour
-
-- A custom title bar with an HTML menu (File / View / Help), styled after VS Code. The native
-  menu stays registered for its keyboard accelerators, and on macOS it also keeps the system
-  menu bar's own *Edit* and *Window* entries.
-- Terminal pop-outs open as their own framed window.
-- Native dialogs for choosing the host directory of a device's `[volume]` bind mount, plus
-  *Open Labs Folder* and reveal-in-file-manager. Importing a lab uses the in-page upload modal
-  and downloading a file uses the browser's own download, on the desktop as in a browser.
-- **Open Terminal Here** opens the OS terminal emulator in a lab's directory — a plain shell, so
-  `kathara` commands run against the right lab without having to `cd` (override the emulator
-  with `terminalCommand` in `preferences.json`).
-- **`kathara://lab/<name>`** opens that lab, in the running instance if there is one.
-- Quitting with labs still deployed asks first, and offers to undeploy them — their containers
-  would otherwise keep running.
-- The backend is bound to `127.0.0.1` only and paired with this one launch via a random token
-  (see [Security](#security)); the renderer runs sandboxed and context-isolated with no Node
-  access, reaching the shell only through an explicit bridge.
-
-See [docs/DESKTOP.md](docs/DESKTOP.md) for the implementation behind each of these.
-
-## Development
-
-The backend and frontend can also run standalone, outside the desktop app — for contributors
-working on either of them, or for driving the API directly.
 
 ### Make targets
 
@@ -239,10 +262,6 @@ pytest                                   # everything, including both of the abo
 - **Live terminals require the Docker manager.** Attaching to a running device (`connect` /
   interactive TTY) is unsupported on Kathara managers other than Docker.
 - **No layered/hierarchical topology layout** — the graph is force-directed only.
-- **Known upstream bug:** disconnecting a device from a collision domain, or removing a domain a
-  device is attached to, can leave the lab wedged (an unguarded `None` interface in the Kathara
-  framework). The lab must then be deleted or the server restarted. The fix belongs to the
-  upstream [Kathara](https://github.com/KatharaFramework/Kathara) repo.
 
 ## Security
 
