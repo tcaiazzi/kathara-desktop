@@ -142,7 +142,11 @@ build: frontend shell
 
 ## ---- installer packaging ---------------------------------------------------
 
-dist: install wheel fetch-python vendor-deps
+# `clean` first: build.mjs already empties $(DESKTOP_DIR)/build and Vite empties the frontend's
+# dist, but nothing empties $(DESKTOP_DIR)/release. A tree that has packaged more than once holds
+# the installers of every version built in it, side by side, and they are picked up by glob — so
+# the version just built is not necessarily the one that gets shipped or tested.
+dist: clean install wheel fetch-python vendor-deps
 	$(RUN_NODE) cd $(DESKTOP_DIR) && npm run dist:$(PLATFORM)
 
 dist-linux:
@@ -156,7 +160,7 @@ dist-win:
 
 # AppImage only, for the host's own arch only (no deb/rpm, no cross-arch). Quick local package,
 # not what CI produces (that's `dist-linux`, all Linux targets x both arches).
-appimage: install wheel fetch-python-host vendor-deps-host
+appimage: clean install wheel fetch-python-host vendor-deps-host
 	$(RUN_NODE) cd $(DESKTOP_DIR) && npm run dist:linux:appimage
 
 ## ---- clean -----------------------------------------------------------------
