@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0", "ruff>=0.14"]
+dev = ["pytest>=7.0", "pytest-cov>=5.0", "ruff>=0.14"]
 
 [project.scripts]
 kathara-api = "kathara_api.main:run"
@@ -84,3 +84,13 @@ markers = [
     "network: integration tests that require internet access (live gallery fetch)",
 ]
 testpaths = ["tests"]
+
+# Read by `make coverage` and by CI's backend job, which report the number without enforcing a
+# threshold. Not wired into `addopts`, so a plain `pytest` run stays as fast as it is.
+[tool.coverage.run]
+source = ["kathara_api"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

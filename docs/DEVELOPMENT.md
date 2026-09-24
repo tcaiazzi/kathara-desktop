@@ -185,3 +185,7 @@ pytest -m docker                         # integration tests (need a running Doc
 pytest -m network                        # integration tests (need internet: live gallery fetch)
 pytest                                   # everything, including both of the above
 ```
+
+`make coverage` runs the CI subset with branch coverage and prints a per-file summary; the HTML
+report lands in `htmlcov/`. CI publishes the same table on each run's summary page. It is a
+report, not a gate: no threshold fails the build.

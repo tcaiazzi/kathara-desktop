@@ -45,7 +45,7 @@ endif
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
         wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell \
-        check lint typecheck test check-frontend check-desktop check-backend \
+        check lint typecheck test coverage check-frontend check-desktop check-backend \
         clean clean-wheel clean-python clean-deps distclean
 
 all: build
@@ -95,6 +95,12 @@ typecheck:
 test:
 	$(RUN_NODE) npm run test --prefix $(FRONTEND_DIR)
 	pytest -m "not docker and not network"
+
+# Backend branch coverage over the same suite CI runs (settings in pyproject.toml's
+# [tool.coverage]): a per-file summary in the terminal, an HTML report in htmlcov/. Report only,
+# nothing here fails on a low number.
+coverage:
+	pytest -m "not docker and not network" --cov --cov-report=term --cov-report=html
 
 ## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----
 ## Only needed for `dist`; skip these for plain dev builds. `vendor-deps` needs `wheel` (it installs

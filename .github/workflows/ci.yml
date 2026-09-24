@@ -47,4 +47,6 @@ jobs:
           python-version: "3.12"
       - run: pip install -e '.[dev]'
       - run: ruff check src tests
-      - run: pytest -m "not docker and not network"
+      - run: pytest -m "not docker and not network" --cov
+      # Report only, no threshold: the per-file table lands on the run's summary page.
+      - run: coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
