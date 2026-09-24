@@ -52,3 +52,29 @@ def test_connect_machine_rejects_explicit_interface_on_running_machine():
 
     with pytest.raises(NotSupportedError):
         service.connect_machine("lab1", "pc1", "A", interface_number=3)
+
+
+class _Container:
+    def __init__(self, network_mode):
+        self.attrs = {"HostConfig": {"NetworkMode": network_mode}}
+
+
+def test_connect_machine_rejects_running_machine_started_without_network():
+    service, facade, lab = _service_with_stopped_machine()
+    machine = lab.machines["pc1"]
+    machine.api_object = _Container("none")
+
+    with pytest.raises(NotSupportedError, match="started without any interface"):
+        service.connect_machine("lab1", "pc1", "A")
+
+    assert facade.called is False
+    assert machine.interfaces == {}
+
+
+def test_connect_machine_connects_running_machine_started_with_network():
+    service, facade, lab = _service_with_stopped_machine()
+    lab.machines["pc1"].api_object = _Container("bridge")
+
+    service.connect_machine("lab1", "pc1", "A")
+
+    assert facade.called is True

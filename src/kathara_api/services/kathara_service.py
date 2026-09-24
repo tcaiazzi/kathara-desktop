@@ -1952,12 +1952,32 @@ class KatharaService:
                     "Explicit interface_number is only supported when the device is not running."
                 )
 
+            # Kathara starts a device with no interfaces in Docker's `none` network mode, and Docker
+            # refuses to attach any network to such a container. Checked here because Kathara's own
+            # connect adds the interface to the model and creates the collision domain before
+            # Docker refuses, leaving a phantom interface behind an unreadable daemon error.
+            if self._started_without_network(machine):
+                raise NotSupportedError(
+                    f"Device `{machine_name}` was started without any interface, and Docker cannot "
+                    "connect a running container like that to a collision domain. Stop the lab, "
+                    "connect the device, then start the lab again."
+                )
+
             self._facade().connect_machine_to_link(
                 machine,
                 link,
                 mac_address=mac_address,
             )
         return machine
+
+    @staticmethod
+    def _started_without_network(machine: Machine) -> bool:
+        """Whether the device's Docker container was created in the `none` network mode. Only a
+        Docker container carries ``attrs``; other managers' objects read as ``False``."""
+        attrs = getattr(machine.api_object, "attrs", None)
+        if not isinstance(attrs, dict):
+            return False
+        return (attrs.get("HostConfig") or {}).get("NetworkMode") == "none"
 
     def disconnect_machine(
         self, lab_name: str, machine_name: str, link_name: str, keep_link: bool = False
