@@ -2051,7 +2051,11 @@ class KatharaService:
         # `/bin -> usr/bin`) without following symlinks encountered among the listed children —
         # plain `find` (`-P`) treats a symlinked `path` as a leaf at depth 0, so with `-mindepth 1`
         # excluding that depth-0 node, listing a symlinked directory silently returns zero entries.
-        cmd = f"find -H {quoted} -mindepth 1 -maxdepth 1 -printf '%f\\t%y\\t%Y\\t%s\\t%m\\t%T@\\n'"
+        #
+        # The name goes last and each entry ends in NUL, the one byte a filename cannot contain: a
+        # name may hold tabs or newlines, but the five fields before it never do, so splitting on
+        # the first five tabs always leaves the name whole.
+        cmd = f"find -H {quoted} -mindepth 1 -maxdepth 1 -printf '%y\\t%Y\\t%s\\t%m\\t%T@\\t%f\\0'"
         stdout, _ = self._exec_checked(
             lab_name,
             machine_name,
@@ -2061,13 +2065,11 @@ class KatharaService:
         )
 
         entries: list[FsEntry] = []
-        for raw_line in stdout.decode("utf-8", errors="replace").splitlines():
-            if not raw_line.strip():
+        for record in stdout.decode("utf-8", errors="replace").split("\0"):
+            parts = record.split("\t", 5)
+            if len(parts) != 6 or not parts[5]:
                 continue
-            parts = raw_line.split("\t", 5)
-            if len(parts) != 6:
-                continue
-            name, kind, target_kind, size_raw, mode, mtime_raw = parts
+            kind, target_kind, size_raw, mode, mtime_raw, name = parts
             try:
                 size = int(size_raw)
             except ValueError:

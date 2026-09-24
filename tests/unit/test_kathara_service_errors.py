@@ -134,9 +134,9 @@ def test_fs_list_directory_marks_symlink_to_directory_as_directory():
     def _fake_exec(lab_name, machine_name, command, wait=False):
         if command[0:2] == ["sh", "-lc"]:
             payload = (
-                "bin\tl\td\t7\t777\t1700000000\n"
-                "etc\td\td\t4096\t755\t1700000001\n"
-                "hosts\tf\tf\t123\t644\t1700000002\n"
+                "l\td\t7\t777\t1700000000\tbin\0"
+                "d\td\t4096\t755\t1700000001\tetc\0"
+                "f\tf\t123\t644\t1700000002\thosts\0"
             )
             return (payload.encode("utf-8"), b"", 0)
         raise AssertionError(f"Unexpected command: {command}")
@@ -161,7 +161,7 @@ def test_fs_list_directory_dereferences_a_symlinked_query_path():
     def _fake_exec(lab_name, machine_name, command, wait=False):
         if command[0:2] == ["sh", "-lc"]:
             assert "find -H " in command[2]
-            payload = "ls\td\td\t4096\t755\t1700000000\n"
+            payload = "d\td\t4096\t755\t1700000000\tls\0"
             return (payload.encode("utf-8"), b"", 0)
         raise AssertionError(f"Unexpected command: {command}")
 

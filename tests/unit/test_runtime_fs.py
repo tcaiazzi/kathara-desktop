@@ -175,12 +175,13 @@ def test_a_failing_command_without_stderr_reports_its_exit_code(service, facade)
 # ---------------------------------------------------------------------------
 
 
-def test_listing_skips_malformed_lines_and_tolerates_unparseable_numbers(service, facade):
+def test_listing_skips_malformed_records_and_tolerates_unparseable_numbers(service, facade):
     facade.result = (
-        b"\n"
-        b"only\tthree\tfields\n"
-        b"b.txt\tf\tf\tbig\t644\tsoon\n"
-        b"A.txt\tf\tf\t12\t600\t1700000000.5\n",
+        b"\0"
+        b"only\tthree\tfields\0"
+        b"f\tf\t1\t644\t0\t\0"  # no name
+        b"f\tf\tbig\t644\tsoon\tb.txt\0"
+        b"f\tf\t12\t600\t1700000000.5\tA.txt\0",
         b"",
         0,
     )
@@ -195,10 +196,10 @@ def test_listing_skips_malformed_lines_and_tolerates_unparseable_numbers(service
 
 def test_listing_sorts_directories_first_then_by_name_case_insensitively(service, facade):
     facade.result = (
-        b"zeta\td\td\t4096\t755\t0\n"
-        b"beta\tf\tf\t1\t644\t0\n"
-        b"Alpha\tf\tf\t1\t644\t0\n"
-        b"Ops\td\td\t4096\t755\t0\n",
+        b"d\td\t4096\t755\t0\tzeta\0"
+        b"f\tf\t1\t644\t0\tbeta\0"
+        b"f\tf\t1\t644\t0\tAlpha\0"
+        b"d\td\t4096\t755\t0\tOps\0",
         b"",
         0,
     )
@@ -207,6 +208,36 @@ def test_listing_sorts_directories_first_then_by_name_case_insensitively(service
 
     assert [e.name for e in entries] == ["Ops", "zeta", "Alpha", "beta"]
     assert [e.path for e in entries] == ["/Ops", "/zeta", "/Alpha", "/beta"]
+
+
+def test_listing_keeps_names_with_tabs_newlines_and_spaces_whole(service, facade):
+    """Regression: with tab-separated fields and one entry per line, a tab in a name shifted every
+    field after it (a folder `conf<TAB>bak` came out as a *file* named `conf`, which then failed
+    to open), and a newline split one entry into two broken ones."""
+    facade.result = (
+        b"d\td\t4096\t755\t1700000001\tconf\tbak\0"
+        b"f\tf\t0\t644\t1700000002\treport\t2026.txt\0"
+        b"f\tf\t5\t600\t1700000003\ttwo\nlines\0"
+        b"f\tf\t1\t644\t1700000004\t \0",
+        b"",
+        0,
+    )
+
+    entries = service.fs_list_directory("l", "pc1", "/root")
+
+    assert [(e.name, e.path, e.is_dir, e.size, e.mode) for e in entries] == [
+        ("conf\tbak", "/root/conf\tbak", True, 4096, "755"),
+        (" ", "/root/ ", False, 1, "644"),
+        ("report\t2026.txt", "/root/report\t2026.txt", False, 0, "644"),
+        ("two\nlines", "/root/two\nlines", False, 5, "600"),
+    ]
+
+
+def test_listing_asks_find_for_nul_terminated_records_with_the_name_last(service, facade):
+    service.fs_list_directory("l", "pc1", "/")
+
+    [(_, [_, _, cmd], _, _)] = facade.execs
+    assert cmd.endswith("-printf '%y\\t%Y\\t%s\\t%m\\t%T@\\t%f\\0'")
 
 
 def test_listing_quotes_the_path_inside_the_find_command(service, facade):
