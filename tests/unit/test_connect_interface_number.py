@@ -64,7 +64,7 @@ def test_connect_machine_rejects_running_machine_started_without_network():
     machine = lab.machines["pc1"]
     machine.api_object = _Container("none")
 
-    with pytest.raises(NotSupportedError, match="started without any interface"):
+    with pytest.raises(NotSupportedError, match="`pc1` was started without any network interface"):
         service.connect_machine("lab1", "pc1", "A")
 
     assert facade.called is False
