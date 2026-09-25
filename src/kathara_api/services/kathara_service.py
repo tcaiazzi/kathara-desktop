@@ -58,10 +58,13 @@ from ..errors import (
     ApiError,
     BinaryFileError,
     LabAlreadyRegisteredError,
+    LabCloseRefusedError,
     LabConfLockedError,
+    LabDeleteRefusedError,
     LabRenameLockedError,
     LabTransitioningError,
     LinkInUseError,
+    NotALabError,
     PathNotFoundError,
     SettingsLockedError,
 )
@@ -83,7 +86,8 @@ from . import (
     lab_store,
 )
 from .docker_tty import SHELL_PATHS
-from .lab_store import LabStore, lab_id_for
+from .known_labs import KNOWN_LABS_FILENAME, KnownLabs
+from .lab_store import LabPlace, LabStore, is_within, lab_id_for
 from .registry import LabRegistry
 
 logger = logging.getLogger("kathara_api")
@@ -143,7 +147,7 @@ class KatharaService:
     # user starts Docker.
     _FACADE_FAILURE_TTL = 3.0
 
-    def __init__(self, store: Optional[LabStore] = None) -> None:
+    def __init__(self, store: Optional[LabStore] = None, known: Optional[KnownLabs] = None) -> None:
         self._instance: Optional[Kathara] = None
         self._mutate_lock = threading.RLock()
         self._init_lock = threading.Lock()
@@ -167,6 +171,11 @@ class KatharaService:
         self._claim_locks_guard = threading.Lock()
         self.registry = LabRegistry()
         self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
+        # Lab directories opened from outside the store's root (open_lab) — see known_labs.py.
+        if known is None:
+            state_dir = get_settings().state_dir_path()
+            known = KnownLabs(state_dir / KNOWN_LABS_FILENAME if state_dir is not None else None)
+        self.known = known
         # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
         # restart. Safe at import time: builds model objects only (no facade/Docker), and reads
         # nothing if the storage root does not exist yet.
@@ -185,16 +194,16 @@ class KatharaService:
     def _lab_dir(self, lab_id: str) -> Optional[Path]:
         """The directory of the lab ``lab_id``, or ``None`` when it has none on disk.
 
-        The registry answers for every lab that loaded. The scan covers a directory under the root
-        that did not — one whose ``lab.conf`` failed to parse at startup — so that its
-        ``lab.conf`` can still be read and the lab undeployed, exported and deleted like any other.
-        ``None`` is what a reconstruct-only lab (running containers, no directory) and an unknown
-        id both get.
+        The registry answers for every lab that loaded. The scan covers a known directory that did
+        not — one whose ``lab.conf`` failed to parse at startup, or an opened folder that has since
+        gone missing — so that its ``lab.conf`` can still be read and the lab undeployed, exported,
+        closed or deleted like any other. ``None`` is what a reconstruct-only lab (running
+        containers, no directory) and an unknown id both get.
         """
         directory = self.registry.directory(lab_id)
         if directory is not None:
             return directory
-        for candidate in self.store.lab_dirs():
+        for candidate in [*self.store.lab_dirs(), *self.known.dirs()]:
             if lab_id_for(candidate) == lab_id:
                 return candidate
         return None
@@ -693,6 +702,27 @@ class KatharaService:
         return owner == ROOT_MACHINE and fs.path.normpath(guest) in ("", "/")
 
     @staticmethod
+    def _escapes_lab(lab: Lab, path: str) -> bool:
+        """Whether the already-cleaned lab-relative ``path`` resolves outside the lab's directory.
+
+        ``_clean_offline_path`` already refuses a ``..`` that climbs out; this catches the other
+        way out, a symbolic link inside the lab pointing elsewhere, which pyfilesystem's ``OSFS``
+        follows without a word. A lab opened from anywhere on the host (``open_lab``) can hold
+        one, and following it would let the lab filesystem API read or write any file the backend
+        can. A path-less (in-memory) lab has nowhere to escape to.
+        """
+        try:
+            root = Path(lab.fs.getsyspath("/"))
+        except fs.errors.NoSysPath:
+            return False
+        return not is_within(root / path.lstrip("/"), root)
+
+    def _confine(self, lab: Lab, path: str) -> None:
+        """Refuse ``path`` if it escapes the lab — see ``_escapes_lab``."""
+        if self._escapes_lab(lab, path):
+            raise ApiError(f"`{path}` leads outside the lab through a symbolic link.")
+
+    @staticmethod
     def _offline_fs_owner(lab: Lab, path: str) -> tuple[str, str]:
         """Resolve a lab-relative path (``"pc1/etc/motd"``, ``"pc1.startup"``, ``"notes.txt"``) to
         ``(owner, guest_path)`` — ``owner`` is a real device name if the path's first segment
@@ -778,6 +808,85 @@ class KatharaService:
                 self.store.delete_lab(lab_dir)
                 raise
             return lab
+
+    def open_lab(self, path: str, init: bool = False) -> tuple[Lab, list[str]]:
+        """Open the folder at ``path`` — anywhere on the host — as a lab, and remember it.
+
+        The folder is used in place: nothing is copied under the labs root, and the lab's id is
+        derived from where it is (``lab_store.lab_id_for``), so a lab `kathara lstart` runs in
+        that folder is this one. Opening a folder that is already open (or one of the root's own
+        labs) just returns it, which is what makes a "recent labs" entry safe to click twice.
+
+        ``path`` must be trusted: once open, the whole folder is readable and writable through the
+        lab filesystem API. The route that reaches this is guarded by the desktop shell's own
+        token (``dependencies.require_shell_token``) for exactly that reason.
+
+        A folder with neither a ``lab.conf`` nor any device folder is a ``NotALabError`` (422) —
+        unless ``init``, which makes it a lab first by writing an empty ``lab.conf``, the same one
+        ``create_lab`` writes for a lab with no devices. Returns the lab and the non-fatal parse
+        warnings an import reports.
+        """
+        if not os.path.isabs(path):
+            raise ApiError("A lab folder must be given as an absolute path.")
+        directory = Path(os.path.realpath(path))
+        if not directory.is_dir():
+            raise PathNotFoundError(f"`{path}` is not a folder.")
+        if directory.parent == directory:
+            raise ApiError("The root of the filesystem can't be opened as a lab.")
+        lab_id = lab_id_for(directory)
+        warnings: list[str] = []
+        with self._claiming(lab_id):
+            if self.registry.get(lab_id) is None:
+                self.store.check_openable(directory)
+                conf_path = self.store.lab_conf_path(directory)
+                if init and not conf_path.exists():
+                    self.store.write_lab_conf(directory, lab_builder.build_lab(LabCreate(name=directory.name)))
+                files, _dirs = self.store.read_lab(directory)
+                t = lab_import.translate_lab_files(files, directory.name)
+                if t.errors:
+                    if LAB_CONF_FILENAME not in files:
+                        raise NotALabError(f"`{directory.name}` has no lab.conf and no device folders.")
+                    raise ApiError("; ".join(t.errors))
+                self._build_and_register(t.payload, directory)
+                warnings = t.warnings
+            if not self.store.is_under_root(directory):
+                self.known.add(directory)
+        # Through the usual lookup, so the answer already shows whatever runs under this lab's id
+        # — e.g. a lab started from the CLI in this folder before it was ever opened here.
+        return self.get_lab_or_reconstruct(lab_id), warnings
+
+    def close_lab(self, lab_id: str) -> None:
+        """Forget a lab opened from outside the labs root; its folder is left untouched.
+
+        Undeploys it first: containers left running would belong to a lab nothing lists any more,
+        with no way to stop them short of reopening it. A lab under the root cannot be closed
+        (``LabCloseRefusedError``) — the next restart would list it again; it is deleted instead.
+        Works on an opened folder that has gone missing too, which is how one is dropped from
+        the list.
+        """
+        self._check_not_transitioning(lab_id)
+        with self._mutate_lock:
+            lab_dir = self._lab_dir(lab_id)
+            if lab_dir is None and self.registry.get(lab_id) is None:
+                raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+            if lab_dir is not None and self.store.is_under_root(lab_dir):
+                raise LabCloseRefusedError(
+                    f"`{self._lab_label(lab_id)}` is in the labs folder, so it can't be closed. Delete it instead."
+                )
+            try:
+                self._facade().undeploy_lab(lab_hash=lab_id)
+            except DockerDaemonConnectionError:
+                # Same reasoning as delete_lab: with no daemon there is nothing running to stop.
+                logger.warning("Docker daemon unreachable while closing lab `%s`; skipping undeploy", lab_id)
+        with self._claiming(lab_id):
+            self.registry.remove(lab_id)
+            if lab_dir is not None:
+                self.known.remove(lab_dir)
+
+    def lab_place(self, lab: Lab) -> LabPlace:
+        """Where ``lab`` lives, for the response schemas (``LabSummary.path``/``managed``)."""
+        directory = self._lab_dir(lab.hash)
+        return LabPlace(directory, directory is not None and self.store.is_under_root(directory))
 
     def export_lab_zip(self, lab_id: str) -> tuple[str, io.BytesIO]:
         """The lab's directory name and an in-memory .zip of that directory (raises 404 if unknown).
@@ -953,8 +1062,17 @@ class KatharaService:
             self.store.write_lab_conf_text(lab_dir, new_text)
 
     def _reload_from_disk(self) -> None:
-        """Rebuild the registry from the stored lab directories."""
-        for lab_dir in self.store.lab_dirs():
+        """Rebuild the registry from every lab directory this backend knows: the store root's own,
+        then the folders opened from elsewhere (``known``).
+
+        An opened folder that is missing (an unmounted drive, a folder moved away) stays known
+        rather than being forgotten — it may well come back — and is just not loaded.
+        """
+        opened = [d for d in self.known.dirs() if not self.store.is_under_root(d)]
+        for lab_dir in [*self.store.lab_dirs(), *opened]:
+            if not lab_dir.is_dir():
+                logger.info("Not loading lab `%s`: the folder is missing", lab_dir)
+                continue
             try:
                 t = self._translate_lab_dir(lab_dir)
                 if t is None:
@@ -1174,7 +1292,7 @@ class KatharaService:
         for name in lab.machines:
             fname = f"{name}.startup"
             text = ""
-            if lab.fs.exists(fname):
+            if lab.fs.exists(fname) and not self._escapes_lab(lab, fname):
                 try:
                     text = lab.fs.readtext(fname)
                 except UnicodeDecodeError:
@@ -1190,6 +1308,7 @@ class KatharaService:
         again once its last real content is deleted (see `fs_delete_offline`)."""
         path = self._clean_offline_path(path)
         lab = self.get_lab_or_reconstruct(lab_id)
+        self._confine(lab, path)
         owner, guest = self._offline_fs_owner(lab, path)
         target_fs = self._fs_for(lab, owner)
         normalized = self.normalize_guest_path(path)
@@ -1216,6 +1335,7 @@ class KatharaService:
         separate fan-out over `lab.machines` is needed."""
         path = self._clean_offline_path(path)
         lab = self.get_lab_or_reconstruct(lab_id)
+        self._confine(lab, path)
         owner, guest = self._offline_fs_owner(lab, path)
         target_fs = self._fs_for(lab, owner)
 
@@ -1230,6 +1350,10 @@ class KatharaService:
                 if len(matches) >= _SEARCH_MAX_TOTAL_MATCHES:
                     truncated = True
                     break
+                display_path = file_path if owner == ROOT_MACHINE else fs.path.join(f"/{owner}", file_path)
+                # The walk follows a symlinked directory, so a file under one may lie outside.
+                if self._escapes_lab(lab, display_path):
+                    continue
                 try:
                     info = target_fs.getinfo(file_path, namespaces=["details"])
                     if info.size is not None and info.size > max_file_size:
@@ -1246,7 +1370,6 @@ class KatharaService:
                 )
                 if file_capped:
                     truncated = True
-                display_path = file_path if owner == ROOT_MACHINE else fs.path.join(f"/{owner}", file_path)
                 matches.extend(
                     FsSearchMatch(path=display_path, line_number=lineno, line_text=text_)
                     for lineno, text_ in file_matches
@@ -1262,6 +1385,7 @@ class KatharaService:
         before they can differ about *how* they read the bytes.
         """
         lab = self.get_lab_or_reconstruct(lab_id)
+        self._confine(lab, path)
         owner, guest = self._offline_fs_owner(lab, path)
         target_fs = self._fs_for(lab, owner)
         if target_fs is None or not target_fs.exists(guest):
@@ -1295,6 +1419,7 @@ class KatharaService:
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
+            self._confine(lab, path)
             owner, guest = self._offline_fs_owner(lab, path)
             if owner == ROOT_MACHINE:
                 self._write_lab_root_files(lab, {guest: content}, [])
@@ -1321,6 +1446,7 @@ class KatharaService:
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
+            self._confine(lab, path)
             owner, guest = self._offline_fs_owner(lab, path)
             target_fs = self._fs_for_write(lab, owner)
             parent = posixpath.dirname(guest)
@@ -1337,6 +1463,7 @@ class KatharaService:
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
+            self._confine(lab, path)
             owner, guest = self._offline_fs_owner(lab, path)
             if owner == ROOT_MACHINE:
                 self._write_lab_root_files(lab, {}, [guest])
@@ -1353,6 +1480,7 @@ class KatharaService:
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
+            self._confine(lab, path)
             owner, guest = self._offline_fs_owner(lab, path)
 
             # The lab root itself is never a valid delete target — `DELETE /labs/{lab}` is what
@@ -1406,6 +1534,8 @@ class KatharaService:
         a copy needs neither.
         """
         lab = self.get_lab_or_reconstruct(lab_id)
+        self._confine(lab, source_path)
+        self._confine(lab, destination_path)
         source_owner, source_guest = self._offline_fs_owner(lab, source_path)
         dest_owner, dest_guest = self._offline_fs_owner(lab, destination_path)
         # Neither end may be the lab's own root: moving it away and copying something over it are
@@ -1826,6 +1956,8 @@ class KatharaService:
                     self.store.rename_lab(moved, lab_dir.name)  # roll the directory back
                     raise
                 self.registry.remove(lab_id)
+                if not self.store.is_under_root(moved):
+                    self.known.replace(lab_dir, moved)
                 return renamed
 
     def delete_lab(self, lab_id: str) -> None:
@@ -1834,6 +1966,11 @@ class KatharaService:
             lab_dir = self._lab_dir(lab_id)
             if self.registry.get(lab_id) is None and lab_dir is None:
                 raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+            if lab_dir is not None and not self.store.is_under_root(lab_dir):
+                raise LabDeleteRefusedError(
+                    f"`{self._lab_label(lab_id)}` is a folder opened from outside the labs folder, so it "
+                    "can't be deleted from here. Close it instead."
+                )
             try:
                 self._facade().undeploy_lab(lab_hash=lab_id)
             except DockerDaemonConnectionError:

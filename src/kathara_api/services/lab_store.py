@@ -24,7 +24,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, BinaryIO, Optional, Union
+from typing import Any, BinaryIO, NamedTuple, Optional, Union
 
 from Kathara import utils as kathara_utils
 from Kathara.exceptions import LabNotFoundError
@@ -76,6 +76,22 @@ def lab_id_for(directory: Union[str, Path]) -> str:
     (``gen_lab_conf``) and ignores one it reads, so only a hand-written ``LAB_NAME`` diverges.
     """
     return kathara_utils.generate_urlsafe_hash(kathara_utils.get_absolute_path(str(directory)))
+
+
+class LabPlace(NamedTuple):
+    """Where a lab lives: its directory (None for a lab known only from running containers), and
+    whether that directory is under the labs root — a lab this app created or that was dropped
+    there — rather than a folder opened from elsewhere."""
+
+    directory: Optional[Path]
+    managed: bool
+
+
+def is_within(path: Path, base: Path) -> bool:
+    """Whether ``path`` resolves to ``base`` or somewhere beneath it, symlinks followed."""
+    resolved_base = base.resolve()
+    resolved = path.resolve()
+    return resolved == resolved_base or resolved_base in resolved.parents
 
 
 def sanitize_lab_name(name: str) -> str:
@@ -239,6 +255,10 @@ class LabStore:
             return []
         return sorted(p.name for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
 
+    def is_under_root(self, directory: Path) -> bool:
+        """Whether ``directory`` is one of the root's own lab directories (see ``lab_dirs``)."""
+        return directory.resolve().parent == self.root.resolve()
+
     def lab_dirs(self) -> list[Path]:
         """The directory of every lab under the root, in ``lab_names`` order.
 
@@ -274,7 +294,9 @@ class LabStore:
 
         Binary files are skipped (they can't be represented in the text-based pending model used
         for queued-but-not-yet-deployed state); the native-fs deploy path reads binaries straight
-        off disk instead.
+        off disk instead. So is a file symlinked to somewhere outside the lab: a folder opened
+        from anywhere may hold one, and following it would read a file that is not the lab's.
+        ``os.walk`` already declines to descend into symlinked directories.
         """
         base = Path(path)
         files: dict[str, str] = {}
@@ -285,12 +307,45 @@ class LabStore:
                 dirs.append(rel_root.replace(os.sep, "/"))
             for filename in filenames:
                 abs_path = Path(root) / filename
+                if abs_path.is_symlink() and not is_within(abs_path, base):
+                    continue
                 rel = os.path.relpath(abs_path, base).replace(os.sep, "/")
                 try:
                     files[rel] = abs_path.read_text(encoding="utf-8")
                 except (UnicodeDecodeError, ValueError):
                     continue  # binary file — not representable as text here
         return files, dirs
+
+    @staticmethod
+    def check_openable(directory: Path) -> None:
+        """Refuse a directory too large to be a lab, before anything reads it into memory.
+
+        Opening a folder reads every text file in it (``read_lab``), so opening the wrong one —
+        a home directory, a source tree — must fail fast with a clear message rather than walk
+        and load all of it. Bounded by the same caps an import enforces (``ApiSettings``), which
+        the Settings page can raise for a lab that legitimately exceeds them; the walk stops as
+        soon as either is crossed. Symlinked directories are not followed, as in ``read_lab``.
+        """
+        settings = get_settings()
+        count = 0
+        total = 0
+        for root, _dirnames, filenames in os.walk(directory):
+            for filename in filenames:
+                count += 1
+                if count > settings.max_files_per_lab:
+                    raise ApiError(
+                        f"`{directory}` holds more than {settings.max_files_per_lab} files, more than a "
+                        "lab this app opens. Pick the lab's own folder, or raise the limit in Settings."
+                    )
+                try:
+                    total += (Path(root) / filename).lstat().st_size
+                except OSError:
+                    continue
+                if total > settings.max_bytes_per_lab:
+                    raise ApiError(
+                        f"`{directory}` holds more than {format_mb(settings.max_bytes_per_lab)}, more than a "
+                        "lab this app opens. Pick the lab's own folder, or raise the limit in Settings."
+                    )
 
     def write_lab_conf(self, lab_dir: Path, lab: Lab) -> None:
         """Regenerate and (over)write ``lab_dir/lab.conf`` from ``lab`` (see ``gen_lab_conf``)."""
@@ -310,7 +365,8 @@ class LabStore:
         (``None``) rather than raising, mirroring ``read_lab``'s own binary-file handling.
         """
         path = self.lab_conf_path(directory)
-        if not path.is_file():
+        if not path.is_file() or not is_within(path, directory):
+            # Also None for a lab.conf symlinked out of the lab — see read_lab.
             return None
         try:
             data = path.read_bytes()
@@ -367,7 +423,7 @@ class LabStore:
         if not directory.is_dir():
             raise LabNotFoundError(f"Lab `{directory.name}` not found.")
         path = self.layout_path(directory)
-        if not path.is_file():
+        if not path.is_file() or not is_within(path, directory):
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))

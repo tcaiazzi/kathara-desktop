@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, sta
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from ..dependencies import get_service
+from ..dependencies import get_service, require_shell_token
 from ..downloads import attachment_headers
 from ..schemas.common import Message
 from ..schemas.examples import ExampleCreate, ExampleSummary
@@ -32,6 +32,7 @@ from ..schemas.lab import (
     LabDetail,
     LabLayout,
     LabLocation,
+    LabOpen,
     LabRename,
     LabSummary,
     UndeployOptions,
@@ -47,16 +48,21 @@ def _to_set(values):
     return set(values) if values else None
 
 
-def _import_result(lab, warnings: list[str]) -> LabImportResult:
+def _detail(lab, service: KatharaService) -> LabDetail:
+    """The lab's detail, including where it lives — every route answering with a lab goes through here."""
+    return serializers.lab_to_detail(lab, service.lab_place(lab))
+
+
+def _import_result(lab, warnings: list[str], service: KatharaService) -> LabImportResult:
     """Build a LabImportResult (lab detail + non-fatal parse warnings) — shared by import + upload."""
-    return LabImportResult(**serializers.lab_to_detail(lab).model_dump(), warnings=warnings)
+    return LabImportResult(**_detail(lab, service).model_dump(), warnings=warnings)
 
 
 @router.post("", response_model=LabDetail, status_code=status.HTTP_201_CREATED)
 def create_lab(payload: LabCreate, service: KatharaService = Depends(get_service)) -> LabDetail:
     """Create a network scenario from a JSON description (not yet deployed)."""
     lab = service.create_lab(payload)
-    return serializers.lab_to_detail(lab)
+    return _detail(lab, service)
 
 
 @router.post("/upload", response_model=LabImportResult, status_code=status.HTTP_201_CREATED)
@@ -72,7 +78,24 @@ def upload_lab(
     """
     lab_name = (name or "").strip() or Path(file.filename or "lab").stem
     lab, warnings = service.upload_lab(lab_name, file.file, deploy=deploy)
-    return _import_result(lab, warnings)
+    return _import_result(lab, warnings, service)
+
+
+@router.post(
+    "/open",
+    response_model=LabImportResult,
+    dependencies=[Depends(require_shell_token)],
+)
+def open_lab(payload: LabOpen, service: KatharaService = Depends(get_service)) -> LabImportResult:
+    """Open a host folder, wherever it is, as a lab — used in place, and remembered across restarts.
+
+    Desktop shell only (the `X-Kathara-Shell-Token` header): the shell picks the folder in a native
+    dialog, and nothing the renderer sends may choose a directory this API then reads and writes.
+    Opening an already-open folder returns it. 422 `NotALabError` for a folder with no `lab.conf`
+    and no device folders, unless `init` is set.
+    """
+    lab, warnings = service.open_lab(payload.path, init=payload.init)
+    return _import_result(lab, warnings, service)
 
 
 # Declared above the /{lab_id} routes below: FastAPI/Starlette resolves in registration
@@ -92,7 +115,7 @@ def create_example_lab(payload: ExampleCreate, service: KatharaService = Depends
     optional target `name`.
     """
     lab, warnings = service.install_example(payload.id, payload.name)
-    return _import_result(lab, warnings)
+    return _import_result(lab, warnings, service)
 
 
 # Also declared above GET /{lab_id} for the same registration-order reason as /examples above.
@@ -120,20 +143,20 @@ def create_gallery_lab(payload: GalleryInstall, service: KatharaService = Depend
     a path form isn't possible — same reasoning as POST /examples above.
     """
     lab, warnings = service.install_gallery_lab(payload.id, payload.name)
-    return _import_result(lab, warnings)
+    return _import_result(lab, warnings, service)
 
 
 @router.get("", response_model=list[LabSummary])
 def list_labs(service: KatharaService = Depends(get_service)) -> list[LabSummary]:
     """List the network scenarios known to the API."""
-    return [serializers.lab_to_summary(lab) for lab in service.list_labs()]
+    return [serializers.lab_to_summary(lab, service.lab_place(lab)) for lab in service.list_labs()]
 
 
 @router.get("/{lab_id}", response_model=LabDetail)
 def get_lab(lab_id: str, service: KatharaService = Depends(get_service)) -> LabDetail:
     """Return details of a network scenario, merged with its running state."""
     lab = service.get_lab_or_reconstruct(lab_id)
-    return serializers.lab_to_detail(lab)
+    return _detail(lab, service)
 
 
 @router.get("/{lab_id}/download")
@@ -163,7 +186,7 @@ def update_lab_conf(
     """Apply an edited ``lab.conf`` to a non-deployed lab (rebuilds its topology), storing the
     submitted text verbatim. 409 if deployed."""
     lab = service.update_lab_conf(lab_id, payload.content)
-    return serializers.lab_to_detail(lab)
+    return _detail(lab, service)
 
 
 @router.get("/{lab_id}/location", response_model=LabLocation)
@@ -348,7 +371,7 @@ def deploy_lab(
         selected_machines=_to_set(resolved.selected_machines),
         excluded_machines=_to_set(resolved.excluded_machines),
     )
-    return serializers.lab_to_detail(lab)
+    return _detail(lab, service)
 
 
 @router.post("/{lab_id}/undeploy", response_model=Message)
@@ -372,11 +395,20 @@ def undeploy_lab(
 def rename_lab(lab_id: str, payload: LabRename, service: KatharaService = Depends(get_service)) -> LabDetail:
     """Rename a non-deployed network scenario (409 while deployed, or if the name is taken)."""
     lab = service.rename_lab(lab_id, payload.name)
-    return serializers.lab_to_detail(lab)
+    return _detail(lab, service)
+
+
+@router.post("/{lab_id}/close", response_model=Message)
+def close_lab(lab_id: str, service: KatharaService = Depends(get_service)) -> Message:
+    """Forget a lab opened from outside the labs folder (undeploying it first); its folder stays.
+    409 for a lab in the labs folder, which is deleted instead."""
+    service.close_lab(lab_id)
+    return Message(detail="Lab closed.")
 
 
 @router.delete("/{lab_id}", response_model=Message)
 def delete_lab(lab_id: str, service: KatharaService = Depends(get_service)) -> Message:
-    """Undeploy a network scenario and drop it from the registry."""
+    """Undeploy a network scenario and remove its directory. 409 for a folder opened from outside
+    the labs folder, which is closed instead."""
     service.delete_lab(lab_id)
     return Message(detail="Lab deleted.")

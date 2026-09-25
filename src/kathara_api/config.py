@@ -94,6 +94,19 @@ class ApiSettings(BaseSettings):
     # dependencies.require_auth_token).
     auth_token: Optional[str] = None
 
+    # A second secret, held by the desktop shell's main process only and never handed to the
+    # renderer, for the one route that turns a caller-chosen host path into a lab this API can
+    # read and write (`POST /labs/open`, see dependencies.require_shell_token). The pairing token
+    # above cannot guard it: the renderer holds that one, and a script injected into the page
+    # would then be able to point the filesystem API at any directory. Unset by default, which
+    # disables that route — no other deployment has a trusted native side to pick the folder.
+    shell_token: Optional[str] = None
+
+    # Where the backend keeps state that belongs to no single lab: the list of lab directories
+    # opened from outside labs_dir (services/known_labs.py). Unset means that list is kept in
+    # memory only; the desktop app points it at its own per-user data directory.
+    state_dir: Optional[str] = None
+
     # How many live TTY websockets (routers/exec.py:tty_live_ws) can be open at once. Each one
     # holds a thread of services/docker_tty.py's dedicated executor for as long as the terminal
     # stays open (a blocking socket read in a loop) — this is also that executor's size, so a
@@ -108,6 +121,11 @@ class ApiSettings(BaseSettings):
     def labs_dir_path(self) -> Path:
         """Absolute path to the lab storage root."""
         return Path(self.labs_dir).expanduser().resolve()
+
+    def state_dir_path(self) -> Optional[Path]:
+        """Absolute path to the state directory, or None when none is configured."""
+        configured = (self.state_dir or "").strip()
+        return Path(configured).expanduser().resolve() if configured else None
 
     def static_dir_path(self) -> Optional[Path]:
         """Absolute path to the built frontend, or None if not configured or absent.

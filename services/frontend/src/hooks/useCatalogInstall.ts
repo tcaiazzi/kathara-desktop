@@ -28,11 +28,12 @@ interface CatalogInstallOptions<T extends CatalogItem> {
 /** The id of the already-installed lab called `name`, or null if there is none.
  *
  * Only the backend can derive a lab's id (it comes from the directory's path), so a lab this
- * client did not just create has to be looked up. By name is enough here: a catalogue installs
- * under the labs root, where two labs cannot share a directory name. */
+ * client did not just create has to be looked up. A catalogue installs under the labs root, where
+ * two labs cannot share a directory name — so the lookup is by name among `managed` labs only; a
+ * folder opened from elsewhere may well carry the same name. */
 async function installedLabId(name: string): Promise<string | null> {
   const labs = await api.listLabs();
-  return labs.find((lab) => lab.name === name)?.id ?? null;
+  return labs.find((lab) => lab.managed && lab.name === name)?.id ?? null;
 }
 
 /** The install-or-open flow behind the welcome screen's examples and the gallery's labs.

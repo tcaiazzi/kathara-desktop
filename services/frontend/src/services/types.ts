@@ -83,6 +83,11 @@ export interface LabSummary {
   // What every per-lab call and route takes. Derived by the backend from the lab directory's path
   // (and equal to its Kathara hash), so a rename changes it — never build one from `name`.
   id: string;
+  // The lab's directory on the host; null for a lab known only from running containers.
+  path: string | null;
+  // Whether that directory is under the labs root rather than a folder opened from elsewhere: a
+  // managed lab is deleted, an opened one is only closed (its folder is the user's own).
+  managed: boolean;
   n_machines: number;
   n_links: number;
   deployed: boolean;

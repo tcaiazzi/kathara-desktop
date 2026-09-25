@@ -90,8 +90,48 @@ class LabConfLockedError(ApiError):
 class LabRenameLockedError(ApiError):
     """Raised when renaming a lab while it is deployed.
 
-    A lab's name is its directory name *and* the identity Kathara derives container/network names
-    from, so renaming a running lab would orphan everything already deployed under the old name.
+    A rename moves the lab's directory, and the lab's id — the hash Kathara names its containers
+    and networks after — is derived from that directory's path, so renaming a running lab would
+    orphan everything already deployed under the old id.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
+class ShellOnlyError(ApiError):
+    """Raised by require_shell_token (dependencies.py): the route opens a caller-chosen host
+    directory as a lab, and only the desktop shell's main process — which holds the shell token
+    and picked the folder in a native dialog — may ask for that."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+
+
+class NotALabError(ApiError):
+    """Raised when opening a directory that holds neither a ``lab.conf`` nor any device folder.
+
+    Distinct from a plain 400 so the frontend can offer to make it one (``POST /labs/open`` with
+    ``init: true``) instead of just reporting a failure.
+    """
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class LabCloseRefusedError(ApiError):
+    """Raised when closing a lab that lives under the labs root.
+
+    Every directory there is a lab by construction, so closing one could not stick: it would be
+    listed again on the next restart. Deleting it is what removes it.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
+class LabDeleteRefusedError(ApiError):
+    """Raised when deleting a lab whose directory is outside the labs root.
+
+    That directory is the user's own folder, opened from wherever it is — this app did not create
+    it and must not ``rmtree`` it. Closing the lab forgets it; removing the folder is left to the
+    user's own file manager.
     """
 
     status_code = status.HTTP_409_CONFLICT

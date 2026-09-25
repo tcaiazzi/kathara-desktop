@@ -4,7 +4,7 @@ The Kathara models expose no ``to_dict()``; this module bridges them to the Pyda
 response schemas.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from Kathara.model.Lab import Lab
 from Kathara.model.Link import Link
@@ -15,6 +15,7 @@ from ..schemas.lab import LabDetail, LabMetadata, LabSummary
 from ..schemas.link import LinkDetail
 from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping, Ulimit, VolumeMount
 from ..schemas.stats import MachineStats
+from .lab_store import LabPlace
 
 
 def _ports_to_schema(ports: dict) -> list[PortMapping]:
@@ -119,17 +120,26 @@ def _is_deployed(lab: Lab) -> bool:
     return any(m.api_object is not None for m in lab.machines.values())
 
 
-def lab_to_summary(lab: Lab) -> LabSummary:
+def _place_fields(place: Optional[LabPlace]) -> dict[str, Any]:
+    """``path``/``managed`` from where the service says the lab lives (``KatharaService.lab_place``);
+    a lab with no known place is reported as having no directory."""
+    if place is None or place.directory is None:
+        return {"path": None, "managed": False}
+    return {"path": str(place.directory), "managed": place.managed}
+
+
+def lab_to_summary(lab: Lab, place: Optional[LabPlace] = None) -> LabSummary:
     return LabSummary(
         name=lab.name,
         id=lab.hash,
         n_machines=len(lab.machines),
         n_links=len(lab.links),
         deployed=_is_deployed(lab),
+        **_place_fields(place),
     )
 
 
-def lab_to_detail(lab: Lab) -> LabDetail:
+def lab_to_detail(lab: Lab, place: Optional[LabPlace] = None) -> LabDetail:
     """Serialize a lab, including its devices and collision domains."""
     return LabDetail(
         name=lab.name,
@@ -137,6 +147,7 @@ def lab_to_detail(lab: Lab) -> LabDetail:
         n_machines=len(lab.machines),
         n_links=len(lab.links),
         deployed=_is_deployed(lab),
+        **_place_fields(place),
         metadata=_lab_metadata(lab),
         machines=[machine_to_detail(m) for m in lab.machines.values()],
         links=[link_to_detail(link) for link in lab.links.values()],

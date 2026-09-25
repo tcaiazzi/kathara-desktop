@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from fastapi import Request
 
 from .config import get_settings
-from .errors import UnauthorizedError
+from .errors import ShellOnlyError, UnauthorizedError
 from .services.kathara_service import KatharaService
 
 # A single process-wide service instance (the underlying Kathara facade is a singleton).
@@ -68,6 +68,24 @@ def require_auth_token_or_query(request: Request) -> None:
     from proxy logs, browser history, `Referer`) where a header would do.
     """
     _check_token(request, allow_query=True)
+
+
+# Header, not `Authorization`: the request also carries the ordinary pairing token there, and the
+# route that needs this one must pass both checks.
+SHELL_TOKEN_HEADER = "x-kathara-shell-token"
+
+
+def require_shell_token(request: Request) -> None:
+    """Reject the request unless it carries ``KATHARA_API_SHELL_TOKEN`` (see
+    config.ApiSettings.shell_token) in the ``X-Kathara-Shell-Token`` header.
+
+    Unlike :func:`require_auth_token` this is *not* a no-op when unset: with no shell token
+    configured nothing trusted can supply a host path, so the route is closed to everyone.
+    """
+    expected = get_settings().shell_token
+    supplied = request.headers.get(SHELL_TOKEN_HEADER)
+    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+        raise ShellOnlyError("Only the desktop app can open a folder as a lab.")
 
 
 def is_origin_allowed(origin: str | None, host_header: str | None) -> bool:

@@ -723,11 +723,13 @@ export function WorkspacePage() {
   }, [registerTourSelectFirstDevice]);
   // A kathara://lab/<name> deep link (services/desktop's deepLinkRoute.ts) names the lab the way a
   // person would, but the route takes its id, which only the backend derives — so the name arrives
-  // as `?lab=` and is resolved here against the list, then swapped for the lab's own route.
+  // as `?lab=` and is resolved here against the list, then swapped for the lab's own route. A name
+  // is unique only under the labs root, so a lab there wins over an opened folder of the same name.
   const deepLinkedName = searchParams.get("lab");
   useEffect(() => {
     if (deepLinkedName == null || labs == null) return;
-    const match = labs.find((l) => l.name === deepLinkedName);
+    const named = labs.filter((l) => l.name === deepLinkedName);
+    const match = named.find((l) => l.managed) ?? named[0];
     if (match) {
       navigate(`/workspace/${encodeURIComponent(match.id)}`, { replace: true });
       return;

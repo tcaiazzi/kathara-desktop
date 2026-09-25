@@ -11,6 +11,7 @@ covered once for every route by test_error_mapping.py.
 
 import io
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,6 +22,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate, MachineUpdate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.lab_store import LabPlace
 
 
 class _RecordingService:
@@ -28,7 +30,8 @@ class _RecordingService:
     `returns[method]`: a plain value, or a callable run with the call's arguments.
 
     `normalize_guest_path` is the real one: several routes echo its result back, and a copy of
-    it here would let the tests agree with themselves instead of with the service.
+    it here would let the tests agree with themselves instead of with the service. `lab_place`
+    is not recorded either: every route answering with a lab asks it, for presentation only.
     """
 
     def __init__(self):
@@ -37,6 +40,9 @@ class _RecordingService:
 
     def normalize_guest_path(self, path: str) -> str:
         return KatharaService.normalize_guest_path(self, path)
+
+    def lab_place(self, lab) -> LabPlace:
+        return LabPlace(Path("/labs") / lab.name, True)
 
     def __getattr__(self, name):
         if name.startswith("_"):
@@ -334,6 +340,7 @@ def test_create_lab_returns_201_and_the_lab_detail(api):
 
     assert res.status_code == 201
     assert res.json()["name"] == "l"
+    assert (res.json()["path"], res.json()["managed"]) == (str(Path("/labs") / "l"), True)
     assert [m["name"] for m in res.json()["machines"]] == ["pc1"]
     [(name, (spec,), _)] = service.calls
     assert name == "create_lab" and isinstance(spec, LabCreate) and spec.name == "l"

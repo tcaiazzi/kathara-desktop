@@ -58,6 +58,7 @@ CASES: list[tuple[str, tuple]] = [
     ("undeploy_lab", ()),
     ("rename_lab", ("new-name",)),
     ("delete_lab", ()),
+    ("close_lab", ()),
     ("get_machine_api_object", (MACHINE,)),
     ("available_shells", (MACHINE,)),
     ("add_machine", (MachineCreate(name=MACHINE),)),

@@ -84,6 +84,8 @@ function lab(machines: MachineDetail[], links: LinkDetail[] = []): LabDetail {
   return {
     name: "l",
     id: "h",
+    path: null,
+    managed: true,
     n_machines: machines.length,
     n_links: links.length,
     deployed: false,

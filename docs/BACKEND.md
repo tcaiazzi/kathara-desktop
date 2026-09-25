@@ -64,6 +64,20 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   does not. The desktop app is the only caller that sets it — a random value generated per launch
   (`services/desktop/src/backend.ts`) pairs one backend process with its own Electron instance;
   Docker Compose and plain dev runs leave it unset, and so unauthenticated.
+- **Labs outside the labs root** — `POST /labs/open` opens a host folder as a lab where it is (no
+  copy); its id is the hash of that folder's path, like every lab's. It is remembered across
+  restarts in `known_labs.json` under `ApiSettings.state_dir` (env `KATHARA_API_STATE_DIR`;
+  in memory only when unset — `services/known_labs.py`). `LabSummary.managed` tells the two kinds
+  apart: a lab under the root is deleted (`DELETE`), an opened folder is only closed
+  (`POST .../close`, which undeploys it and forgets it but never touches the folder), and each
+  refuses the other's removal with a 409. Opening is guarded by a **second** token,
+  `ApiSettings.shell_token` (env `KATHARA_API_SHELL_TOKEN`, header `X-Kathara-Shell-Token`,
+  `dependencies.require_shell_token`) that only the desktop shell's main process holds: the
+  pairing token is also the renderer's, and a script in the page must not be able to point the
+  filesystem API at any directory it likes. With no shell token configured the route is closed to
+  everyone. A folder is refused before it is read when it exceeds the import caps
+  (`LabStore.check_openable`), and a symbolic link inside a lab that leads outside it is refused by
+  every offline-filesystem call and skipped by `read_lab` (`KatharaService._escapes_lab`).
 - **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config,
   via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
   interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
@@ -140,6 +154,7 @@ that `None` up instead of falling back to a sensible default.
 | POST | `/api/labs/examples` | Install a bundled example as a real lab (409 if the name exists) | `ExampleCreate {id, name?}` | `LabImportResult` (201) |
 | GET | `/api/labs/gallery` | Upstream Kathara-Labs catalog (cached; `refresh=true` bypasses the cache), each entry flagged `installed` | `?refresh=false` | `GalleryCatalog` |
 | POST | `/api/labs/gallery` | Install a lab from the upstream gallery (409 if the name exists) | `GalleryInstall {id, name?}` | `LabImportResult` (201) |
+| POST | `/api/labs/open` | Open a host folder as a lab, in place (desktop shell only: `X-Kathara-Shell-Token`; 422 `NotALabError` for a folder that is not a lab unless `init`) | `LabOpen {path, init?}` | `LabImportResult` |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
 | GET | `/api/labs/{lab}/location` | Host path of the lab directory (desktop shell only) | — | `LabLocation {path}` |
@@ -164,7 +179,8 @@ that `None` up instead of falling back to a sensible default.
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
 | POST | `/api/labs/{lab}/rename` | Rename the lab directory; the lab gets a new id (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` (with the new `id`) |
-| DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk) | — | `Message` |
+| POST | `/api/labs/{lab}/close` | Close a lab opened from outside the labs root: undeploy it and forget it, folder untouched (409 for a lab under the root) | — | `Message` |
+| DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk; 409 for a folder opened from outside the labs root) | — | `Message` |
 
 ## Machines — `/api/labs/{lab}/machines`
 

@@ -105,6 +105,8 @@ desktop app sets the ones it needs itself; these matter when running the backend
 | `KATHARA_API_LABS_DIR` | `./data/labs` | Where labs are persisted on disk |
 | `KATHARA_API_STATIC_DIR` | *(unset)* | Serve a built frontend (`services/frontend/dist`) from this process at `/`. Set by the desktop app; unset when running the backend standalone for development |
 | `KATHARA_API_AUTH_TOKEN` | *(unset)* | Require this exact token (`Authorization: Bearer …` or `?token=`) on every request. Set by the desktop app to a random per-launch value; unset (no auth) everywhere else |
+| `KATHARA_API_SHELL_TOKEN` | *(unset)* | Required (`X-Kathara-Shell-Token`) by `POST /api/labs/open`, which opens any host folder as a lab. Meant for the desktop shell's main process only; unset closes that route |
+| `KATHARA_API_STATE_DIR` | *(unset)* | Where the list of lab folders opened from outside the labs dir is kept (`known_labs.json`). Unset keeps it in memory only |
 | `KATHARA_API_CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins (only needed when the frontend is served from a different origin). `*` is accepted but disables credentialed cross-origin requests — the spec forbids combining the two, and allowing both would let any website call this API |
 | `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override. Only `docker` is supported for now |
 | `KATHARA_API_DEFAULT_IMAGE` | *(Kathara default)* | Default device image |

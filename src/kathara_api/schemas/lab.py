@@ -49,6 +49,17 @@ class LabRename(BaseModel):
     name: str
 
 
+class LabOpen(BaseModel):
+    """A host folder to open as a lab (``POST /labs/open``, desktop shell only).
+
+    ``init`` makes a folder with no ``lab.conf`` and no device folders into an empty lab, rather
+    than refusing it as not a lab.
+    """
+
+    path: str
+    init: bool = False
+
+
 class LabConfUpdate(BaseModel):
     """Raw ``lab.conf`` text to apply to an existing, non-deployed lab."""
 
@@ -110,6 +121,12 @@ class LabSummary(BaseModel):
     # `lab_hash` label on its containers, derived from the lab directory's path — see
     # services/lab_store.lab_id_for.
     id: str
+    # The lab's directory on the host; None for a lab known only from running containers.
+    path: Optional[str] = None
+    # Whether that directory is under the labs root (created here, or dropped there) rather than a
+    # folder opened from elsewhere. Decides the lab's removal: a managed lab is deleted, an opened
+    # one is closed, and its folder left alone.
+    managed: bool = False
     n_machines: int
     n_links: int
     deployed: bool
