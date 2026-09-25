@@ -36,10 +36,10 @@ import {
   startBackendElevatedNative,
   stopBackend,
   verifyCanElevate,
-  toElevateOutcome,
-  type ElevateOutcome,
 } from "./backend";
-import { deepLinkFromArgv, handleDeepLink, registerProtocol } from "./deeplink";
+import { deepLinkFromArgv } from "./deepLinkRoute";
+import { handleDeepLink, registerProtocol } from "./deeplink";
+import { toElevateOutcome, type ElevateOutcome } from "./elevateOutcome";
 import { ensurePathEnv } from "./env";
 import {
   openLabsDir,

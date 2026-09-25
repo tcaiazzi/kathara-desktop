@@ -14,6 +14,7 @@ import path from "node:path";
 import { log } from "./logger";
 import { labsDir } from "./paths";
 import { readPrefs } from "./prefs";
+import { linuxTerminalArgv } from "./terminalArgv";
 
 /**
  * Electron's dialog functions have separate parented and parentless overloads; passing an
@@ -105,21 +106,10 @@ function spawnDetached(command: string, args: string[], options: SpawnOptions = 
   proc.unref();
 }
 
-function linuxTerminalArgv(cwd: string, command?: string): string[] | null {
-  const run = (...args: string[]) => (command ? args : []);
-  const candidates: string[][] = [
-    ["x-terminal-emulator", ...run("-e", "sh", "-c", command ?? "")],
-    ["gnome-terminal", `--working-directory=${cwd}`, ...run("--", "sh", "-c", command ?? "")],
-    ["konsole", "--workdir", cwd, ...run("-e", "sh", "-c", command ?? "")],
-    ["xfce4-terminal", `--working-directory=${cwd}`, ...run("-x", "sh", "-c", command ?? "")],
-    ["alacritty", "--working-directory", cwd, ...run("-e", "sh", "-c", command ?? "")],
-    ["kitty", "-d", cwd, ...run("sh", "-c", command ?? "")],
-    ["xterm", ...run("-e", "sh", "-c", command ?? "")],
-  ];
+/** Whether `binary` exists in one of the directories on PATH — linuxTerminalArgv's lookup. */
+function isOnPath(binary: string): boolean {
   const dirs = (process.env.PATH ?? "").split(path.delimiter);
-  return (
-    candidates.find(([bin]) => dirs.some((d) => d && fs.existsSync(path.join(d, bin)))) ?? null
-  );
+  return dirs.some((d) => d && fs.existsSync(path.join(d, binary)));
 }
 
 /** Open a plain shell in the lab's directory — no command, just `cd` there. */
@@ -185,7 +175,7 @@ async function spawnTerminal(labDir: string, command?: string): Promise<void> {
     return;
   }
 
-  const argv = linuxTerminalArgv(labDir, command ? `${command}; exec sh` : undefined);
+  const argv = linuxTerminalArgv(labDir, command ? `${command}; exec sh` : undefined, isOnPath);
   if (!argv) {
     throw new Error(
       "No supported terminal emulator was found. Set \"terminalCommand\" in preferences.json " +

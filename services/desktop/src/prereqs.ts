@@ -18,6 +18,7 @@ import { app } from "electron";
 import { pythonEnv } from "./backend";
 import { bundledPythonPath, devVenvPython } from "./paths";
 import { log } from "./logger";
+import { atLeast310 } from "./version";
 
 export interface Check {
   id: "docker" | "python" | "kathara" | "kathara_api" | "dependencies" | "uvicorn" | "frontend";
@@ -239,11 +240,6 @@ async function probe(interpreter: string): Promise<Probe | null> {
   } catch {
     return null;
   }
-}
-
-function atLeast310(version: string): boolean {
-  const [major, minor] = version.split(".").map(Number);
-  return major > 3 || (major === 3 && minor >= 10);
 }
 
 /**

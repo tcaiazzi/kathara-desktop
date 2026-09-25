@@ -1,7 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { isBoundedString, isPlainAbsolutePath, isTrustedRendererUrl, quoteForShellString } from "./safety";
+import {
+  isBoundedString,
+  isPlainAbsolutePath,
+  isTrustedRendererUrl,
+  isUsablePort,
+  quoteForShellString,
+} from "./safety";
 
 // Every character the path check must refuse: shell metacharacters plus the control characters
 // that break a `.bat` line or a shell script.
@@ -71,6 +77,27 @@ describe("isBoundedString", () => {
     ["a boxed string", new String("abc")],
   ])("rejects %s", (_label, value) => {
     expect(isBoundedString(value, 10)).toBe(false);
+  });
+});
+
+describe("isUsablePort", () => {
+  it.each([1024, 8000, 41234, 65535])("accepts %d", (port) => {
+    expect(isUsablePort(port)).toBe(true);
+  });
+
+  // A hand-edited preferences.json is the only way these reach here.
+  it.each([
+    ["a privileged port", 1023],
+    ["port 0", 0],
+    ["a negative port", -1],
+    ["a port past the range", 65536],
+    ["a fraction", 8080.5],
+    ["a numeric string", "8080"],
+    ["NaN", Number.NaN],
+    ["null", null],
+    ["undefined", undefined],
+  ])("rejects %s", (_label, port) => {
+    expect(isUsablePort(port)).toBe(false);
   });
 });
 

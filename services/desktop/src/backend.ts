@@ -17,9 +17,11 @@ import sudoPrompt from "@vscode/sudo-prompt";
 import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir } from "./paths";
 import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
-import { isPlainAbsolutePath, quoteForShellString } from "./safety";
+import type { ElevateFailureReason, ElevateResult } from "./elevateOutcome";
+import { redactEnvArgsForLog } from "./logRedaction";
+import { isPlainAbsolutePath, isUsablePort, quoteForShellString } from "./safety";
 
-interface BackendHandle {
+export interface BackendHandle {
   port: number;
   baseUrl: string;
   /** Pairing token for this one backend instance — see buildBackendCommand. Sent as
@@ -33,44 +35,7 @@ function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** Env var names whose value must never reach a log line (they still reach the actual command
- * unchanged — this only redacts what gets logged). */
-const SENSITIVE_ENV_KEYS = new Set(["KATHARA_API_AUTH_TOKEN"]);
 
-/** For logging an `env KEY=value ...` argv list without leaking a secret into the log file — which
- * the app then invites the user to open and share (Help menu, the setup/error page's log tail). */
-function redactEnvArgsForLog(envArgs: string[]): string[] {
-  return envArgs.map((entry) => {
-    const key = entry.slice(0, entry.indexOf("="));
-    return SENSITIVE_ENV_KEYS.has(key) ? `${key}=***` : entry;
-  });
-}
-
-/** Why an elevated (re)start of the backend didn't produce a running, root-owned backend. */
-export type ElevateFailureReason = "wrong-password" | "not-permitted" | "cancelled" | "timeout" | "error" | "rate-limited";
-
-/** `restarted` says whether the attempt got far enough to stop the backend it was replacing.
- * When false — a password rejected before anything was torn down, or a native attempt that
- * failed alongside a still-running backend — the caller's page is still on a live origin and
- * must be left alone, so its elevation prompt can show the error and offer a retry in place.
- * When true, the backend was restarted on a *new* port and the caller has to be sent there. */
-type ElevateResult =
-  | { ok: true; handle: BackendHandle }
-  | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
-
-/** What actually crosses the IPC boundary to the renderer for `elevation:elevate` — see
- * main.ts's handler. Deliberately smaller than `ElevateResult` on success: the renderer never
- * needs the new backend's `baseUrl`/`token` itself (main.ts navigates the window there directly;
- * `auth:get-token` remains the only channel that ever hands the renderer a token), and returning
- * `handle` here would leak the bearer token straight into a renderer that loads content this app
- * doesn't trust (see preload.ts's own doc comment on why its surface is kept small). */
-export type ElevateOutcome =
-  | { ok: true }
-  | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
-
-export function toElevateOutcome(result: ElevateResult): ElevateOutcome {
-  return result.ok ? { ok: true } : result;
-}
 
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_POLL_MS = 250;
@@ -381,11 +346,6 @@ function findFreePort(): Promise<number> {
   });
 }
 
-/** Chromium refuses to load a URL on a handful of ports (ERR_UNSAFE_PORT); ports we assign
- * ourselves via findFreePort() never land there, but a hand-edited preferences.json could. */
-function isUsablePort(port: unknown): port is number {
-  return Number.isInteger(port) && (port as number) >= 1024 && (port as number) <= 65535;
-}
 
 /** Bind-test a specific port on the loopback interface. Racy by nature — something can take it
  * between this check and the child's own bind — which is exactly the race findFreePort() already

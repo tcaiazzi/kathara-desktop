@@ -6,7 +6,7 @@
  * entry is attack surface for a page that renders lab content.
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { ElevateFailureReason, ElevateOutcome } from "./backend";
+import type { ElevateFailureReason, ElevateOutcome } from "./elevateOutcome";
 import type { MenuAction } from "./menu";
 import type { DockerStatus } from "./prereqs";
 

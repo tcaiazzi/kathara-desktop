@@ -112,7 +112,7 @@ export function defaultLabsDir(): string {
  * `export KEY="value"` in a script that runs as root, escaping only `"`. `preferences.json` is
  * parsed by readPrefs with no schema validation at all, so a hand-edited (or otherwise
  * attacker-written) file is the one way a value can reach here without passing main.ts's
- * `labs:set-dir` checks. Same shape as backend.ts's isUsablePort, which guards prefs.backendPort
+ * `labs:set-dir` checks. Same shape as safety.ts's isUsablePort, which guards prefs.backendPort
  * for the same reason.
  *
  * console.warn rather than logger's log(): logger.ts imports this module for logFile(), so

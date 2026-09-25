@@ -85,6 +85,12 @@ export function quoteForShellString(
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
+/** Chromium refuses to load a URL on a handful of ports (ERR_UNSAFE_PORT); ports we assign
+ * ourselves via findFreePort() never land there, but a hand-edited preferences.json could. */
+export function isUsablePort(port: unknown): port is number {
+  return Number.isInteger(port) && (port as number) >= 1024 && (port as number) <= 65535;
+}
+
 /**
  * The origin the backend is ever reachable on: loopback, any port.
  *

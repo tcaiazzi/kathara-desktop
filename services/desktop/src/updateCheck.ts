@@ -6,6 +6,7 @@
  */
 import { app } from "electron";
 import { log } from "./logger";
+import { isNewer, parseVersion } from "./version";
 
 // The repo release.yml actually publishes to (see its tag_name: v<package.json version>).
 // Deliberately not the KatharaFramework repo that pyproject.toml lists for bug reports and
@@ -22,22 +23,6 @@ interface UpdateInfo {
   /** The release page on GitHub, to open externally — never auto-downloaded (see
    * electron-builder.yml: releases are unsigned and installed manually by design). */
   url: string;
-}
-
-/** Parses "1.2.3" or "v1.2.3" into a comparable [major, minor, patch] triple, or null if it
- * isn't in that shape (a pre-release tag, a malformed one, or a dev build's "0.0.0-dev" style
- * version) — treated as "nothing to compare against" rather than guessed at. */
-function parseVersion(raw: string): [number, number, number] | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(raw.trim());
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function isNewer(candidate: [number, number, number], current: [number, number, number]): boolean {
-  for (let i = 0; i < 3; i++) {
-    if (candidate[i] !== current[i]) return candidate[i] > current[i];
-  }
-  return false;
 }
 
 let cached: Promise<UpdateInfo | null> | null = null;
