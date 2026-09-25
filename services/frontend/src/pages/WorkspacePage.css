@@ -110,6 +110,15 @@
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
+/* Where a lab opened from outside the labs folder lives (LabRowLabel), under its name. */
+.kt-ws-row-path {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--bs-secondary-color);
+}
 .kt-ws-row-meta {
   flex: 0 0 auto;
   font-size: 11px;

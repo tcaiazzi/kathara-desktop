@@ -195,7 +195,7 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 - Terminal pop-outs keep an ordinary framed window (titled `Terminal: <device>`): they render only
   the terminal, with no strip of their own to drag or close by.
 - **Native dialogs** for choosing the host directory of a device's `[volume]` bind mount, plus
-  *Open Labs Folder* and reveal-in-file-manager. Importing a lab goes through the in-page upload
+  *Show Labs Folder* and reveal-in-file-manager. Importing a lab goes through the in-page upload
   modal and saving a file through the browser's own download, so neither needs a native picker.
   The volume one is desktop-only on purpose (`integrations.ts`'s `pickHostDirectory`): the path
   names a directory on the machine the *backend* runs on, and only this shell — which spawned it
@@ -214,7 +214,10 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   (`labs:open-folder`, no arguments). A folder that is not a lab yet is offered to be made one
   (an empty `lab.conf`). **`kathara-desktop <folder>`** does the same from a terminal, in the
   running instance if there is one (`labFolders.ts`'s `folderFromArgv`, relative paths resolved
-  against the calling shell's directory).
+  against the calling shell's directory). The rail's *Open* button and the welcome screen's
+  *Open Lab Folder…* ask for the same dialog. In the rail, such a lab shows the folder it sits in
+  under its name, and its removal is *Close* — forget it, folder untouched — where a lab in the
+  labs folder has *Delete*.
 - After an elevated session, files it left root-owned are reclaimed from the labs directory
   (`chown -R`) **and** from every opened lab folder — there only root's own files
   (`find -uid 0 -exec chown -h`), since a folder the user opened may legitimately hold other

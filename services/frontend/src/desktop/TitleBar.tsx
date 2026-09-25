@@ -119,7 +119,7 @@ export function TitleBar() {
         "separator",
         { label: "Save", accel: `${mod}+S`, run: command("lab:save") },
         "separator",
-        { label: "Open Labs Folder", run: () => void shell?.openLabsFolder().catch(() => {}) },
+        { label: "Show Labs Folder", run: () => void shell?.openLabsFolder().catch(() => {}) },
         "separator",
         { label: "Quit", accel: `${mod}+Q`, run: () => void shell?.quit().catch(() => {}) },
       ],

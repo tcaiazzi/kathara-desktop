@@ -35,6 +35,7 @@ import {
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
+  FolderOpen,
   Play,
   Plus,
   RefreshCw,
@@ -87,6 +88,7 @@ import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
+import { labFolderHint } from "../services/labPlace";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
 
@@ -267,7 +269,7 @@ const RAIL_MIN_W = 180;
 const RAIL_MAX_W = 560;
 // Comfortably above IMPORT_ROW_COMPACT_WIDTH (plus the rail's own 10px side padding) so a fresh
 // install never shows the import row's compact dropdown at startup — only a manually narrowed rail.
-const RAIL_DEFAULT_W = 300;
+const RAIL_DEFAULT_W = 365;
 
 // The manual per-group "Collapse panel" toggle shrinks a group to (about) its header height;
 // clicking it again (or its header strip) restores it to a usable height.
@@ -292,10 +294,11 @@ const COLLAPSE_THRESHOLD = 60;
 // into a single dropdown — see the `compactActions` header ref below.
 const HEADER_ACTIONS_COMPACT_WIDTH = 900;
 
-// Below this width, the rail's import row (New/Upload/Browse) collapses into a single "Add Lab"
-// dropdown instead of squeezing/deforming — same pattern as compactActions above. ~242px is the
-// row's natural unsquished width (3 sm buttons, icon+label); padded for font-rendering variance.
-const IMPORT_ROW_COMPACT_WIDTH = 260;
+// Below this width, the rail's import row (New/Open/Upload/Browse) collapses into a single
+// "Add Lab" dropdown instead of squeezing/deforming — same pattern as compactActions above. ~242px
+// is the row's natural unsquished width with 3 sm buttons (icon+label), ~324px with the desktop
+// app's 4th, Open; padded for font-rendering variance.
+const IMPORT_ROW_COMPACT_WIDTH = isDesktop() ? 340 : 260;
 
 // Fraction of the total height the topology row gets when it's first split off from the shared
 // tab group below it — matches the shipped default screenshot (topology noticeably taller than
@@ -517,6 +520,22 @@ function focusTerminals(api: DockviewApi) {
   terms[0].api.setActive();
 }
 
+interface LabRowLabelProps {
+  lab: LabSummary;
+}
+
+// A rail row's name, plus — for a folder opened from outside the labs folder — where it is, which
+// is what tells two such labs with the same name apart (services/labPlace.ts).
+function LabRowLabel({ lab }: LabRowLabelProps) {
+  const hint = !lab.managed && lab.path ? labFolderHint(lab.path) : null;
+  return (
+    <span className="kt-ws-row-name">
+      {lab.name || "(unnamed)"}
+      {hint && <span className="kt-ws-row-path">{hint}</span>}
+    </span>
+  );
+}
+
 // The Workspace (see App.tsx's routes): left rail (labs + devices) + a dockview panel area
 // (topology, devices, files, runtime-fs, terminals, stats) whose layout is freely rearrangeable
 // by dragging.
@@ -527,7 +546,7 @@ export function WorkspacePage() {
   const toast = useToast();
   const { theme: ktTheme } = useTheme();
   const { run: runBusy } = useBusyAction();
-  const { deployToggle, deleteLab, renameLab, wipeAll } = useLabLifecycleActions();
+  const { deployToggle, deleteLab, closeLab, renameLab, wipeAll } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
   const [labsError, setLabsError] = useState<string | null>(null);
@@ -1009,14 +1028,25 @@ export function WorkspacePage() {
   }, [detail, searchParams, setSearchParams]);
 
   // The header buttons pass the open lab; the rail's context menu passes the right-clicked lab,
-  // which may be a different one — in that case the open lab stays put.
-  async function handleDelete(lab: LabRef) {
-    await deleteLab(lab, setBusy, async () => {
+  // which may be a different one — in that case the open lab stays put. A managed lab is deleted
+  // with its directory; a folder opened from elsewhere is the user's own, so it is only closed —
+  // the backend refuses the other way round for each (see LabSummary.managed).
+  async function handleRemove(lab: LabRef & { managed: boolean }) {
+    const remove = lab.managed ? deleteLab : closeLab;
+    await remove(lab, setBusy, async () => {
       await reloadLabs();
       if (localStorage.getItem(LS_LAST_LAB) === lab.id) localStorage.removeItem(LS_LAST_LAB);
       if (lab.id === labId) navigate("/workspace");
     });
   }
+
+  // File → Open Lab Folder…, from the rail and the welcome screen. The shell picks the folder in
+  // its own dialog and lands the window on the lab itself (services/desktop's openFolderAsLab), so
+  // there is nothing to do here with the result. Desktop only: the browser build has no way to
+  // hand the backend a folder it may trust.
+  const openLabFolder = isDesktop()
+    ? () => void desktop()?.openLabFolder().catch((e) => toast.reportError("Open lab folder", e))
+    : undefined;
 
   async function handleRename(lab: LabRef) {
     await renameLab(lab, setBusy, async (renamed) => {
@@ -1076,7 +1106,7 @@ export function WorkspacePage() {
         { label: "Download .zip", disabled: busy, action: () => void handleDownload(lab) },
         ...(isDesktop()
           ? [
-              { label: "Open lab folder", action: () => void desktop()?.revealLab(lab.id) },
+              { label: "Show in File Manager", action: () => void desktop()?.revealLab(lab.id) },
               {
                 label: "Open Terminal Here",
                 action: () =>
@@ -1086,7 +1116,14 @@ export function WorkspacePage() {
               },
             ]
           : []),
-        { label: "Remove", danger: true, disabled: busy, action: () => void handleDelete(lab) },
+        lab.managed
+          ? { label: "Delete…", danger: true, disabled: busy, action: () => void handleRemove(lab) }
+          : {
+              label: "Close",
+              title: "Remove it from the list; the folder stays where it is",
+              disabled: busy,
+              action: () => void handleRemove(lab),
+            },
       ],
     });
   }
@@ -1208,6 +1245,12 @@ export function WorkspacePage() {
                       <Plus size={14} className="me-2" />
                       New lab
                     </Dropdown.Item>
+                    {openLabFolder && (
+                      <Dropdown.Item onClick={openLabFolder}>
+                        <FolderOpen size={14} className="me-2" />
+                        Open lab folder
+                      </Dropdown.Item>
+                    )}
                     <Dropdown.Item onClick={() => setShowUpload(true)}>
                       <Upload size={14} className="me-2" />
                       Upload lab
@@ -1230,6 +1273,18 @@ export function WorkspacePage() {
                     <Plus size={14} className="me-1" />
                     New
                   </Button>
+                  {openLabFolder && (
+                    <Button
+                      size="sm"
+                      variant="outline-secondary"
+                      className="flex-fill"
+                      onClick={openLabFolder}
+                      title="Open a folder anywhere on your computer as a lab, where it is"
+                    >
+                      <FolderOpen size={14} className="me-1" />
+                      Open
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="outline-secondary"
@@ -1314,13 +1369,14 @@ export function WorkspacePage() {
                         }}
                         onContextMenu={(e) => openLabMenu(e, l)}
                         title={
-                          l.id === labId
+                          (l.id === labId
                             ? `${l.name || "(unnamed)"} — click to hide other labs · right-click for actions`
-                            : `${l.name || "(unnamed)"} — click to open · right-click for actions`
+                            : `${l.name || "(unnamed)"} — click to open · right-click for actions`) +
+                          (!l.managed && l.path ? `\n${l.path}` : "")
                         }
                       >
                         <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
-                        <span className="kt-ws-row-name">{l.name || "(unnamed)"}</span>
+                        <LabRowLabel lab={l} />
                         <span className="kt-ws-row-meta">{l.n_machines}</span>
                       </button>
                     ))
@@ -1331,9 +1387,13 @@ export function WorkspacePage() {
               currentLab && (
                 <>
                   <div className="kt-ws-list">
-                    <div className="kt-ws-row kt-ws-row--static" onContextMenu={(e) => openLabMenu(e, currentLab)}>
+                    <div
+                      className="kt-ws-row kt-ws-row--static"
+                      onContextMenu={(e) => openLabMenu(e, currentLab)}
+                      title={!currentLab.managed && currentLab.path ? currentLab.path : undefined}
+                    >
                       <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
-                      <span className="kt-ws-row-name">{currentLab.name || "(unnamed)"}</span>
+                      <LabRowLabel lab={currentLab} />
                       <span className="kt-ws-row-meta">{currentLab.n_machines}</span>
                     </div>
                   </div>
@@ -1498,8 +1558,12 @@ export function WorkspacePage() {
                       <Dropdown.Item disabled={busy} onClick={() => void handleDownload(detail)}>
                         Download
                       </Dropdown.Item>
-                      <Dropdown.Item className="text-danger" disabled={busy} onClick={() => void handleDelete(detail)}>
-                        Delete
+                      <Dropdown.Item
+                        className={detail.managed ? "text-danger" : undefined}
+                        disabled={busy}
+                        onClick={() => void handleRemove(detail)}
+                      >
+                        {detail.managed ? "Delete" : "Close"}
                       </Dropdown.Item>
                     </DropdownButton>
                     {/* Kept in the DOM (display:none, so zero-size) rather than omitted: the
@@ -1582,10 +1646,23 @@ export function WorkspacePage() {
                       </Button>
                     </span>
                     <span data-tour="delete-btn" className="d-inline-flex">
-                      <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete(detail)}>
-                        <Trash2 size={14} className="me-1" />
-                        Delete
-                      </Button>
+                      {detail.managed ? (
+                        <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleRemove(detail)}>
+                          <Trash2 size={14} className="me-1" />
+                          Delete
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline-secondary"
+                          disabled={busy}
+                          onClick={() => void handleRemove(detail)}
+                          title="Remove it from the list; the folder stays where it is"
+                        >
+                          <X size={14} className="me-1" />
+                          Close
+                        </Button>
+                      )}
                     </span>
                   </>
                 )}
@@ -1634,6 +1711,7 @@ export function WorkspacePage() {
               onNewLab={() => setShowNew(true)}
               onImportLab={() => setShowUpload(true)}
               onBrowseGallery={() => setShowGallery(true)}
+              onOpenFolder={openLabFolder}
               onLabCreated={handleLabCreated}
               // Nothing to fall back on for a genuine first run (labs.length === 0): dismissing
               // would just show this exact same screen again on the next render.

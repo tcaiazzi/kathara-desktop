@@ -2,7 +2,7 @@ import { useCatalogInstall } from "../hooks/useCatalogInstall";
 import { useCatalogList } from "../hooks/useCatalogList";
 import { CatalogInstallButton } from "./CatalogInstallButton";
 import { Button } from "react-bootstrap";
-import { Globe, Plus, Upload } from "lucide-react";
+import { FolderOpen, Globe, Plus, Upload } from "lucide-react";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useTheme } from "../hooks/useTheme";
@@ -18,6 +18,9 @@ interface WelcomeScreenProps {
   onImportLab: () => void;
   /** Opens the GalleryModal (WorkspacePage's `showGallery`). */
   onBrowseGallery: () => void;
+  /** Open a folder anywhere on disk as a lab (the desktop shell's File → Open Lab Folder…). Absent
+   *  in the browser build, which has no way to hand the backend a folder — no button then. */
+  onOpenFolder?: () => void;
   /** Same contract as NewLabModal/UploadLabModal's `onCreated`: refresh the lab list and open it. */
   onLabCreated: (labId: string) => void;
   /** Rendered only when the user already has labs (arrived via ?welcome=1) — a genuine first run,
@@ -29,7 +32,14 @@ interface WelcomeScreenProps {
 // see it again via ?welcome=1 — see WorkspacePage). Only Bootstrap + react-bootstrap + lucide,
 // same as the rest of the app; no wizard/stepper primitive, since this is one static screen that
 // only launches the two flows (NewLabModal/UploadLabModal) that already exist.
-export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCreated, onDismiss }: WelcomeScreenProps) {
+export function WelcomeScreen({
+  onNewLab,
+  onImportLab,
+  onBrowseGallery,
+  onOpenFolder,
+  onLabCreated,
+  onDismiss,
+}: WelcomeScreenProps) {
   const { dark } = useTheme();
 
   const { items: examples } = useCatalogList<ExampleLab>({
@@ -61,6 +71,12 @@ export function WelcomeScreen({ onNewLab, onImportLab, onBrowseGallery, onLabCre
           <Plus size={16} className="me-1" />
           New Lab
         </Button>
+        {onOpenFolder && (
+          <Button variant="outline-secondary" onClick={onOpenFolder}>
+            <FolderOpen size={16} className="me-1" />
+            Open Lab Folder…
+          </Button>
+        )}
         <Button variant="outline-secondary" onClick={onImportLab}>
           <Upload size={16} className="me-1" />
           Import a .zip…

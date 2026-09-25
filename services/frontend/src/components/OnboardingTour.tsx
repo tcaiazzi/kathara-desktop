@@ -133,8 +133,9 @@ const STEPS: TourStep[] = [
   {
     element: '[data-tour="delete-btn"]',
     popover: {
-      title: "Delete",
-      description: "Permanently removes this lab and its files. Undeploy it first if it's still running.",
+      title: "Delete or Close",
+      description:
+        "Delete permanently removes a lab in your labs folder, files and all. A folder you opened from elsewhere shows Close instead: it leaves the list, and the folder stays where it is.",
     },
   },
 ];

@@ -88,7 +88,7 @@ export function buildMenu(handlers: MenuHandlers): void {
         // keystroke before the page ever saw it, breaking in-editor saving.
         { ...item("Save", "lab:save", "CmdOrCtrl+S"), registerAccelerator: false },
         { type: "separator" },
-        { label: "Open Labs Folder", click: () => openLabsDir() },
+        { label: "Show Labs Folder", click: () => openLabsDir() },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
       ],

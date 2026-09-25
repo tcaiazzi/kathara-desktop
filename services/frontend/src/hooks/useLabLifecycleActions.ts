@@ -236,6 +236,27 @@ export function useLabLifecycleActions() {
     [confirm, runBusy, toast],
   );
 
+  // Forgets a lab opened from outside the labs folder. Its folder is the user's own, so nothing on
+  // disk is touched — which is what the confirm has to make plain, next to a Delete that does
+  // remove files for a managed lab.
+  const closeLab = useCallback(
+    async (lab: LabRef, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
+      const name = labLabel(lab);
+      const ok = await confirm({
+        title: `Close ${name}?`,
+        message: `This undeploys "${name}" if it is running and removes it from the list. Its folder and every file in it stay where they are — open it again any time with File → Open Lab Folder.`,
+        okLabel: "Close",
+      });
+      if (!ok) return;
+      await runBusy(setBusy, "Close", async () => {
+        await api.closeLab(lab.id);
+        toast.show(`Lab "${name}" closed.`, "success");
+        await onDone();
+      });
+    },
+    [confirm, runBusy, toast],
+  );
+
   // Renames the lab's on-disk directory. The backend refuses (409) while the lab is deployed —
   // surfaced as an error toast by runBusy, no special-casing needed here. `onDone` receives the
   // renamed lab, whose id is new (it is derived from the directory's path), so callers can follow
@@ -286,5 +307,5 @@ export function useLabLifecycleActions() {
     [confirm, requestReclaimAuth, runBusy, toast],
   );
 
-  return { deployToggle, deleteLab, renameLab, wipeAll };
+  return { deployToggle, deleteLab, closeLab, renameLab, wipeAll };
 }

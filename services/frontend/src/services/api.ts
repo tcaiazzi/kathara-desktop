@@ -216,6 +216,9 @@ export const api = {
   undeployDevice: (labId: string, machine: string) =>
     request<Message>("POST", `/labs/${encodeURIComponent(labId)}/undeploy`, { selected_machines: [machine] }),
   deleteLab: (labId: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(labId)}`),
+  // Forget a lab opened from outside the labs folder (`managed: false`): undeploys it and drops it
+  // from the list, leaving its folder alone. 409 for a managed lab, which is deleted instead.
+  closeLab: (labId: string) => request<Message>("POST", `/labs/${encodeURIComponent(labId)}/close`),
   // Rename a lab (its on-disk directory). The lab's id is derived from that directory's path, so
   // the returned detail carries a *new* id — the old one names nothing afterwards. 409 while the
   // lab is deployed (the id is also the Kathara hash its containers carry) or if `newName` is
