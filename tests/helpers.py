@@ -14,7 +14,9 @@ from Kathara.exceptions import LabNotFoundError
 from kathara_api.services.kathara_service import KatharaService
 
 
-def zip_bytes(entries: dict[str, bytes], modes: Optional[dict[str, int]] = None) -> io.BytesIO:
+def zip_bytes(
+    entries: dict[str, bytes], modes: Optional[dict[str, int]] = None, compression: int = zipfile.ZIP_STORED
+) -> io.BytesIO:
     """Build an in-memory .zip archive from a path->content map.
 
     ``modes`` maps an entry name to the Unix mode the archive should *record* for it. Needed
@@ -23,10 +25,14 @@ def zip_bytes(entries: dict[str, bytes], modes: Optional[dict[str, int]] = None)
     branch of ``LabStore.extract_zip`` with a value that matters. The bits are stored the way a
     real Unix-authored archive stores them: ``external_attr = mode << 16``, with the regular-file
     type bits included, exactly as ``ZipInfo.from_file`` (and so ``LabStore.zip_lab``) writes them.
+
+    ``compression=zipfile.ZIP_DEFLATED`` makes the archive smaller than its content, which is what a
+    test of the *decompressed*-size caps needs: stored, an archive is always larger than what it
+    holds, so the cap on the raw upload would reject it first.
     """
     buf = io.BytesIO()
     modes = modes or {}
-    with zipfile.ZipFile(buf, "w") as zf:
+    with zipfile.ZipFile(buf, "w", compression=compression) as zf:
         for name, content in entries.items():
             if name in modes:
                 info = zipfile.ZipInfo(name)

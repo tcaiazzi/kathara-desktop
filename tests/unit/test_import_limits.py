@@ -12,6 +12,7 @@ import io
 import socket
 import threading
 import time
+import zipfile
 
 import pytest
 import uvicorn
@@ -71,6 +72,44 @@ def test_copy_with_cap_rejects_over_the_cumulative_cap_even_when_under_the_per_f
         )
 
 
+_MB = 1 << 20
+
+
+def test_read_bounded_accepts_exactly_the_cap_and_names_it_when_refusing():
+    assert LabStore._read_bounded(io.BytesIO(b"hello"), cap=5) == b"hello"
+    with pytest.raises(ApiError, match=r"^Upload is larger than the .* this import allows\.$"):
+        LabStore._read_bounded(io.BytesIO(b"hello!"), cap=5)
+
+
+def test_read_bounded_counts_every_chunk_not_just_the_last():
+    # Reads go 1 MiB at a time: 2 MiB against a 1.5 MiB cap is only over when the chunks are summed.
+    with pytest.raises(ApiError):
+        LabStore._read_bounded(io.BytesIO(b"x" * (2 * _MB)), cap=int(1.5 * _MB))
+
+
+def test_read_bounded_returns_a_multi_chunk_upload_byte_for_byte():
+    data = bytes(range(256)) * (10 * 1024)  # 2.5 MiB, three reads
+    assert LabStore._read_bounded(io.BytesIO(data), cap=3 * _MB) == data
+
+
+def test_copy_with_cap_accepts_exactly_both_caps():
+    dst = io.BytesIO()
+    assert LabStore._copy_with_cap(io.BytesIO(b"hello"), dst, "f", per_file_cap=5, written_so_far=95, total_cap=100) == 5
+
+
+def test_copy_with_cap_counts_every_chunk_of_one_file():
+    with pytest.raises(ApiError, match=r"^`big\.bin` is larger than the .* this import allows\.$"):
+        LabStore._copy_with_cap(
+            io.BytesIO(b"x" * (2 * _MB)), io.BytesIO(), "big.bin",
+            per_file_cap=int(1.5 * _MB), written_so_far=0, total_cap=10 * _MB,
+        )
+
+
+def test_copy_with_cap_names_the_total_cap_when_refusing():
+    with pytest.raises(ApiError, match=r"^This archive is larger than the .* this import allows\.$"):
+        LabStore._copy_with_cap(io.BytesIO(b"hello"), io.BytesIO(), "f", per_file_cap=100, written_so_far=98, total_cap=100)
+
+
 # -- LabStore.extract_zip, against realistic (honestly-sized) archives -------------------------
 
 
@@ -91,16 +130,37 @@ def test_extract_zip_enforces_the_per_file_size_cap(tmp_path, monkeypatch):
 
 
 def test_extract_zip_enforces_the_cumulative_size_cap_across_many_small_files(tmp_path, monkeypatch):
-    # Every single member is honestly small and individually under the per-file cap; only the sum
-    # exceeds the per-lab budget — the scenario _copy_with_cap's running total exists for.
+    """Every member is under the per-file cap and the compressed upload is under the per-lab cap;
+    only the decompressed sum exceeds it — the case `_copy_with_cap`'s running total exists for.
+
+    The archive is deflated on purpose: stored, it would be larger than its content, and the cap
+    on the raw upload (the same `max_bytes_per_lab`) would reject it before any member is counted.
+    The total is only crossed by the third payload file, so a running total that forgets earlier
+    files cannot pass.
+    """
     monkeypatch.setattr(get_settings(), "max_bytes_per_file", 1000)
-    monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 100)
+    monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 800)
     store = LabStore(tmp_path / "labs")
     entries = {"lab.conf": b'pc1[0]="A"\n'}
-    entries.update({f"f{i}": b"x" * 50 for i in range(5)})  # 250 bytes of payload, 100-byte budget
-    with pytest.raises(ApiError):
-        store.extract_zip("demo", zip_bytes(entries))
+    entries.update({f"f{i}": b"x" * 300 for i in range(3)})  # 911 bytes decompressed
+    archive = zip_bytes(entries, compression=zipfile.ZIP_DEFLATED)
+    assert len(archive.getvalue()) < 800  # so the raw-upload cap is not what fires
+
+    with pytest.raises(ApiError, match="This archive is larger than"):
+        store.extract_zip("demo", archive)
     assert not (tmp_path / "labs" / "demo").exists()
+
+
+def test_extract_zip_accepts_a_decompressed_total_of_exactly_the_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_bytes_per_file", 1000)
+    monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 911)
+    store = LabStore(tmp_path / "labs")
+    entries = {"lab.conf": b'pc1[0]="A"\n'}
+    entries.update({f"f{i}": b"x" * 300 for i in range(3)})  # exactly 911 bytes decompressed
+
+    store.extract_zip("demo", zip_bytes(entries, compression=zipfile.ZIP_DEFLATED))
+
+    assert (tmp_path / "labs" / "demo" / "f2").read_bytes() == b"x" * 300
 
 
 def test_extract_zip_enforces_the_raw_upload_size_cap(tmp_path, monkeypatch):
@@ -112,6 +172,40 @@ def test_extract_zip_enforces_the_raw_upload_size_cap(tmp_path, monkeypatch):
     with pytest.raises(ApiError):
         store.extract_zip("demo", zip_bytes({"lab.conf": b"x"}))
     assert not (tmp_path / "labs" / "demo").exists()
+
+
+def test_extract_zip_accepts_exactly_the_file_count_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_files_per_lab", 3)
+    store = LabStore(tmp_path / "labs")
+
+    store.extract_zip("demo", zip_bytes({"lab.conf": b'pc1[0]="A"\n', "a": b"1", "b": b"2"}))
+
+    assert sorted(p.name for p in (tmp_path / "labs" / "demo").iterdir()) == ["a", "b", "lab.conf"]
+
+
+def test_extract_zip_names_the_count_when_refusing(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_files_per_lab", 2)
+    store = LabStore(tmp_path / "labs")
+
+    with pytest.raises(ApiError, match=r"^This archive has 3 entries, more than the 2 this import allows\.$"):
+        store.extract_zip("demo", zip_bytes({"lab.conf": b'pc1[0]="A"\n', "a": b"1", "b": b"2"}))
+
+
+def test_extract_zip_accepts_a_member_of_exactly_the_per_file_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_bytes_per_file", 11)
+    store = LabStore(tmp_path / "labs")
+
+    store.extract_zip("demo", zip_bytes({"lab.conf": b'pc1[0]="A"\n'}))  # exactly 11 bytes
+
+    assert (tmp_path / "labs" / "demo" / "lab.conf").read_bytes() == b'pc1[0]="A"\n'
+
+
+def test_extract_zip_names_an_oversized_member_by_its_declared_size(tmp_path, monkeypatch):
+    monkeypatch.setattr(get_settings(), "max_bytes_per_file", 10)
+    store = LabStore(tmp_path / "labs")
+
+    with pytest.raises(ApiError, match=r"^`big` is .* more than the .* this import allows\.$"):
+        store.extract_zip("demo", zip_bytes({"lab.conf": b"x", "big": b"X" * 1000}))
 
 
 def test_extract_zip_still_works_within_every_cap(tmp_path):

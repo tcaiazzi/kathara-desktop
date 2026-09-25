@@ -16,7 +16,13 @@ from kathara_api.errors import ApiError, LabAlreadyRegisteredError
 from kathara_api.schemas.lab import LabCreate, LabMetadata
 from kathara_api.schemas.machine import InterfaceAttach, MachineCreate, PortMapping, Ulimit, VolumeMount
 from kathara_api.services import lab_builder, lab_import
-from kathara_api.services.lab_store import LabStore, gen_device_lines, gen_lab_conf, sanitize_lab_name
+from kathara_api.services.lab_store import (
+    LabStore,
+    conf_value,
+    gen_device_lines,
+    gen_lab_conf,
+    sanitize_lab_name,
+)
 from tests.helpers import zip_bytes
 
 
@@ -351,3 +357,230 @@ def test_gen_device_lines_omits_unset_scalars_without_disturbing_the_order():
         "pc1[shell]=/bin/sh",
         "pc1[num_terms]=3",
     ]
+
+
+# -- extract_zip: archive structure -------------------------------------------------------------
+
+
+def test_extract_zip_writes_an_absolute_member_inside_the_lab(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.extract_zip("demo", zip_bytes({"/": b"", "/lab.conf": b'pc1[0]="A"\n', "/pc1/etc/motd": b"hi"}))
+
+    lab = tmp_path / "labs" / "demo"
+    assert (lab / "lab.conf").read_bytes() == b'pc1[0]="A"\n'
+    assert (lab / "pc1" / "etc" / "motd").read_bytes() == b"hi"
+
+
+def test_extract_zip_keeps_extracting_after_a_directory_entry(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.extract_zip("demo", zip_bytes({"pc1/": b"", "lab.conf": b'pc1[0]="A"\n', "pc1/a.txt": b"a"}))
+
+    lab = tmp_path / "labs" / "demo"
+    assert (lab / "lab.conf").is_file()
+    assert (lab / "pc1" / "a.txt").read_bytes() == b"a"
+
+
+def test_extract_zip_creates_a_nested_empty_directory_without_its_parents_listed(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.extract_zip("demo", zip_bytes({"lab.conf": b'pc1[0]="A"\n', "pc1/etc/frr/": b""}))
+
+    assert (tmp_path / "labs" / "demo" / "pc1" / "etc" / "frr").is_dir()
+
+
+def test_store_root_is_created_with_its_missing_parents(tmp_path):
+    store = LabStore(tmp_path / "not" / "yet" / "labs")
+
+    store.ensure_root()
+    lab_dir = store.ensure_lab_dir("demo")
+
+    assert lab_dir == tmp_path / "not" / "yet" / "labs" / "demo" and lab_dir.is_dir()
+
+
+def test_nested_lab_dir_is_created_with_its_missing_parents(tmp_path):
+    assert LabStore(tmp_path / "missing" / "labs").ensure_lab_dir("demo").is_dir()
+
+
+def test_write_lab_accepts_a_directory_its_files_already_created(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.write_lab("demo", {"lab.conf": 'pc1[0]="A"\n', "pc1/etc/motd": "hi"}, dirs=["pc1/etc", "pc1"])
+
+    assert (tmp_path / "labs" / "demo" / "pc1" / "etc" / "motd").read_text() == "hi"
+
+
+def test_read_lab_conf_text_accepts_a_file_of_exactly_the_size_ceiling(tmp_path, monkeypatch):
+    from kathara_api.services import lab_store as lab_store_module
+
+    store = LabStore(tmp_path / "labs")
+    store.ensure_lab_dir("demo")
+    (tmp_path / "labs" / "demo" / "lab.conf").write_text("x" * 64)
+
+    monkeypatch.setattr(lab_store_module, "MAX_LAB_CONF_BYTES", 64)
+    assert store.read_lab_conf_text("demo") == "x" * 64
+    monkeypatch.setattr(lab_store_module, "MAX_LAB_CONF_BYTES", 63)
+    assert store.read_lab_conf_text("demo") is None
+
+
+# -- conf_value and generated lab.conf text ------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ['say "hi"', "it's", "two\nlines", "carriage\rreturn"])
+def test_conf_value_refuses_any_character_lab_conf_cannot_hold(value):
+    """lab.conf has no escaping: a quote would end the value early and a newline would start a new
+    directive, so each of them, on its own, must be refused rather than written."""
+    with pytest.raises(ApiError, match="contains a quote or newline"):
+        conf_value(value)
+
+
+@pytest.mark.parametrize(
+    "value, rendered",
+    [
+        ("kathara/base", "kathara/base"),
+        (2, "2"),
+        (True, "True"),
+        ("with space", '"with space"'),
+        ("tab\there", '"tab\there"'),
+        ("a#b", '"a#b"'),  # unquoted, `#` would start a comment
+        ("", '""'),
+    ],
+)
+def test_conf_value_quotes_only_when_the_bare_form_would_be_ambiguous(value, rendered):
+    assert conf_value(value) == rendered
+
+
+def test_gen_device_lines_renders_a_mac_address_and_the_default_image():
+    lab = lab_builder.build_lab(
+        LabCreate(
+            name="macs",
+            machines=[MachineCreate(name="pc1", image="", interfaces=[
+                InterfaceAttach(link="A", mac_address="02:42:ac:11:00:02"), InterfaceAttach(link="B"),
+            ])],
+        )
+    )
+
+    assert gen_device_lines(lab.machines["pc1"])[:3] == [
+        'pc1[0]="A/02:42:ac:11:00:02"',
+        'pc1[1]="B"',
+        'pc1[image]="kathara/base"',
+    ]
+
+
+def test_gen_device_lines_writes_ipv6_false_but_omits_other_false_flags():
+    """ipv6 is three-state: False means "off", which differs from following the global setting."""
+    lab = lab_builder.build_lab(
+        LabCreate(name="flags", machines=[MachineCreate(name="pc1", image="kathara/base", ipv6=False, privileged=False)])
+    )
+
+    assert gen_device_lines(lab.machines["pc1"]) == ['pc1[image]="kathara/base"', "pc1[ipv6]=False"]
+
+
+def test_gen_device_lines_skips_an_empty_interface_slot_and_keeps_the_rest():
+    from types import SimpleNamespace
+
+    def iface(link):
+        return SimpleNamespace(link=SimpleNamespace(name=link), mac_address=None)
+
+    device = SimpleNamespace(
+        name="pc1",
+        interfaces={0: iface("A"), 1: None, 2: iface("C")},
+        meta={"image": "kathara/base", "ports": {}, "envs": {}, "sysctls": {}, "ulimits": {}, "volumes": {},
+              "exec_commands": []},
+    )
+
+    assert gen_device_lines(device)[:2] == ['pc1[0]="A"', 'pc1[2]="C"']
+
+
+def test_gen_lab_conf_writes_every_metadata_key_then_a_blank_line():
+    lab = lab_builder.build_lab(
+        LabCreate(
+            name="meta",
+            metadata=LabMetadata(description="A demo", version="1.0", author="Ann", email="ann@example.org",
+                                 web="https://example.org"),
+            machines=[MachineCreate(name="pc1", image="kathara/base")],
+        )
+    )
+
+    assert gen_lab_conf(lab).splitlines()[:8] == [
+        "LAB_NAME=meta",
+        'LAB_DESCRIPTION="A demo"',
+        "LAB_VERSION=1.0",
+        "LAB_AUTHOR=Ann",
+        "LAB_EMAIL=ann@example.org",
+        "LAB_WEB=https://example.org",
+        "",
+        'pc1[image]="kathara/base"',
+    ]
+
+
+def test_extract_zip_keeps_a_single_folder_that_has_a_file_beside_it(tmp_path):
+    """Only a lone wrapper folder is stripped: a folder with a loose file next to it (a folder-based
+    lab's device plus its README) is the lab itself."""
+    store = LabStore(tmp_path / "labs")
+    store.extract_zip("demo", zip_bytes({"README.md": b"notes", "pc1/etc/motd": b"hi"}))
+
+    lab = tmp_path / "labs" / "demo"
+    assert (lab / "README.md").read_bytes() == b"notes"
+    assert (lab / "pc1" / "etc" / "motd").read_bytes() == b"hi"
+
+
+def test_scratch_directory_is_a_hidden_sibling_inside_the_labs_root(tmp_path):
+    """Inside the root, so publishing is an atomic rename on one filesystem; dot-prefixed, so a
+    scratch directory left behind by a crash is never listed as a lab."""
+    store = LabStore(tmp_path / "labs")
+    store.ensure_root()
+
+    scratch = store._new_scratch_dir("demo")
+
+    assert scratch.parent == tmp_path / "labs"
+    assert scratch.name.startswith(".demo.") and scratch.name.endswith(".tmp")
+    assert store.lab_names() == []
+
+
+def test_read_lab_skips_a_binary_file_without_losing_the_files_after_it(tmp_path, monkeypatch):
+    from kathara_api.services import lab_store as lab_store_module
+
+    lab = tmp_path / "lab"
+    (lab / "pc1").mkdir(parents=True)
+    (lab / "pc1" / "a.bin").write_bytes(b"\xff\xfe\x00")
+    (lab / "pc1" / "b.txt").write_text("after")
+    real_walk = lab_store_module.os.walk
+
+    def sorted_walk(top):  # directory listing order is arbitrary; make the binary come first
+        for root, dirnames, filenames in real_walk(top):
+            yield root, dirnames, sorted(filenames)
+
+    monkeypatch.setattr(lab_store_module.os, "walk", sorted_walk)
+
+    files, _ = LabStore(tmp_path / "labs").read_lab(lab)
+
+    assert files == {"pc1/b.txt": "after"}
+
+
+def test_read_lab_lists_only_empty_directories(tmp_path):
+    lab = tmp_path / "lab"
+    (lab / "pc1" / "etc").mkdir(parents=True)
+    (lab / "pc1" / "etc" / "motd").write_text("hi")
+    (lab / "pc2" / "empty").mkdir(parents=True)
+    (lab / "shared").mkdir()
+
+    _, dirs = LabStore(tmp_path / "labs").read_lab(lab)
+
+    assert sorted(dirs) == ["pc2/empty", "shared"]
+
+
+def test_gen_device_lines_omits_every_false_flag_except_ipv6():
+    from types import SimpleNamespace
+
+    device = SimpleNamespace(
+        name="pc1",
+        interfaces={},
+        meta={"image": "kathara/base", "ipv6": False, "privileged": False, "bridged": False, "shell": "",
+              "ports": {}, "envs": {}, "sysctls": {}, "ulimits": {}, "volumes": {}, "exec_commands": []},
+    )
+
+    assert gen_device_lines(device) == ['pc1[image]="kathara/base"', "pc1[ipv6]=False"]
+
+
+def test_sanitize_lab_name_explains_what_a_name_may_contain():
+    with pytest.raises(ApiError, match=r"^Invalid lab name `a/b`\. Use letters, digits, dot, dash or underscore"):
+        sanitize_lab_name("a/b")
+
