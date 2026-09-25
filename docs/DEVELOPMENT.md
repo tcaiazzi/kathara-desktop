@@ -161,7 +161,7 @@ Makefile is a step of one of them.
 ## Checks and tests
 
 `make check` runs everything `.github/workflows/ci.yml` gates a pull request on — the frontend's
-lint, typecheck, unit tests and build, the desktop shell's typecheck and build, then `ruff` and
+lint, typecheck, unit tests and build, the desktop shell's typecheck, unit tests and build, then `ruff` and
 the backend test suite. Run it before opening a PR. It assumes the dependencies are installed:
 `make install` for the two Node trees, `pip install -e '.[dev]'` for the backend.
 
@@ -186,12 +186,19 @@ pytest -m network                        # integration tests (need internet: liv
 pytest                                   # everything, including both of the above
 ```
 
-`make coverage` runs both test suites with coverage and prints a per-file summary for each: the
-frontend's (`npm run test:coverage`, HTML report in `services/frontend/coverage/`) and the
-backend's CI subset with branch coverage (HTML report in `htmlcov/`). CI publishes both tables on
-each run's summary page. It is a report, not a gate: no threshold fails the build.
+`make coverage` runs the three test suites with coverage and prints a per-file summary for each:
+the frontend's and the desktop shell's (`npm run test:coverage`, HTML reports in
+`services/frontend/coverage/` and `services/desktop/coverage/`) and the backend's CI subset with
+branch coverage (HTML report in `htmlcov/`). CI publishes every table on each run's summary page.
+It is a report, not a gate: no threshold fails the build.
 
 The frontend suite runs in Vitest's `node` environment, with no DOM: it tests pure logic only,
 and logic worth testing that lives in a component or hook is first moved into a plain module
 under `src/services/` (or `src/editor/`). Its total counts components and hooks too, so it reads
 low by design; the per-file numbers for those modules are the ones to watch.
+
+The desktop shell's suite (`services/desktop`, `npm run test`) follows the same rule for the
+Electron main process: it covers only modules that import nothing from `electron`, such as
+`src/safety.ts`, so it runs under plain Node. Logic worth testing that sits in a module needing
+the Electron runtime is moved into one of those first. Anything that needs a real window, IPC or
+a child process is checked by running the app.

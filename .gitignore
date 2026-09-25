@@ -6,6 +6,7 @@ __pycache__/
 .coverage
 htmlcov/
 services/frontend/coverage/
+services/desktop/coverage/
 build/
 dist/
 

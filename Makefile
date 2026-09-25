@@ -75,6 +75,7 @@ check-frontend:
 
 check-desktop:
 	$(RUN_NODE) npm run typecheck --prefix $(DESKTOP_DIR)
+	$(RUN_NODE) npm run test --prefix $(DESKTOP_DIR)
 	$(RUN_NODE) npm run build --prefix $(DESKTOP_DIR)
 
 # Markers, not a plain `pytest`: the docker/network suites need a daemon and the internet, so CI
@@ -94,14 +95,16 @@ typecheck:
 
 test:
 	$(RUN_NODE) npm run test --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run test --prefix $(DESKTOP_DIR)
 	pytest -m "not docker and not network"
 
-# Coverage over the same suites CI runs, a per-file summary in the terminal for each half. HTML
-# reports land in services/frontend/coverage/ (settings in vite.config.ts's `test.coverage`) and
-# htmlcov/ (backend branch coverage, settings in pyproject.toml's [tool.coverage]). Report only,
-# nothing here fails on a low number.
+# Coverage over the same suites CI runs, a per-file summary in the terminal for each of the three.
+# HTML reports land in services/frontend/coverage/ and services/desktop/coverage/ (settings in
+# each one's vite.config.ts / vitest.config.ts) and htmlcov/ (backend branch coverage, settings in
+# pyproject.toml's [tool.coverage]). Report only, nothing here fails on a low number.
 coverage:
 	$(RUN_NODE) npm run test:coverage --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm run test:coverage --prefix $(DESKTOP_DIR)
 	pytest -m "not docker and not network" --cov --cov-report=term --cov-report=html
 
 ## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----

@@ -13,6 +13,8 @@
   "main": "build/main.js",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "build:shell": "node scripts/build.mjs",
     "build:frontend": "npm --prefix ../frontend run build",
     "build": "npm run typecheck && npm run build:shell",
@@ -25,10 +27,12 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@vitest/coverage-v8": "^3.2.7",
     "electron": "^44.0.0",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.28.0",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.7"
   },
   "homepage": "https://www.kathara.org/",
   "dependencies": {
