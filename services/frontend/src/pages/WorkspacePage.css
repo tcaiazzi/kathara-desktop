@@ -110,6 +110,10 @@
   white-space: nowrap;
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
+/* An opened folder that is remembered but not loaded (LabSummary.problem). */
+.kt-ws-row--problem {
+  opacity: 0.6;
+}
 /* Where a lab opened from outside the labs folder lives (LabRowLabel), under its name. */
 .kt-ws-row-path {
   display: block;

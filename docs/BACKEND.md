@@ -64,6 +64,21 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   does not. The desktop app is the only caller that sets it — a random value generated per launch
   (`services/desktop/src/backend.ts`) pairs one backend process with its own Electron instance;
   Docker Compose and plain dev runs leave it unset, and so unauthenticated.
+- **Changes made on disk outside the app** — a lab is a folder the user may be editing elsewhere
+  (an editor, `git pull`), so `services/lab_watch.py` polls every loaded lab's top-level
+  `lab.conf` and `*.startup` (mtime + size, `ApiSettings.lab_watch_interval`, env
+  `KATHARA_API_LAB_WATCH_INTERVAL`, default 1 s, 0 = off; polling rather than OS notifications
+  because `watchfiles` is an optional accelerator some packaged builds lack, and notifications
+  miss network drives). `KatharaService.handle_disk_change` reacts: a changed `lab.conf` rebuilds
+  the lab's model — silently if it is the text this app last wrote (`LabStore.wrote_lab_conf`),
+  since only an outside edit that text was built on can still be missing from the model; not while
+  the lab is deployed (`conf-pending`, then retried every poll until the lab is stopped, from the
+  app or the CLI); not if the file doesn't parse (`conf-invalid`, current model kept). The watcher
+  takes `_mutate_lock` only if it is free within a moment, so another lab's long deploy never
+  stalls it. A changed `<device>.startup` marks that device dirty for the next redeploy (`shared.startup` marks all of them). Each outcome is published on
+  `GET /api/events` (`services/lab_events.py`), one SSE stream for all labs, `?token=` accepted
+  like the stats stream. The watcher's thread is started by the app's lifespan (`main.py`), so
+  building a `KatharaService` alone — a test — starts none.
 - **Labs outside the labs root** — `POST /labs/open` opens a host folder as a lab where it is (no
   copy); its id is the hash of that folder's path, like every lab's. It is remembered across
   restarts in `known_labs.json` under `ApiSettings.state_dir` (env `KATHARA_API_STATE_DIR`;
@@ -77,7 +92,14 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   filesystem API at any directory it likes. With no shell token configured the route is closed to
   everyone. A folder is refused before it is read when it exceeds the import caps
   (`LabStore.check_openable`), and a symbolic link inside a lab that leads outside it is refused by
-  every offline-filesystem call and skipped by `read_lab` (`KatharaService._escapes_lab`).
+  every offline-filesystem call and skipped by `read_lab` and the zip export
+  (`KatharaService._escapes_lab`). Beneath the path an operation is given, recursive deletes,
+  copies, moves and walks never follow a link either (`kathara_service.py`'s `_remove_tree`,
+  `_copy_tree`, `_walk`): a link is removed, copied or skipped as the link it is, never what it
+  points at. An opened folder that is remembered but not loaded — missing, or with a lab.conf
+  that doesn't parse — is still listed (`LabSummary.problem`), so it can be closed, and loads by
+  itself once it is back or fixed. Two paths differing only in non-ASCII characters get the same
+  Kathara hash (Kathara strips them), so opening the second is refused.
 - **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config,
   via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
   interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
@@ -155,6 +177,7 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/labs/gallery` | Upstream Kathara-Labs catalog (cached; `refresh=true` bypasses the cache), each entry flagged `installed` | `?refresh=false` | `GalleryCatalog` |
 | POST | `/api/labs/gallery` | Install a lab from the upstream gallery (409 if the name exists) | `GalleryInstall {id, name?}` | `LabImportResult` (201) |
 | POST | `/api/labs/open` | Open a host folder as a lab, in place (desktop shell only: `X-Kathara-Shell-Token`; 422 `NotALabError` for a folder that is not a lab unless `init`) | `LabOpen {path, init?}` | `LabImportResult` |
+| GET | `/api/events` | Lab events as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`. Accepts `?token=` | — | SSE stream |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
 | GET | `/api/labs/{lab}/location` | Host path of the lab directory (desktop shell only) | — | `LabLocation {path}` |

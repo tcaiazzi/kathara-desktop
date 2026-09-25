@@ -119,12 +119,17 @@ export interface UseFsTree {
   setEditorText: (value: string) => void;
   /**
    * Replace the editor buffer *and* the saved baseline it is compared against — for a caller that
-   * re-read the selected file's content out of band (LabExplorer re-fetching lab.conf), so the
-   * buffer doesn't immediately read as unsaved.
+   * re-read a file's content out of band (LabExplorer re-fetching lab.conf, or a startup script
+   * changed on disk), so the buffer doesn't immediately read as unsaved. A no-op unless `path` is
+   * still the buffer's file: the read may have raced a switch to another one, and installing it
+   * anyway would put one file's text under another's name, for the next save to write there.
    */
-  setBuffer: (content: string) => void;
+  setBuffer: (path: string, content: string) => void;
   /** The path `editorText`/`loadedText` actually belong to — see FsTreeScopeState's own doc. */
   bufferPath: string | null;
+  /** What `bufferPath` held when last loaded or saved — the baseline `dirty` compares against, and
+   *  how a caller told that a file changed on disk can tell its own save from someone else's. */
+  loadedText: string;
   /** Whether the editor buffer differs from what was last loaded/saved. */
   dirty: boolean;
   /** Opens `path` in the editor (going through the same discard-confirmation flow as clicking it
@@ -539,11 +544,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   const selectedIsDir = !!selected && (findNode(tree, selected)?.dir ?? false);
 
-  const setBuffer = useCallback((content: string) => {
-    // Self-correcting rather than trusting the caller to have checked first: whichever path is
-    // currently selected is, by construction, what a freshly-installed buffer belongs to.
-    installBuffer(scoped.current.selected, content);
-  }, [installBuffer]);
+  // Keyed on the buffer's own path, not `selected`: a multi-selection moves `selected` and leaves the
+  // buffer alone, so the two can name different files (see onTreeSelect).
+  const setBuffer = useCallback(
+    (path: string, content: string) => {
+      if (scoped.current.bufferPath === path) installBuffer(path, content);
+    },
+    [installBuffer],
+  );
 
   const handleSave = useCallback(async () => {
     const path = scoped.current.bufferPath;
@@ -1005,6 +1013,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setEditorText,
     setBuffer,
     bufferPath,
+    loadedText,
     dirty: !!bufferPath && editorText !== loadedText,
     selectFile,
     canModify,

@@ -14,6 +14,7 @@ deployment that cannot open a folder by path (no shell token, see ``dependencies
 import json
 import logging
 import os
+import tempfile
 import threading
 from pathlib import Path
 from typing import Optional
@@ -89,6 +90,14 @@ class KnownLabs:
             return
         self._path.parent.mkdir(parents=True, exist_ok=True)
         body = {"version": _FORMAT_VERSION, "labs": [{"path": str(d)} for d in self._dirs]}
-        tmp = self._path.parent / f".{self._path.name}.tmp"
-        tmp.write_text(json.dumps(body, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, self._path)
+        # A fresh temporary name every time, not a fixed one: a leftover from a crash — possibly
+        # root-owned, written by an elevated backend — must not block every later save.
+        fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=f".{self._path.name}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(body, indent=2) + "\n")
+            os.replace(tmp, self._path)
+        except BaseException:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
+            raise

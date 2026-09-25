@@ -115,6 +115,11 @@ class ApiSettings(BaseSettings):
     # cores than the default assumes.
     tty_max_sessions: int = 32
 
+    # Seconds between two checks of every loaded lab's lab.conf and *.startup for changes made
+    # outside this app (services/lab_watch.py). 0 turns the watcher off. Read once, when the app
+    # starts: the watcher's thread is started then.
+    lab_watch_interval: float = 1.0
+
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 

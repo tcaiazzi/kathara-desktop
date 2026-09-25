@@ -88,9 +88,26 @@ export interface LabSummary {
   // Whether that directory is under the labs root rather than a folder opened from elsewhere: a
   // managed lab is deleted, an opened one is only closed (its folder is the user's own).
   managed: boolean;
+  // Set only for an opened folder that is remembered but not loaded: "missing" (not there) or
+  // "unloadable" (its lab.conf doesn't parse). It can only be closed; it loads by itself once back.
+  problem?: string | null;
   n_machines: number;
   n_links: number;
   deployed: boolean;
+}
+
+// Mirrors the backend's lab events (GET /api/events; KatharaService.handle_disk_change): a lab's
+// lab.conf or startup scripts changed on disk outside this app. `conf-reloaded` — the topology was
+// rebuilt from the new lab.conf; `conf-pending` — not applied because the lab is deployed;
+// `conf-invalid` — not applied because it doesn't load (`detail` says why); `startup` — the listed
+// `<device>.startup` / `shared.startup` files changed.
+export type LabEventKind = "conf-reloaded" | "conf-pending" | "conf-invalid" | "startup";
+
+export interface LabEvent {
+  lab_id: string;
+  kind: LabEventKind;
+  files: string[];
+  detail: string | null;
 }
 
 // What a whole-lab action needs: `id` to address the lab, `name` to talk about it to the user.

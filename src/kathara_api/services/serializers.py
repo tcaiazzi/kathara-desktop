@@ -4,6 +4,7 @@ The Kathara models expose no ``to_dict()``; this module bridges them to the Pyda
 response schemas.
 """
 
+from pathlib import Path
 from typing import Any, Optional
 
 from Kathara.model.Lab import Lab
@@ -136,6 +137,21 @@ def lab_to_summary(lab: Lab, place: Optional[LabPlace] = None) -> LabSummary:
         n_links=len(lab.links),
         deployed=_is_deployed(lab),
         **_place_fields(place),
+    )
+
+
+def unloaded_lab_summary(lab_id: str, directory: Path, problem: str) -> LabSummary:
+    """A remembered opened folder that isn't loaded (``KatharaService.unloaded_opened_labs``): no
+    model to describe, so just where it is and why it isn't there."""
+    return LabSummary(
+        name=directory.name,
+        id=lab_id,
+        n_machines=0,
+        n_links=0,
+        deployed=False,
+        path=str(directory),
+        managed=False,
+        problem=problem,
     )
 
 

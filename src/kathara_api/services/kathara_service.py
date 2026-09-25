@@ -25,6 +25,7 @@ import logging
 import os
 import posixpath
 import shlex
+import shutil
 import threading
 import time
 from contextlib import contextmanager
@@ -87,7 +88,9 @@ from . import (
 )
 from .docker_tty import SHELL_PATHS
 from .known_labs import KNOWN_LABS_FILENAME, KnownLabs
+from .lab_events import LabEvents
 from .lab_store import LabPlace, LabStore, is_within, lab_id_for
+from .lab_watch import STARTUP_SUFFIX
 from .registry import LabRegistry
 
 logger = logging.getLogger("kathara_api")
@@ -129,6 +132,62 @@ def _search_lines_in_text(
             if len(matches) >= max_matches:
                 return matches, True
     return matches, False
+
+
+# -- symlink-safe tree operations for a lab's on-disk fs -------------------------------------------
+#
+# pyfilesystem's OSFS follows symbolic links everywhere: `removetree` deletes *through* a symlinked
+# directory, `fs.copy.copy_dir` and `walk` copy and list whatever it points at. A lab opened from
+# anywhere on the host (`open_lab`) may hold such a link, so these do the same jobs on the real
+# paths without ever following one: a link is removed, copied or skipped as the link it is.
+# `_confine` checks the path an operation is *given*; these keep everything *beneath* it in the lab.
+# A path-less (in-memory) fs has no links, and keeps pyfilesystem's own behaviour.
+
+
+def _sys_path(target_fs, path: str) -> Optional[str]:
+    try:
+        return target_fs.getsyspath(path)
+    except fs.errors.NoSysPath:
+        return None
+
+
+def _remove_tree(target_fs, path: str) -> None:
+    """``removetree`` that removes a symlinked directory's link, never what it points at."""
+    real = _sys_path(target_fs, path)
+    if real is None:
+        target_fs.removetree(path)
+    elif os.path.islink(real):
+        os.unlink(real)
+    else:
+        shutil.rmtree(real)
+
+
+def _copy_tree(src_fs, src: str, dst_fs, dst: str) -> None:
+    """Copy a directory into ``dst`` (merging into one that exists), copying links as links."""
+    src_real, dst_real = _sys_path(src_fs, src), _sys_path(dst_fs, dst)
+    if src_real is None or dst_real is None:
+        dst_fs.makedirs(dst, recreate=True)
+        fs.copy.copy_dir(src_fs, src, dst_fs, dst)
+        return
+    shutil.copytree(src_real, dst_real, symlinks=True, dirs_exist_ok=True)
+
+
+def _walk(target_fs, path: str = "/") -> Generator[tuple[str, bool], None, None]:
+    """Every entry under ``path`` as ``(fs path, is_dir)``, without descending into a symlinked
+    directory — which also keeps a link loop (``loop -> .``) from walking forever."""
+    base = _sys_path(target_fs, "/")
+    start = _sys_path(target_fs, path)
+    if base is None or start is None:
+        for dir_path in target_fs.walk.dirs(path=path):
+            yield dir_path, True
+        for file_path in target_fs.walk.files(path=path):
+            yield file_path, False
+        return
+    for root, dirnames, filenames in os.walk(start):
+        for name, is_dir in [*((d, True) for d in dirnames if not os.path.islink(os.path.join(root, d))),
+                             *((f, False) for f in filenames)]:
+            rel = os.path.relpath(os.path.join(root, name), base).replace(os.sep, "/")
+            yield f"/{rel}", is_dir
 
 
 class KatharaService:
@@ -176,6 +235,10 @@ class KatharaService:
             state_dir = get_settings().state_dir_path()
             known = KnownLabs(state_dir / KNOWN_LABS_FILENAME if state_dir is not None else None)
         self.known = known
+        # Changes to labs made outside this app, for GET /api/events — see handle_disk_change —
+        # and the labs whose outside lab.conf edit is waiting for them to be undeployed.
+        self.events = LabEvents()
+        self._conf_pending: set[str] = set()
         # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
         # restart. Safe at import time: builds model objects only (no facade/Docker), and reads
         # nothing if the storage root does not exist yet.
@@ -836,7 +899,16 @@ class KatharaService:
         lab_id = lab_id_for(directory)
         warnings: list[str] = []
         with self._claiming(lab_id):
-            if self.registry.get(lab_id) is None:
+            placed = self.registry.directory(lab_id)
+            if placed is not None and Path(os.path.realpath(placed)) != directory:
+                # Kathara's hash drops every non-ASCII character before hashing, so two paths
+                # that differ only in those share an id — and would share containers under the CLI
+                # too. Opening the second would hand back the first lab's model and edits.
+                raise ApiError(
+                    f"`{directory}` can't be opened next to `{placed}`: Kathara gives both the same "
+                    "identity (their paths differ only in non-ASCII characters). Rename one of them."
+                )
+            if placed is None:
                 self.store.check_openable(directory)
                 conf_path = self.store.lab_conf_path(directory)
                 if init and not conf_path.exists():
@@ -849,8 +921,13 @@ class KatharaService:
                     raise ApiError("; ".join(t.errors))
                 self._build_and_register(t.payload, directory)
                 warnings = t.warnings
-            if not self.store.is_under_root(directory):
-                self.known.add(directory)
+                placed = directory
+            if not self.store.is_under_root(placed):
+                try:
+                    self.known.add(placed)
+                except OSError:
+                    # The lab is open either way; it just won't be listed again after a restart.
+                    logger.warning("Could not remember opened lab folder %s", placed, exc_info=True)
         # Through the usual lookup, so the answer already shows whatever runs under this lab's id
         # — e.g. a lab started from the CLI in this folder before it was ever opened here.
         return self.get_lab_or_reconstruct(lab_id), warnings
@@ -882,6 +959,126 @@ class KatharaService:
             self.registry.remove(lab_id)
             if lab_dir is not None:
                 self.known.remove(lab_dir)
+
+    # -- changes made on disk outside this app (services/lab_watch.py) ----------------------------
+
+    def watched_labs(self) -> dict[str, Path]:
+        """What the disk watcher polls, by id: every loaded lab's directory, and every opened folder
+        that didn't load (``unloaded_opened_labs``) — so one that comes back, or whose lab.conf gets
+        fixed, loads without being opened again."""
+        watched = self.registry.directories()
+        for lab_id, directory, _problem in self.unloaded_opened_labs():
+            watched.setdefault(lab_id, directory)
+        return watched
+
+    def unloaded_opened_labs(self) -> list[tuple[str, Path, str]]:
+        """Folders opened from outside the labs root that are remembered but not loaded, as
+        ``(id, directory, problem)``: ``"missing"`` (not there — an unmounted drive, a moved folder)
+        or ``"unloadable"`` (its lab.conf doesn't parse). Listed so they can still be closed."""
+        unloaded: list[tuple[str, Path, str]] = []
+        for directory in self.known.dirs():
+            lab_id = lab_id_for(directory)
+            if self.store.is_under_root(directory) or self.registry.get(lab_id) is not None:
+                continue
+            unloaded.append((lab_id, directory, "unloadable" if directory.is_dir() else "missing"))
+        return unloaded
+
+    # How long the watcher waits for `_mutate_lock` before giving a lab's change back to be retried:
+    # a deploy of *another* lab holds it for minutes, and one lab must not stall every other's.
+    _DISK_CHANGE_LOCK_WAIT_S = 0.2
+
+    def handle_disk_change(self, lab_id: str, files: set[str]) -> set[str]:
+        """React to ``files`` — names at the top of the lab's directory — having changed on disk,
+        and return the ones to be offered again on the next poll (``lab_watch.LabWatcher``).
+
+        Called for changes the watcher cannot tell apart from this app's own, so each half first
+        works out whether there is anything to do:
+
+        - ``lab.conf``: rebuilds the lab's model from disk, exactly as ``update_lab_conf`` would
+          for the same text. If the text is the one this app itself last wrote
+          (``LabStore.wrote_lab_conf``) that happens silently — the model already agrees, bar an
+          outside edit the app's own edit was built on top of. If the text does not parse (most
+          likely an edit still in progress) the current model is kept. If the lab is deployed, a
+          rebuild would desync the running containers, so ``lab.conf`` is handed back until it is
+          not: stopped here or from the CLI in the lab's folder, the new file then applies.
+        - ``*.startup``: marks the devices whose boot script changed dirty, so a redeploy pushes it
+          into a device that is already running (``registry.mark_dirty``); ``shared.startup`` runs
+          on every device, so it marks all of them.
+
+        Every outcome but a silent one is published (``events``), a pending ``lab.conf`` once.
+        Everything is handed back while the lab is mid deploy/undeploy, or when ``_mutate_lock``
+        can't be had promptly — never blocking the watcher, which serves every lab.
+        """
+        with self._transitioning_lock:
+            if lab_id in self._transitioning:
+                return set(files)
+        if not self._mutate_lock.acquire(timeout=self._DISK_CHANGE_LOCK_WAIT_S):
+            return set(files)
+        try:
+            lab = self.registry.get(lab_id)
+            lab_dir = self.registry.directory(lab_id)
+            if lab is None or lab_dir is None:
+                self._conf_pending.discard(lab_id)
+                self._load_opened_lab(lab_id)
+                return set()  # otherwise closed, deleted or renamed since the poll: nothing to update
+            pending: set[str] = set()
+            if LAB_CONF_FILENAME in files and not self._lab_conf_changed_on_disk(lab_id, lab_dir):
+                pending.add(LAB_CONF_FILENAME)
+            startups = sorted(name for name in files if name.endswith(STARTUP_SUFFIX))
+            if startups:
+                devices = {name[: -len(STARTUP_SUFFIX)] for name in startups}
+                touched = set(lab.machines) if "shared" in devices else devices & set(lab.machines)
+                for machine_name in touched:
+                    self.registry.mark_dirty(lab_id, machine_name)
+                self._publish_disk_event(lab_id, "startup", startups)
+            return pending
+        finally:
+            self._mutate_lock.release()
+
+    def _load_opened_lab(self, lab_id: str) -> None:
+        """Load an opened folder that didn't load before, now that its files changed — it came
+        back, or its lab.conf was fixed. Called holding ``_mutate_lock``."""
+        directory = next((d for i, d, _problem in self.unloaded_opened_labs() if i == lab_id), None)
+        if directory is None or not directory.is_dir():
+            return
+        if self._reload_lab_from_disk(directory) is not None:
+            self._publish_disk_event(lab_id, "conf-reloaded", [LAB_CONF_FILENAME])
+
+    def _lab_conf_changed_on_disk(self, lab_id: str, lab_dir: Path) -> bool:
+        """The ``lab.conf`` half of ``handle_disk_change``, holding ``_mutate_lock``. False means
+        "not yet": the lab is deployed."""
+        text = self.store.read_lab_conf_text(lab_dir)
+        own = text is not None and self.store.wrote_lab_conf(lab_dir, text)
+        # Refreshed first: a lab stopped from outside the app still carries its old api_objects
+        # until something asks Docker (see _refresh_from_api).
+        lab = self.get_lab_or_reconstruct(lab_id)
+        if any(m.api_object is not None for m in lab.machines.values()):
+            if own:
+                return True  # a live edit this app made itself, already in the model
+            if lab_id not in self._conf_pending:
+                self._conf_pending.add(lab_id)
+                self._publish_disk_event(
+                    lab_id, "conf-pending", [LAB_CONF_FILENAME], "Undeploy the lab to apply the new lab.conf."
+                )
+            return False
+        self._conf_pending.discard(lab_id)
+        if not own:
+            # From now on the file is someone else's: an outside revert to exactly the text this app
+            # last wrote must not then be taken for this app's own write.
+            self.store.forget_lab_conf(lab_dir)
+        errors = lab_conf_edit.parse_errors(text) if text is not None else []
+        reloaded = None if errors else self._reload_lab_from_disk(lab_dir)
+        if own:
+            return True
+        if reloaded is None:
+            detail = "; ".join(errors) if errors else "it could not be loaded — see the backend log."
+            self._publish_disk_event(lab_id, "conf-invalid", [LAB_CONF_FILENAME], detail)
+        else:
+            self._publish_disk_event(lab_id, "conf-reloaded", [LAB_CONF_FILENAME])
+        return True
+
+    def _publish_disk_event(self, lab_id: str, kind: str, files: list[str], detail: Optional[str] = None) -> None:
+        self.events.publish({"lab_id": lab_id, "kind": kind, "files": files, "detail": detail})
 
     def lab_place(self, lab: Lab) -> LabPlace:
         """Where ``lab`` lives, for the response schemas (``LabSummary.path``/``managed``)."""
@@ -1081,7 +1278,11 @@ class KatharaService:
                 # subfolder already exists on disk automatically pick up machine.fs — see
                 # Kathara's Machine.__init__), so a redeployed/reloaded lab stays OS-backed.
                 lab = lab_builder.build_lab(t.payload, path=str(lab_dir))
-                self.registry.add_if_absent(lab, lab_dir)
+                if not self.registry.add_if_absent(lab, lab_dir):
+                    logger.warning(
+                        "Not loading `%s`: it has the same Kathara identity as `%s`",
+                        lab_dir, self.registry.directory(lab.hash),
+                    )
             except Exception:
                 logger.warning("Failed to reload lab `%s` from disk", lab_dir, exc_info=True)
 
@@ -1346,7 +1547,7 @@ class KatharaService:
         matches: list[FsSearchMatch] = []
         truncated = False
         if target_fs is not None and target_fs.exists(guest):
-            for file_path in target_fs.walk.files(path=guest):
+            for file_path in (p for p, is_dir in _walk(target_fs, guest) if not is_dir):
                 if len(matches) >= _SEARCH_MAX_TOTAL_MATCHES:
                     truncated = True
                     break
@@ -1504,7 +1705,7 @@ class KatharaService:
                     # own root."
                     if not recursive and next(iter(lab.fs.scandir(owner)), None) is not None:
                         raise ApiError(f"`{path}` is not empty. Delete recursively to remove it.")
-                    lab.fs.removetree(owner)
+                    _remove_tree(lab.fs, owner)
                 machine.fs = None
                 return
 
@@ -1516,7 +1717,7 @@ class KatharaService:
             if target_fs.isdir(guest):
                 if not recursive and next(iter(target_fs.scandir(guest)), None) is not None:
                     raise ApiError(f"`{path}` is not empty. Delete recursively to remove it.")
-                target_fs.removetree(guest)
+                _remove_tree(target_fs, guest)
             else:
                 target_fs.remove(guest)
             dirty = self._dirty_target_for(lab, path)
@@ -1568,12 +1769,10 @@ class KatharaService:
             is_dir = src_fs.isdir(source_guest)
             same_fs = src_fs is dst_fs
             if is_dir:
-                if same_fs:
-                    src_fs.movedir(source_guest, dest_guest, create=True)
-                else:
-                    dst_fs.makedirs(dest_guest, recreate=True)
-                    fs.copy.copy_dir(src_fs, source_guest, dst_fs, dest_guest)
-                    src_fs.removetree(source_guest)
+                # Copy-then-remove on either kind of move, never pyfilesystem's own movedir: that
+                # is a copy_dir + removetree too, and both follow symlinks (see _remove_tree).
+                _copy_tree(src_fs, source_guest, dst_fs, dest_guest)
+                _remove_tree(src_fs, source_guest)
             else:
                 if same_fs:
                     src_fs.move(source_guest, dest_guest, overwrite=True)
@@ -1597,11 +1796,10 @@ class KatharaService:
                 lab_id, source_path, destination_path
             )
 
-            # No same-fs/cross-fs split like fs_move_offline needs: fs.copy.copy_dir/copy_file
-            # work identically either way, and unlike move there is no source to remove.
+            # No same-fs/cross-fs split like fs_move_offline needs: both helpers work identically
+            # either way, and unlike move there is no source to remove.
             if src_fs.isdir(source_guest):
-                dst_fs.makedirs(dest_guest, recreate=True)
-                fs.copy.copy_dir(src_fs, source_guest, dst_fs, dest_guest)
+                _copy_tree(src_fs, source_guest, dst_fs, dest_guest)
             else:
                 fs.copy.copy_file(src_fs, source_guest, dst_fs, dest_guest)
 
@@ -1845,11 +2043,14 @@ class KatharaService:
 
             files: dict[str, str] = {}
             if machine.fs is not None:
-                dirs = list(machine.fs.walk.dirs())
+                entries = list(_walk(machine.fs))
+                dirs = [p for p, is_dir in entries if is_dir]
                 if dirs:
                     quoted = " ".join(shlex.quote(d) for d in dirs)
                     self._exec_checked(lab_id, machine_name, f"mkdir -p {quoted}", action_label="mkdir")
-                for file_path in machine.fs.walk.files():
+                for file_path in (p for p, is_dir in entries if not is_dir):
+                    if self._escapes_lab(lab, f"/{machine_name}{file_path}"):
+                        continue  # a link out of the lab: never pushed, like every other read
                     try:
                         files[file_path] = machine.fs.readtext(file_path)
                     except UnicodeDecodeError:
@@ -2119,7 +2320,7 @@ class KatharaService:
             if lab.fs.exists(fname):
                 lab.fs.remove(fname)
         if lab.fs.exists(machine_name):
-            lab.fs.removetree(machine_name)
+            _remove_tree(lab.fs, machine_name)
 
     def connect_machine(
         self,

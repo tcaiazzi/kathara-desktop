@@ -90,7 +90,7 @@ const api = {
   dropElevation: (
     openLab?: string,
     skipReclaimCheck?: boolean,
-  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> =>
+  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean; reclaimPaths?: string[] }> =>
     ipcRenderer.invoke("elevation:drop", openLab, skipReclaimCheck),
   /** Linux companion to a `dropElevation` that came back with `needsReclaimPassword: true`: runs
    * the actual `chown` with this password (fed straight to `sudo -S`, never stored). Shares its

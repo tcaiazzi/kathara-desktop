@@ -7,6 +7,9 @@
 // the whole app, and a command with no page mounted to handle it is simply a no-op.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useToast } from "../context/ToastContext";
+import { api } from "../services/api";
+import { labNamed } from "../services/labPlace";
 import { desktop, type DesktopMenuAction } from "./bridge";
 
 type Handler = () => void | Promise<void>;
@@ -21,6 +24,7 @@ const DesktopCommandsContext = createContext<Registry | null>(null);
 
 export function DesktopCommandsProvider({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
+  const toast = useToast();
   // A set per action, not one handler: "Save" is offered by every editor panel on screen, and
   // each decides for itself whether it owns the command (it checks whether focus is inside it),
   // exactly as the Ctrl+S keydown listener in useSaveShortcut already does.
@@ -57,14 +61,32 @@ export function DesktopCommandsProvider({ children }: { children: React.ReactNod
     const offMenu = shell.onMenuAction(dispatch);
 
     // kathara://lab/<name> arrives as a route so react-router can navigate in place, keeping
-    // the dock layout and any open terminals.
-    const offDeepLink = shell.onDeepLink((route) => navigate(route));
+    // the dock layout and any open terminals. The link carries the lab's name and the Workspace
+    // route its id, which only the backend derives, so a `/workspace?lab=<name>` is resolved here,
+    // against a freshly fetched list, before navigating: straight to the lab's own route, so a link
+    // to the lab already open changes nothing, rather than passing through a route with no lab.
+    const offDeepLink = shell.onDeepLink((route) => {
+      const url = new URL(route, window.location.origin);
+      const name = url.pathname === "/workspace" ? url.searchParams.get("lab") : null;
+      if (name === null) {
+        navigate(route);
+        return;
+      }
+      void api
+        .listLabs()
+        .then((labs) => {
+          const lab = labNamed(labs, name);
+          if (lab) navigate(`/workspace/${encodeURIComponent(lab.id)}`);
+          else toast.show(`Lab "${name}" not found.`, "danger");
+        })
+        .catch((e) => toast.reportError("Open lab", e));
+    });
 
     return () => {
       offMenu();
       offDeepLink();
     };
-  }, [dispatch, navigate]);
+  }, [dispatch, navigate, toast]);
 
   const value = useMemo(() => ({ register, dispatch }), [register, dispatch]);
   return <DesktopCommandsContext.Provider value={value}>{children}</DesktopCommandsContext.Provider>;

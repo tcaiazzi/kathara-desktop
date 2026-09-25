@@ -1,4 +1,17 @@
-// Where a lab lives, as the rail shows it. Pure, so it can be tested without a DOM.
+// Where a lab lives, as the rail shows it, and finding one by the name a person would use. Pure,
+// so it can be tested without a DOM.
+
+import type { LabSummary } from "./types";
+
+/**
+ * The lab a person means by `name` (a kathara://lab/<name> link), or undefined. A name is unique
+ * only under the labs root — a folder opened from elsewhere may carry the same one — so a lab
+ * there wins; otherwise the first opened folder of that name.
+ */
+export function labNamed(labs: LabSummary[], name: string): LabSummary | undefined {
+  const named = labs.filter((lab) => lab.name === name && !lab.problem);
+  return named.find((lab) => lab.managed) ?? named[0];
+}
 
 /**
  * The folder a lab opened from outside the labs root sits in, short enough for a rail row:

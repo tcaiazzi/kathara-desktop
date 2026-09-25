@@ -149,7 +149,9 @@ def create_gallery_lab(payload: GalleryInstall, service: KatharaService = Depend
 @router.get("", response_model=list[LabSummary])
 def list_labs(service: KatharaService = Depends(get_service)) -> list[LabSummary]:
     """List the network scenarios known to the API."""
-    return [serializers.lab_to_summary(lab, service.lab_place(lab)) for lab in service.list_labs()]
+    loaded = [serializers.lab_to_summary(lab, service.lab_place(lab)) for lab in service.list_labs()]
+    unloaded = [serializers.unloaded_lab_summary(*entry) for entry in service.unloaded_opened_labs()]
+    return loaded + unloaded
 
 
 @router.get("/{lab_id}", response_model=LabDetail)

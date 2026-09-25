@@ -110,6 +110,7 @@ paths_to_mutate = [
     "src/kathara_api/services/known_labs.py",
     "src/kathara_api/services/lab_import.py",
     "src/kathara_api/services/lab_store.py",
+    "src/kathara_api/services/lab_watch.py",
     "src/kathara_api/dependencies.py",
     "src/kathara_api/routers/",
 ]

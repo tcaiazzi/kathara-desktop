@@ -6,7 +6,7 @@
  * Only "kathara://lab/<name>" is understood; anything else is ignored rather than guessed at.
  * A link names the lab the way a person would, but the Workspace route takes the lab's id — which
  * only the backend can derive, from the lab directory's path — so the name travels as the
- * `?lab=` query instead and the renderer resolves it (WorkspacePage).
+ * `?lab=` query instead and the renderer resolves it (DesktopCommands.tsx).
  */
 
 export const DEEP_LINK_PROTOCOL = "kathara";

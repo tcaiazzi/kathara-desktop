@@ -70,7 +70,8 @@ import { desktop, isDesktop, type DesktopDockerStatus } from "../desktop/bridge"
 import { useDockerStatus } from "../desktop/DockerStatusContext";
 import { usePublishOpenLabName } from "../context/OpenLabNameContext";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
-import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
+import { WorkspaceCoreProvider, useWorkspaceCore, type StartupChange } from "../context/WorkspaceCoreContext";
+import { useLabEvents } from "../hooks/useLabEvents";
 import {
   useOnboardingTour,
   useOnboardingTourFocusPanel,
@@ -88,6 +89,7 @@ import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
+import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import { labFolderHint } from "../services/labPlace";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
@@ -141,6 +143,7 @@ function FilesPanel() {
         detail={ws.detail}
         onStructuralChange={ws.onRefresh}
         onStartupFileSaved={ws.refreshStartups}
+        startupChange={ws.startupChange}
       />
     </div>
   );
@@ -527,7 +530,9 @@ interface LabRowLabelProps {
 // A rail row's name, plus — for a folder opened from outside the labs folder — where it is, which
 // is what tells two such labs with the same name apart (services/labPlace.ts).
 function LabRowLabel({ lab }: LabRowLabelProps) {
-  const hint = !lab.managed && lab.path ? labFolderHint(lab.path) : null;
+  const folder = !lab.managed && lab.path ? labFolderHint(lab.path) : null;
+  const problem = lab.problem ? PROBLEM_LABEL[lab.problem] ?? lab.problem : null;
+  const hint = [folder, problem].filter(Boolean).join(" · ");
   return (
     <span className="kt-ws-row-name">
       {lab.name || "(unnamed)"}
@@ -535,6 +540,16 @@ function LabRowLabel({ lab }: LabRowLabelProps) {
     </span>
   );
 }
+
+// LabSummary.problem, as the rail says it — and what a click on such a row explains instead of
+// opening a lab that isn't loaded.
+const PROBLEM_LABEL: Record<string, string> = { missing: "missing", unloadable: "can't be loaded" };
+const PROBLEM_EXPLANATION: Record<string, string> = {
+  missing:
+    "can't be opened: its folder isn't there any more. It loads by itself if the folder comes back; Close removes it from the list.",
+  unloadable:
+    "can't be opened: its lab.conf doesn't load. Fix it in another editor and it loads by itself; Close removes it from the list.",
+};
 
 // The Workspace (see App.tsx's routes): left rail (labs + devices) + a dockview panel area
 // (topology, devices, files, runtime-fs, terminals, stats) whose layout is freely rearrangeable
@@ -617,11 +632,18 @@ export function WorkspacePage() {
     if (id !== null && dockApiRef.current) showNodeInfo(dockApiRef.current);
   }, []);
 
+  // Same out-of-order guard as `load` below: lab events (useLabEvents) start a reload at any time,
+  // and a slow one started before a close must not land after the close's own and list the lab
+  // again.
+  const reloadGenRef = useRef(0);
   const reloadLabs = useCallback(async () => {
+    const gen = ++reloadGenRef.current;
     setLabsError(null);
     try {
-      setLabs(await api.listLabs());
+      const next = await api.listLabs();
+      if (reloadGenRef.current === gen) setLabs(next);
     } catch (e) {
+      if (reloadGenRef.current !== gen) return;
       toast.reportError("List labs", e);
       setLabsError(e instanceof ApiError ? e.message : "Couldn't load labs.");
     }
@@ -742,50 +764,32 @@ export function WorkspacePage() {
   }, [registerTourSelectFirstDevice]);
   // The shell can land the window on a lab this page has never listed — a folder it just opened
   // (File → Open Lab Folder…, `kathara-desktop <folder>`) — so a route naming an id the list
-  // doesn't have refreshes the list, once per id, for the rail to show it.
+  // doesn't have refreshes the list — once while it stays missing, and again if it goes missing
+  // later: a folder closed and opened again comes back under the same id.
   const refreshedForId = useRef<string | null>(null);
   useEffect(() => {
-    if (!labId || labs == null || labs.some((l) => l.id === labId) || refreshedForId.current === labId) return;
+    if (!labId || labs == null) return;
+    if (labs.some((l) => l.id === labId)) {
+      refreshedForId.current = null;
+      return;
+    }
+    if (refreshedForId.current === labId) return;
     refreshedForId.current = labId;
     void reloadLabs();
   }, [labId, labs, reloadLabs]);
 
-  // A kathara://lab/<name> deep link (services/desktop's deepLinkRoute.ts) names the lab the way a
-  // person would, but the route takes its id, which only the backend derives — so the name arrives
-  // as `?lab=` and is resolved here against the list, then swapped for the lab's own route. A name
-  // is unique only under the labs root, so a lab there wins over an opened folder of the same name.
-  const deepLinkedName = searchParams.get("lab");
   useEffect(() => {
-    if (deepLinkedName == null || labs == null) return;
-    const named = labs.filter((l) => l.name === deepLinkedName);
-    const match = named.find((l) => l.managed) ?? named[0];
-    if (match) {
-      navigate(`/workspace/${encodeURIComponent(match.id)}`, { replace: true });
-      return;
-    }
-    toast.show(`Lab "${deepLinkedName}" not found.`, "danger");
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("lab");
-        return next;
-      },
-      { replace: true },
-    );
-  }, [deepLinkedName, labs, navigate, setSearchParams, toast]);
-
-  useEffect(() => {
-    if (didRedirect.current || labId || labs == null || deepLinkedName != null) return;
+    if (didRedirect.current || labId || labs == null) return;
     didRedirect.current = true;
     // An explicit request to see the welcome screen (Help menu, or its own "show it again" link)
     // wins over jumping back into the last-open lab — set *after* didRedirect so dismissing the
     // welcome later doesn't then trigger a surprise redirect on its own re-render.
     if (searchParams.get("welcome") === "1") return;
     const last = localStorage.getItem(LS_LAST_LAB);
-    if (last && labs.some((l) => l.id === last)) {
+    if (last && labs.some((l) => l.id === last && !l.problem)) {
       navigate(`/workspace/${encodeURIComponent(last)}`, { replace: true });
     }
-  }, [labs, labId, deepLinkedName, navigate, searchParams]);
+  }, [labs, labId, navigate, searchParams]);
 
   // Zero labs is the only trigger for the welcome screen — no persisted "seen" flag: it's
   // self-healing (it comes back if the user empties their workspace, which is exactly when they
@@ -925,6 +929,25 @@ export function WorkspacePage() {
   const { deviceContextItems, findDeviceNode, domainContextItems, findDomainNode, actionConfig, setActionConfig } =
     deviceActions;
 
+  // A lab's lab.conf or startup scripts changed on disk outside the app (hooks/useLabEvents; the
+  // backend has already reloaded the lab, or says why it didn't). The list refreshes for any lab
+  // whose topology was reloaded — its device count may have changed; the open lab also reloads
+  // its detail (LabExplorer then follows lab.conf, with its own conflict check) or hands the
+  // changed startup scripts to the device preview and the file editor.
+  const [startupChange, setStartupChange] = useState<StartupChange | null>(null);
+  useEffect(() => setStartupChange(null), [labId]);
+  useLabEvents((event) => {
+    if (event.kind === "conf-reloaded") void reloadLabs();
+    if (event.lab_id !== labId) return;
+    const notice = labEventNotice(event);
+    if (notice) toast.show(notice.message, notice.variant, "Changed on disk");
+    if (event.kind === "conf-reloaded") void load();
+    if (event.kind === "startup") {
+      void deviceActions.refreshStartups();
+      setStartupChange((prev) => ({ paths: changedStartupPaths(event), seq: (prev?.seq ?? 0) + 1 }));
+    }
+  });
+
   useEffect(() => {
     const dockApi = dockApiRef.current;
     if (!dockApi || !detail) return;
@@ -1051,6 +1074,7 @@ export function WorkspacePage() {
   async function handleRename(lab: LabRef) {
     await renameLab(lab, setBusy, async (renamed) => {
       await reloadLabs();
+      if (localStorage.getItem(LS_LAST_LAB) === lab.id) localStorage.setItem(LS_LAST_LAB, renamed.id);
       // A rename moves the directory, and the id is derived from its path: follow the lab to its
       // new id, but only if it's the one currently open (the route still holds the old one).
       if (lab.id === labId) navigate(`/workspace/${encodeURIComponent(renamed.id)}`, { replace: true });
@@ -1093,6 +1117,22 @@ export function WorkspacePage() {
   // one currently open.
   function openLabMenu(e: React.MouseEvent, lab: LabSummary) {
     e.preventDefault();
+    // An opened folder that isn't loaded has nothing to rename, download or show: only Close.
+    if (lab.problem) {
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        items: [
+          {
+            label: "Close",
+            title: "Remove it from the list; the folder, if it is still somewhere, stays where it is",
+            disabled: busy,
+            action: () => void handleRemove(lab),
+          },
+        ],
+      });
+      return;
+    }
     setCtxMenu({
       x: e.clientX,
       y: e.clientY,
@@ -1184,12 +1224,13 @@ export function WorkspacePage() {
             detail: currentDetail,
             onRefresh: load,
             refreshStartups: deviceActions.refreshStartups,
+            startupChange,
             runtimeFsPreferredMachine,
             setSelectedId,
             setContextMenu: setCtxMenu,
           }
         : null,
-    [labId, currentDetail, load, deviceActions.refreshStartups, runtimeFsPreferredMachine],
+    [labId, currentDetail, load, deviceActions.refreshStartups, startupChange, runtimeFsPreferredMachine],
   );
 
   const runningMachines = deviceMachines.filter((m) => m.running);
@@ -1359,9 +1400,14 @@ export function WorkspacePage() {
                     filteredLabs?.map((l) => (
                       <button
                         key={l.id}
-                        className={`kt-ws-row ${l.id === labId ? "active" : ""}`}
+                        className={`kt-ws-row ${l.id === labId ? "active" : ""} ${l.problem ? "kt-ws-row--problem" : ""}`}
                         onClick={() => {
-                          if (l.id === labId) {
+                          if (l.problem) {
+                            toast.show(
+                              `"${l.name || "(unnamed)"}" ${PROBLEM_EXPLANATION[l.problem] ?? "isn't loaded."}`,
+                              "info",
+                            );
+                          } else if (l.id === labId) {
                             setLabPickerOpen(false);
                           } else {
                             navigate(`/workspace/${encodeURIComponent(l.id)}`);

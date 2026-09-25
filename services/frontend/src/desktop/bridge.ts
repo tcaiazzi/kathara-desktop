@@ -102,7 +102,7 @@ export interface DesktopApi {
   dropElevation(
     openLab?: string,
     skipReclaimCheck?: boolean,
-  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }>;
+  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean; reclaimPaths?: string[] }>;
   /** Linux companion to a `dropElevation` that came back with `needsReclaimPassword: true`: runs
    * the reclaim `chown` with this password (never stored, fed straight to `sudo -S`). */
   reclaimLabsDirOwnership(

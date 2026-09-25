@@ -10,26 +10,40 @@ import { isPlainAbsolutePath, quoteForShellString } from "./safety";
 /** Where the backend keeps the list (src/kathara_api/services/known_labs.py) — keep in step. */
 export const KNOWN_LABS_FILENAME = "known_labs.json";
 
+// A URL scheme ("kathara:", "file:", "https:") — but not a Windows drive letter ("C:\", "C:/").
+const URL_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+const WINDOWS_DRIVE_RE = /^[a-z]:([\\/]|$)/i;
+
 /**
  * The folder a launch was asked to open (`kathara-desktop ~/labs/ospf`), or null.
  *
- * `leading` is how many entries of `argv` are the launcher itself: the executable, plus the app
- * path when running unpackaged (`electron .`). After those, flags — Chromium's own, and whatever a
- * desktop entry adds (`--no-sandbox`) — and kathara:// links are not folders; the last remaining
- * argument is the one, resolved against `cwd` (the *calling* shell's, for a second instance), and
- * only if it really is a directory.
+ * `argv[0]` is the executable, and `launcher` names the paths that are the launcher itself rather
+ * than something to open — the app path when running unpackaged (`electron .`). Those are matched
+ * by value, never by position: Chromium puts its own switches ahead of the app path in a second
+ * instance's argv, so a fixed count would drop a switch and keep the app's own folder. Flags —
+ * Chromium's, and whatever a desktop entry adds (`--no-sandbox`) — are not folders, and neither is
+ * anything with a URL
+ * scheme. That last rule is a security one, not a nicety: the OS hands the app every `kathara:`
+ * link a web page opens, and one without `//` (`kathara:../../../home/u/x`) is neither a deep link
+ * (deepLinkRoute.ts wants `kathara://`) nor, once resolved, anything but an attacker-chosen
+ * absolute path. The last remaining argument is the one, resolved against `cwd` (the *calling*
+ * shell's, for a second instance), and only if it really is a directory.
  */
 export function folderFromArgv(
   argv: string[],
   cwd: string,
-  leading: number,
+  launcher: string[],
   isDirectory: (candidate: string) => boolean,
 ): string | null {
-  const candidates = argv.slice(leading).filter((arg) => arg && !arg.startsWith("-") && !arg.includes("://"));
+  const own = new Set(launcher.map((p) => path.resolve(p)));
+  const candidates = argv
+    .slice(1)
+    .filter((arg) => arg && !arg.startsWith("-") && (!URL_SCHEME_RE.test(arg) || WINDOWS_DRIVE_RE.test(arg)))
+    .map((arg) => path.resolve(cwd, arg))
+    .filter((resolved) => !own.has(resolved));
   const last = candidates.at(-1);
   if (last === undefined) return null;
-  const resolved = path.resolve(cwd, last);
-  return isDirectory(resolved) ? resolved : null;
+  return isDirectory(last) ? last : null;
 }
 
 /**

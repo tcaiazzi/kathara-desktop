@@ -2,6 +2,13 @@ import { createContext, useContext } from "react";
 import type { ContextMenuState } from "../components/TopologyContextMenu";
 import type { LabDetail } from "../services/types";
 
+/** Startup scripts of the open lab that changed on disk outside the app (hooks/useLabEvents),
+ *  as lab-relative paths; `seq` makes a repeat of the same paths a new value. */
+export interface StartupChange {
+  paths: string[];
+  seq: number;
+}
+
 // A narrower, independently-stable slice of WorkspaceCtx (see WorkspaceContext.tsx) for the
 // panels that hold a large virtualized tree (LabExplorer, RuntimeFilesystemEditor): just the
 // fields whose *identity* only changes when something these panels actually care about changes —
@@ -19,6 +26,8 @@ interface WorkspaceCoreCtx {
   refreshStartups: () => Promise<void>;
   /** The machine the Runtime Filesystem panel should preselect (set by openRuntimeFsPanel). */
   runtimeFsPreferredMachine: string | null;
+  /** The latest outside change to the open lab's startup scripts, or null — see StartupChange. */
+  startupChange: StartupChange | null;
   /** Raw selection setter (no side effects) — lets a panel drive the shared selection without
    *  forcing "Device Information" into focus the way WorkspaceCtx's wrapped setter does. */
   setSelectedId: (id: string | null) => void;

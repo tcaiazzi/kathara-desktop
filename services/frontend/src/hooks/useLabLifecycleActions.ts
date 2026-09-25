@@ -63,12 +63,12 @@ async function waitForDockerReady(shell: DesktopApi, timeoutMs = 15_000, interva
 // drops the elevation regardless of what the user chose in it.
 async function dropElevationIfAny(
   openLab: string | undefined,
-  requestReclaimAuth: () => Promise<"reclaimed" | "skipped">,
+  requestReclaimAuth: (paths: string[]) => Promise<"reclaimed" | "skipped">,
 ): Promise<void> {
   try {
     const result = await desktop()?.dropElevation(openLab);
     if (result?.needsReclaimPassword) {
-      await requestReclaimAuth();
+      await requestReclaimAuth(result.reclaimPaths ?? []);
       await desktop()?.dropElevation(openLab, true);
     }
   } catch {

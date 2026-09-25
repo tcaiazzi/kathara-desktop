@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
+import type { StartupChange } from "../context/WorkspaceCoreContext";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
-import { api, isAbortError } from "../services/api";
+import { api, ApiError, isAbortError } from "../services/api";
 import type { LabConfView, LabDetail } from "../services/types";
 import { FsTreePanel } from "./FsTreePanel";
 
@@ -13,6 +14,9 @@ interface LabExplorerProps {
   /** Called after a device's own `<name>.startup` is saved, so the Device Information panel's startup
    *  preview (fed by useDeviceActions' `startups`, fetched independently of this tab) picks it up. */
   onStartupFileSaved?: () => Promise<void>;
+  /** Startup scripts that changed on disk outside the app — the tree re-lists, and the file open
+   *  in the editor follows the new version (see the effect below). */
+  startupChange?: StartupChange | null;
 }
 
 // lab.conf is the only entry that's never deletable, draggable or renamable here. Everything else
@@ -41,7 +45,7 @@ function isStartupFilePath(path: string): boolean {
 // FsTreePanel); what's specific to this tab lives here: lab.conf is read/written through its own
 // endpoint (it rebuilds the topology, and is refused while the lab is deployed) and is watched
 // for changes made elsewhere.
-export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSaved }: LabExplorerProps) {
+export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSaved, startupChange }: LabExplorerProps) {
   const toast = useToast();
 
   const [labConf, setLabConf] = useState<LabConfView | null>(null);
@@ -151,7 +155,7 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
   // lab.conf) and on the toolbar's ↻. Not `detail` itself, so the ↻ counts too, and not an inline
   // object, which would re-list on every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const refreshKey = useMemo(() => ({}), [detail, confReloadKey]);
+  const refreshKey = useMemo(() => ({}), [detail, confReloadKey, startupChange]);
   const tree = useFsTree({ source, scopeKey: labId, refreshKey });
 
   // Read through refs so this effect doesn't re-run on every keystroke in the editor. Keyed off
@@ -163,7 +167,41 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
   bufferPathRef.current = tree.bufferPath;
   const dirtyRef = useRef(tree.dirty);
   dirtyRef.current = tree.dirty;
+  const loadedTextRef = useRef(tree.loadedText);
+  loadedTextRef.current = tree.loadedText;
+  const editorTextRef = useRef(tree.editorText);
+  editorTextRef.current = tree.editorText;
   const setBuffer = tree.setBuffer;
+
+  // A startup script changed on disk outside the app. The file open in the editor follows it, but
+  // unsaved edits are never replaced: saving them would overwrite the outside version, so that is
+  // said instead. The disk copy is compared with the editor first — the change the watcher saw may
+  // just be this editor's own save coming back, landing before the save marked the buffer clean.
+  // One deleted outside the app keeps its buffer, which saving would write back.
+  useEffect(() => {
+    const path = bufferPathRef.current;
+    if (!startupChange || !path || !startupChange.paths.includes(path)) return;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const { content } = await api.fsReadTextOffline(labId, path);
+        if (controller.signal.aborted || bufferPathRef.current !== path || content === loadedTextRef.current) return;
+        if (content === editorTextRef.current || !dirtyRef.current) {
+          setBuffer(path, content);
+        } else {
+          toast.show(`${path} changed on disk. Saving your edits will overwrite that version.`, "info", "Changed on disk");
+        }
+      } catch (e) {
+        if (controller.signal.aborted || bufferPathRef.current !== path) return;
+        if (e instanceof ApiError && e.status === 404) {
+          toast.show(`${path} was deleted on disk. Saving will create it again.`, "info", "Changed on disk");
+        } else if (!isAbortError(e)) {
+          toast.reportError("Reload file", e);
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [startupChange, labId, setBuffer, toast]);
 
   // Keep lab.conf in step with what's on disk. If the file changed underneath an edit in progress,
   // don't clobber the buffer — surface the conflict and let the user decide.
@@ -179,7 +217,7 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
         } else {
           serverConfRef.current = conf.content;
           setConfConflict(null);
-          if (editing && changed) setBuffer(conf.content);
+          if (editing && changed) setBuffer(LAB_CONF_PATH, conf.content);
         }
         setLabConf(conf);
       } catch (e) {
@@ -194,7 +232,7 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
   function acceptConfConflict() {
     if (confConflict === null) return;
     serverConfRef.current = confConflict;
-    if (bufferPathRef.current === LAB_CONF_PATH) setBuffer(confConflict);
+    setBuffer(LAB_CONF_PATH, confConflict);
     setConfConflict(null);
   }
 

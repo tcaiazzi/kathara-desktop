@@ -127,6 +127,10 @@ class LabSummary(BaseModel):
     # folder opened from elsewhere. Decides the lab's removal: a managed lab is deleted, an opened
     # one is closed, and its folder left alone.
     managed: bool = False
+    # Set only for a folder opened from outside the labs root that is remembered but not loaded:
+    # "missing" (not there) or "unloadable" (its lab.conf doesn't parse). Such a lab can only be
+    # closed; it loads by itself once the folder is back or fixed.
+    problem: Optional[str] = None
     n_machines: int
     n_links: int
     deployed: bool

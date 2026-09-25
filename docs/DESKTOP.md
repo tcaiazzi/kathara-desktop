@@ -221,10 +221,18 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 - After an elevated session, files it left root-owned are reclaimed from the labs directory
   (`chown -R`) **and** from every opened lab folder — there only root's own files
   (`find -uid 0 -exec chown -h`), since a folder the user opened may legitimately hold other
-  accounts' files (`labFolders.ts`'s `reclaimScript`).
+  accounts' files (`labFolders.ts`'s `reclaimScript`). An opened folder only counts if it is a
+  real directory the user owns (`main.ts`'s `reclaimTargets`): the list comes from a file in the
+  user's own data directory, not trusted to name `/usr/local`. The prompt lists every path.
+- A folder opened while the backend is (re)starting — a startup, an elevation — is parked and
+  opened once the new backend has loaded (`openFolderAsLab`, `replayPendingLabFolder`).
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one. The link
-  carries a name, the route an id (see `docs/BACKEND.md`), so it lands on `/workspace?lab=<name>`
-  and the Workspace resolves the name against the lab list.
+  carries a name, the route an id (see `docs/BACKEND.md`), so it arrives as `/workspace?lab=<name>`
+  and the renderer's deep-link listener (`DesktopCommands.tsx`) resolves the name against a fresh
+  lab list before navigating — straight to the lab's route, so a link to the open lab changes
+  nothing. `labFolders.ts`'s `folderFromArgv` never takes an argument with a URL scheme for a
+  folder: the OS hands the app every `kathara:` link a web page opens, including ones like
+  `kathara:../../x` that are no deep link.
 - Quitting with labs still deployed asks first, and offers to undeploy them — their containers
   would otherwise keep running.
 - The backend is bound to `127.0.0.1` only and paired with this one launch via the token

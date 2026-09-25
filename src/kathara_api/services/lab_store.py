@@ -15,6 +15,7 @@ but no writer), so JSON-created labs — which have no source ``lab.conf`` — c
 the same on-disk format as uploaded ones.
 """
 
+import hashlib
 import io
 import json
 import logging
@@ -68,8 +69,12 @@ def lab_id_for(directory: Union[str, Path]) -> str:
     Computed exactly the way ``kathara lstart`` computes a lab's hash (``LabParser.parse`` builds
     ``Lab(None, path)`` from ``utils.get_absolute_path``), so a lab started from the CLI in the same
     directory is the same lab here — same containers, same ``lab_hash`` label — and two labs whose
-    directories share a basename never collide. The directory need not exist yet: a creation path
+    directories share a basename don't collide. The directory need not exist yet: a creation path
     claims the id of the directory it is about to write.
+
+    Kathara's hash first drops every non-ASCII character, so two directories whose paths differ
+    only in those do share an id — as they would share containers under the CLI.
+    ``KatharaService.open_lab`` refuses the second one rather than confuse the two.
 
     The one case where the CLI disagrees is a ``lab.conf`` with a ``LAB_NAME`` line: Kathara's
     ``LabParser`` then re-derives the hash from that name. This app never writes one
@@ -230,6 +235,9 @@ class LabStore:
 
     def __init__(self, root: Union[str, Path]) -> None:
         self.root = Path(root)
+        # Digest of the lab.conf text this store last wrote into each lab directory — see
+        # wrote_lab_conf, which lets the disk watcher tell this app's own writes from anyone else's.
+        self._written_conf: dict[Path, str] = {}
 
     def ensure_root(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -256,8 +264,12 @@ class LabStore:
         return sorted(p.name for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
 
     def is_under_root(self, directory: Path) -> bool:
-        """Whether ``directory`` is one of the root's own lab directories (see ``lab_dirs``)."""
-        return directory.resolve().parent == self.root.resolve()
+        """Whether ``directory`` is one of the root's own lab directories (see ``lab_dirs``).
+
+        By where it is listed, not where it resolves to: a lab under the root that is itself a
+        symlink to elsewhere is still one of the root's — deleted, never closed.
+        """
+        return Path(os.path.abspath(directory)).parent.resolve() == self.root.resolve()
 
     def lab_dirs(self) -> list[Path]:
         """The directory of every lab under the root, in ``lab_names`` order.
@@ -296,7 +308,8 @@ class LabStore:
         for queued-but-not-yet-deployed state); the native-fs deploy path reads binaries straight
         off disk instead. So is a file symlinked to somewhere outside the lab: a folder opened
         from anywhere may hold one, and following it would read a file that is not the lab's.
-        ``os.walk`` already declines to descend into symlinked directories.
+        ``os.walk`` already declines to descend into symlinked directories. Anything that is not a
+        regular file (a FIFO would block the read forever) is skipped too.
         """
         base = Path(path)
         files: dict[str, str] = {}
@@ -307,7 +320,7 @@ class LabStore:
                 dirs.append(rel_root.replace(os.sep, "/"))
             for filename in filenames:
                 abs_path = Path(root) / filename
-                if abs_path.is_symlink() and not is_within(abs_path, base):
+                if not self._is_lab_file(abs_path, base):
                     continue
                 rel = os.path.relpath(abs_path, base).replace(os.sep, "/")
                 try:
@@ -315,6 +328,14 @@ class LabStore:
                 except (UnicodeDecodeError, ValueError):
                     continue  # binary file — not representable as text here
         return files, dirs
+
+    @staticmethod
+    def _is_lab_file(path: Path, base: Path) -> bool:
+        """Whether ``path`` is a regular file that belongs to the lab in ``base``: not a symlink out
+        of it, and not a FIFO, socket or device, which reading would block on or make no sense of."""
+        if path.is_symlink() and not is_within(path, base):
+            return False
+        return path.is_file()
 
     @staticmethod
     def check_openable(directory: Path) -> None:
@@ -349,7 +370,33 @@ class LabStore:
 
     def write_lab_conf(self, lab_dir: Path, lab: Lab) -> None:
         """Regenerate and (over)write ``lab_dir/lab.conf`` from ``lab`` (see ``gen_lab_conf``)."""
-        self._atomic_write_text(lab_dir / LAB_CONF_FILENAME, gen_lab_conf(lab))
+        self._write_conf(lab_dir, gen_lab_conf(lab))
+
+    def wrote_lab_conf(self, directory: Path, text: str) -> bool:
+        """Whether ``text`` is exactly the ``lab.conf`` this store last wrote into ``directory``.
+
+        How ``KatharaService.handle_disk_change`` tells a change the app made itself — which the
+        disk watcher sees like any other — from one made outside it: every lab.conf write this app
+        makes goes through ``write_lab_conf``/``write_lab_conf_text``, which record it. Compared by
+        content rather than by timestamp, so an outside edit landing right after one of ours is
+        never mistaken for it.
+        """
+        return self._written_conf.get(directory.resolve()) == self._digest(text)
+
+    def forget_lab_conf(self, directory: Path) -> None:
+        """Stop treating whatever this store last wrote into ``directory`` as its own: the file has
+        since been changed by someone else (see ``KatharaService.handle_disk_change``)."""
+        self._written_conf.pop(directory.resolve(), None)
+
+    def _write_conf(self, directory: Path, text: str) -> Path:
+        final = directory / LAB_CONF_FILENAME
+        self._atomic_write_text(final, text)
+        self._written_conf[directory.resolve()] = self._digest(text)
+        return final
+
+    @staticmethod
+    def _digest(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     @staticmethod
     def lab_conf_path(directory: Path) -> Path:
@@ -392,9 +439,7 @@ class LabStore:
         """
         if not directory.is_dir():
             raise LabNotFoundError(f"Lab `{directory.name}` not found.")
-        final = directory / LAB_CONF_FILENAME
-        self._atomic_write_text(final, text)
-        return final
+        return self._write_conf(directory, text)
 
     @staticmethod
     def _atomic_write_text(path: Path, text: str) -> None:
@@ -605,6 +650,10 @@ class LabStore:
             for root, _dirs, files in os.walk(directory):
                 for filename in files:
                     abs_path = Path(root) / filename
+                    # The download must not carry what the lab filesystem API refuses to read: a
+                    # file symlinked from outside the lab (see read_lab).
+                    if not LabStore._is_lab_file(abs_path, directory):
+                        continue
                     arcname = os.path.relpath(abs_path, directory)
                     archive.write(abs_path, arcname)
         buf.seek(0)

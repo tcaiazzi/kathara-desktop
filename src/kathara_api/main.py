@@ -12,10 +12,11 @@ from . import __version__
 from .config import format_mb, get_settings
 from .dependencies import get_service, is_origin_allowed, require_auth_token
 from .errors import ForbiddenOriginError, register_exception_handlers
+from .routers import events, labs, links, machines, stats, system
 from .routers import exec as exec_router
-from .routers import labs, links, machines, stats, system
 from .schemas.common import ErrorResponse
 from .services.docker_tty import shutdown_tty_executor
+from .services.lab_watch import LabWatcher
 from .spa import mount_spa
 
 logging.basicConfig(level=logging.INFO)
@@ -27,7 +28,16 @@ API_PREFIX = "/api"
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # Started here rather than with the service, so nothing that merely builds one — a test, a
+    # script — gets a polling thread with it.
+    interval = get_settings().lab_watch_interval
+    service = get_service()
+    watcher = LabWatcher(service.watched_labs, service.handle_disk_change, interval) if interval > 0 else None
+    if watcher is not None:
+        watcher.start()
     yield
+    if watcher is not None:
+        watcher.stop()
     # Stop accepting new live-TTY work on shutdown instead of relying on ThreadPoolExecutor's own
     # atexit, which waits for every worker thread to return — a TTY read can stay blocked for as
     # long as its terminal is open (see docs/DESIGN-NOTES.md).
@@ -157,6 +167,8 @@ def create_app() -> FastAPI:
     # EventSource, see require_auth_token_or_query), not the plain header-only dependency this
     # would attach. The route carries its own matching dependency in routers/stats.py instead.
     app.include_router(stats.router, prefix=API_PREFIX)
+    # Same reason as stats: `/events` is a native EventSource too.
+    app.include_router(events.router, prefix=API_PREFIX)
 
     # Strictly last: mount_spa adds a catch-all route, and Starlette matches routes in
     # registration order, so anything registered after it would be unreachable.

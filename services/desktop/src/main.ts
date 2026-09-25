@@ -422,11 +422,7 @@ async function runStartup(resumePath?: string): Promise<void> {
       handleDeepLink(win, pendingDeepLink);
       pendingDeepLink = null;
     }
-    if (pendingLabFolder) {
-      const folder = pendingLabFolder;
-      pendingLabFolder = null;
-      void openFolderAsLab(folder);
-    }
+    replayPendingLabFolder();
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     log(`startup failed: ${error}`);
@@ -548,6 +544,7 @@ function registerIpc(): void {
             const url = new URL(recovered);
             if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
             await win.loadURL(url.toString());
+            replayPendingLabFolder();
           }
           return toElevateOutcome(result);
         }
@@ -560,6 +557,7 @@ function registerIpc(): void {
             url.searchParams.set("resumeDeploy", "1");
           }
           await win.loadURL(url.toString());
+          replayPendingLabFolder();
         }
         return toElevateOutcome(result);
       });
@@ -587,7 +585,7 @@ function registerIpc(): void {
       _e,
       openLabArg: unknown,
       skipReclaimCheckArg: unknown,
-    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> => {
+    ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean; reclaimPaths?: string[] }> => {
       const openLab = optionalString(openLabArg, "lab id", MAX_LAB_ID_LENGTH);
       // Strict `=== true`, not truthiness: this flag skips the root-owned-file check and the
       // prompt that goes with it, so anything that merely looks truthy must not be able to.
@@ -619,7 +617,7 @@ function registerIpc(): void {
             // No native dialog can collect a password on Linux (see
             // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
             // either) — tell the renderer to ask instead.
-            return { dropped: false, needsReclaimPassword: true };
+            return { dropped: false, needsReclaimPassword: true, reclaimPaths: reclaimPaths(targets) };
           }
           // macOS: sudo-prompt's native dialog is reliable here, so a plain confirm first (this
           // isn't a deploy the user just asked for — they only undeployed) is enough.
@@ -634,8 +632,8 @@ function registerIpc(): void {
             cancelId: 1,
             message: "Some lab files are still owned by the administrator account",
             detail:
-              "The privileged session that just ended left some files in your labs folder, or in a " +
-              "lab folder you opened, owned by the administrator account. Reclaiming them needs " +
+              "The privileged session that just ended left some files owned by the administrator " +
+              `account in:\n${reclaimPaths(targets).join("\n")}\n\nReclaiming them needs ` +
               "one more authorization prompt " +
               "— the app never stores your password, so being asked again here is expected, not a " +
               "bug. If you leave them as is, further edits to the affected lab (or undeploying it) " +
@@ -902,6 +900,27 @@ function showMessage(options: Electron.MessageBoxOptions): Promise<Electron.Mess
  * the user can resolve on the spot; anything else is reported as it is.
  */
 async function openFolderAsLab(folder: string): Promise<void> {
+  // A backend (re)start in flight — startup, elevate, drop — means the request would reach a
+  // backend that is gone or about to be, and any navigation be wiped by the reload that follows.
+  // Parked instead, and replayed by whichever of them finishes (replayPendingLabFolder).
+  if (status.state !== "ready" || startupInFlight || bootOpInFlight) {
+    pendingLabFolder = folder;
+    return;
+  }
+  await openFolderNow(folder);
+}
+
+/** Open the folder parked while the backend was (re)starting, now that the window is on the new
+ * one. Straight to openFolderNow: this runs from inside the boot op that just finished loading,
+ * which openFolderAsLab's own check would still see as in flight. */
+function replayPendingLabFolder(): void {
+  if (!pendingLabFolder) return;
+  const folder = pendingLabFolder;
+  pendingLabFolder = null;
+  void openFolderNow(folder);
+}
+
+async function openFolderNow(folder: string): Promise<void> {
   log(`opening lab folder ${folder}`);
   let result = await openLabFolder(folder, false);
   if (!result.ok && result.notALab) {
@@ -926,6 +945,23 @@ async function openFolderAsLab(folder: string): Promise<void> {
   if (win) navigateRenderer(win, `/workspace/${encodeURIComponent(result.labId)}`);
 }
 
+/** Whether `dir` is a directory — itself, not through a symlink — owned by the current user.
+ * Always true on Windows, where there is no ownership to reclaim (see hasForeignOwnedFiles). */
+function isOwnDirectory(dir: string): boolean {
+  const uid = process.getuid?.();
+  try {
+    const stat = fs.lstatSync(dir);
+    return stat.isDirectory() && (uid === undefined || stat.uid === uid);
+  } catch {
+    return false;
+  }
+}
+
+/** Every path a reclaim of `targets` would touch, for the prompt that asks about it. */
+function reclaimPaths(targets: ReclaimTargets): string[] {
+  return [...(targets.labsDir ? [targets.labsDir] : []), ...targets.openedDirs];
+}
+
 /** File → Open Lab Folder…: the native dialog, then openFolderAsLab. */
 async function pickAndOpenLabFolder(): Promise<void> {
   const folder = await pickLabFolder(win);
@@ -933,9 +969,10 @@ async function pickAndOpenLabFolder(): Promise<void> {
 }
 
 /** The folder a launch's `argv` asks to open, or null — see labFolders.ts's folderFromArgv. An
- * unpackaged run (`electron .`) has the app path as a second leading argument. */
+ * unpackaged run (`electron .`) also carries the app path, which is the launcher, not a lab. */
 function labFolderFromArgv(argv: string[], cwd: string): string | null {
-  return folderFromArgv(argv, cwd, process.defaultApp ? 2 : 1, (candidate) => {
+  const launcher = process.defaultApp ? [app.getAppPath()] : [];
+  return folderFromArgv(argv, cwd, launcher, (candidate) => {
     try {
       return fs.statSync(candidate).isDirectory();
     } catch {
@@ -950,6 +987,11 @@ function labFolderFromArgv(argv: string[], cwd: string): string | null {
  * for root's own files (hasRootOwnedFiles) — it is the user's folder and may hold other accounts'
  * files legitimately. Derived here from the backend's own list of opened folders, read off disk,
  * since this runs while the backend is being replaced.
+ *
+ * That list is a file in the user's own data directory, so it is not trusted to name a folder
+ * worth a root chown: an opened folder only counts if it is a real directory (not a symlink)
+ * that the user owns. A system directory that ended up on the list — `/usr/local`, `/etc` —
+ * would otherwise have root's files handed to the user. The prompt names every path it covers.
  */
 async function reclaimTargets(): Promise<ReclaimTargets> {
   const labs = labsDir();
@@ -965,7 +1007,11 @@ async function reclaimTargets(): Promise<ReclaimTargets> {
       log(`not checking ${JSON.stringify(dir)} for root-owned files: not a path a reclaim can take`);
       continue;
     }
-    if (fs.existsSync(dir) && (await hasRootOwnedFiles(dir))) openedDirs.push(dir);
+    if (!isOwnDirectory(dir)) {
+      log(`not checking ${JSON.stringify(dir)} for root-owned files: not a directory the user owns`);
+      continue;
+    }
+    if (await hasRootOwnedFiles(dir)) openedDirs.push(dir);
   }
   return { labsDir: (await hasForeignOwnedFiles(labs)) ? labs : null, openedDirs };
 }
@@ -1093,8 +1139,7 @@ if (!app.requestSingleInstanceLock()) {
       if (status.state === "ready") handleDeepLink(win, url);
       else pendingDeepLink = url;
     } else if (folder) {
-      if (status.state === "ready") void openFolderAsLab(folder);
-      else pendingLabFolder = folder;
+      void openFolderAsLab(folder); // parks it itself while the backend isn't ready
     } else {
       win?.focus();
     }

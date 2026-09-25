@@ -86,6 +86,10 @@ CASES: list[tuple[str, tuple]] = [
 # Methods whose first parameter is `lab_id` but that are *not* part of this "does an existing lab
 # exist" family, with the reason each is excluded rather than silently missing:
 SKIPPED = {
+    "handle_disk_change": (
+        "called by the disk watcher for labs it just listed from the registry; a lab gone since "
+        "is simply nothing left to update (returns True), never an error to report."
+    ),
     "exec_command": (
         "resolves straight through the Docker facade by container name "
         "(KatharaService.exec_command -> facade.exec), never via get_lab_or_reconstruct/the "

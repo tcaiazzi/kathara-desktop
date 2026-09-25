@@ -16,7 +16,8 @@ import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { desktop } from "./bridge";
 
 type ReclaimOutcome = "reclaimed" | "skipped";
-type ReclaimAuthApi = () => Promise<ReclaimOutcome>;
+/** `paths` are the folders the reclaim would touch — shown, so the user knows what they authorize. */
+type ReclaimAuthApi = (paths: string[]) => Promise<ReclaimOutcome>;
 const ReclaimAuthCtx = createContext<ReclaimAuthApi | null>(null);
 
 // Every reason `reclaimLabsDirOwnership` can return has an entry, so unlike the elevation modal
@@ -31,14 +32,16 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paths, setPaths] = useState<string[]>([]);
 
   const { open, settle } = usePromiseModal<ReclaimOutcome>("skipped");
 
   const requestReclaimAuth = useCallback<ReclaimAuthApi>(
-    () =>
+    (targetPaths) =>
       open(() => {
         setPassword("");
         setError(null);
+        setPaths(targetPaths);
         setShow(true);
       }),
     [open],
@@ -86,11 +89,20 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
           </Modal.Header>
           <Modal.Body>
             <p>
-              The privileged session that just ended left some files in your labs folder, or in a
-              lab folder you opened, owned by the administrator account. Enter your password to reclaim them for your own account,
+              The privileged session that just ended left some files owned by the administrator
+              account in these folders. Enter your password to reclaim them for your own account,
               or leave them as is and fix it yourself later — either way the app continues
               normally.
             </p>
+            {paths.length > 0 && (
+              <ul className="small text-break">
+                {paths.map((p) => (
+                  <li key={p}>
+                    <code>{p}</code>
+                  </li>
+                ))}
+              </ul>
+            )}
             {error && (
               <Alert variant="danger" className="py-2">
                 {error}

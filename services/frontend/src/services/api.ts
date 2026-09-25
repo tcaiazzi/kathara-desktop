@@ -371,6 +371,13 @@ export const api = {
 
   // stats/stream is a GET endpoint, so the browser's native EventSource can be used directly
   // against this URL — no manual SSE body-parsing needed.
+  // The lab events stream (GET /api/events). Async, unlike statsStreamUrl below: it is opened as
+  // soon as the Workspace mounts, which can be before the pairing token has been fetched.
+  labEventsUrl: async () => {
+    await authTokenReady;
+    const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
+    return `${API_BASE}/events${tokenParam}`;
+  },
   statsStreamUrl: (labId: string) => {
     const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
     return `${API_BASE}/labs/${encodeURIComponent(labId)}/stats/stream${tokenParam}`;

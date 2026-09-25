@@ -66,6 +66,8 @@ const SHUTDOWN_DEATH_POLL_MS = 8_000;
  * normally answers instantly — but finite, so a wedged PAM module can't hang the IPC call
  * that's holding the elevation prompt open. */
 const SUDO_VERIFY_TIMEOUT_MS = 15_000;
+/** Bounds the ownership reclaim, which does real work under sudo — see reclaimOwnershipWithPassword. */
+const RECLAIM_TIMEOUT_MS = 120_000;
 /** Below this many *consecutive* failed sudo checks, a cooldown never engages — a person mistyping
  * their own password a couple of times pays nothing extra. Past it, `sudo -S -k -v` stops being a
  * free oracle a compromised renderer (e.g. content a lab loaded into the webview) could otherwise
@@ -264,7 +266,11 @@ export async function reclaimOwnershipWithPassword(
   const { script } = command;
   if (script === null) return { ok: true };
 
-  return withSudoRateLimit(() => runSudoWithPassword(["sh", "-c", script], password, "reclaim lab file ownership"));
+  // Far longer than a password check: the chown walks the whole labs directory and every opened
+  // folder, and a timeout here SIGKILLs sudo with the root chown possibly half done.
+  return withSudoRateLimit(() =>
+    runSudoWithPassword(["sh", "-c", script], password, "reclaim lab file ownership", { timeoutMs: RECLAIM_TIMEOUT_MS }),
+  );
 }
 
 /** What `openLabFolder` got back: the lab's id, or why the folder didn't open. `notALab` is the
@@ -574,6 +580,12 @@ async function buildBackendCommand(
   const shellToken = crypto.randomBytes(32).toString("hex");
   const labs = labsDir();
   fs.mkdirSync(labs, { recursive: true });
+  // Checked like the labs dir is (paths.ts's labsDir): on the elevated macOS/Windows paths every
+  // env value is written into a script run as root, escaping only `"`. Without a usable one the
+  // backend keeps its list of opened folders in memory only.
+  const state = stateDir();
+  const stateEnv: Record<string, string> = isPlainAbsolutePath(state) ? { KATHARA_API_STATE_DIR: state } : {};
+  if (!stateEnv.KATHARA_API_STATE_DIR) log(`not passing the state directory to the backend: ${JSON.stringify(state)}`);
 
   const appEnv: Record<string, string> = {
     // src/kathara_api/config.py already defaults to loopback; this pins it regardless of a stray
@@ -585,7 +597,7 @@ async function buildBackendCommand(
     KATHARA_API_LABS_DIR: labs,
     KATHARA_API_AUTH_TOKEN: token,
     KATHARA_API_SHELL_TOKEN: shellToken,
-    KATHARA_API_STATE_DIR: stateDir(),
+    ...stateEnv,
     PYTHONUNBUFFERED: "1",
     ...pythonEnv(pythonOverrides),
   };
@@ -792,7 +804,7 @@ function runSudoWithPassword(
   argv: string[],
   password: string,
   logLabel: string,
-  { verifyOnly = false }: { verifyOnly?: boolean } = {},
+  { verifyOnly = false, timeoutMs = SUDO_VERIFY_TIMEOUT_MS }: { verifyOnly?: boolean; timeoutMs?: number } = {},
 ): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
   return new Promise((resolve) => {
     let proc: ChildProcess;
@@ -819,7 +831,7 @@ function runSudoWithPassword(
     const timer = setTimeout(() => {
       proc.kill("SIGKILL");
       finish(null);
-    }, SUDO_VERIFY_TIMEOUT_MS);
+    }, timeoutMs);
     proc.once("close", (code) => {
       clearTimeout(timer);
       finish(code);
@@ -842,7 +854,7 @@ function runSudoWithPassword(
       }
       if (code === null) {
         log(`${logLabel} did not finish in time`);
-        resolve({ ok: false, reason: "timeout", message: `sudo did not respond within ${SUDO_VERIFY_TIMEOUT_MS}ms` });
+        resolve({ ok: false, reason: "timeout", message: `sudo did not respond within ${timeoutMs}ms` });
         return;
       }
       if (verifyOnly || SUDO_WRONG_PASSWORD_MARKERS.some((m) => stderrBuf.includes(m))) {

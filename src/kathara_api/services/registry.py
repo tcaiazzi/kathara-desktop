@@ -65,6 +65,11 @@ class LabRegistry:
             self._dirs.pop(lab_id, None)
             return self._labs.pop(lab_id, None)
 
+    def directories(self) -> dict[str, Path]:
+        """Every registered lab's id and directory."""
+        with self._lock:
+            return dict(self._dirs)
+
     def ids(self) -> list[str]:
         with self._lock:
             return list(self._labs.keys())

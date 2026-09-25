@@ -436,3 +436,201 @@ def test_the_close_route_closes_an_opened_lab(api, tmp_path):
 
     assert client.post(f"/api/labs/{lab.hash}/close").status_code == 200
     assert client.get("/api/labs").json() == []
+
+
+# -- symbolic links *inside* what an operation touches -----------------------------------------
+
+
+@pytest.fixture
+def nested_link_lab(tmp_path):
+    """An opened lab with a directory, and a device folder, that each hold a link to a directory
+    outside the lab — the shape a recursive delete, copy or move walks into."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "precious.txt").write_text("PRECIOUS\n")
+    service = _service(tmp_path)
+    folder = _folder(tmp_path, files={"lab.conf": LAB_CONF + 'pc2[0]="A"\n', "docs/readme.txt": "hi\n"})
+    (folder / "docs" / "ext").symlink_to(outside, target_is_directory=True)
+    (folder / "pc2").mkdir()
+    (folder / "pc2" / "ext").symlink_to(outside, target_is_directory=True)
+    lab, _ = service.open_lab(str(folder))
+    return service, lab, folder, outside
+
+
+def test_a_recursive_delete_removes_a_nested_link_and_nothing_it_points_at(nested_link_lab):
+    service, lab, folder, outside = nested_link_lab
+
+    service.fs_delete_offline(lab.hash, "/docs", recursive=True)
+
+    assert not (folder / "docs").exists()
+    assert (outside / "precious.txt").read_text() == "PRECIOUS\n"
+
+
+def test_removing_a_device_leaves_what_its_folder_links_to(nested_link_lab):
+    service, lab, folder, outside = nested_link_lab
+
+    service.remove_machine(lab.hash, "pc2")
+
+    assert not (folder / "pc2").exists()
+    assert (outside / "precious.txt").read_text() == "PRECIOUS\n"
+    assert "pc2" not in (folder / "lab.conf").read_text()
+
+
+@pytest.mark.parametrize("destination", ["/docs-moved", "/pc1/docs"], ids=["same device", "across devices"])
+def test_moving_a_directory_moves_a_nested_link_as_a_link(nested_link_lab, destination):
+    service, lab, folder, outside = nested_link_lab
+
+    service.fs_move_offline(lab.hash, "/docs", destination)
+
+    moved = folder / destination.lstrip("/")
+    assert (moved / "ext").is_symlink()
+    assert (moved / "readme.txt").read_text() == "hi\n"
+    assert (outside / "precious.txt").read_text() == "PRECIOUS\n"
+
+
+def test_copying_a_directory_copies_a_nested_link_as_a_link_that_stays_unreadable(nested_link_lab):
+    service, lab, folder, _outside = nested_link_lab
+
+    service.fs_copy_offline(lab.hash, "/docs", "/docs2")
+
+    assert (folder / "docs2" / "ext").is_symlink()
+    with pytest.raises(ApiError, match="outside the lab"):
+        service.fs_read_text_offline(lab.hash, "/docs2/ext/precious.txt")
+
+
+def test_the_zip_download_leaves_out_files_linked_from_outside_the_lab(nested_link_lab, tmp_path):
+    import io
+    import zipfile
+
+    service, lab, folder, outside = nested_link_lab
+    (folder / "notes.txt").symlink_to(outside / "precious.txt")
+
+    _name, buf = service.export_lab_zip(lab.hash)
+
+    names = zipfile.ZipFile(io.BytesIO(buf.getvalue())).namelist()
+    assert "docs/readme.txt" in names
+    assert not any("precious" in n or n == "notes.txt" for n in names)
+
+
+def test_a_search_neither_loops_on_a_link_cycle_nor_walks_out_of_the_lab(tmp_path):
+    service = _service(tmp_path)
+    folder = _folder(tmp_path, files={"lab.conf": LAB_CONF, "notes.txt": "needle\n"})
+    (folder / "loop").symlink_to(folder, target_is_directory=True)
+    (folder / "root").symlink_to(os.path.abspath(os.sep), target_is_directory=True)
+    lab, _ = service.open_lab(str(folder))
+
+    matches, _ = service.fs_search_offline(lab.hash, "/", "needle")
+
+    assert [m.path for m in matches] == ["/notes.txt"]
+
+
+def test_a_fifo_in_an_opened_folder_is_skipped_rather_than_read(tmp_path):
+    service = _service(tmp_path)
+    folder = _folder(tmp_path)
+    os.mkfifo(folder / "pipe")
+
+    lab, _ = service.open_lab(str(folder))
+    _name, buf = service.export_lab_zip(lab.hash)
+
+    assert sorted(lab.machines) == ["pc1"]
+    assert buf.getvalue()
+
+
+# -- identity edge cases -----------------------------------------------------------------------
+
+
+def test_a_folder_whose_path_differs_only_in_non_ascii_characters_is_refused(tmp_path):
+    """Kathara's hash drops non-ASCII characters, so the two would share an id — and containers."""
+    service = _service(tmp_path)
+    first = _folder(tmp_path, "lab_")
+    second = _folder(tmp_path, "lab_é")
+    assert lab_id_for(first) == lab_id_for(second)
+    service.open_lab(str(first))
+
+    with pytest.raises(ApiError, match="same identity"):
+        service.open_lab(str(second))
+    assert service.known.dirs() == [first]
+
+
+def test_a_lab_under_the_root_that_is_a_symlink_is_still_the_roots(tmp_path):
+    service = _service(tmp_path)
+    real = _folder(tmp_path, "elsewhere-lab")
+    service.store.root.mkdir(parents=True)
+    (service.store.root / "linked").symlink_to(real, target_is_directory=True)
+    service._reload_from_disk()
+    lab_id = lab_id_for(service.store.root / "linked")
+
+    lab, _ = service.open_lab(str(real))  # the same lab, reached by its real path
+
+    assert lab.hash == lab_id
+    assert service.lab_place(lab).managed is True
+    assert service.known.dirs() == []
+    with pytest.raises(LabCloseRefusedError):
+        service.close_lab(lab_id)
+
+
+def test_a_state_dir_that_cannot_be_written_does_not_stop_a_folder_opening(tmp_path, monkeypatch):
+    service = _service(tmp_path)
+    folder = _folder(tmp_path)
+
+    def refuse(_directory):
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(service.known, "add", refuse)
+    lab, _ = service.open_lab(str(folder))
+
+    assert service.registry.get(lab.hash) is lab
+
+
+# -- opened folders that are remembered but not loaded -----------------------------------------
+
+
+def test_a_remembered_folder_that_is_missing_or_broken_is_listed_so_it_can_be_closed(api, tmp_path, monkeypatch):
+    client, service = api
+    missing = _folder(tmp_path, "gone")
+    broken = _folder(tmp_path, "broken")
+    service.open_lab(str(missing))
+    service.open_lab(str(broken))
+    (missing / "lab.conf").unlink()
+    missing.rmdir()
+    (broken / "lab.conf").write_text("pc1[0]=A\npc1[2]=B\n")
+    from kathara_api import dependencies
+
+    monkeypatch.setattr(dependencies, "_service", _service(tmp_path))  # a restart
+
+    listed = {lab["name"]: lab for lab in client.get("/api/labs").json()}
+
+    assert (listed["gone"]["problem"], listed["broken"]["problem"]) == ("missing", "unloadable")
+    assert listed["gone"]["id"] == lab_id_for(missing)
+    assert client.post(f"/api/labs/{listed['gone']['id']}/close").status_code == 200
+    assert [lab["name"] for lab in client.get("/api/labs").json()] == ["broken"]
+
+
+def test_a_broken_remembered_folder_loads_by_itself_once_its_lab_conf_is_fixed(tmp_path):
+    folder = _folder(tmp_path)
+    _service(tmp_path).open_lab(str(folder))
+    (folder / "lab.conf").write_text("pc1[0]=A\npc1[2]=B\n")
+    service = _service(tmp_path)
+    lab_id = lab_id_for(folder)
+    assert lab_id in service.watched_labs()
+    published = []
+    service.events.publish = published.append
+
+    (folder / "lab.conf").write_text(LAB_CONF)
+    service.handle_disk_change(lab_id, {"lab.conf"})
+
+    assert service.registry.get(lab_id) is not None
+    assert [e["kind"] for e in published] == ["conf-reloaded"]
+
+
+def test_a_leftover_temporary_file_does_not_block_saving_the_list(tmp_path):
+    state = tmp_path / "state" / "known_labs.json"
+    state.parent.mkdir()
+    leftover = state.parent / ".known_labs.json.tmp"
+    leftover.write_text("{}")
+    leftover.chmod(0o400)
+    known = KnownLabs(state)
+
+    known.add(tmp_path / "a")
+
+    assert KnownLabs(state).dirs() == [tmp_path / "a"]

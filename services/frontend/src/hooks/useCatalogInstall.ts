@@ -33,7 +33,7 @@ interface CatalogInstallOptions<T extends CatalogItem> {
  * folder opened from elsewhere may well carry the same name. */
 async function installedLabId(name: string): Promise<string | null> {
   const labs = await api.listLabs();
-  return labs.find((lab) => lab.managed && lab.name === name)?.id ?? null;
+  return labs.find((lab) => lab.managed && !lab.problem && lab.name === name)?.id ?? null;
 }
 
 /** The install-or-open flow behind the welcome screen's examples and the gallery's labs.
@@ -54,7 +54,13 @@ export function useCatalogInstall<T extends CatalogItem>({
 
   async function openInstalled(item: T) {
     const labId = await installedLabId(fallbackName(item));
-    if (labId) onDone(labId);
+    if (labId) {
+      onDone(labId);
+      return;
+    }
+    // The folder is under the labs root (that is what made the catalogue call it installed), but
+    // no loaded lab carries its name: its lab.conf doesn't load.
+    toast.show(`Lab "${fallbackName(item)}" is in the labs folder but can't be loaded — check its lab.conf.`, "danger");
   }
 
   async function run(item: T) {
