@@ -1958,9 +1958,9 @@ class KatharaService:
             # Docker refuses, leaving a phantom interface behind an unreadable daemon error.
             if self._started_without_network(machine):
                 raise NotSupportedError(
-                    f"Device `{machine_name}` was started without any interface, and Docker cannot "
-                    "connect a running container like that to a collision domain. Stop the lab, "
-                    "connect the device, then start the lab again."
+                    f"Device `{machine_name}` was started without any interface, so its Docker "
+                    "container was created with networking disabled. So it cannot be connected to any" \
+                    " link at runtime. Stop the lab, connect the device, then start the lab again."
                 )
 
             self._facade().connect_machine_to_link(
