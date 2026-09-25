@@ -5,24 +5,42 @@ create or rename owes the disk and the registry, a running-state lookup that fin
 the host sysctl discovery behind the device editor's autocomplete. No Docker.
 """
 
+import asyncio
+
 import pytest
 from Kathara.exceptions import InvocationError, LabNotFoundError, MachineNotFoundError
 from Kathara.model.Lab import Lab
 
-from kathara_api.errors import ApiError
+from kathara_api.errors import ApiError, LabAlreadyRegisteredError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import kathara_service as kathara_service_module
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_service
+from tests.helpers import FakeFacadeBase, make_service, zip_bytes
 
 
 class _RecordingFacade(FakeFacadeBase):
     def __init__(self):
         self.deploy_calls = []
+        self.undeploy_calls = []
+        self.stats_labs = []
 
     def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
         self.deploy_calls.append(selected_machines)
+
+    def undeploy_lab(self, **kwargs):
+        self.undeploy_calls.append(kwargs)
+
+    def get_machines_stats(self, lab_name=None, machine_name=None, user=None):
+        self.stats_labs.append(lab_name)
+        yield {}
+        yield {}
+
+    def get_formatted_manager_name(self):
+        return "Docker (Kathara)"
+
+    def get_release_version(self):
+        return "29.7.2"
 
 
 @pytest.fixture
@@ -170,3 +188,133 @@ def test_net_sysctls_are_empty_without_proc_sys_net(service, tmp_path, monkeypat
     _point_proc_sys_net_at(monkeypatch, tmp_path / "missing")
 
     assert service.list_net_sysctls() == []
+
+
+# ---------------------------------------------------------------------------
+# What reaches Kathara from the lab lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_deploy_accepts_selecting_every_device(service, facade):
+    service.deploy_lab("l", selected_machines={"pc1", "pc2"})
+
+    assert facade.deploy_calls == [{"pc1", "pc2"}]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {},
+        {"selected_machines": {"pc1"}},
+        {"excluded_machines": {"pc2"}},
+        {"selected_links": {"A"}},
+    ],
+    ids=["whole lab", "selected", "excluded", "links"],
+)
+def test_undeploy_hands_its_selection_to_kathara_unchanged(service, facade, kwargs):
+    service.undeploy_lab("l", **kwargs)
+
+    assert facade.undeploy_calls == [
+        {"lab_name": "l", "selected_machines": None, "excluded_machines": None, "selected_links": None, **kwargs}
+    ]
+
+
+def test_undeploying_only_some_links_leaves_the_other_links_and_the_model_in_place(tmp_path, facade):
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
+    service.create_lab(LabCreate(name="net", machines=[
+        MachineCreate(name="pc1", interfaces=[{"link": "A"}]), MachineCreate(name="pc2", interfaces=[{"link": "B"}]),
+    ]))
+    lab = service.registry.get("net")
+    for obj in [*lab.machines.values(), *lab.links.values()]:
+        obj.api_object = object()
+
+    service.undeploy_lab("net", selected_links={"A"})
+
+    assert service.registry.get("net") is lab  # a partial undeploy does not reload the lab from disk
+    assert lab.links["A"].api_object is None
+    assert lab.links["B"].api_object is not None
+
+
+def test_deleting_a_lab_undeploys_that_lab_only(service, facade):
+    service.delete_lab("l")
+
+    assert facade.undeploy_calls == [{"lab_name": "l"}]
+
+
+def test_stats_stream_asks_for_that_lab_and_waits_only_the_rest_of_the_interval(service, facade, monkeypatch):
+    clock = iter([100.0, 100.0, 100.25, 100.25])
+    sleeps = []
+    monkeypatch.setattr(kathara_service_module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(kathara_service_module.time, "sleep", sleeps.append)
+
+    assert list(service.machines_stats_stream("l")) == [[], []]
+    assert facade.stats_labs == ["l"]
+    assert sleeps == [pytest.approx(0.75)]  # one second between samples, 0.25 of it already gone
+
+
+def test_uploading_a_lab_does_not_deploy_it_unless_asked(service, facade):
+    service.upload_lab("up", zip_bytes({"lab.conf": b"pc1[image]=kathara/base\n"}))
+
+    assert facade.deploy_calls == []
+
+
+def test_listing_the_gallery_uses_the_cache_unless_asked_to_refresh(service, monkeypatch):
+    from kathara_api.services import lab_gallery
+
+    refreshes = []
+
+    async def fake_fetch(refresh=False):
+        refreshes.append(refresh)
+        return lab_gallery.Catalog(repo="a/b", ref="main", section="", fetched_at=0.0, entries={})
+
+    monkeypatch.setattr(lab_gallery, "fetch_catalog_async", fake_fetch)
+
+    asyncio.run(service.list_gallery_labs())
+    asyncio.run(service.list_gallery_labs(refresh=True))
+
+    assert refreshes == [False, True]
+
+
+def test_system_info_reports_the_manager_and_daemon_version_when_docker_answers(service):
+    info = service.system_info()
+
+    assert (info["manager"], info["version"]) == ("Docker (Kathara)", "29.7.2")
+
+
+def test_the_docker_hub_image_list_is_fetched_again_once_its_cache_expires(service, monkeypatch):
+    from kathara_api.services import docker_hub
+
+    fetches = []
+    now = [1000.0]
+    monkeypatch.setattr(docker_hub, "list_tagged_images", lambda: fetches.append(1) or ["kathara/base"])
+    monkeypatch.setattr(kathara_service_module.time, "monotonic", lambda: now[0])
+
+    service._official_images()
+    now[0] += service._IMAGES_CACHE_TTL - 1
+    service._official_images()
+    now[0] += 2
+    service._official_images()
+
+    assert len(fetches) == 2
+
+
+def test_reloading_from_disk_skips_an_unloadable_lab_and_keeps_going(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.write_lab("a_broken", {"lab.conf": "!!! not a lab.conf\n"})
+    store.write_lab("b_good", {"lab.conf": "pc1[image]=kathara/base\n"})
+
+    service = make_service(store=store)
+    service._reload_from_disk()
+
+    assert service.registry.get("a_broken") is None
+    assert service.registry.get("b_good") is not None
+
+
+def test_a_name_held_by_an_unregistered_directory_is_not_free(service):
+    """A directory can exist without a registry entry (dropped in by hand, or its lab.conf failed
+    to parse), and importing over it would destroy it."""
+    service.store.write_lab("taken", {"notes.txt": "someone else's"})
+
+    with pytest.raises(LabAlreadyRegisteredError, match=r"^Lab `taken` already exists\.$"):
+        service.upload_lab("taken", zip_bytes({"lab.conf": b"pc1[image]=kathara/base\n"}))
+    assert (service.store.lab_dir("taken") / "notes.txt").read_text() == "someone else's"

@@ -15,6 +15,7 @@ from kathara_api.errors import ApiError, NotSupportedError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import lab_builder
+from kathara_api.services.docker_tty import SHELL_PATHS
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import FakeFacadeBase, make_lab, make_service
@@ -30,10 +31,24 @@ class _RuntimeFacade(FakeFacadeBase):
         self.deployed_links = []
         self.deployed_machines = []
         self.deploy_machine_error: Exception | None = None
+        self.streams: list[bool] = []
+        self.connects: list[tuple[str, str, object]] = []
+        self.disconnects: list[tuple[str, str, object]] = []
+        self.undeployed_machines: list[tuple[str, object]] = []
 
     def exec(self, machine_name, command, lab_name=None, wait=False, stream=False):
         self.execs.append((machine_name, command, lab_name, wait))
+        self.streams.append(stream)
         return self.result
+
+    def connect_machine_to_link(self, machine, link, mac_address=None):
+        self.connects.append((machine.name, link.name, mac_address))
+
+    def disconnect_machine_from_link(self, machine, link, keep_link=False):
+        self.disconnects.append((machine.name, link.name, keep_link))
+
+    def undeploy_machine(self, machine, keep_links=False):
+        self.undeployed_machines.append((machine.name, keep_links))
 
     def copy_files(self, machine, guest_to_host):
         self.copies.append((machine.name, {path: data.read() for path, data in guest_to_host.items()}))
@@ -368,3 +383,182 @@ def test_add_machine_whose_deploy_fails_leaves_no_trace(running_disk_lab, facade
     assert "pc2" not in lab.machines
     assert list(lab.links["A"].machines) == ["pc1"]
     assert service.store.read_lab_conf_text("disk") == "pc1[0]=A\n"
+
+
+
+# ---------------------------------------------------------------------------
+# The exact exec each runtime operation sends, and to which device of which lab
+# ---------------------------------------------------------------------------
+
+_SHELL_PROBE = "".join(f"[ -x {path} ] && echo {name}\n" for name, path in SHELL_PATHS.items())
+
+
+@pytest.mark.parametrize(
+    "call, command",
+    [
+        (lambda s: s.fs_read_bytes("l", "pc1", "/etc/hosts"),
+         ["sh", "-lc", f"[ -d /etc/hosts ] && exit {KatharaService._FS_READ_IS_DIR_EXIT}; cat /etc/hosts"]),
+        (lambda s: s.fs_mkdir("l", "pc1", "/d"), ["mkdir", "-p", "/d"]),
+        (lambda s: s.fs_move("l", "pc1", "/a", "/b"), ["mv", "--", "/a", "/b"]),
+        (lambda s: s.fs_copy("l", "pc1", "/a", "/b"), ["cp", "-a", "--", "/a", "/b"]),
+        (lambda s: s.fs_delete("l", "pc1", "/a", recursive=True), ["rm", "-rf", "--", "/a"]),
+        (lambda s: s.fs_delete("l", "pc1", "/a"), ["sh", "-lc", "rm -f -- /a || rmdir -- /a"]),
+        (lambda s: s.get_startup_log("l", "pc1"), ["cat", "/var/log/startup.log"]),
+        (lambda s: s.is_startup_finished("l", "pc1"), ["test", "-f", "/tmp/EOS"]),
+        (lambda s: s.available_shells("l", "pc1"), ["sh", "-lc", _SHELL_PROBE]),
+    ],
+    ids=["read", "mkdir", "move", "copy", "delete -r", "delete", "startup log", "startup finished", "shells"],
+)
+def test_each_runtime_operation_runs_one_non_blocking_exec_on_the_right_device(service, facade, call, command):
+    call(service)
+
+    assert facade.execs == [("pc1", command, "l", False)]
+    assert facade.streams == [False]
+
+
+def test_listing_runs_its_find_on_the_right_device_without_blocking(service, facade):
+    service.fs_list_directory("l", "pc1", "/srv")
+
+    [(machine, command, lab, wait)] = facade.execs
+    assert (machine, lab, wait, command[:2]) == ("pc1", "l", False, ["sh", "-lc"])
+
+
+# ---------------------------------------------------------------------------
+# Output that is not valid UTF-8 is shown with replacement characters, never raised on
+# ---------------------------------------------------------------------------
+
+
+def test_a_startup_log_with_invalid_utf8_is_still_returned(service, facade):
+    facade.result = (b"ip a \xff done\n", b"", 0)
+
+    assert service.get_startup_log("l", "pc1") == "ip a \ufffd done\n"
+
+
+def test_a_failing_command_with_invalid_utf8_stderr_still_reports_it(service, facade):
+    facade.result = (b"", b"denied \xff", 1)
+
+    with pytest.raises(ApiError, match="denied \ufffd"):
+        service.fs_mkdir("l", "pc1", "/d")
+    with pytest.raises(ApiError, match="denied \ufffd"):
+        service.fs_read_bytes("l", "pc1", "/d")
+
+
+def test_a_listing_with_an_invalid_utf8_name_is_still_returned(service, facade):
+    facade.result = (b"f\tf\t1\t644\t0\tbad\xffname\0", b"", 0)
+
+    assert [e.name for e in service.fs_list_directory("l", "pc1", "/")] == ["bad\ufffdname"]
+
+
+def test_a_shell_probe_with_invalid_utf8_still_finds_the_shells(service, facade):
+    facade.result = (b"bash\n\xff\nzsh\n", b"", 0)
+
+    assert service.available_shells("l", "pc1") == ["bash", "zsh"]
+
+
+# ---------------------------------------------------------------------------
+# What reaches Kathara when a running device's topology changes
+# ---------------------------------------------------------------------------
+
+
+def test_connecting_a_running_device_hands_its_mac_address_to_kathara(service, facade):
+    service.connect_machine("l", "pc1", "B", mac_address="02:42:ac:11:00:02")
+
+    assert facade.connects == [("pc1", "B", "02:42:ac:11:00:02")]
+
+
+def test_a_running_device_refuses_an_explicit_interface_number(service, facade):
+    with pytest.raises(NotSupportedError, match=r"Explicit interface_number is only supported when the device is not running\.$"):
+        service.connect_machine("l", "pc1", "B", interface_number=3)
+    assert facade.connects == []
+
+
+@pytest.mark.parametrize("keep_link", [False, True])
+def test_disconnecting_a_running_device_hands_keep_link_to_kathara(service, facade, keep_link):
+    if keep_link:
+        service.disconnect_machine("l", "pc1", "A", keep_link=True)
+    else:
+        service.disconnect_machine("l", "pc1", "A")
+
+    assert facade.disconnects == [("pc1", "A", keep_link)]
+
+
+@pytest.mark.parametrize("keep_links", [False, True])
+def test_removing_a_running_device_hands_keep_links_to_kathara(service, facade, keep_links):
+    if keep_links:
+        service.remove_machine("l", "pc1", keep_links=True)
+    else:
+        service.remove_machine("l", "pc1")
+
+    assert facade.undeployed_machines == [("pc1", keep_links)]
+    assert "pc1" not in service.registry.get("l").machines
+
+
+def test_connecting_a_stopped_device_appends_the_next_interface_with_its_mac_to_lab_conf(tmp_path, facade):
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
+    make_lab(service, "disk", {"lab.conf": "pc1[0]=A\n"})
+
+    service.connect_machine("disk", "pc1", "B", mac_address="02:42:ac:11:00:02")
+
+    assert service.store.read_lab_conf_text("disk") == "pc1[0]=A\npc1[1]=B/02:42:ac:11:00:02\n"
+    assert [(n, i.link.name, i.mac_address) for n, i in service.registry.get("disk").machines["pc1"].interfaces.items()] == [
+        (0, "A", None),
+        (1, "B", "02:42:ac:11:00:02"),
+    ]
+    assert facade.connects == []
+
+
+def test_listing_shows_a_symlink_to_a_file_as_a_file_and_sorts_names_case_insensitively(service, facade):
+    facade.result = (
+        b"l\tf\t4\t777\t0\tlink-to-file\0"
+        b"l\td\t4\t777\t0\tlink-to-dir\0"
+        b"f\tf\t1\t644\t0\tb\0"
+        b"f\tf\t1\t644\t0\t_a\0"
+        b"f\tf\t1\t644\t0\tA\0",
+        b"",
+        0,
+    )
+
+    entries = service.fs_list_directory("l", "pc1", "/")
+
+    # "_" sorts before letters once names are lower-cased (it would sort after them upper-cased).
+    assert [(e.name, e.is_dir) for e in entries] == [
+        ("link-to-dir", True), ("_a", False), ("A", False), ("b", False), ("link-to-file", False),
+    ]
+
+
+def test_a_failing_recursive_delete_names_the_path(service, facade):
+    facade.result = (b"", b"rm: busy\n", 1)
+
+    with pytest.raises(ApiError) as exc_info:
+        service.fs_delete("l", "pc1", "/a", recursive=True)
+    assert exc_info.value.detail == "Delete `/a` failed on `pc1`: rm: busy"
+
+
+def test_exec_command_by_default_neither_waits_nor_streams(service, facade):
+    service.exec_command("l", "pc1", ["ip", "a"])
+
+    assert facade.execs == [("pc1", ["ip", "a"], "l", False)]
+    assert facade.streams == [False]
+
+
+def test_live_tty_on_a_manager_without_api_objects_is_not_supported(tmp_path):
+    service = make_service(facade=FakeFacadeBase())  # has no get_machine_api_object at all
+    lab = lab_builder.build_lab(LabCreate.model_validate({"name": "l", "machines": [{"name": "pc1"}]}))
+    lab.machines["pc1"].api_object = object()
+    service.registry.add(lab)
+
+    with pytest.raises(NotSupportedError, match="Live TTY is not supported"):
+        service.get_machine_api_object("l", "pc1")
+
+
+def test_a_failed_add_to_a_running_lab_keeps_a_device_folder_that_already_existed(tmp_path, facade):
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
+    make_lab(service, "disk", {"lab.conf": "pc1[0]=A\n", "pc2/etc/motd": "keep me"})
+    service.registry.get("disk").machines["pc1"].api_object = object()
+    facade.deploy_machine_error = RuntimeError("image not found")
+
+    with pytest.raises(RuntimeError):
+        service.add_machine("disk", MachineCreate(name="pc2"))
+
+    assert (service.store.lab_dir("disk") / "pc2" / "etc" / "motd").read_text() == "keep me"
+

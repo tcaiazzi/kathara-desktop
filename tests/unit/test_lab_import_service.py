@@ -19,6 +19,7 @@ class _FakeFacade(FakeFacadeBase):
     def __init__(self):
         self.deployed = []
         self.exec_calls = []
+        self.exec_labs = []
         self.copied = []
 
     def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
@@ -37,6 +38,7 @@ class _FakeFacade(FakeFacadeBase):
 
     def exec(self, machine_name, command, lab_name=None, wait=False, stream=False):
         self.exec_calls.append((machine_name, command, wait))
+        self.exec_labs.append(lab_name)
         return (b"", b"", 0)
 
     def copy_files(self, machine, guest_to_host):
@@ -141,6 +143,62 @@ def test_redeploy_of_already_running_machine_pushes_live_update_once(tmp_path):
     # A further redeploy with no new edit doesn't push again.
     service.deploy_lab("lab1")
     assert facade.exec_calls == [("r1", "sh /tmp/.kathara_boot.sh", False)]
+
+
+def test_an_edit_made_before_the_first_deploy_is_not_pushed_again_later(tmp_path):
+    """The first deploy packs the files straight from disk, so it consumes the pending edit: a
+    later redeploy with nothing new must not push or re-run the startup script."""
+    service = _service(tmp_path)
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF}, [])
+    service.fs_write_text_offline("lab1", "/r1.startup", "echo before\n")
+
+    service.deploy_lab("lab1")
+    service.deploy_lab("lab1")
+
+    facade = service._instance
+    assert facade.copied == [] and facade.exec_calls == []
+
+
+def test_live_push_runs_every_exec_against_its_own_lab(tmp_path):
+    service = _service(tmp_path)
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF}, [])
+    service.deploy_lab("lab1")
+    service.fs_write_text_offline("lab1", "/r1/etc/motd", "hi")
+    service.fs_write_text_offline("lab1", "/r1.startup", "echo again\n")
+
+    service.deploy_lab("lab1")
+
+    facade = service._instance
+    assert [cmd for _, cmd, _ in facade.exec_calls] == ["mkdir -p /etc", "sh /tmp/.kathara_boot.sh"]
+    assert facade.exec_labs == ["lab1", "lab1"]
+
+
+def test_boot_script_treats_an_unreadable_startup_as_empty(tmp_path):
+    from kathara_api.services.kathara_service import KatharaService
+
+    service = _service(tmp_path)
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF + "r1[exec]=echo last\n"}, [])
+    lab = service.registry.get("lab1")
+    lab.fs.writebytes("shared.startup", b"\xff\xfe")
+    lab.fs.writebytes("r1.startup", b"\xff\xfe")
+
+    assert KatharaService._boot_script(lab, lab.machines["r1"]) == "echo last"
+
+
+def test_a_partial_redeploy_pushes_only_the_selected_running_device(tmp_path):
+    """Another running device with pending edits is not part of this deploy, so it must not be
+    pushed or have its startup script re-run."""
+    service = _service(tmp_path)
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF}, [])
+    service.deploy_lab("lab1")
+    service.fs_write_text_offline("lab1", "/r1.startup", "echo r1\n")
+    service.fs_write_text_offline("lab1", "/pc1.startup", "echo pc1\n")
+
+    service.deploy_lab("lab1", selected_machines={"r1"})
+
+    facade = service._instance
+    assert {machine for machine, _ in facade.copied} == {"r1"}
+    assert [machine for machine, _, _ in facade.exec_calls] == ["r1"]
 
 
 def test_live_push_recreates_device_dirs_and_pushes_text_files_only(tmp_path):

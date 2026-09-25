@@ -798,3 +798,185 @@ def test_fs_search_offline_skips_binary_files(tmp_path):
 
     assert [m.path for m in matches] == ["/pc1/a.txt"]
     assert truncated is False
+
+
+# -- listing details, overwrite/merge semantics, dirty marking -----------------------------------
+
+
+def test_offline_listing_reports_each_entry_size_mtime_and_full_path(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "abc")
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi")
+
+    [notes] = [e for e in service.fs_list_offline("testlab", "/") if e.name == "notes.txt"]
+    [etc] = service.fs_list_offline("testlab", "/pc1")
+
+    assert (notes.path, notes.is_dir, notes.size) == ("/notes.txt", False, 3)
+    assert isinstance(notes.mtime, float) and notes.mtime > 0
+    assert (etc.path, etc.is_dir) == ("/pc1/etc", True)
+
+
+def test_deleting_an_empty_directory_needs_no_recursive_flag(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline("testlab", "/pc1/empty")
+
+    service.fs_delete_offline("testlab", "/pc1/empty")
+
+    assert not (store.lab_dir("testlab") / "pc1" / "empty").exists()
+
+
+def test_deleting_a_non_empty_directory_is_refused_unless_recursive(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi")
+
+    with pytest.raises(ApiError, match=r"^`/pc1/etc` is not empty\. Delete recursively to remove it\.$"):
+        service.fs_delete_offline("testlab", "/pc1/etc")
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
+
+
+def test_moving_onto_an_existing_file_replaces_it(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/a", "new")
+    service.fs_write_text_offline("testlab", "/pc1/b", "old")
+
+    service.fs_move_offline("testlab", "/pc1/a", "/pc1/b")
+
+    assert (store.lab_dir("testlab") / "pc1" / "b").read_text() == "new"
+    assert not (store.lab_dir("testlab") / "pc1" / "a").exists()
+
+
+@pytest.mark.parametrize("operation", ["fs_move_offline", "fs_copy_offline"])
+def test_a_directory_moved_or_copied_onto_an_existing_one_is_merged_into_it(tmp_path, operation):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/etc/new.conf", "n")
+    service.fs_write_text_offline("testlab", "/pc2/etc/old.conf", "o")
+
+    getattr(service, operation)("testlab", "/pc1/etc", "/pc2/etc")
+
+    assert sorted(p.name for p in (store.lab_dir("testlab") / "pc2" / "etc").iterdir()) == ["new.conf", "old.conf"]
+    assert (store.lab_dir("testlab") / "pc1" / "etc").exists() is (operation == "fs_copy_offline")
+
+
+@pytest.mark.parametrize("path", ["/pc1/etc", "/scratch"])
+def test_creating_an_existing_directory_again_is_harmless(tmp_path, path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline("testlab", path)
+
+    service.fs_mkdir_offline("testlab", path)
+
+    assert (store.lab_dir("testlab") / path.lstrip("/")).is_dir()
+
+
+@pytest.mark.parametrize("folder", ["/pc1/opt", "/scratch"])
+def test_uploading_a_second_file_into_the_same_new_folder_works(tmp_path, folder):
+    service, store = _two_machine_lab(tmp_path)
+
+    service.fs_upload_bytes_offline("testlab", f"{folder}/a.bin", b"\x00")
+    service.fs_upload_bytes_offline("testlab", f"{folder}/b.bin", b"\x01")
+
+    assert sorted(p.name for p in (store.lab_dir("testlab") / folder.lstrip("/")).iterdir()) == ["a.bin", "b.bin"]
+
+
+# Every name a mistaken dirty mark could land on: the devices, and the non-device names below.
+_ANY_NAME = {"pc1", "pc2", "notes", "other", "shared"}
+
+
+def _dirty_after(service, action) -> set[str]:
+    service.registry.pop_dirty_machines("testlab", _ANY_NAME)  # start from a clean slate
+    action()
+    return service.registry.pop_dirty_machines("testlab", _ANY_NAME)
+
+
+def test_each_offline_change_marks_exactly_the_devices_it_touches_dirty(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/pc1/a", "a")
+
+    assert _dirty_after(service, lambda: service.fs_mkdir_offline("testlab", "/pc1/d")) == {"pc1"}
+    assert _dirty_after(service, lambda: service.fs_copy_offline("testlab", "/pc1/a", "/pc2/a")) == {"pc2"}
+    assert _dirty_after(service, lambda: service.fs_move_offline("testlab", "/pc1/a", "/pc2/b")) == {"pc1", "pc2"}
+    assert _dirty_after(service, lambda: service.fs_delete_offline("testlab", "/pc2/b")) == {"pc2"}
+    assert _dirty_after(service, lambda: service.fs_write_text_offline("testlab", "/pc2.startup", "ip a\n")) == {"pc2"}
+    assert _dirty_after(service, lambda: service.fs_write_text_offline("testlab", "/notes/todo.txt", "x")) == set()
+    assert _dirty_after(service, lambda: service.fs_write_text_offline("testlab", "/other.startup", "x")) == set()
+
+
+# -- search: skipped files do not end the walk, and the total cap spans files ---------------------
+
+
+def test_fs_search_offline_is_case_insensitive_by_default(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/notes.txt", "NEEDLE\n")
+
+    assert [m.line_text for m in service.fs_search_offline("testlab", "/", "needle")[0]] == ["NEEDLE"]
+
+
+def test_fs_search_offline_keeps_walking_after_a_skipped_binary_file(tmp_path):
+    # Root-level files are walked before subdirectories, so the binary comes first.
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_upload_bytes_offline("testlab", "/a.bin", b"needle\xff\xfe")
+    service.fs_write_text_offline("testlab", "/pc1/b.txt", "needle\n")
+
+    assert [m.path for m in service.fs_search_offline("testlab", "/", "needle")[0]] == ["/pc1/b.txt"]
+
+
+def test_fs_search_offline_keeps_walking_after_a_skipped_oversized_file_and_searches_one_at_the_limit(
+    tmp_path, monkeypatch
+):
+    from kathara_api.config import get_settings
+
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/big.txt", "needle " * 3)  # 21 bytes, over the limit
+    service.fs_write_text_offline("testlab", "/pc1/fits.txt", "needle " * 2 + "123456")  # exactly 20
+    monkeypatch.setattr(get_settings(), "max_bytes_per_file", 20)
+
+    assert [m.path for m in service.fs_search_offline("testlab", "/", "needle")[0]] == ["/pc1/fits.txt"]
+
+
+def test_fs_search_offline_total_cap_limits_a_later_file_too(tmp_path, monkeypatch):
+    import kathara_api.services.kathara_service as kathara_service_module
+
+    monkeypatch.setattr(kathara_service_module, "_SEARCH_MAX_TOTAL_MATCHES", 3)
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline("testlab", "/first.txt", "needle\nneedle\n")
+    service.fs_write_text_offline("testlab", "/pc1/second.txt", "needle\n" * 5)
+
+    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+
+    assert [m.path for m in matches] == ["/first.txt", "/first.txt", "/pc1/second.txt"]
+    assert truncated is True
+
+
+def test_offline_listing_puts_directories_first_then_names_case_insensitively(tmp_path):
+    service, _ = _two_machine_lab(tmp_path)
+    for name in ("b.txt", "_a.txt", "A.txt"):
+        service.fs_write_text_offline("testlab", f"/pc1/{name}", "x")
+    service.fs_mkdir_offline("testlab", "/pc1/zdir")
+
+    assert [e.name for e in service.fs_list_offline("testlab", "/pc1")] == ["zdir", "_a.txt", "A.txt", "b.txt"]
+
+
+def test_an_empty_device_folder_can_be_deleted_and_then_written_to_again(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline("testlab", "/pc1")
+
+    service.fs_delete_offline("testlab", "/pc1")  # empty: no recursive flag needed
+    assert not (store.lab_dir("testlab") / "pc1").exists()
+
+    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "back")
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "back"
+
+
+def test_search_lines_in_text_keeps_a_line_of_exactly_the_maximum_length_whole():
+    from kathara_api.services.kathara_service import _SEARCH_MAX_LINE_LENGTH, _search_lines_in_text
+
+    line = "needle" + "x" * (_SEARCH_MAX_LINE_LENGTH - 6)
+
+    assert _search_lines_in_text(line, "needle", False, 10)[0] == [(1, line)]
+
+
+def test_search_lines_in_text_ignores_case_on_both_sides_unless_asked():
+    from kathara_api.services.kathara_service import _search_lines_in_text
+
+    assert _search_lines_in_text("a needle here", "NEEDLE", False, 10)[0] == [(1, "a needle here")]
+    assert _search_lines_in_text("a needle here", "NEEDLE", True, 10)[0] == []
+
