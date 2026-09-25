@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:mutation": "stryker run",
     "build:shell": "node scripts/build.mjs",
     "build:frontend": "npm --prefix ../frontend run build",
     "build": "npm run typecheck && npm run build:shell",
@@ -26,6 +27,8 @@
     "dist:linux:appimage": "npm run dist -- --linux AppImage"
   },
   "devDependencies": {
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^3.2.7",
     "electron": "^44.0.0",

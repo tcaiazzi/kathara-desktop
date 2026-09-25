@@ -46,7 +46,8 @@ endif
         install install-frontend install-desktop \
         wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell \
         check lint typecheck test coverage check-frontend check-desktop check-backend \
-        clean clean-wheel clean-python clean-deps distclean
+        mutation mutation-frontend mutation-desktop mutation-backend \
+        clean clean-wheel clean-python clean-deps clean-mutation distclean
 
 all: build
 
@@ -106,6 +107,37 @@ coverage:
 	$(RUN_NODE) npm run test:coverage --prefix $(FRONTEND_DIR)
 	$(RUN_NODE) npm run test:coverage --prefix $(DESKTOP_DIR)
 	pytest -m "not docker and not network" --cov --cov-report=term --cov-report=html
+
+## ---- mutation testing (never in CI) ---------------------------------------
+## Coverage says which lines the tests run; mutation testing says which of them the tests would
+## notice breaking. Each tool plants one small change at a time (a flipped comparison, a dropped
+## branch, an emptied string) and reruns the suite: a change no test fails on is a "survivor".
+## Kept out of CI because it is noisy rather than slow (all three take about six minutes on a
+## 12-core machine, most of it the backend's ~4,400 mutants): many survivors are equivalent
+## mutants no test could tell apart from the original, so read them one by one rather than
+## chasing the score. Nothing here fails on a low number.
+##
+## Needs the `mutation` extra for the backend (`pip install -e '.[dev,mutation]'`, Linux/macOS:
+## mutmut forks) and `make install` for the Node trees, where Stryker is a devDependency.
+
+mutation: mutation-frontend mutation-desktop mutation-backend
+
+# Stryker, configured in each tree's stryker.config.mjs. Reports in <tree>/reports/mutation/.
+mutation-frontend:
+	$(RUN_NODE) npm run test:mutation --prefix $(FRONTEND_DIR)
+
+mutation-desktop:
+	$(RUN_NODE) npm run test:mutation --prefix $(DESKTOP_DIR)
+
+# mutmut, configured in pyproject.toml's [tool.mutmut]. Always from scratch, so the numbers are
+# those of the current tests and never results mutmut kept from an earlier run in mutants/.
+# mutants/src is created before the run and put first on PYTHONPATH, or the editable install
+# resolves `kathara_api` to the unmutated src/ (Python caches a path entry that does not exist yet
+# as empty). Afterwards: `mutmut results` lists the survivors, `mutmut show <name>` shows one.
+mutation-backend:
+	rm -rf mutants
+	mkdir -p mutants/src
+	PYTHONPATH=$(CURDIR)/mutants/src mutmut run
 
 ## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----
 ## Only needed for `dist`; skip these for plain dev builds. `vendor-deps` needs `wheel` (it installs
@@ -196,6 +228,11 @@ clean-python:
 # ~100 MB interpreter download per arch.
 clean-deps:
 	rm -rf $(DESKTOP_DIR)/vendor/site-packages-*
+
+# Mutation testing's working copy and reports (see `mutation`).
+clean-mutation:
+	rm -rf mutants $(FRONTEND_DIR)/reports $(DESKTOP_DIR)/reports
+	rm -rf $(FRONTEND_DIR)/.stryker-tmp $(DESKTOP_DIR)/.stryker-tmp
 
 # Everything clean removes, plus node_modules. Forces the next build to reinstall/refetch.
 distclean: clean clean-wheel clean-python clean-deps

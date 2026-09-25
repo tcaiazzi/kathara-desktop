@@ -30,6 +30,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "pytest-cov>=5.0", "ruff>=0.14"]
+# `make mutation-backend` only. Pinned: mutmut 3 has changed its configuration keys between minor
+# releases, and [tool.mutmut] below is written for this one.
+mutation = ["mutmut==3.8.0"]
 
 [project.scripts]
 kathara-api = "kathara_api.main:run"
@@ -94,3 +97,28 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+
+# Read by `make mutation-backend`, never by CI. The modules with the backend's actual logic:
+# schemas/, errors.py and main.py are declarations and wiring, where nearly every mutant is either
+# rejected by pydantic at import or equivalent. `also_copy` puts the rest of the package next to
+# the mutated files in mutants/src, so imports of the unmutated modules still resolve.
+[tool.mutmut]
+paths_to_mutate = [
+    "src/kathara_api/services/kathara_service.py",
+    "src/kathara_api/services/lab_conf_edit.py",
+    "src/kathara_api/services/lab_import.py",
+    "src/kathara_api/services/lab_store.py",
+    "src/kathara_api/dependencies.py",
+    "src/kathara_api/routers/",
+]
+tests_dir = ["tests/unit"]
+also_copy = ["src/kathara_api"]
+# The drift guard deselected here checks that every per-lab method of KatharaService has a test;
+# mutmut adds each method's mutated copies to the class under new names, which it then reports as
+# untested methods.
+pytest_add_cli_args = [
+    "--deselect", "tests/unit/test_unknown_lab_coverage.py::test_every_lab_lookup_method_is_covered",
+    "-m", "not docker and not network",
+    "-p", "no:cacheprovider",
+    "-q",
+]

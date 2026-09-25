@@ -7,6 +7,11 @@ __pycache__/
 htmlcov/
 services/frontend/coverage/
 services/desktop/coverage/
+# Mutation testing (`make mutation`): mutmut's working copy, Stryker's sandbox and reports
+mutants/
+.stryker-tmp/
+services/frontend/reports/
+services/desktop/reports/
 build/
 dist/
 
