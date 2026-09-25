@@ -4,13 +4,13 @@ import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
-import type { MachineDetail } from "../services/types";
 import {
-  MachineOptionsFields,
   optionsFormStateFromMachine,
   optionsFormStateToPayload,
   type OptionsFormState,
-} from "./MachineOptionsFields";
+} from "../services/machineOptionsForm";
+import type { MachineDetail } from "../services/types";
+import { MachineOptionsFields } from "./MachineOptionsFields";
 import { ModalSubmitFooter } from "./ModalSubmitFooter";
 
 interface MachineOptionsEditorProps {

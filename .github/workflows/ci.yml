@@ -19,7 +19,13 @@ jobs:
         working-directory: services/frontend
       - run: npm run typecheck
         working-directory: services/frontend
-      - run: npm run test
+      # `shell: bash` runs with `-eo pipefail`, so a failing test still fails the step through `tee`.
+      - run: npm run test:coverage | tee coverage.txt
+        shell: bash
+        working-directory: services/frontend
+      # Report only, no threshold: the per-file table lands on the run's summary page.
+      - run: |
+          { echo '### Frontend coverage'; echo '```text'; grep -E '^\s*[-A-Za-z0-9_./ ]+\|' coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
         working-directory: services/frontend
       - run: npm run build
         working-directory: services/frontend

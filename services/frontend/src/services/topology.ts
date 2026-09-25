@@ -165,3 +165,48 @@ export function computeTopology(
   }
   return { nodes, edges };
 }
+
+// -- layout geometry --------------------------------------------------------------------------
+
+/** Node id → canvas position: what the layout engine reports and what `lab.layout` stores. */
+export type NodePositions = Record<string, { x: number; y: number }>;
+
+// Do two position maps describe the same layout? Coordinates are compared as integers (that is what
+// the engine reports and what is stored), so a sub-pixel drift never marks the layout as unsaved.
+export function samePositions(a: NodePositions, b: NodePositions | null): boolean {
+  if (!b) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(
+    (id) => b[id] && Math.round(a[id].x) === Math.round(b[id].x) && Math.round(a[id].y) === Math.round(b[id].y),
+  );
+}
+
+/** The viewport transform that fits every node into a `width`×`height` canvas: the nodes' bounding
+ *  box plus a 50px margin on each side, centred, at a scale kept within [0.3, 2]. `nodes` must not
+ *  be empty. */
+export function fitTransform(
+  nodes: readonly { x: number; y: number }[],
+  width: number,
+  height: number,
+): { scale: number; tx: number; ty: number } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const nd of nodes) {
+    minX = Math.min(minX, nd.x);
+    minY = Math.min(minY, nd.y);
+    maxX = Math.max(maxX, nd.x);
+    maxY = Math.max(maxY, nd.y);
+  }
+  const pad = 50;
+  const bw = maxX - minX + pad * 2;
+  const bh = maxY - minY + pad * 2;
+  const scale = Math.max(0.3, Math.min(2, Math.min(width / bw, height / bh)));
+  return {
+    scale,
+    tx: (width - (minX + maxX) * scale) / 2,
+    ty: (height - (minY + maxY) * scale) / 2,
+  };
+}

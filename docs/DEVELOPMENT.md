@@ -186,6 +186,12 @@ pytest -m network                        # integration tests (need internet: liv
 pytest                                   # everything, including both of the above
 ```
 
-`make coverage` runs the CI subset with branch coverage and prints a per-file summary; the HTML
-report lands in `htmlcov/`. CI publishes the same table on each run's summary page. It is a
-report, not a gate: no threshold fails the build.
+`make coverage` runs both test suites with coverage and prints a per-file summary for each: the
+frontend's (`npm run test:coverage`, HTML report in `services/frontend/coverage/`) and the
+backend's CI subset with branch coverage (HTML report in `htmlcov/`). CI publishes both tables on
+each run's summary page. It is a report, not a gate: no threshold fails the build.
+
+The frontend suite runs in Vitest's `node` environment, with no DOM: it tests pure logic only,
+and logic worth testing that lives in a component or hook is first moved into a plain module
+under `src/services/` (or `src/editor/`). Its total counts components and hooks too, so it reads
+low by design; the per-file numbers for those modules are the ones to watch.

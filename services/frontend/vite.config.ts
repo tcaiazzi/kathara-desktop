@@ -28,5 +28,14 @@ export default defineConfig({
     // which is why labConfRules.ts and fsTree.ts exist apart from their CodeMirror/React callers.
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // `npm run test:coverage`. Report only, no threshold. Components and hooks are counted too, so
+    // the total reflects the whole of src/, not just the part this suite is meant to reach.
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.{ts,tsx}"],
+      exclude: ["src/**/*.test.ts", "src/test/**", "src/main.tsx", "src/services/types.ts"],
+      reporter: ["text", "html"],
+      reportsDirectory: "coverage",
+    },
   },
 });

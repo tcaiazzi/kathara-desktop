@@ -15,11 +15,17 @@ import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
-import { useForceLayout, type NodePositions } from "../hooks/useForceLayout";
+import { useForceLayout } from "../hooks/useForceLayout";
 import { api, isAbortError } from "../services/api";
 import { machineStartupText } from "../services/labfs";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
-import { deviceStateLabel, formatIface, formatPort } from "../services/topology";
+import {
+  deviceStateLabel,
+  formatIface,
+  formatPort,
+  samePositions,
+  type NodePositions,
+} from "../services/topology";
 import type { LabDetail, StartupStatus } from "../services/types";
 import "./TopologyGraph.css";
 import type { ContextMenuState } from "./TopologyContextMenu";
@@ -70,17 +76,6 @@ function Kv({ k, v }: { k: string; v: ReactNode }) {
       <span className="k">{k}</span>
       <span className="v">{v}</span>
     </div>
-  );
-}
-
-// Do two position maps describe the same layout? Coordinates are compared as integers (that is what
-// the engine reports and what is stored), so a sub-pixel drift never marks the layout as unsaved.
-function samePositions(a: NodePositions, b: NodePositions | null): boolean {
-  if (!b) return false;
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  return keys.every(
-    (id) => b[id] && Math.round(a[id].x) === Math.round(b[id].x) && Math.round(a[id].y) === Math.round(b[id].y),
   );
 }
 

@@ -6,13 +6,14 @@
 // events that need component-level context (building context-menu items, opening modals) rather
 // than the hook owning that state itself.
 //
-// Everything above the hook is module-level on purpose — the SVG element builder, the tooltip
-// markup and the viewport transform have no React state to hold, so they stay out of the hook
-// body and out of every re-render.
+// Everything above the hook is module-level on purpose — the SVG element builder and the viewport
+// transform have no React state to hold, so they stay out of the hook body and out of every
+// re-render. The tooltip markup lives in services/topologyTooltip.ts, where it is unit-tested.
 
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { CATEGORY_ICON } from "../services/deviceIcon";
-import { deviceStateLabel, formatIface, formatPort, type TopoEdge, type TopoModel, type TopoNode } from "../services/topology";
+import { fitTransform, type NodePositions, type TopoEdge, type TopoModel, type TopoNode } from "../services/topology";
+import { tooltipHtml } from "../services/topologyTooltip";
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -26,8 +27,6 @@ function svgEl<K extends keyof SVGElementTagNameMap>(
   if (text != null) n.textContent = text;
   return n;
 }
-
-export type NodePositions = Record<string, { x: number; y: number }>;
 
 interface Engine {
   canvas: HTMLDivElement;
@@ -92,67 +91,16 @@ interface UseForceLayout {
   centerOn: (id: string) => void;
 }
 
-function esc(s: string): string {
-  return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
-}
-
-function ttRow(k: string, v: string): string {
-  return `<div class="tt-row"><span class="tt-k">${esc(k)}</span><span class="tt-v">${esc(v)}</span></div>`;
-}
-
-// Full-detail HTML shown on node hover (device: image/state/interfaces+IPs/ports; domain: members).
-function tooltipHtml(nd: TopoNode): string {
-  if (nd.type === "dev") {
-    const rows: string[] = [
-      `<div class="tt-title">${esc(nd.name)}<span class="tt-tag">${esc(nd.typeLabel)}${nd.bridged ? " · bridged" : ""}</span></div>`,
-      ttRow("image", nd.image || "—"),
-      ttRow("state", deviceStateLabel(nd)),
-    ];
-    if (nd.ifaces.length) {
-      rows.push('<div class="tt-sec">interfaces</div>');
-      for (const it of nd.ifaces) {
-        const ips = it.ips.length ? it.ips.join(", ") : "—";
-        rows.push(`<div class="tt-if"><span class="tt-mono">${formatIface(it.num, esc(it.link))}</span><span class="tt-mono tt-ip">${esc(ips)}</span></div>`);
-        if (it.mac) rows.push(`<div class="tt-mac tt-mono">${esc(it.mac)}</div>`);
-      }
-    }
-    if (nd.ports.length) {
-      const ports = nd.ports.map(formatPort).join(", ");
-      rows.push('<div class="tt-sec">ports</div>');
-      rows.push(`<div class="tt-mono">${esc(ports)}</div>`);
-    }
-    return rows.join("");
-  }
-  const rows: string[] = [
-    `<div class="tt-title">${esc(nd.name)}<span class="tt-tag">${nd.external.length ? "external" : "collision domain"}</span></div>`,
-    ttRow("devices", nd.members.join(", ") || "—"),
-  ];
-  if (nd.external.length) rows.push(ttRow("host", nd.external.join(", ")));
-  return rows.join("");
-}
-
 function applyTransform(engine: Engine): void {
   engine.viewport.setAttribute("transform", `translate(${engine.tx},${engine.ty}) scale(${engine.scale})`);
 }
 
 // Fit all nodes into view (scale + center). Shared by the returned fit() and the auto-fit-on-settle.
 function fitEngine(engine: Engine): void {
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const nd of engine.nodes) {
-    minX = Math.min(minX, nd.x);
-    minY = Math.min(minY, nd.y);
-    maxX = Math.max(maxX, nd.x);
-    maxY = Math.max(maxY, nd.y);
-  }
-  const pad = 50;
-  const bw = maxX - minX + pad * 2;
-  const bh = maxY - minY + pad * 2;
-  engine.scale = Math.max(0.3, Math.min(2, Math.min(engine.W / bw, engine.H / bh)));
-  engine.tx = (engine.W - (minX + maxX) * engine.scale) / 2;
-  engine.ty = (engine.H - (minY + maxY) * engine.scale) / 2;
+  const { scale, tx, ty } = fitTransform(engine.nodes, engine.W, engine.H);
+  engine.scale = scale;
+  engine.tx = tx;
+  engine.ty = ty;
   applyTransform(engine);
 }
 

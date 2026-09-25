@@ -6,10 +6,10 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
 import {
   defaultOptionsFormState,
-  MachineOptionsFields,
   optionsFormStateToPayload,
   type OptionsFormState,
-} from "./MachineOptionsFields";
+} from "../services/machineOptionsForm";
+import { MachineOptionsFields } from "./MachineOptionsFields";
 import { ModalSubmitFooter } from "./ModalSubmitFooter";
 
 interface AddDeviceModalProps {

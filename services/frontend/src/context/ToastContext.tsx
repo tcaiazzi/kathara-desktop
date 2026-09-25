@@ -2,33 +2,21 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { ToastContainer, Toast, Button } from "react-bootstrap";
 import { desktop } from "../desktop/bridge";
 import { ApiError } from "../services/api";
-
-type ToastVariant = "success" | "danger" | "info";
-
-/** An optional action button a toast/notification can offer — e.g. "Download" on an
- *  update-available notice (see UpdateChecker.tsx). Deliberately a plain url string rather than a
- *  callback: it must survive the notification history's IPC round-trip (saveNotificationHistory/
- *  loadNotificationHistory) across a shell-triggered reload, which a closure can't. */
-interface ToastAction {
-  label: string;
-  url: string;
-}
+import {
+  allRead,
+  unreadCount as countUnread,
+  withCarriedHistory,
+  withNewNotification,
+  type NotificationHistoryItem,
+  type ToastAction,
+  type ToastVariant,
+} from "../services/notificationHistory";
 
 interface ToastItem {
   id: number;
   message: string;
   detail?: string;
   variant: ToastVariant;
-  action?: ToastAction;
-}
-
-interface NotificationHistoryItem {
-  id: number;
-  message: string;
-  detail?: string;
-  variant: ToastVariant;
-  timestamp: number;
-  read: boolean;
   action?: ToastAction;
 }
 
@@ -65,19 +53,6 @@ export function openLink(url: string): void {
   }
 }
 
-// Cap so a long-running session doesn't grow the history array unbounded.
-const HISTORY_LIMIT = 200;
-
-/** Loose runtime check on whatever the shell hands back from a prior saveNotificationHistory —
- * cheap insurance against a future shape change, not full validation. */
-function isHistoryItem(v: unknown): v is NotificationHistoryItem {
-  return (
-    typeof v === "object" && v !== null &&
-    typeof (v as NotificationHistoryItem).id === "number" &&
-    typeof (v as NotificationHistoryItem).message === "string"
-  );
-}
-
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [history, setHistory] = useState<NotificationHistoryItem[]>([]);
@@ -91,16 +66,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // call fired from another component's own mount-time effect (e.g. UpdateChecker's update
   // check, whose result can already be cached in the main process and so resolve before this
   // does) — overwriting outright would silently drop whatever that earlier call already added.
-  // `loaded` is always the older, carried-over half, so it goes after `prev` in the newest-first
-  // list.
+  // See withCarriedHistory for the order and the validation.
   useEffect(() => {
     const shell = desktop();
     if (!shell) return;
     let cancelled = false;
     void shell.loadNotificationHistory().then((loaded) => {
-      if (!cancelled && Array.isArray(loaded) && loaded.every(isHistoryItem)) {
-        setHistory((prev) => [...prev, ...loaded].slice(0, HISTORY_LIMIT));
-      }
+      if (!cancelled) setHistory((prev) => withCarriedHistory(prev, loaded));
     }).catch(() => {});
     return () => {
       cancelled = true;
@@ -125,7 +97,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => [...prev, { id, message, detail, variant, action }]);
     setTimeout(() => remove(id), variant === "danger" ? 7000 : 3500);
     setHistory((prev) =>
-      [{ id, message, detail, variant, action, timestamp: Date.now(), read: false }, ...prev].slice(0, HISTORY_LIMIT),
+      withNewNotification(prev, { id, message, detail, variant, action, timestamp: Date.now(), read: false }),
     );
   }, [remove]);
 
@@ -138,13 +110,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [show],
   );
 
-  const markAllRead = useCallback(() => {
-    setHistory((prev) => (prev.some((h) => !h.read) ? prev.map((h) => ({ ...h, read: true })) : prev));
-  }, []);
+  const markAllRead = useCallback(() => setHistory(allRead), []);
 
   const clearHistory = useCallback(() => setHistory([]), []);
 
-  const unreadCount = useMemo(() => history.reduce((n, h) => n + (h.read ? 0 : 1), 0), [history]);
+  const unreadCount = useMemo(() => countUnread(history), [history]);
 
   const value = useMemo(() => ({ show, reportError }), [show, reportError]);
   const notificationsValue = useMemo(

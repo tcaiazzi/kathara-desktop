@@ -96,10 +96,12 @@ test:
 	$(RUN_NODE) npm run test --prefix $(FRONTEND_DIR)
 	pytest -m "not docker and not network"
 
-# Backend branch coverage over the same suite CI runs (settings in pyproject.toml's
-# [tool.coverage]): a per-file summary in the terminal, an HTML report in htmlcov/. Report only,
+# Coverage over the same suites CI runs, a per-file summary in the terminal for each half. HTML
+# reports land in services/frontend/coverage/ (settings in vite.config.ts's `test.coverage`) and
+# htmlcov/ (backend branch coverage, settings in pyproject.toml's [tool.coverage]). Report only,
 # nothing here fails on a low number.
 coverage:
+	$(RUN_NODE) npm run test:coverage --prefix $(FRONTEND_DIR)
 	pytest -m "not docker and not network" --cov --cov-report=term --cov-report=html
 
 ## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----
