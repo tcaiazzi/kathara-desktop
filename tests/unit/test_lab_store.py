@@ -60,7 +60,7 @@ def test_gen_lab_conf_round_trips_through_parser():
     parsed = lab_import.parse_lab_conf(conf)
     assert not parsed.errors
     assert set(parsed.machines.keys()) == {"r1", "pc1"}
-    assert parsed.metadata == {"name": "static_routing", "description": "Two routers", "author": "Kathara"}
+    assert parsed.metadata == {"description": "Two routers", "author": "Kathara"}  # no name: see gen_lab_conf
 
     r1 = parsed.machines["r1"]
     assert r1.image == "kathara/base"
@@ -102,7 +102,7 @@ def test_delete_lab_removes_directory(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.write_lab("demo", {"lab.conf": "pc1[0]=\"A\"\n"})
     assert store.lab_dir("demo").exists()
-    store.delete_lab("demo")
+    store.delete_lab(store.lab_dir("demo"))
     assert not store.lab_dir("demo").exists()
     assert store.lab_names() == []
 
@@ -177,8 +177,8 @@ def test_download_upload_round_trip_keeps_the_execute_bit(tmp_path):
     store.write_lab("demo", {"lab.conf": 'pc1[0]="A"\n', "pc1.startup": "echo hi\n"})
     os.chmod(tmp_path / "labs" / "demo" / "pc1.startup", 0o755)
 
-    buf = store.zip_lab("demo")
-    store.delete_lab("demo")
+    buf = store.zip_lab(store.lab_dir("demo"))
+    store.delete_lab(store.lab_dir("demo"))
     store.extract_zip("demo", buf)
 
     assert (tmp_path / "labs" / "demo" / "pc1.startup").stat().st_mode & stat.S_IXUSR
@@ -228,7 +228,7 @@ def test_scratch_directories_are_unique_per_write(tmp_path):
 def test_zip_lab_archives_directory_at_root(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.write_lab("demo", {"lab.conf": 'pc1[0]="A"\n', "pc1/etc/motd": "hi\n"})
-    buf = store.zip_lab("demo")
+    buf = store.zip_lab(store.lab_dir("demo"))
     with zipfile.ZipFile(buf) as archive:
         names = set(archive.namelist())
         assert "lab.conf" in names  # stored at the archive root, no wrapper folder
@@ -239,33 +239,33 @@ def test_zip_lab_archives_directory_at_root(tmp_path):
 def test_zip_lab_missing_lab_raises_not_found(tmp_path):
     store = LabStore(tmp_path / "labs")
     with pytest.raises(LabNotFoundError):
-        store.zip_lab("nope")
+        store.zip_lab(store.lab_dir("nope"))
 
 
 def test_read_write_lab_conf_text_round_trips_crlf(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.write_lab("crlflab", {"lab.conf": "pc1[image]=kathara/base\r\npc1[0]=A\r\n"})
 
-    assert store.read_lab_conf_text("crlflab") == "pc1[image]=kathara/base\r\npc1[0]=A\r\n"
+    assert store.read_lab_conf_text(store.lab_dir("crlflab")) == "pc1[image]=kathara/base\r\npc1[0]=A\r\n"
 
-    store.write_lab_conf_text("crlflab", "pc1[image]=kathara/base\r\npc1[0]=A\r\npc1[1]=B\r\n")
-    assert store.read_lab_conf_text("crlflab") == "pc1[image]=kathara/base\r\npc1[0]=A\r\npc1[1]=B\r\n"
+    store.write_lab_conf_text(store.lab_dir("crlflab"), "pc1[image]=kathara/base\r\npc1[0]=A\r\npc1[1]=B\r\n")
+    assert store.read_lab_conf_text(store.lab_dir("crlflab")) == "pc1[image]=kathara/base\r\npc1[0]=A\r\npc1[1]=B\r\n"
 
 
 def test_read_lab_conf_text_absent_or_missing_dir(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.ensure_lab_dir("nolabconf")
-    assert store.read_lab_conf_text("nolabconf") is None
-    assert store.read_lab_conf_text("does-not-exist") is None
+    assert store.read_lab_conf_text(store.lab_dir("nolabconf")) is None
+    assert store.read_lab_conf_text(store.lab_dir("does-not-exist")) is None
 
 
 def test_write_lab_conf_text_is_atomic_and_requires_existing_dir(tmp_path):
     store = LabStore(tmp_path / "labs")
     with pytest.raises(LabNotFoundError):
-        store.write_lab_conf_text("nosuchlab", "pc1[image]=kathara/base\n")
+        store.write_lab_conf_text(store.lab_dir("nosuchlab"), "pc1[image]=kathara/base\n")
 
     store.ensure_lab_dir("atomiclab")
-    store.write_lab_conf_text("atomiclab", "pc1[image]=kathara/base\n")
+    store.write_lab_conf_text(store.lab_dir("atomiclab"), "pc1[image]=kathara/base\n")
     lab_dir = store.lab_dir("atomiclab")
     assert (lab_dir / "lab.conf").read_text() == "pc1[image]=kathara/base\n"
     assert not (lab_dir / ".lab.conf.tmp").exists()
@@ -415,9 +415,9 @@ def test_read_lab_conf_text_accepts_a_file_of_exactly_the_size_ceiling(tmp_path,
     (tmp_path / "labs" / "demo" / "lab.conf").write_text("x" * 64)
 
     monkeypatch.setattr(lab_store_module, "MAX_LAB_CONF_BYTES", 64)
-    assert store.read_lab_conf_text("demo") == "x" * 64
+    assert store.read_lab_conf_text(store.lab_dir("demo")) == "x" * 64
     monkeypatch.setattr(lab_store_module, "MAX_LAB_CONF_BYTES", 63)
-    assert store.read_lab_conf_text("demo") is None
+    assert store.read_lab_conf_text(store.lab_dir("demo")) is None
 
 
 # -- conf_value and generated lab.conf text ------------------------------------------------------
@@ -489,7 +489,9 @@ def test_gen_device_lines_skips_an_empty_interface_slot_and_keeps_the_rest():
     assert gen_device_lines(device)[:2] == ['pc1[0]="A"', 'pc1[2]="C"']
 
 
-def test_gen_lab_conf_writes_every_metadata_key_then_a_blank_line():
+def test_gen_lab_conf_writes_every_metadata_key_but_the_name_then_a_blank_line():
+    """LAB_NAME is left out: Kathara's LabParser would re-derive the lab's hash from it, so
+    `kathara lstart` in the directory would deploy under a different identity (see lab_id_for)."""
     lab = lab_builder.build_lab(
         LabCreate(
             name="meta",
@@ -499,8 +501,7 @@ def test_gen_lab_conf_writes_every_metadata_key_then_a_blank_line():
         )
     )
 
-    assert gen_lab_conf(lab).splitlines()[:8] == [
-        "LAB_NAME=meta",
+    assert gen_lab_conf(lab).splitlines()[:7] == [
         'LAB_DESCRIPTION="A demo"',
         "LAB_VERSION=1.0",
         "LAB_AUTHOR=Ann",

@@ -131,11 +131,11 @@ const api = {
    * in an OS-modal dialog. */
   pickHostDirectory: (current?: string): Promise<string | null> =>
     ipcRenderer.invoke("fs:pick-host-dir", current),
-  revealLab: (labName: string) => ipcRenderer.invoke("fs:reveal-lab", labName),
+  revealLab: (labId: string) => ipcRenderer.invoke("fs:reveal-lab", labId),
   openLabsFolder: () => ipcRenderer.invoke("fs:open-labs-folder"),
 
   // -- device terminal in the lab's directory --
-  openTerminalHere: (labName: string) => ipcRenderer.invoke("terminal:open-here", labName),
+  openTerminalHere: (labId: string) => ipcRenderer.invoke("terminal:open-here", labId),
 
   // -- lab storage directory (Settings) --
   getLabsDir: (): Promise<string> => ipcRenderer.invoke("labs:get-dir"),

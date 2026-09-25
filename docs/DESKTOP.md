@@ -202,7 +202,9 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   `preferences.json`. That override honours a `{cmd}` placeholder that nothing currently fills:
   `spawnTerminal` takes an optional command, and the only entry point — *Open Terminal Here* —
   opens a plain shell. The placeholder is what an "attach to this device" entry point would use.
-- **`kathara://lab/<name>`** opens that lab, in the running instance if there is one.
+- **`kathara://lab/<name>`** opens that lab, in the running instance if there is one. The link
+  carries a name, the route an id (see `docs/BACKEND.md`), so it lands on `/workspace?lab=<name>`
+  and the Workspace resolves the name against the lab list.
 - Quitting with labs still deployed asks first, and offers to undeploy them — their containers
   would otherwise keep running.
 - The backend is bound to `127.0.0.1` only and paired with this one launch via the token

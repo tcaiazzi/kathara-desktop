@@ -8,7 +8,7 @@ import { ModalSubmitFooter } from "./ModalSubmitFooter";
 interface NewLabModalProps {
   show: boolean;
   onClose: () => void;
-  onCreated: (labName: string) => void;
+  onCreated: (labId: string) => void;
 }
 
 // Lab names double as on-disk directory names, so they must be a safe single path segment —
@@ -39,7 +39,7 @@ export function NewLabModal({ show, onClose, onCreated }: NewLabModalProps) {
       // LabSummary.name is nullable: resolve it once so the toast can't print `Lab "null"`.
       const labName = detail.name ?? trimmed;
       toast.show(`Lab "${labName}" created.`, "success");
-      onCreated(labName);
+      onCreated(detail.id);
       handleClose();
     });
   }

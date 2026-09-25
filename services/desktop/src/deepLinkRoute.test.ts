@@ -3,18 +3,22 @@ import { deepLinkFromArgv, resolveDeepLink } from "./deepLinkRoute";
 
 describe("resolveDeepLink", () => {
   it.each([
-    ["kathara://lab/demo", "/workspace/demo"],
-    ["kathara://lab/my%20lab", "/workspace/my%20lab"],
-    ["kathara://lab/caff%C3%A8", "/workspace/caff%C3%A8"],
-    ["kathara://lab/demo?tab=topology#x", "/workspace/demo"],
-  ])("routes %s to the lab's workspace", (raw, route) => {
+    ["kathara://lab/demo", "/workspace?lab=demo"],
+    ["kathara://lab/my%20lab", "/workspace?lab=my%20lab"],
+    ["kathara://lab/caff%C3%A8", "/workspace?lab=caff%C3%A8"],
+    ["kathara://lab/demo?tab=topology#x", "/workspace?lab=demo"],
+  ])("routes %s to the workspace, naming the lab to open", (raw, route) => {
     expect(resolveDeepLink(raw)).toEqual({ kind: "route", route });
   });
 
-  it("re-encodes the lab name, so an encoded slash cannot reach another route", () => {
+  it("re-encodes the lab name, so an encoded slash or query cannot reach another route", () => {
     expect(resolveDeepLink("kathara://lab/..%2Fsettings")).toEqual({
       kind: "route",
-      route: "/workspace/..%2Fsettings",
+      route: "/workspace?lab=..%2Fsettings",
+    });
+    expect(resolveDeepLink("kathara://lab/a%26welcome%3D1")).toEqual({
+      kind: "route",
+      route: "/workspace?lab=a%26welcome%3D1",
     });
   });
 

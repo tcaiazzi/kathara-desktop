@@ -87,7 +87,7 @@ interface FsTreeLabels {
 
 interface UseFsTreeOptions {
   source: FsTreeSource;
-  /** Identity of what is being browsed (lab name, device name). A change resets everything. */
+  /** Identity of what is being browsed (lab id, device name). A change resets everything. */
   scopeKey: string;
   /** False parks the hook: no fetching, empty tree (e.g. no running device to browse). */
   enabled?: boolean;

@@ -6,7 +6,7 @@ from Kathara.exceptions import NotSupportedError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, lab_id, register_lab
 
 
 class _FacadeCaptureConnect(FakeFacadeBase):
@@ -30,14 +30,14 @@ def _service_with_stopped_machine():
             }
         )
     )
-    service.registry.add(lab)
+    register_lab(service, lab)
     return service, facade, lab
 
 
 def test_connect_machine_adds_explicit_interface_on_stopped_machine():
     service, facade, lab = _service_with_stopped_machine()
 
-    service.connect_machine("lab1", "pc1", "A", interface_number=3, mac_address="02:00:00:00:00:03")
+    service.connect_machine(lab_id(service, "lab1"), "pc1", "A", interface_number=3, mac_address="02:00:00:00:00:03")
 
     machine = lab.machines["pc1"]
     assert facade.called is False
@@ -51,7 +51,7 @@ def test_connect_machine_rejects_explicit_interface_on_running_machine():
     lab.machines["pc1"].api_object = object()
 
     with pytest.raises(NotSupportedError):
-        service.connect_machine("lab1", "pc1", "A", interface_number=3)
+        service.connect_machine(lab_id(service, "lab1"), "pc1", "A", interface_number=3)
 
 
 class _Container:
@@ -65,7 +65,7 @@ def test_connect_machine_rejects_running_machine_started_without_network():
     machine.api_object = _Container("none")
 
     with pytest.raises(NotSupportedError, match="`pc1` was started without any network interface"):
-        service.connect_machine("lab1", "pc1", "A")
+        service.connect_machine(lab_id(service, "lab1"), "pc1", "A")
 
     assert facade.called is False
     assert machine.interfaces == {}
@@ -75,6 +75,6 @@ def test_connect_machine_connects_running_machine_started_with_network():
     service, facade, lab = _service_with_stopped_machine()
     lab.machines["pc1"].api_object = _Container("bridge")
 
-    service.connect_machine("lab1", "pc1", "A")
+    service.connect_machine(lab_id(service, "lab1"), "pc1", "A")
 
     assert facade.called is True

@@ -15,7 +15,7 @@ import { ModalSubmitFooter } from "./ModalSubmitFooter";
 
 interface MachineOptionsEditorProps {
   show: boolean;
-  labName: string;
+  labId: string;
   machine: MachineDetail | null;
   deployed: boolean;
   onClose: () => void;
@@ -26,7 +26,7 @@ interface MachineOptionsEditorProps {
 // ulimits, exec commands, ports, volumes, and any other pass-through option) — the full-fidelity
 // alternative to hand-editing lab.conf text. Only usable while the lab is undeployed (`deployed`
 // gates every control read-only) since options only ever take effect on the lab's next deploy.
-export function MachineOptionsEditor({ show, labName, machine, deployed, onClose, onSaved }: MachineOptionsEditorProps) {
+export function MachineOptionsEditor({ show, labId, machine, deployed, onClose, onSaved }: MachineOptionsEditorProps) {
   const [form, setForm] = useState<OptionsFormState | null>(null);
   const [initial, setInitial] = useState<OptionsFormState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -77,7 +77,7 @@ export function MachineOptionsEditor({ show, labName, machine, deployed, onClose
   async function handleSave() {
     if (!form || !machine) return;
     await runBusy(setBusy, "Save device options", async () => {
-      await api.updateMachine(labName, machine.name, optionsFormStateToPayload(form));
+      await api.updateMachine(labId, machine.name, optionsFormStateToPayload(form));
       toast.show(`Saved options for ${machine.name}.`, "success");
       await onSaved();
       onClose();

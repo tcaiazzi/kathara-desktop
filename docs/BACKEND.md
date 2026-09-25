@@ -11,8 +11,15 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 - **`services/kathara_service.py`** (`KatharaService`) — the single integration point with Kathara. It
   holds the `Kathara.get_instance()` facade behind a mutation lock and a process-local `LabRegistry`
   (`services/registry.py`); state is single-worker by design. Lab *creation* is serialized per lab
-  **name** (`_claiming_name`) rather than behind that global lock, so the check-then-write that
-  claims a name is atomic without a large `.zip` extraction stalling unrelated labs' deploys.
+  **directory** (`_claiming`) rather than behind that global lock, so the check-then-write that
+  claims a directory is atomic without a large `.zip` extraction stalling unrelated labs' deploys.
+- **A lab's id** — the `{lab}` segment of every per-lab path below, and `id` in `LabSummary` — is
+  Kathara's hash of the lab directory's absolute path (`lab_store.lab_id_for`). It is also the
+  `lab_hash` every facade call is made with, so a lab `kathara lstart` starts in the same directory
+  *is* this lab (same containers). It is never a name: renaming a lab moves its directory and so
+  changes its id, which is why `POST .../rename` returns the lab again and is refused while it is
+  deployed. The one divergence from the CLI is a hand-written `LAB_NAME=` in `lab.conf`, from which
+  Kathara's `LabParser` re-derives the hash; this app never writes one (`gen_lab_conf`).
 - **`services/lab_store.py`** (`LabStore`) — on-disk persistence of labs under `KATHARA_API_LABS_DIR`
   (atomic tmp-swap writes, into a per-write private scratch dir; publishing over an already-existing
   lab directory is refused rather than overwriting it). An imported/uploaded/hand-edited `lab.conf` is always persisted
@@ -156,7 +163,7 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/labs/{lab}/images` | Which of this lab's device images are missing locally and which have a newer version upstream — call it immediately before a deploy so the download is its own consented step instead of a silent pull inside `POST .../deploy`. Callers must treat *any* failure as "deploy anyway". Costs one registry round-trip per present image (bounded, parallel) unless `image_update_policy` is `Never` | — | `LabImagesStatus` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
-| POST | `/api/labs/{lab}/rename` | Rename the lab directory (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` |
+| POST | `/api/labs/{lab}/rename` | Rename the lab directory; the lab gets a new id (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` (with the new `id`) |
 | DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk) | — | `Message` |
 
 ## Machines — `/api/labs/{lab}/machines`

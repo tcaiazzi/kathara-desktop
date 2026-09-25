@@ -8,10 +8,10 @@ import "./TerminalWindowPage.css";
 // `openTerminalWindow()` as a real, separate browser window/tab rather than an in-page overlay,
 // so the OS's own window manager handles drag/resize/arranging multiple terminals.
 //
-// Mounted outside WorkspaceProvider, which is why the lab name comes from the route.
+// Mounted outside WorkspaceProvider, which is why the lab id comes from the route.
 export function TerminalWindowPage() {
-  const { name = "", machine = "" } = useParams();
-  const session = useTerminalSession(name, machine);
+  const { labId = "", machine = "" } = useParams();
+  const session = useTerminalSession(labId, machine);
   const { containerRef, terminalRef } = session;
 
   useEffect(() => {

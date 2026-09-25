@@ -164,8 +164,8 @@ export const api = {
   listAvailableImages: () => request<AvailableImages>("GET", "/system/images"),
 
   listLabs: () => request<LabSummary[]>("GET", "/labs"),
-  getLab: (name: string, signal?: AbortSignal) =>
-    request<LabDetail>("GET", `/labs/${encodeURIComponent(name)}`, undefined, signal),
+  getLab: (labId: string, signal?: AbortSignal) =>
+    request<LabDetail>("GET", `/labs/${encodeURIComponent(labId)}`, undefined, signal),
   createLab: (payload: LabCreate, signal?: AbortSignal) => request<LabDetail>("POST", "/labs", payload, signal),
   // Binary-safe lab upload (a .zip of a standard Kathara lab directory) — unlike createLab's
   // JSON payload, this can carry non-text files. `name` is optional; the backend derives one
@@ -194,142 +194,144 @@ export const api = {
 
   // The lab's real on-disk lab.conf (verbatim: comments/quoting/unmapped options intact).
   // `exists: false` + empty content means the lab has no lab.conf on disk yet; PUT creates it.
-  getLabConf: (name: string, signal?: AbortSignal) =>
-    request<LabConfView>("GET", `/labs/${encodeURIComponent(name)}/lab-conf`, undefined, signal),
+  getLabConf: (labId: string, signal?: AbortSignal) =>
+    request<LabConfView>("GET", `/labs/${encodeURIComponent(labId)}/lab-conf`, undefined, signal),
   // Apply an edited lab.conf to a non-deployed lab (rebuilds its topology). 409 if deployed.
   // The submitted text is stored verbatim — a follow-up getLabConf should return it unchanged.
-  updateLabConf: (name: string, content: string) =>
-    request<LabDetail>("PUT", `/labs/${encodeURIComponent(name)}/lab-conf`, { content }),
+  updateLabConf: (labId: string, content: string) =>
+    request<LabDetail>("PUT", `/labs/${encodeURIComponent(labId)}/lab-conf`, { content }),
 
   // -- fixed topology layout (the lab's `lab.layout` file) --
   // An empty `nodes` map means the lab has no fixed layout (the graph then auto-lays out).
-  getLayout: (name: string) => request<LabLayout>("GET", `/labs/${encodeURIComponent(name)}/layout`),
-  saveLayout: (name: string, nodes: Record<string, { x: number; y: number }>) =>
-    request<LabLayout>("PUT", `/labs/${encodeURIComponent(name)}/layout`, { version: 1, nodes }),
-  deleteLayout: (name: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(name)}/layout`),
+  getLayout: (labId: string) => request<LabLayout>("GET", `/labs/${encodeURIComponent(labId)}/layout`),
+  saveLayout: (labId: string, nodes: Record<string, { x: number; y: number }>) =>
+    request<LabLayout>("PUT", `/labs/${encodeURIComponent(labId)}/layout`, { version: 1, nodes }),
+  deleteLayout: (labId: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(labId)}/layout`),
 
-  deployLab: (name: string) => request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/deploy`, {}),
-  undeployLab: (name: string) => request<Message>("POST", `/labs/${encodeURIComponent(name)}/undeploy`, {}),
+  deployLab: (labId: string) => request<LabDetail>("POST", `/labs/${encodeURIComponent(labId)}/deploy`, {}),
+  undeployLab: (labId: string) => request<Message>("POST", `/labs/${encodeURIComponent(labId)}/undeploy`, {}),
   // Deploy/undeploy a single device (the backend deploy/undeploy accept a machine subset).
-  deployDevice: (name: string, machine: string) =>
-    request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/deploy`, { selected_machines: [machine] }),
-  undeployDevice: (name: string, machine: string) =>
-    request<Message>("POST", `/labs/${encodeURIComponent(name)}/undeploy`, { selected_machines: [machine] }),
-  deleteLab: (name: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(name)}`),
-  // Rename a lab (its on-disk directory). 409 while the lab is deployed — its name is what
-  // Kathara derives container/network names from — or if `newName` is already taken.
-  renameLab: (name: string, newName: string) =>
-    request<LabDetail>("POST", `/labs/${encodeURIComponent(name)}/rename`, { name: newName }),
+  deployDevice: (labId: string, machine: string) =>
+    request<LabDetail>("POST", `/labs/${encodeURIComponent(labId)}/deploy`, { selected_machines: [machine] }),
+  undeployDevice: (labId: string, machine: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labId)}/undeploy`, { selected_machines: [machine] }),
+  deleteLab: (labId: string) => request<Message>("DELETE", `/labs/${encodeURIComponent(labId)}`),
+  // Rename a lab (its on-disk directory). The lab's id is derived from that directory's path, so
+  // the returned detail carries a *new* id — the old one names nothing afterwards. 409 while the
+  // lab is deployed (the id is also the Kathara hash its containers carry) or if `newName` is
+  // already taken.
+  renameLab: (labId: string, newName: string) =>
+    request<LabDetail>("POST", `/labs/${encodeURIComponent(labId)}/rename`, { name: newName }),
   // Download a lab as a .zip of its on-disk directory. Binary response, so it uses the same
   // error-checked raw fetch as fsDownload rather than the JSON `request` wrapper.
-  downloadLab: (name: string) => requestBlob(`/labs/${encodeURIComponent(name)}/download`),
+  downloadLab: (labId: string) => requestBlob(`/labs/${encodeURIComponent(labId)}/download`),
 
   // -- Lab Configuration tab: the lab's own on-disk directory, browsed/edited directly (real
   // reads/writes on every call — no separate cache, so nothing here can ever drift from disk). --
-  getStartupScripts: (labName: string) =>
-    request<Record<string, string>>("GET", `/labs/${encodeURIComponent(labName)}/fs/startups`),
-  fsListOffline: (labName: string, path: string, signal?: AbortSignal) =>
+  getStartupScripts: (labId: string) =>
+    request<Record<string, string>>("GET", `/labs/${encodeURIComponent(labId)}/fs/startups`),
+  fsListOffline: (labId: string, path: string, signal?: AbortSignal) =>
     request<FsListResponse>(
       "GET",
-      `/labs/${encodeURIComponent(labName)}/fs/list?path=${encodeURIComponent(path)}`,
+      `/labs/${encodeURIComponent(labId)}/fs/list?path=${encodeURIComponent(path)}`,
       undefined,
       signal,
     ),
-  fsReadTextOffline: (labName: string, path: string) =>
-    request<FsReadTextResponse>("GET", `/labs/${encodeURIComponent(labName)}/fs/text?path=${encodeURIComponent(path)}`),
-  fsWriteTextOffline: (labName: string, path: string, content: string) =>
-    request<Message>("PUT", `/labs/${encodeURIComponent(labName)}/fs/text`, { path, content }),
-  fsMkdirOffline: (labName: string, path: string) =>
-    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/mkdir`, { path }),
-  fsMoveOffline: (labName: string, sourcePath: string, destinationPath: string) =>
-    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/move`, {
+  fsReadTextOffline: (labId: string, path: string) =>
+    request<FsReadTextResponse>("GET", `/labs/${encodeURIComponent(labId)}/fs/text?path=${encodeURIComponent(path)}`),
+  fsWriteTextOffline: (labId: string, path: string, content: string) =>
+    request<Message>("PUT", `/labs/${encodeURIComponent(labId)}/fs/text`, { path, content }),
+  fsMkdirOffline: (labId: string, path: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labId)}/fs/mkdir`, { path }),
+  fsMoveOffline: (labId: string, sourcePath: string, destinationPath: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labId)}/fs/move`, {
       source_path: sourcePath,
       destination_path: destinationPath,
     }),
-  fsCopyOffline: (labName: string, sourcePath: string, destinationPath: string) =>
-    request<Message>("POST", `/labs/${encodeURIComponent(labName)}/fs/copy`, {
+  fsCopyOffline: (labId: string, sourcePath: string, destinationPath: string) =>
+    request<Message>("POST", `/labs/${encodeURIComponent(labId)}/fs/copy`, {
       source_path: sourcePath,
       destination_path: destinationPath,
     }),
-  fsDeleteOffline: (labName: string, path: string, recursive = false) =>
-    request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/fs`, { path, recursive }),
-  fsUploadOffline: async (labName: string, path: string, file: File) => {
+  fsDeleteOffline: (labId: string, path: string, recursive = false) =>
+    request<Message>("DELETE", `/labs/${encodeURIComponent(labId)}/fs`, { path, recursive }),
+  fsUploadOffline: async (labId: string, path: string, file: File) => {
     const form = new FormData();
     form.append("path", path);
     form.append("file", file);
-    return requestForm<FsUploadResponse>(`/labs/${encodeURIComponent(labName)}/fs/upload`, form);
+    return requestForm<FsUploadResponse>(`/labs/${encodeURIComponent(labId)}/fs/upload`, form);
   },
-  fsDownloadOffline: (labName: string, path: string) =>
-    requestBlob(`/labs/${encodeURIComponent(labName)}/fs/download?path=${encodeURIComponent(path)}`),
-  fsSearchOffline: (labName: string, path: string, query: string, caseSensitive = false, signal?: AbortSignal) =>
+  fsDownloadOffline: (labId: string, path: string) =>
+    requestBlob(`/labs/${encodeURIComponent(labId)}/fs/download?path=${encodeURIComponent(path)}`),
+  fsSearchOffline: (labId: string, path: string, query: string, caseSensitive = false, signal?: AbortSignal) =>
     request<FsSearchResponse>(
       "GET",
-      `/labs/${encodeURIComponent(labName)}/fs/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}&case_sensitive=${caseSensitive}`,
+      `/labs/${encodeURIComponent(labId)}/fs/search?path=${encodeURIComponent(path)}&query=${encodeURIComponent(query)}&case_sensitive=${caseSensitive}`,
       undefined,
       signal,
     ),
 
-  fsList: (labName: string, machineName: string, path: string, signal?: AbortSignal) =>
+  fsList: (labId: string, machineName: string, path: string, signal?: AbortSignal) =>
     request<FsListResponse>(
       "GET",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/list?path=${encodeURIComponent(path)}`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/list?path=${encodeURIComponent(path)}`,
       undefined,
       signal,
     ),
-  fsReadText: (labName: string, machineName: string, path: string) =>
+  fsReadText: (labId: string, machineName: string, path: string) =>
     request<FsReadTextResponse>(
       "GET",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/text?path=${encodeURIComponent(path)}`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/text?path=${encodeURIComponent(path)}`,
     ),
-  fsWriteText: (labName: string, machineName: string, path: string, content: string) =>
+  fsWriteText: (labId: string, machineName: string, path: string, content: string) =>
     request<Message>(
       "PUT",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/text`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/text`,
       { path, content },
     ),
-  fsMkdir: (labName: string, machineName: string, path: string) =>
+  fsMkdir: (labId: string, machineName: string, path: string) =>
     request<Message>(
       "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/mkdir`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/mkdir`,
       { path },
     ),
-  fsMove: (labName: string, machineName: string, sourcePath: string, destinationPath: string) =>
+  fsMove: (labId: string, machineName: string, sourcePath: string, destinationPath: string) =>
     request<Message>(
       "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/move`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/move`,
       { source_path: sourcePath, destination_path: destinationPath },
     ),
-  fsCopy: (labName: string, machineName: string, sourcePath: string, destinationPath: string) =>
+  fsCopy: (labId: string, machineName: string, sourcePath: string, destinationPath: string) =>
     request<Message>(
       "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/copy`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/copy`,
       { source_path: sourcePath, destination_path: destinationPath },
     ),
-  fsDelete: (labName: string, machineName: string, path: string, recursive = false) =>
+  fsDelete: (labId: string, machineName: string, path: string, recursive = false) =>
     request<Message>(
       "DELETE",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs`,
       { path, recursive },
     ),
-  fsUpload: async (labName: string, machineName: string, path: string, file: File) => {
+  fsUpload: async (labId: string, machineName: string, path: string, file: File) => {
     const form = new FormData();
     form.append("path", path);
     form.append("file", file);
     return requestForm<FsUploadResponse>(
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/upload`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/upload`,
       form,
     );
   },
-  fsDownload: (labName: string, machineName: string, path: string) =>
+  fsDownload: (labId: string, machineName: string, path: string) =>
     requestBlob(
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/fs/download?path=${encodeURIComponent(path)}`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/download?path=${encodeURIComponent(path)}`,
     ),
   // Live boot-time startup log + finished flag for a running device — poll while a node's info
   // panel is open and startup hasn't finished yet (see TopologyGraph's node-info block).
-  getStartupStatus: (labName: string, machineName: string, signal?: AbortSignal) =>
+  getStartupStatus: (labId: string, machineName: string, signal?: AbortSignal) =>
     request<StartupStatus>(
       "GET",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/startup-status`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/startup-status`,
       undefined,
       signal,
     ),
@@ -338,8 +340,8 @@ export const api = {
   // Called immediately before a deploy so the download can be its own visible, consented step
   // instead of happening silently inside POST /deploy. Callers must treat any failure here as
   // "carry on and deploy anyway" (see labImagesOrNull in useLabLifecycleActions).
-  getLabImages: (labName: string) =>
-    request<LabImagesStatus>("GET", `/labs/${encodeURIComponent(labName)}/images`),
+  getLabImages: (labId: string) =>
+    request<LabImagesStatus>("GET", `/labs/${encodeURIComponent(labId)}/images`),
   // Fire-and-poll: this resolves only when the whole download is done, so callers start it
   // without awaiting and poll getImagePullProgress for the bar, using this promise as the
   // authoritative completion signal.
@@ -349,63 +351,63 @@ export const api = {
     request<ImagePullProgress>("GET", "/images/pull/progress", undefined, signal),
 
   // Shells actually available in a running device (for the live-terminal picker).
-  listShells: (labName: string, machineName: string) =>
+  listShells: (labId: string, machineName: string) =>
     request<string[]>(
       "GET",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/shells`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/shells`,
     ),
 
   // A native WebSocket/EventSource can't set an Authorization header, so the pairing token (when
   // one is configured — see authHeaders above) travels as `?token=` instead, matching what
   // require_auth_token and the /tty/ws handler both accept.
-  ttyWsUrl: (labName: string, machineName: string, shell = "bash") => {
+  ttyWsUrl: (labId: string, machineName: string, shell = "bash") => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     const tokenParam = cachedAuthToken ? `&token=${encodeURIComponent(cachedAuthToken)}` : "";
-    return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}${tokenParam}`;
+    return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}${tokenParam}`;
   },
 
   // stats/stream is a GET endpoint, so the browser's native EventSource can be used directly
   // against this URL — no manual SSE body-parsing needed.
-  statsStreamUrl: (labName: string) => {
+  statsStreamUrl: (labId: string) => {
     const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
-    return `${API_BASE}/labs/${encodeURIComponent(labName)}/stats/stream${tokenParam}`;
+    return `${API_BASE}/labs/${encodeURIComponent(labId)}/stats/stream${tokenParam}`;
   },
 
   // -- topology mutations (add/remove device or domain, connect/disconnect interfaces) --
   addMachine: (
-    labName: string,
+    labId: string,
     payload: Partial<MachineOptionsPayload> & { name: string; interfaces?: { link: string; number: number }[] },
     signal?: AbortSignal,
-  ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labName)}/machines`, payload, signal),
-  removeMachine: (labName: string, machineName: string) =>
-    request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`),
+  ) => request<MachineDetail>("POST", `/labs/${encodeURIComponent(labId)}/machines`, payload, signal),
+  removeMachine: (labId: string, machineName: string) =>
+    request<Message>("DELETE", `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}`),
   // Full replace of a stopped device's option set (schemas/machine.py's MachineUpdate) — rejected
   // with 409 while the lab is deployed.
-  updateMachine: (labName: string, machineName: string, payload: MachineUpdatePayload) =>
+  updateMachine: (labId: string, machineName: string, payload: MachineUpdatePayload) =>
     request<MachineDetail>(
       "PUT",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}`,
       payload,
     ),
   // connect/disconnect take query params on the backend (no request body) — see routers/machines.py.
   // interfaceNumber is only honored for a stopped device (static lab.conf edit); omit it for a
   // running device so the backend/Kathara auto-assigns the next interface number at runtime.
-  connectMachine: (labName: string, machineName: string, link: string, interfaceNumber?: number, macAddress?: string) => {
+  connectMachine: (labId: string, machineName: string, link: string, interfaceNumber?: number, macAddress?: string) => {
     const q = new URLSearchParams({ link });
     if (interfaceNumber !== undefined) q.set("interface_number", String(interfaceNumber));
     if (macAddress) q.set("mac_address", macAddress);
     return request<MachineDetail>(
       "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/connect?${q.toString()}`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/connect?${q.toString()}`,
     );
   },
-  disconnectMachine: (labName: string, machineName: string, link: string) =>
+  disconnectMachine: (labId: string, machineName: string, link: string) =>
     request<Message>(
       "POST",
-      `/labs/${encodeURIComponent(labName)}/machines/${encodeURIComponent(machineName)}/disconnect?link=${encodeURIComponent(link)}`,
+      `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/disconnect?link=${encodeURIComponent(link)}`,
     ),
-  addLink: (labName: string, name: string, external: string[] = []) =>
-    request<LinkDetail>("POST", `/labs/${encodeURIComponent(labName)}/links`, { name, external }),
-  removeLink: (labName: string, linkName: string) =>
-    request<Message>("DELETE", `/labs/${encodeURIComponent(labName)}/links/${encodeURIComponent(linkName)}`),
+  addLink: (labId: string, name: string, external: string[] = []) =>
+    request<LinkDetail>("POST", `/labs/${encodeURIComponent(labId)}/links`, { name, external }),
+  removeLink: (labId: string, linkName: string) =>
+    request<Message>("DELETE", `/labs/${encodeURIComponent(labId)}/links/${encodeURIComponent(linkName)}`),
 };

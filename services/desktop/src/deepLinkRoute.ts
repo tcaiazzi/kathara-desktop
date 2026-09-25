@@ -4,6 +4,9 @@
  * the logging and the navigation.
  *
  * Only "kathara://lab/<name>" is understood; anything else is ignored rather than guessed at.
+ * A link names the lab the way a person would, but the Workspace route takes the lab's id — which
+ * only the backend can derive, from the lab directory's path — so the name travels as the
+ * `?lab=` query instead and the renderer resolves it (WorkspacePage).
  */
 
 export const DEEP_LINK_PROTOCOL = "kathara";
@@ -32,7 +35,7 @@ export function resolveDeepLink(raw: string): DeepLinkResolution {
     // page's <a href="kathara://..."> and would otherwise crash the whole main process.
     const segments = [url.hostname, ...url.pathname.split("/")].filter(Boolean).map(decodeURIComponent);
     if (segments.length === 2 && segments[0] === "lab") {
-      return { kind: "route", route: `/workspace/${encodeURIComponent(segments[1])}` };
+      return { kind: "route", route: `/workspace?lab=${encodeURIComponent(segments[1])}` };
     }
   } catch {
     return { kind: "unparsable" };

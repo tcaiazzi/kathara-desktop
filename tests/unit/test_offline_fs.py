@@ -16,7 +16,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import ROOT_MACHINE, KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import make_service
+from tests.helpers import lab_id, make_service
 
 
 def _service(tmp_path) -> tuple[KatharaService, LabStore]:
@@ -39,29 +39,29 @@ def _two_machine_lab(tmp_path, lab_name="testlab"):
 def test_write_and_read_device_file(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
-    assert service.fs_read_text_offline("testlab", "/pc1/etc/motd") == "hi\n"
+    assert service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd") == "hi\n"
 
 
 def test_mkdir_device_dir(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_mkdir_offline("testlab", "/pc1/etc/frr")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/etc/frr")
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "frr").is_dir()
 
 
 def test_delete_device_file(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_delete_offline("testlab", "/pc1/etc/motd")
+    service.fs_delete_offline(lab_id(service, "testlab"), "/pc1/etc/motd")
 
     assert not (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
     with pytest.raises(PathNotFoundError):
-        service.fs_read_text_offline("testlab", "/pc1/etc/motd")
+        service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd")
 
 
 def test_delete_device_root_removes_the_folder_entirely(tmp_path):
@@ -69,16 +69,16 @@ def test_delete_device_root_removes_the_folder_entirely(tmp_path):
     it stops existing (on disk and in listings) until something is written under this device
     again, matching a real filesystem instead of leaving a permanent empty shell behind."""
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
-    service.fs_write_text_offline("testlab", "/pc1/root.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/root.txt", "hi\n")
 
-    service.fs_delete_offline("testlab", "/pc1", recursive=True)
+    service.fs_delete_offline(lab_id(service, "testlab"), "/pc1", recursive=True)
 
     assert not (store.lab_dir("testlab") / "pc1").exists()
-    assert "pc1" not in {e.name for e in service.fs_list_offline("testlab", "/")}
+    assert "pc1" not in {e.name for e in service.fs_list_offline(lab_id(service, "testlab"), "/")}
 
     # Writing under it again recreates it from scratch.
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi again\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi again\n")
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi again\n"
 
 
@@ -87,17 +87,17 @@ def test_delete_device_root_honours_recursive_false(tmp_path):
     is refused without it, exactly like any other non-empty directory (see the `/pc1/etc` control
     case below), not force-deleted regardless of the flag."""
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
     with pytest.raises(ApiError):
-        service.fs_delete_offline("testlab", "/pc1", recursive=False)
+        service.fs_delete_offline(lab_id(service, "testlab"), "/pc1", recursive=False)
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
 
     # Control: the generic (non-device-root) branch already enforces this — confirms both
     # branches agree, not just that the device-root one raises for some other reason.
     with pytest.raises(ApiError):
-        service.fs_delete_offline("testlab", "/pc1/etc", recursive=False)
+        service.fs_delete_offline(lab_id(service, "testlab"), "/pc1/etc", recursive=False)
 
 
 def test_delete_never_touched_device_root_is_a_noop_not_an_error(tmp_path):
@@ -105,16 +105,16 @@ def test_delete_never_touched_device_root_is_a_noop_not_an_error(tmp_path):
     anyway (e.g. a stale UI selection) must still be a no-op, not a 404."""
     service, _store = _two_machine_lab(tmp_path)
 
-    service.fs_delete_offline("testlab", "/pc1", recursive=True)  # must not raise
+    service.fs_delete_offline(lab_id(service, "testlab"), "/pc1", recursive=True)  # must not raise
 
-    assert "pc1" not in {e.name for e in service.fs_list_offline("testlab", "/")}
+    assert "pc1" not in {e.name for e in service.fs_list_offline(lab_id(service, "testlab"), "/")}
 
 
 def test_move_file_same_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_move_offline("testlab", "/pc1/etc/motd", "/pc1/etc/motd2")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/pc1/etc/motd2")
 
     assert not (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd2").read_text() == "hi\n"
@@ -122,9 +122,9 @@ def test_move_file_same_device(tmp_path):
 
 def test_move_file_cross_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_move_offline("testlab", "/pc1/etc/motd", "/pc2/etc/motd")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/pc2/etc/motd")
 
     assert not (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
     assert (store.lab_dir("testlab") / "pc2" / "etc" / "motd").read_text() == "hi\n"
@@ -132,9 +132,9 @@ def test_move_file_cross_device(tmp_path):
 
 def test_move_dir_cross_device_recursive(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/frr/frr.conf", "hostname pc1\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/frr/frr.conf", "hostname pc1\n")
 
-    service.fs_move_offline("testlab", "/pc1/etc/frr", "/pc2/etc/frr2")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/etc/frr", "/pc2/etc/frr2")
 
     assert not (store.lab_dir("testlab") / "pc1" / "etc" / "frr").exists()
     assert (store.lab_dir("testlab") / "pc2" / "etc" / "frr2" / "frr.conf").read_text() == "hostname pc1\n"
@@ -143,9 +143,9 @@ def test_move_dir_cross_device_recursive(tmp_path):
 def test_moving_a_file_out_of_a_folder_leaves_the_folder_in_place(tmp_path):
     """Regression: dragging a file out of a folder must not also remove the folder."""
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/ciao/ciao.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/ciao/ciao.txt", "hi\n")
 
-    service.fs_move_offline("testlab", "/pc1/ciao/ciao.txt", "/pc1/ciao.txt")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/ciao/ciao.txt", "/pc1/ciao.txt")
 
     assert (store.lab_dir("testlab") / "pc1" / "ciao").is_dir()  # the folder survives
     assert (store.lab_dir("testlab") / "pc1" / "ciao.txt").read_text() == "hi\n"
@@ -156,9 +156,9 @@ def test_moving_a_file_out_of_a_folder_leaves_the_folder_in_place(tmp_path):
 
 def test_copy_file_same_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/pc1/etc/motd2")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/pc1/etc/motd2")
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd2").read_text() == "hi\n"
@@ -166,9 +166,9 @@ def test_copy_file_same_device(tmp_path):
 
 def test_copy_file_cross_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/pc2/etc/motd")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/pc2/etc/motd")
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
     assert (store.lab_dir("testlab") / "pc2" / "etc" / "motd").read_text() == "hi\n"
@@ -176,9 +176,9 @@ def test_copy_file_cross_device(tmp_path):
 
 def test_copy_dir_cross_device_recursive(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/frr/frr.conf", "hostname pc1\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/frr/frr.conf", "hostname pc1\n")
 
-    service.fs_copy_offline("testlab", "/pc1/etc/frr", "/pc2/etc/frr2")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/pc1/etc/frr", "/pc2/etc/frr2")
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "frr" / "frr.conf").read_text() == "hostname pc1\n"
     assert (store.lab_dir("testlab") / "pc2" / "etc" / "frr2" / "frr.conf").read_text() == "hostname pc1\n"
@@ -186,39 +186,39 @@ def test_copy_dir_cross_device_recursive(tmp_path):
 
 def test_copy_does_not_remove_source(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/pc1/etc/motd2")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/pc1/etc/motd2")
 
-    assert service.fs_read_text_offline("testlab", "/pc1/etc/motd") == "hi\n"
+    assert service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd") == "hi\n"
 
 
 def test_fs_copy_offline_rejects_copying_over_lab_conf(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
 
     with pytest.raises(ApiError):
-        service.fs_copy_offline("testlab", "/notes.txt", "/lab.conf")
+        service.fs_copy_offline(lab_id(service, "testlab"), "/notes.txt", "/lab.conf")
 
     assert (store.lab_dir("testlab") / "lab.conf").read_text() != "hi\n"
 
 
 def test_fs_copy_offline_allows_copying_lab_conf_as_source(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    original = service.fs_read_text_offline("testlab", "/lab.conf")
+    original = service.fs_read_text_offline(lab_id(service, "testlab"), "/lab.conf")
 
-    service.fs_copy_offline("testlab", "/lab.conf", "/lab.conf.bak")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/lab.conf", "/lab.conf.bak")
 
     assert (store.lab_dir("testlab") / "lab.conf.bak").read_text() == original
-    assert service.fs_read_text_offline("testlab", "/lab.conf") == original
+    assert service.fs_read_text_offline(lab_id(service, "testlab"), "/lab.conf") == original
 
 
 def test_copy_root_file_into_root_dir_keeps_the_dir(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/ciao.txt", "hi\n")
-    service.fs_mkdir_offline("testlab", "/ciao")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/ciao.txt", "hi\n")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/ciao")
 
-    service.fs_copy_offline("testlab", "/ciao.txt", "/ciao/ciao.txt")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/ciao.txt", "/ciao/ciao.txt")
 
     assert (store.lab_dir("testlab") / "ciao").is_dir()
     assert (store.lab_dir("testlab") / "ciao" / "ciao.txt").read_text() == "hi\n"
@@ -227,9 +227,9 @@ def test_copy_root_file_into_root_dir_keeps_the_dir(tmp_path):
 
 def test_copy_file_from_device_to_root(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_copy_offline("testlab", "/pc1/etc/motd", "/motd")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/motd")
 
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
     assert (store.lab_dir("testlab") / "motd").read_text() == "hi\n"
@@ -237,9 +237,9 @@ def test_copy_file_from_device_to_root(tmp_path):
 
 def test_copy_file_from_root_to_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/motd", "hi\n")
 
-    service.fs_copy_offline("testlab", "/motd", "/pc1/etc/motd")
+    service.fs_copy_offline(lab_id(service, "testlab"), "/motd", "/pc1/etc/motd")
 
     assert (store.lab_dir("testlab") / "motd").read_text() == "hi\n"
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
@@ -251,26 +251,26 @@ def test_copy_file_from_root_to_device(tmp_path):
 def test_write_and_read_root_file(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
 
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
-    assert service.fs_read_text_offline("testlab", "/notes.txt") == "hi\n"
+    assert service.fs_read_text_offline(lab_id(service, "testlab"), "/notes.txt") == "hi\n"
 
 
 def test_mkdir_root_dir(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_mkdir_offline("testlab", "/scratch")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/scratch")
 
     assert (store.lab_dir("testlab") / "scratch").is_dir()
 
 
 def test_move_root_file_into_root_dir_keeps_the_dir(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/ciao.txt", "hi\n")
-    service.fs_mkdir_offline("testlab", "/ciao")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/ciao.txt", "hi\n")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/ciao")
 
-    service.fs_move_offline("testlab", "/ciao.txt", "/ciao/ciao.txt")
+    service.fs_move_offline(lab_id(service, "testlab"), "/ciao.txt", "/ciao/ciao.txt")
 
     assert (store.lab_dir("testlab") / "ciao").is_dir()
     assert (store.lab_dir("testlab") / "ciao" / "ciao.txt").read_text() == "hi\n"
@@ -279,9 +279,9 @@ def test_move_root_file_into_root_dir_keeps_the_dir(tmp_path):
 
 def test_move_file_from_device_to_root(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_move_offline("testlab", "/pc1/etc/motd", "/motd")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/motd")
 
     assert not (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
     assert (store.lab_dir("testlab") / "motd").read_text() == "hi\n"
@@ -289,9 +289,9 @@ def test_move_file_from_device_to_root(tmp_path):
 
 def test_move_file_from_root_to_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/motd", "hi\n")
 
-    service.fs_move_offline("testlab", "/motd", "/pc1/etc/motd")
+    service.fs_move_offline(lab_id(service, "testlab"), "/motd", "/pc1/etc/motd")
 
     assert not (store.lab_dir("testlab") / "motd").exists()
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
@@ -303,19 +303,19 @@ def test_move_file_from_root_to_device(tmp_path):
 def test_startup_file_is_a_plain_root_file(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_write_text_offline("testlab", "/pc1.startup", "ip a\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1.startup", "ip a\n")
 
     assert (store.lab_dir("testlab") / "pc1.startup").read_text() == "ip a\n"
-    assert service.get_startup_scripts("testlab")["pc1"] == "ip a\n"
+    assert service.get_startup_scripts(lab_id(service, "testlab"))["pc1"] == "ip a\n"
 
 
 def test_moving_startup_file_between_devices_updates_get_startup_scripts(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1.startup", "ip a\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1.startup", "ip a\n")
 
-    service.fs_move_offline("testlab", "/pc1.startup", "/pc2.startup")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1.startup", "/pc2.startup")
 
-    scripts = service.get_startup_scripts("testlab")
+    scripts = service.get_startup_scripts(lab_id(service, "testlab"))
     assert scripts["pc1"] == ""
     assert scripts["pc2"] == "ip a\n"
 
@@ -325,10 +325,10 @@ def test_moving_startup_file_between_devices_updates_get_startup_scripts(tmp_pat
 
 def test_fs_list_offline_root_is_a_real_listing_no_synthesized_devices(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    names = {e.name for e in service.fs_list_offline("testlab", "/")}
+    names = {e.name for e in service.fs_list_offline(lab_id(service, "testlab"), "/")}
 
     # pc1 has real content, so it shows; pc2 has never been written to, so it doesn't.
     assert names == {"lab.conf", "pc1", "notes.txt"}
@@ -337,15 +337,15 @@ def test_fs_list_offline_root_is_a_real_listing_no_synthesized_devices(tmp_path)
 def test_fs_list_offline_empty_device_is_an_empty_list_not_an_error(tmp_path):
     service, _store = _two_machine_lab(tmp_path)
 
-    assert service.fs_list_offline("testlab", "/pc1") == []
+    assert service.fs_list_offline(lab_id(service, "testlab"), "/pc1") == []
 
 
 def test_fs_list_offline_missing_path_raises_not_found(tmp_path):
     service, _store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
     with pytest.raises(PathNotFoundError):
-        service.fs_list_offline("testlab", "/pc1/nonexistent")
+        service.fs_list_offline(lab_id(service, "testlab"), "/pc1/nonexistent")
 
 
 def test_fs_list_offline_back_reference_path_raises_illegal_back_reference(tmp_path):
@@ -356,7 +356,7 @@ def test_fs_list_offline_back_reference_path_raises_illegal_back_reference(tmp_p
     service, _store = _two_machine_lab(tmp_path)
 
     with pytest.raises(fs.errors.IllegalBackReference):
-        service.fs_list_offline("testlab", "../../../etc")
+        service.fs_list_offline(lab_id(service, "testlab"), "../../../etc")
 
 
 # Every spelling that resolves to the lab's own lab.conf. A raw string comparison
@@ -384,7 +384,7 @@ def test_writing_lab_conf_is_validated_whatever_the_spelling(tmp_path, path):
     before = (store.lab_dir("testlab") / "lab.conf").read_text()
 
     with pytest.raises(ApiError):
-        service.fs_write_text_offline("testlab", path, "GARBAGE\n")
+        service.fs_write_text_offline(lab_id(service, "testlab"), path, "GARBAGE\n")
 
     assert (store.lab_dir("testlab") / "lab.conf").read_text() == before
 
@@ -395,24 +395,24 @@ def test_writing_lab_conf_rebuilds_the_model_whatever_the_spelling(tmp_path, pat
     bypass writes the file but leaves the registry holding the old machines."""
     service, _store = _two_machine_lab(tmp_path)
 
-    service.fs_write_text_offline("testlab", path, 'pc3[image]="kathara/base"\n')
+    service.fs_write_text_offline(lab_id(service, "testlab"), path, 'pc3[image]="kathara/base"\n')
 
-    assert set(service.registry.get("testlab").machines) == {"pc3"}
+    assert set(service.registry.get(lab_id(service, "testlab")).machines) == {"pc3"}
 
 
 @pytest.mark.parametrize("path", LAB_CONF_SPELLINGS)
 def test_writing_lab_conf_while_deployed_is_refused_whatever_the_spelling(tmp_path, path):
     service, store = _two_machine_lab(tmp_path)
     before = (store.lab_dir("testlab") / "lab.conf").read_text()
-    service.deploy_lab("testlab")
+    service.deploy_lab(lab_id(service, "testlab"))
     # `FakeFacadeBase.deploy_lab` is a no-op, so it leaves `api_object` unset — and that attribute
     # is exactly what the 409 gate reads (`any(m.api_object is not None ...)`). Set it by hand so
     # the lab really looks deployed to the code under test.
-    for machine in service.get_lab_or_reconstruct("testlab").machines.values():
+    for machine in service.get_lab_or_reconstruct(lab_id(service, "testlab")).machines.values():
         machine.api_object = object()
 
     with pytest.raises(LabConfLockedError):
-        service.fs_write_text_offline("testlab", path, 'pc3[image]="kathara/base"\n')
+        service.fs_write_text_offline(lab_id(service, "testlab"), path, 'pc3[image]="kathara/base"\n')
 
     assert (store.lab_dir("testlab") / "lab.conf").read_text() == before
 
@@ -422,7 +422,7 @@ def test_deleting_lab_conf_is_refused_whatever_the_spelling(tmp_path, path):
     service, store = _two_machine_lab(tmp_path)
 
     with pytest.raises(ApiError):
-        service.fs_delete_offline("testlab", path)
+        service.fs_delete_offline(lab_id(service, "testlab"), path)
 
     assert (store.lab_dir("testlab") / "lab.conf").exists()
 
@@ -434,9 +434,9 @@ def test_moving_lab_conf_is_refused_whatever_the_spelling(tmp_path, path):
     service, store = _two_machine_lab(tmp_path)
 
     with pytest.raises(ApiError):
-        service.fs_move_offline("testlab", path, "/moved.conf")
+        service.fs_move_offline(lab_id(service, "testlab"), path, "/moved.conf")
     with pytest.raises(ApiError):
-        service.fs_move_offline("testlab", "/notes.txt", path)
+        service.fs_move_offline(lab_id(service, "testlab"), "/notes.txt", path)
 
     assert (store.lab_dir("testlab") / "lab.conf").exists()
 
@@ -450,13 +450,13 @@ def test_uploading_over_lab_conf_is_routed_through_update_lab_conf(tmp_path, pat
     before = (store.lab_dir("testlab") / "lab.conf").read_bytes()
 
     with pytest.raises(ApiError):
-        service.fs_upload_bytes_offline("testlab", path, b"\x00\xffnot utf-8\n")
+        service.fs_upload_bytes_offline(lab_id(service, "testlab"), path, b"\x00\xffnot utf-8\n")
 
     assert (store.lab_dir("testlab") / "lab.conf").read_bytes() == before
 
     # A valid edit still works through this entry point, and rebuilds the model.
-    service.fs_upload_bytes_offline("testlab", path, b'pc3[image]="kathara/base"\n')
-    assert set(service.registry.get("testlab").machines) == {"pc3"}
+    service.fs_upload_bytes_offline(lab_id(service, "testlab"), path, b'pc3[image]="kathara/base"\n')
+    assert set(service.registry.get(lab_id(service, "testlab")).machines) == {"pc3"}
 
 
 @pytest.mark.parametrize("path", ["/", "", "//", "/.", "./", "/./"])
@@ -464,12 +464,12 @@ def test_fs_move_and_copy_offline_reject_the_lab_root(tmp_path, path):
     """The lab-root guard existed only in fs_delete_offline; moving the root away or copying over
     it is just as destructive."""
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
 
     with pytest.raises(ApiError):
-        service.fs_move_offline("testlab", path, "/elsewhere")
+        service.fs_move_offline(lab_id(service, "testlab"), path, "/elsewhere")
     with pytest.raises(ApiError):
-        service.fs_copy_offline("testlab", "/notes.txt", path)
+        service.fs_copy_offline(lab_id(service, "testlab"), "/notes.txt", path)
 
     assert (store.lab_dir("testlab") / "lab.conf").exists()
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
@@ -480,25 +480,25 @@ def test_a_non_canonical_device_path_still_marks_the_device_dirty(tmp_path):
     dirty and the write is never live-pushed on the next deploy."""
     service, _store = _two_machine_lab(tmp_path)
 
-    service.fs_write_text_offline("testlab", "./pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "./pc1/etc/motd", "hi\n")
 
-    assert service.registry.pop_dirty_machines("testlab", {"pc1", "pc2"}) == {"pc1"}
+    assert service.registry.pop_dirty_machines(lab_id(service, "testlab"), {"pc1", "pc2"}) == {"pc1"}
 
 
 def test_fs_write_text_offline_routes_lab_conf_through_update_lab_conf(tmp_path):
     """lab.conf has real side effects (topology rebuild) a generic write must not bypass."""
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_write_text_offline("testlab", "/lab.conf", 'pc3[image]="kathara/base"\n')
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/lab.conf", 'pc3[image]="kathara/base"\n')
 
-    lab = service.registry.get("testlab")
+    lab = service.registry.get(lab_id(service, "testlab"))
     assert "pc3" in lab.machines
 
 
 def test_fs_delete_offline_rejects_lab_conf(tmp_path):
     service, _store = _two_machine_lab(tmp_path)
     with pytest.raises(ApiError):
-        service.fs_delete_offline("testlab", "/lab.conf")
+        service.fs_delete_offline(lab_id(service, "testlab"), "/lab.conf")
 
 
 @pytest.mark.parametrize("path", ["/", "", "//", "///", "/.", "/./"])
@@ -508,11 +508,11 @@ def test_fs_delete_offline_rejects_the_lab_root(tmp_path, path, recursive):
     rejected, not just the literal "/" — "/.", "//" and friends all `removetree` the same
     directory once they reach `target_fs`, so the guard has to compare normalized paths."""
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
     with pytest.raises(ApiError):
-        service.fs_delete_offline("testlab", path, recursive=recursive)
+        service.fs_delete_offline(lab_id(service, "testlab"), path, recursive=recursive)
 
     # The lab must be completely untouched — this is the regression a permissive guard misses.
     assert (store.lab_dir("testlab") / "lab.conf").exists()
@@ -524,11 +524,11 @@ def test_fs_delete_offline_still_allows_deleting_a_root_level_file_or_dir(tmp_pa
     """The lab-root guard must not overreach: root-level entries other than the root itself stay
     deletable."""
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
-    service.fs_mkdir_offline("testlab", "/scratch")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/scratch")
 
-    service.fs_delete_offline("testlab", "/notes.txt")
-    service.fs_delete_offline("testlab", "/scratch", recursive=True)
+    service.fs_delete_offline(lab_id(service, "testlab"), "/notes.txt")
+    service.fs_delete_offline(lab_id(service, "testlab"), "/scratch", recursive=True)
 
     assert not (store.lab_dir("testlab") / "notes.txt").exists()
     assert not (store.lab_dir("testlab") / "scratch").exists()
@@ -540,28 +540,28 @@ def test_fs_delete_offline_still_allows_deleting_a_root_level_file_or_dir(tmp_pa
 
 def test_undeploy_does_not_lose_root_or_device_content(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
-    service.fs_mkdir_offline("testlab", "/scratch")
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/scratch")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.deploy_lab("testlab")
-    service.undeploy_lab("testlab")
+    service.deploy_lab(lab_id(service, "testlab"))
+    service.undeploy_lab(lab_id(service, "testlab"))
 
-    names = {e.name for e in service.fs_list_offline("testlab", "/")}
+    names = {e.name for e in service.fs_list_offline(lab_id(service, "testlab"), "/")}
     assert {"notes.txt", "scratch", "pc1"} <= names
-    assert service.fs_read_text_offline("testlab", "/pc1/etc/motd") == "hi\n"
+    assert service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd") == "hi\n"
 
 
 def test_rename_does_not_lose_root_or_device_content(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.rename_lab("testlab", "renamed")
+    service.rename_lab(lab_id(service, "testlab"), "renamed")
 
-    names = {e.name for e in service.fs_list_offline("renamed", "/")}
+    names = {e.name for e in service.fs_list_offline(lab_id(service, "renamed"), "/")}
     assert {"notes.txt", "pc1"} <= names
-    assert service.fs_read_text_offline("renamed", "/pc1/etc/motd") == "hi\n"
+    assert service.fs_read_text_offline(lab_id(service, "renamed"), "/pc1/etc/motd") == "hi\n"
 
 
 # -- fs_search_offline ------------------------------------------------------------------------
@@ -611,11 +611,11 @@ def test_search_lines_in_text_trims_long_lines():
 
 def test_fs_search_offline_finds_matches_at_lab_root_and_under_a_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "first line\nneedle here\n")
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "welcome\nneedle in motd\n")
-    service.fs_write_text_offline("testlab", "/pc2/etc/motd", "nothing interesting\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "first line\nneedle here\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "welcome\nneedle in motd\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc2/etc/motd", "nothing interesting\n")
 
-    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+    matches, truncated = service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")
 
     by_path = {m.path: m for m in matches}
     assert truncated is False
@@ -631,10 +631,10 @@ def test_fs_search_offline_finds_matches_at_lab_root_and_under_a_device(tmp_path
 
 def test_fs_search_offline_case_sensitivity_toggle(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "NEEDLE\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "NEEDLE\n")
 
-    insensitive, _ = service.fs_search_offline("testlab", "/", "needle", case_sensitive=False)
-    sensitive, _ = service.fs_search_offline("testlab", "/", "needle", case_sensitive=True)
+    insensitive, _ = service.fs_search_offline(lab_id(service, "testlab"), "/", "needle", case_sensitive=False)
+    sensitive, _ = service.fs_search_offline(lab_id(service, "testlab"), "/", "needle", case_sensitive=True)
 
     assert len(insensitive) == 1
     assert sensitive == []
@@ -645,9 +645,9 @@ def test_fs_search_offline_sets_truncated_once_total_cap_exceeded(tmp_path, monk
 
     monkeypatch.setattr(kathara_service_module, "_SEARCH_MAX_TOTAL_MATCHES", 1)
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "needle one\nneedle two\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "needle one\nneedle two\n")
 
-    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+    matches, truncated = service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")
 
     assert len(matches) == 1
     assert truncated is True
@@ -657,7 +657,7 @@ def test_fs_search_offline_raises_on_missing_path(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
 
     with pytest.raises(PathNotFoundError):
-        service.fs_search_offline("testlab", "/does-not-exist", "needle")
+        service.fs_search_offline(lab_id(service, "testlab"), "/does-not-exist", "needle")
 
 
 def test_fs_search_offline_follows_max_bytes_per_file_at_runtime(tmp_path, monkeypatch):
@@ -679,17 +679,17 @@ def test_fs_search_offline_follows_max_bytes_per_file_at_runtime(tmp_path, monke
     original = settings.max_bytes_per_file
 
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "needle\n" + "x" * 500)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "needle\n" + "x" * 500)
 
-    assert len(service.fs_search_offline("testlab", "/", "needle")[0]) == 1
+    assert len(service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")[0]) == 1
 
     # Below the file's size: it must now be skipped.
     service.update_settings({"max_bytes_per_file": 100})
-    assert service.fs_search_offline("testlab", "/", "needle")[0] == []
+    assert service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")[0] == []
 
     # ...and back up again: the cap follows in both directions, it is not one-way.
     service.update_settings({"max_bytes_per_file": original})
-    assert len(service.fs_search_offline("testlab", "/", "needle")[0]) == 1
+    assert len(service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")[0]) == 1
 
 
 def test_offline_fs_owner_only_ever_names_a_registered_device(tmp_path):
@@ -702,7 +702,7 @@ def test_offline_fs_owner_only_ever_names_a_registered_device(tmp_path):
     what this checks.
     """
     service, _ = _two_machine_lab(tmp_path)
-    lab = service.get_lab_or_reconstruct("testlab")
+    lab = service.get_lab_or_reconstruct(lab_id(service, "testlab"))
 
     paths = [
         "/", "", "//", "/.",                      # the lab root, in its several spellings
@@ -723,50 +723,50 @@ def test_offline_fs_owner_only_ever_names_a_registered_device(tmp_path):
 
 def test_fs_list_offline_on_a_file_is_refused(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
     with pytest.raises(ApiError, match="is a file, not a directory"):
-        service.fs_list_offline("testlab", "/pc1/etc/motd")
+        service.fs_list_offline(lab_id(service, "testlab"), "/pc1/etc/motd")
 
 
 def test_reading_a_directory_offline_is_refused(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_mkdir_offline("testlab", "/pc1/etc")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/etc")
 
     with pytest.raises(ApiError, match="is a directory"):
-        service.fs_read_text_offline("testlab", "/pc1/etc")
+        service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/etc")
 
 
 @pytest.mark.parametrize("path", ["/pc1/nope", "/pc2/anything"])
 def test_reading_a_missing_path_offline_is_not_found(tmp_path, path):
     """`/pc2/anything` is under a device with no folder on disk at all, not just a missing file."""
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_mkdir_offline("testlab", "/pc1/etc")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/etc")
 
     with pytest.raises(PathNotFoundError):
-        service.fs_read_bytes_offline("testlab", path)
+        service.fs_read_bytes_offline(lab_id(service, "testlab"), path)
 
 
 def test_binary_upload_creates_parents_reads_back_as_bytes_and_marks_the_device_dirty(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
-    size = service.fs_upload_bytes_offline("testlab", "/pc1/opt/deep/blob.bin", b"\xff\xfe\x00")
+    size = service.fs_upload_bytes_offline(lab_id(service, "testlab"), "/pc1/opt/deep/blob.bin", b"\xff\xfe\x00")
 
     assert size == 3
     assert (store.lab_dir("testlab") / "pc1" / "opt" / "deep" / "blob.bin").read_bytes() == b"\xff\xfe\x00"
-    assert service.fs_read_bytes_offline("testlab", "/pc1/opt/deep/blob.bin") == b"\xff\xfe\x00"
+    assert service.fs_read_bytes_offline(lab_id(service, "testlab"), "/pc1/opt/deep/blob.bin") == b"\xff\xfe\x00"
     with pytest.raises(BinaryFileError):
-        service.fs_read_text_offline("testlab", "/pc1/opt/deep/blob.bin")
-    assert service.registry.pop_dirty_machines("testlab", {"pc1", "pc2"}) == {"pc1"}
+        service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/opt/deep/blob.bin")
+    assert service.registry.pop_dirty_machines(lab_id(service, "testlab"), {"pc1", "pc2"}) == {"pc1"}
 
 
 @pytest.mark.parametrize("path", ["/pc1/nope", "/pc2/anything"])
 def test_deleting_a_missing_path_offline_is_not_found(tmp_path, path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_mkdir_offline("testlab", "/pc1/etc")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/etc")
 
     with pytest.raises(PathNotFoundError):
-        service.fs_delete_offline("testlab", path)
+        service.fs_delete_offline(lab_id(service, "testlab"), path)
 
 
 @pytest.mark.parametrize("operation", ["fs_move_offline", "fs_copy_offline"])
@@ -774,15 +774,15 @@ def test_moving_or_copying_a_missing_source_offline_is_not_found(tmp_path, opera
     service, store = _two_machine_lab(tmp_path)
 
     with pytest.raises(PathNotFoundError):
-        getattr(service, operation)("testlab", "/pc1/nope", "/pc2/nope")
+        getattr(service, operation)(lab_id(service, "testlab"), "/pc1/nope", "/pc2/nope")
     assert not (store.lab_dir("testlab") / "pc2" / "nope").exists()
 
 
 def test_move_dir_within_the_same_device(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
 
-    service.fs_move_offline("testlab", "/pc1/etc", "/pc1/etc2")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/etc", "/pc1/etc2")
 
     pc1 = store.lab_dir("testlab") / "pc1"
     assert not (pc1 / "etc").exists()
@@ -791,10 +791,10 @@ def test_move_dir_within_the_same_device(tmp_path):
 
 def test_fs_search_offline_skips_binary_files(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/a.txt", "needle\n")
-    service.fs_upload_bytes_offline("testlab", "/pc1/b.bin", b"needle\xff\xfe")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/a.txt", "needle\n")
+    service.fs_upload_bytes_offline(lab_id(service, "testlab"), "/pc1/b.bin", b"needle\xff\xfe")
 
-    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+    matches, truncated = service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")
 
     assert [m.path for m in matches] == ["/pc1/a.txt"]
     assert truncated is False
@@ -805,11 +805,11 @@ def test_fs_search_offline_skips_binary_files(tmp_path):
 
 def test_offline_listing_reports_each_entry_size_mtime_and_full_path(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "abc")
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "abc")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi")
 
-    [notes] = [e for e in service.fs_list_offline("testlab", "/") if e.name == "notes.txt"]
-    [etc] = service.fs_list_offline("testlab", "/pc1")
+    [notes] = [e for e in service.fs_list_offline(lab_id(service, "testlab"), "/") if e.name == "notes.txt"]
+    [etc] = service.fs_list_offline(lab_id(service, "testlab"), "/pc1")
 
     assert (notes.path, notes.is_dir, notes.size) == ("/notes.txt", False, 3)
     assert isinstance(notes.mtime, float) and notes.mtime > 0
@@ -818,28 +818,28 @@ def test_offline_listing_reports_each_entry_size_mtime_and_full_path(tmp_path):
 
 def test_deleting_an_empty_directory_needs_no_recursive_flag(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_mkdir_offline("testlab", "/pc1/empty")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/empty")
 
-    service.fs_delete_offline("testlab", "/pc1/empty")
+    service.fs_delete_offline(lab_id(service, "testlab"), "/pc1/empty")
 
     assert not (store.lab_dir("testlab") / "pc1" / "empty").exists()
 
 
 def test_deleting_a_non_empty_directory_is_refused_unless_recursive(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "hi")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi")
 
     with pytest.raises(ApiError, match=r"^`/pc1/etc` is not empty\. Delete recursively to remove it\.$"):
-        service.fs_delete_offline("testlab", "/pc1/etc")
+        service.fs_delete_offline(lab_id(service, "testlab"), "/pc1/etc")
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
 
 
 def test_moving_onto_an_existing_file_replaces_it(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/a", "new")
-    service.fs_write_text_offline("testlab", "/pc1/b", "old")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/a", "new")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/b", "old")
 
-    service.fs_move_offline("testlab", "/pc1/a", "/pc1/b")
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/a", "/pc1/b")
 
     assert (store.lab_dir("testlab") / "pc1" / "b").read_text() == "new"
     assert not (store.lab_dir("testlab") / "pc1" / "a").exists()
@@ -848,10 +848,10 @@ def test_moving_onto_an_existing_file_replaces_it(tmp_path):
 @pytest.mark.parametrize("operation", ["fs_move_offline", "fs_copy_offline"])
 def test_a_directory_moved_or_copied_onto_an_existing_one_is_merged_into_it(tmp_path, operation):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/etc/new.conf", "n")
-    service.fs_write_text_offline("testlab", "/pc2/etc/old.conf", "o")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/new.conf", "n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc2/etc/old.conf", "o")
 
-    getattr(service, operation)("testlab", "/pc1/etc", "/pc2/etc")
+    getattr(service, operation)(lab_id(service, "testlab"), "/pc1/etc", "/pc2/etc")
 
     assert sorted(p.name for p in (store.lab_dir("testlab") / "pc2" / "etc").iterdir()) == ["new.conf", "old.conf"]
     assert (store.lab_dir("testlab") / "pc1" / "etc").exists() is (operation == "fs_copy_offline")
@@ -860,9 +860,9 @@ def test_a_directory_moved_or_copied_onto_an_existing_one_is_merged_into_it(tmp_
 @pytest.mark.parametrize("path", ["/pc1/etc", "/scratch"])
 def test_creating_an_existing_directory_again_is_harmless(tmp_path, path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_mkdir_offline("testlab", path)
+    service.fs_mkdir_offline(lab_id(service, "testlab"), path)
 
-    service.fs_mkdir_offline("testlab", path)
+    service.fs_mkdir_offline(lab_id(service, "testlab"), path)
 
     assert (store.lab_dir("testlab") / path.lstrip("/")).is_dir()
 
@@ -871,8 +871,8 @@ def test_creating_an_existing_directory_again_is_harmless(tmp_path, path):
 def test_uploading_a_second_file_into_the_same_new_folder_works(tmp_path, folder):
     service, store = _two_machine_lab(tmp_path)
 
-    service.fs_upload_bytes_offline("testlab", f"{folder}/a.bin", b"\x00")
-    service.fs_upload_bytes_offline("testlab", f"{folder}/b.bin", b"\x01")
+    service.fs_upload_bytes_offline(lab_id(service, "testlab"), f"{folder}/a.bin", b"\x00")
+    service.fs_upload_bytes_offline(lab_id(service, "testlab"), f"{folder}/b.bin", b"\x01")
 
     assert sorted(p.name for p in (store.lab_dir("testlab") / folder.lstrip("/")).iterdir()) == ["a.bin", "b.bin"]
 
@@ -882,22 +882,22 @@ _ANY_NAME = {"pc1", "pc2", "notes", "other", "shared"}
 
 
 def _dirty_after(service, action) -> set[str]:
-    service.registry.pop_dirty_machines("testlab", _ANY_NAME)  # start from a clean slate
+    service.registry.pop_dirty_machines(lab_id(service, "testlab"), _ANY_NAME)  # start from a clean slate
     action()
-    return service.registry.pop_dirty_machines("testlab", _ANY_NAME)
+    return service.registry.pop_dirty_machines(lab_id(service, "testlab"), _ANY_NAME)
 
 
 def test_each_offline_change_marks_exactly_the_devices_it_touches_dirty(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/pc1/a", "a")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/a", "a")
 
-    assert _dirty_after(service, lambda: service.fs_mkdir_offline("testlab", "/pc1/d")) == {"pc1"}
-    assert _dirty_after(service, lambda: service.fs_copy_offline("testlab", "/pc1/a", "/pc2/a")) == {"pc2"}
-    assert _dirty_after(service, lambda: service.fs_move_offline("testlab", "/pc1/a", "/pc2/b")) == {"pc1", "pc2"}
-    assert _dirty_after(service, lambda: service.fs_delete_offline("testlab", "/pc2/b")) == {"pc2"}
-    assert _dirty_after(service, lambda: service.fs_write_text_offline("testlab", "/pc2.startup", "ip a\n")) == {"pc2"}
-    assert _dirty_after(service, lambda: service.fs_write_text_offline("testlab", "/notes/todo.txt", "x")) == set()
-    assert _dirty_after(service, lambda: service.fs_write_text_offline("testlab", "/other.startup", "x")) == set()
+    assert _dirty_after(service, lambda: service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/d")) == {"pc1"}
+    assert _dirty_after(service, lambda: service.fs_copy_offline(lab_id(service, "testlab"), "/pc1/a", "/pc2/a")) == {"pc2"}
+    assert _dirty_after(service, lambda: service.fs_move_offline(lab_id(service, "testlab"), "/pc1/a", "/pc2/b")) == {"pc1", "pc2"}
+    assert _dirty_after(service, lambda: service.fs_delete_offline(lab_id(service, "testlab"), "/pc2/b")) == {"pc2"}
+    assert _dirty_after(service, lambda: service.fs_write_text_offline(lab_id(service, "testlab"), "/pc2.startup", "ip a\n")) == {"pc2"}
+    assert _dirty_after(service, lambda: service.fs_write_text_offline(lab_id(service, "testlab"), "/notes/todo.txt", "x")) == set()
+    assert _dirty_after(service, lambda: service.fs_write_text_offline(lab_id(service, "testlab"), "/other.startup", "x")) == set()
 
 
 # -- search: skipped files do not end the walk, and the total cap spans files ---------------------
@@ -905,18 +905,18 @@ def test_each_offline_change_marks_exactly_the_devices_it_touches_dirty(tmp_path
 
 def test_fs_search_offline_is_case_insensitive_by_default(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/notes.txt", "NEEDLE\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "NEEDLE\n")
 
-    assert [m.line_text for m in service.fs_search_offline("testlab", "/", "needle")[0]] == ["NEEDLE"]
+    assert [m.line_text for m in service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")[0]] == ["NEEDLE"]
 
 
 def test_fs_search_offline_keeps_walking_after_a_skipped_binary_file(tmp_path):
     # Root-level files are walked before subdirectories, so the binary comes first.
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_upload_bytes_offline("testlab", "/a.bin", b"needle\xff\xfe")
-    service.fs_write_text_offline("testlab", "/pc1/b.txt", "needle\n")
+    service.fs_upload_bytes_offline(lab_id(service, "testlab"), "/a.bin", b"needle\xff\xfe")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/b.txt", "needle\n")
 
-    assert [m.path for m in service.fs_search_offline("testlab", "/", "needle")[0]] == ["/pc1/b.txt"]
+    assert [m.path for m in service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")[0]] == ["/pc1/b.txt"]
 
 
 def test_fs_search_offline_keeps_walking_after_a_skipped_oversized_file_and_searches_one_at_the_limit(
@@ -925,11 +925,11 @@ def test_fs_search_offline_keeps_walking_after_a_skipped_oversized_file_and_sear
     from kathara_api.config import get_settings
 
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/big.txt", "needle " * 3)  # 21 bytes, over the limit
-    service.fs_write_text_offline("testlab", "/pc1/fits.txt", "needle " * 2 + "123456")  # exactly 20
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/big.txt", "needle " * 3)  # 21 bytes, over the limit
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/fits.txt", "needle " * 2 + "123456")  # exactly 20
     monkeypatch.setattr(get_settings(), "max_bytes_per_file", 20)
 
-    assert [m.path for m in service.fs_search_offline("testlab", "/", "needle")[0]] == ["/pc1/fits.txt"]
+    assert [m.path for m in service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")[0]] == ["/pc1/fits.txt"]
 
 
 def test_fs_search_offline_total_cap_limits_a_later_file_too(tmp_path, monkeypatch):
@@ -937,10 +937,10 @@ def test_fs_search_offline_total_cap_limits_a_later_file_too(tmp_path, monkeypat
 
     monkeypatch.setattr(kathara_service_module, "_SEARCH_MAX_TOTAL_MATCHES", 3)
     service, _ = _two_machine_lab(tmp_path)
-    service.fs_write_text_offline("testlab", "/first.txt", "needle\nneedle\n")
-    service.fs_write_text_offline("testlab", "/pc1/second.txt", "needle\n" * 5)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/first.txt", "needle\nneedle\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/second.txt", "needle\n" * 5)
 
-    matches, truncated = service.fs_search_offline("testlab", "/", "needle")
+    matches, truncated = service.fs_search_offline(lab_id(service, "testlab"), "/", "needle")
 
     assert [m.path for m in matches] == ["/first.txt", "/first.txt", "/pc1/second.txt"]
     assert truncated is True
@@ -949,20 +949,20 @@ def test_fs_search_offline_total_cap_limits_a_later_file_too(tmp_path, monkeypat
 def test_offline_listing_puts_directories_first_then_names_case_insensitively(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
     for name in ("b.txt", "_a.txt", "A.txt"):
-        service.fs_write_text_offline("testlab", f"/pc1/{name}", "x")
-    service.fs_mkdir_offline("testlab", "/pc1/zdir")
+        service.fs_write_text_offline(lab_id(service, "testlab"), f"/pc1/{name}", "x")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/zdir")
 
-    assert [e.name for e in service.fs_list_offline("testlab", "/pc1")] == ["zdir", "_a.txt", "A.txt", "b.txt"]
+    assert [e.name for e in service.fs_list_offline(lab_id(service, "testlab"), "/pc1")] == ["zdir", "_a.txt", "A.txt", "b.txt"]
 
 
 def test_an_empty_device_folder_can_be_deleted_and_then_written_to_again(tmp_path):
     service, store = _two_machine_lab(tmp_path)
-    service.fs_mkdir_offline("testlab", "/pc1")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1")
 
-    service.fs_delete_offline("testlab", "/pc1")  # empty: no recursive flag needed
+    service.fs_delete_offline(lab_id(service, "testlab"), "/pc1")  # empty: no recursive flag needed
     assert not (store.lab_dir("testlab") / "pc1").exists()
 
-    service.fs_write_text_offline("testlab", "/pc1/etc/motd", "back")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "back")
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "back"
 
 

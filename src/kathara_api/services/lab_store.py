@@ -1,9 +1,14 @@
 """On-disk persistence of labs as standard Kathara lab directories.
 
-Every lab is written to ``<root>/<name>/`` as a real Kathara lab directory (``lab.conf``,
-``<machine>.startup``, ``shared.startup``, ``<machine>/…``, ``shared/…``). This is what lets labs
-survive a server restart — the in-memory ``LabRegistry`` alone does not. The store is deliberately
-free of any Kathara-facade/deploy concerns: it only reads and writes directories.
+Every lab this app creates is written to ``<root>/<name>/`` as a real Kathara lab directory
+(``lab.conf``, ``<machine>.startup``, ``shared.startup``, ``<machine>/…``, ``shared/…``). This is
+what lets labs survive a server restart — the in-memory ``LabRegistry`` alone does not. The store is
+deliberately free of any Kathara-facade/deploy concerns: it only reads and writes directories.
+
+A lab is identified by its directory, not by its name: ``lab_id_for`` derives the id every other
+layer uses (registry key, URL segment, Kathara's lab hash) from the directory's absolute path. So
+only the *creation* methods take a name — they decide where under the root a new lab goes — and
+every method that works on an existing lab takes its directory.
 
 ``gen_lab_conf`` regenerates a ``lab.conf`` from a populated ``Lab`` object (Kathara ships parsers
 but no writer), so JSON-created labs — which have no source ``lab.conf`` — can still be persisted in
@@ -21,6 +26,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO, Optional, Union
 
+from Kathara import utils as kathara_utils
 from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
@@ -54,6 +60,22 @@ MAX_LAB_CONF_BYTES = 1 << 20
 # see that module for why they are not spelled out here. Everything in `device.meta` that is *not*
 # in MODELED_META_KEYS is a pass-through option (see `lab_builder.apply_options`) and gets its own
 # `name[key]="value"` line, sorted for stability.
+
+
+def lab_id_for(directory: Union[str, Path]) -> str:
+    """The id of the lab stored in ``directory``: Kathara's own hash of its absolute path.
+
+    Computed exactly the way ``kathara lstart`` computes a lab's hash (``LabParser.parse`` builds
+    ``Lab(None, path)`` from ``utils.get_absolute_path``), so a lab started from the CLI in the same
+    directory is the same lab here — same containers, same ``lab_hash`` label — and two labs whose
+    directories share a basename never collide. The directory need not exist yet: a creation path
+    claims the id of the directory it is about to write.
+
+    The one case where the CLI disagrees is a ``lab.conf`` with a ``LAB_NAME`` line: Kathara's
+    ``LabParser`` then re-derives the hash from that name. This app never writes one
+    (``gen_lab_conf``) and ignores one it reads, so only a hand-written ``LAB_NAME`` diverges.
+    """
+    return kathara_utils.generate_urlsafe_hash(kathara_utils.get_absolute_path(str(directory)))
 
 
 def sanitize_lab_name(name: str) -> str:
@@ -150,6 +172,11 @@ def gen_lab_conf(lab: Lab) -> str:
     are emitted, and container-typed metas (envs/sysctls/ports/ulimits/volumes/exec) are expanded
     into their proper one-line-each directives.
 
+    ``LAB_NAME`` is the one metadata key never written. Kathara's ``LabParser`` assigns it to
+    ``lab.name``, whose setter re-derives the lab's hash from it, so a ``lab.conf`` carrying one
+    makes ``kathara lstart`` hash the *name* instead of the directory — and deploy under a
+    different identity than this app's (see ``lab_id_for``). The name lives in the directory name.
+
     Generating is only ever done where there is no user text to preserve, which is two callers:
     ``LabStore.write_lab_conf`` for a JSON-described lab (``create_lab``), and
     ``KatharaService._lab_conf_base_text`` for a folder-based import whose directory carries no
@@ -160,7 +187,6 @@ def gen_lab_conf(lab: Lab) -> str:
     lines: list[str] = []
 
     metadata = [
-        ("LAB_NAME", lab.name),
         ("LAB_DESCRIPTION", lab.description),
         ("LAB_VERSION", lab.version),
         ("LAB_AUTHOR", lab.author),
@@ -183,7 +209,8 @@ def gen_lab_conf(lab: Lab) -> str:
 
 
 class LabStore:
-    """Reads and writes labs as directories under a single storage root."""
+    """Creates labs as directories under a single storage root, and reads and writes lab
+    directories wherever they are."""
 
     def __init__(self, root: Union[str, Path]) -> None:
         self.root = Path(root)
@@ -211,6 +238,14 @@ class LabStore:
         if not self.root.exists():
             return []
         return sorted(p.name for p in self.root.iterdir() if p.is_dir() and not p.name.startswith("."))
+
+    def lab_dirs(self) -> list[Path]:
+        """The directory of every lab under the root, in ``lab_names`` order.
+
+        Not sanitized: a directory dropped under the root by hand is a lab whatever its name, since
+        nothing about a lab's identity depends on the name being a valid *new* lab name.
+        """
+        return [self.root / name for name in self.lab_names()]
 
     def write_lab(self, name: str, files: dict[str, Union[str, bytes]], dirs: list[str] | None = None) -> Path:
         """Write a lab directory verbatim from a path->content map, atomically.
@@ -261,11 +296,12 @@ class LabStore:
         """Regenerate and (over)write ``lab_dir/lab.conf`` from ``lab`` (see ``gen_lab_conf``)."""
         self._atomic_write_text(lab_dir / LAB_CONF_FILENAME, gen_lab_conf(lab))
 
-    def lab_conf_path(self, name: str) -> Path:
-        return self.lab_dir(name) / LAB_CONF_FILENAME  # lab_dir sanitizes the name
+    @staticmethod
+    def lab_conf_path(directory: Path) -> Path:
+        return directory / LAB_CONF_FILENAME
 
-    def read_lab_conf_text(self, name: str) -> Optional[str]:
-        """Verbatim ``lab.conf`` text for ``name``, or ``None`` when the lab has no such file.
+    def read_lab_conf_text(self, directory: Path) -> Optional[str]:
+        """Verbatim ``lab.conf`` text of the lab in ``directory``, or ``None`` when it has no such file.
 
         Reads bytes and decodes explicitly rather than ``Path.read_text`` — which performs
         universal-newline translation — so a CRLF file comes back exactly as written; a surgical
@@ -273,24 +309,24 @@ class LabStore:
         touch. A file that is oversized or not valid UTF-8 is treated as "nothing editable here"
         (``None``) rather than raising, mirroring ``read_lab``'s own binary-file handling.
         """
-        path = self.lab_conf_path(name)
+        path = self.lab_conf_path(directory)
         if not path.is_file():
             return None
         try:
             data = path.read_bytes()
         except OSError:
-            logger.warning("Could not read %s for lab `%s`", LAB_CONF_FILENAME, name, exc_info=True)
+            logger.warning("Could not read %s", path, exc_info=True)
             return None
         if len(data) > MAX_LAB_CONF_BYTES:
-            logger.warning("Ignoring oversized %s for lab `%s` (%d bytes)", LAB_CONF_FILENAME, name, len(data))
+            logger.warning("Ignoring oversized %s (%d bytes)", path, len(data))
             return None
         try:
             return data.decode("utf-8")
         except UnicodeDecodeError:
-            logger.warning("Ignoring non-UTF-8 %s for lab `%s`", LAB_CONF_FILENAME, name)
+            logger.warning("Ignoring non-UTF-8 %s", path)
             return None
 
-    def write_lab_conf_text(self, name: str, text: str) -> Path:
+    def write_lab_conf_text(self, directory: Path, text: str) -> Path:
         """Write ``lab.conf`` verbatim and atomically (tmp file + ``os.replace``).
 
         Used by every path that must preserve the caller's exact bytes — an import/upload's
@@ -298,9 +334,8 @@ class LabStore:
         which regenerates the file from a ``Lab`` model (lossy, and only still used by
         ``create_lab`` for JSON-described labs that have no source file to preserve).
         """
-        directory = self.lab_dir(name)  # sanitizes name
         if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{name}` not found.")
+            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
         final = directory / LAB_CONF_FILENAME
         self._atomic_write_text(final, text)
         return final
@@ -317,10 +352,11 @@ class LabStore:
 
     # -- fixed topology layout (lab.layout) -----------------------------------
 
-    def layout_path(self, name: str) -> Path:
-        return self.lab_dir(name) / LAYOUT_FILENAME  # lab_dir sanitizes the name
+    @staticmethod
+    def layout_path(directory: Path) -> Path:
+        return directory / LAYOUT_FILENAME
 
-    def read_layout(self, name: str) -> Optional[dict[str, Any]]:
+    def read_layout(self, directory: Path) -> Optional[dict[str, Any]]:
         """Parsed ``lab.layout``, or ``None`` when absent/unreadable/not an object.
 
         Raises ``LabNotFoundError`` if the lab itself doesn't exist — distinct from "no layout",
@@ -328,71 +364,69 @@ class LabStore:
         a 404. A hand-edited or truncated layout file must never break the topology view, so parse
         errors are logged and treated the same as "no layout".
         """
-        if not self.lab_dir(name).is_dir():
-            raise LabNotFoundError(f"Lab `{name}` not found.")
-        path = self.layout_path(name)
+        if not directory.is_dir():
+            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        path = self.layout_path(directory)
         if not path.is_file():
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            logger.warning("Ignoring unreadable %s for lab `%s`", LAYOUT_FILENAME, name, exc_info=True)
+            logger.warning("Ignoring unreadable %s", path, exc_info=True)
             return None
         if not isinstance(data, dict):
-            logger.warning("Ignoring %s for lab `%s`: not a JSON object", LAYOUT_FILENAME, name)
+            logger.warning("Ignoring %s: not a JSON object", path)
             return None
         return data
 
-    def write_layout(self, name: str, data: dict[str, Any]) -> Path:
+    def write_layout(self, directory: Path, data: dict[str, Any]) -> Path:
         """Write ``lab.layout`` atomically (tmp file + ``os.replace``), or raise ``LabNotFoundError``."""
-        directory = self.lab_dir(name)  # sanitizes name
         if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{name}` not found.")
+            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
         final = directory / LAYOUT_FILENAME
         tmp = directory / f".{LAYOUT_FILENAME}.tmp"
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(tmp, final)
         return final
 
-    def delete_layout(self, name: str) -> bool:
+    def delete_layout(self, directory: Path) -> bool:
         """Remove ``lab.layout`` if present; returns whether a file was actually removed.
 
         Raises ``LabNotFoundError`` if the lab itself doesn't exist, matching ``write_layout`` —
         deleting a nonexistent lab's layout has no sensible "nothing to do" reading the way an
         absent layout file does.
         """
-        if not self.lab_dir(name).is_dir():
-            raise LabNotFoundError(f"Lab `{name}` not found.")
-        path = self.layout_path(name)
+        if not directory.is_dir():
+            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        path = self.layout_path(directory)
         if not path.is_file():
             return False
         path.unlink()
         return True
 
-    def delete_lab(self, name: str) -> None:
-        directory = self.lab_dir(name)
+    @staticmethod
+    def delete_lab(directory: Path) -> None:
         if directory.exists():
             shutil.rmtree(directory)
 
-    def rename_lab(self, old_name: str, new_name: str) -> Path:
-        """Rename a lab directory in place — the lab's name *is* its directory name.
+    @staticmethod
+    def rename_lab(directory: Path, new_name: str) -> Path:
+        """Rename a lab directory in place, next to where it already is, and return its new path.
 
         Everything the lab owns travels with the directory (``lab.conf`` verbatim, device folders,
-        startup scripts, ``lab.layout``), so nothing is rewritten. Both names are sanitized, so the
-        rename can never escape the storage root, and ``os.rename`` within it is atomic. Refuses to
-        clobber an existing lab; renaming to the same name is a no-op.
+        startup scripts, ``lab.layout``), so nothing is rewritten. The new name is sanitized, so the
+        rename can never leave the directory's parent, and ``os.rename`` within it is atomic.
+        Refuses to clobber an existing directory; renaming to the same name is a no-op.
         """
-        old_clean = sanitize_lab_name(old_name)
         new_clean = sanitize_lab_name(new_name)
-        source = self.lab_dir(old_clean)
-        if not source.is_dir():
-            raise LabNotFoundError(f"Lab `{old_clean}` not found.")
-        if new_clean == old_clean:
-            return source
-        target = self.lab_dir(new_clean)
+        if not directory.is_dir():
+            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        if new_clean == directory.name:
+            return directory
+        target = directory.parent / new_clean
         if target.exists():
             raise LabAlreadyRegisteredError(f"Lab `{new_clean}` already exists.")
-        os.rename(source, target)
+        os.rename(directory, target)
         return target
 
     def extract_zip(self, name: str, data: BinaryIO) -> Path:
@@ -501,15 +535,15 @@ class LabStore:
                 shutil.rmtree(tmp, ignore_errors=True)
         return final
 
-    def zip_lab(self, name: str) -> io.BytesIO:
-        """Zip the lab's on-disk directory into an in-memory buffer, or raise ``LabNotFoundError``.
+    @staticmethod
+    def zip_lab(directory: Path) -> io.BytesIO:
+        """Zip a lab directory into an in-memory buffer, or raise ``LabNotFoundError``.
 
         Files are stored at the archive root (``lab.conf``, ``pc1.startup``, ``pc1/…``), so a plain
         ``unzip`` and this store's own ``extract_zip`` both round-trip the result cleanly.
         """
-        directory = self.lab_dir(name)  # sanitizes name
         if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{name}` not found.")
+            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
             for root, _dirs, files in os.walk(directory):
@@ -550,9 +584,9 @@ class LabStore:
     def _publish(source: Path, final: Path, name: str) -> None:
         """``os.replace`` a finished scratch tree onto its final path, refusing to clobber.
 
-        Every caller is a lab-*creation* path, and the service asserts the name is free under its
-        per-lab-name lock before calling in — so a ``final`` that exists here means a concurrent
-        create won the race for this name, and the directory is *that lab's*. Clobbering it —
+        Every caller is a lab-*creation* path, and the service asserts the directory is free under
+        its per-lab lock before calling in — so a ``final`` that exists here means a concurrent
+        create won the race for this directory, and it is *that lab's*. Clobbering it —
         ``rmtree(final)`` before the replace — is precisely how a completed import loses every
         one of its files to a racer that goes on to fail with a 409 anyway.
         """

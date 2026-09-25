@@ -120,10 +120,10 @@ export interface DesktopApi {
    * cancels. Starts at `current` when that directory still exists. The desktop app is the only
    * place this can be offered — the browser build renders the host path as a plain text input. */
   pickHostDirectory(current?: string): Promise<string | null>;
-  revealLab(labName: string): Promise<void>;
+  revealLab(labId: string): Promise<void>;
   openLabsFolder(): Promise<void>;
   /** Open a plain shell in the lab's directory — no `kathara connect`, just `cd` there. */
-  openTerminalHere(labName: string): Promise<void>;
+  openTerminalHere(labId: string): Promise<void>;
   /** Lab storage directory (Settings). See SettingsPage.tsx's "Desktop" panel. */
   getLabsDir(): Promise<string>;
   getDefaultLabsDir(): Promise<string>;

@@ -21,7 +21,7 @@ from kathara_api.main import create_app
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import image_pull, lab_builder
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_service
+from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
 
 
 @pytest.fixture(autouse=True)
@@ -91,7 +91,7 @@ def _service(tmp_path, docker_image, api=None):
 def _add_lab(service, machines):
     spec = LabCreate.model_validate({"name": "testlab", "machines": machines})
     lab = lab_builder.build_lab(spec)
-    service.registry.add(lab)
+    register_lab(service, lab)
     return lab
 
 
@@ -113,7 +113,7 @@ def test_missing_and_present_images_are_reported_separately(tmp_path):
         ],
     )
 
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
 
     assert status.missing == ["kathara/frr"]
     assert {img.name: img.state for img in status.images} == {
@@ -129,7 +129,7 @@ def test_device_without_an_image_resolves_the_global_default(tmp_path):
     service = _service(tmp_path, docker_image)
     _add_lab(service, [{"name": "pc1", "interfaces": [{"link": "A", "number": 0}]}])
 
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
 
     assert status.missing == [default]
 
@@ -160,7 +160,7 @@ def test_update_classification_table(tmp_path, name, repo_digests, remote, expec
     service = _service(tmp_path, docker_image)
     _add_lab(service, [{"name": "pc1", "image": name, "interfaces": [{"link": "A", "number": 0}]}])
 
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
 
     assert {img.name: img.state for img in status.images} == {name: expected}
     assert bool(docker_image.remote_calls) is expect_remote_call
@@ -182,7 +182,7 @@ def test_a_daemon_error_is_unknown_not_missing(tmp_path):
     service = _service(tmp_path, _AngryDockerImage())
     _add_lab(service, [{"name": "pc1", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]}])
 
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
 
     assert status.missing == []
     assert {img.state for img in status.images} == {"unknown"}
@@ -204,7 +204,7 @@ def test_update_probes_run_on_daemon_threads(tmp_path, monkeypatch):
     service = _service(tmp_path, docker_image)
     _add_lab(service, [{"name": "pc1", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]}])
 
-    service.check_lab_images("testlab")
+    service.check_lab_images(lab_id(service, "testlab"))
 
     lingering = [t for t in threading.enumerate() if t.name.startswith("kathara-imgcheck-")]
     assert lingering, "expected the abandoned probe to still be running, so this assertion is real"
@@ -220,7 +220,7 @@ def test_never_policy_skips_the_registry_entirely(tmp_path):
     service = _service(tmp_path, docker_image)
     _add_lab(service, [{"name": "pc1", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]}])
 
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
 
     # The whole point of `Never` is that Deploy pays no network cost at all.
     assert docker_image.remote_calls == []
@@ -238,7 +238,7 @@ def test_prompt_and_always_both_check_and_report_the_policy(tmp_path, policy):
     service = _service(tmp_path, docker_image)
     _add_lab(service, [{"name": "pc1", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]}])
 
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
 
     # The backend reports facts plus the policy; deciding whether to *ask* is the client's job.
     assert status.update_policy == policy
@@ -258,7 +258,7 @@ def test_a_hanging_registry_cannot_hang_the_precheck(tmp_path, monkeypatch):
     _add_lab(service, [{"name": "pc1", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]}])
 
     started = time.monotonic()
-    status = service.check_lab_images("testlab")
+    status = service.check_lab_images(lab_id(service, "testlab"))
     elapsed = time.monotonic() - started
 
     assert elapsed < 2.0
@@ -357,7 +357,7 @@ def test_precheck_endpoint_returns_missing_images(client_and_service):
         ],
     )
 
-    res = client.get("/api/labs/testlab/images")
+    res = client.get(f"/api/labs/{lab_id(service, 'testlab')}/images")
 
     assert res.status_code == 200
     assert res.json()["missing"] == ["kathara/frr"]

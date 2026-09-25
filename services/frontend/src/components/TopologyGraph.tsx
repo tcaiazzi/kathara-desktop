@@ -53,7 +53,7 @@ type DeviceActionsProps = Pick<
 >;
 
 interface TopologyGraphProps extends DeviceActionsProps {
-  labName: string;
+  labId: string;
   detail: LabDetail;
   onEditFiles: () => void;
   // Shows/dismisses the shared context menu (rendered once by the workspace page).
@@ -90,7 +90,7 @@ const TOOLBAR_COMPACT_WIDTH = 480;
 // per node is not a good fit for React re-renders. React only owns the low-frequency parts: the
 // side panel and (via the setContextMenu/deviceContextItems props) the context menu.
 export function TopologyGraph({
-  labName,
+  labId,
   detail,
   onEditFiles,
   model,
@@ -140,7 +140,7 @@ export function TopologyGraph({
   // with anyone who opens the lab) and a per-browser draft in localStorage holding not-yet-saved
   // moves. The draft wins while it exists; "Save layout" promotes it to the file and "Re-layout"
   // throws it away — falling back to the fixed layout when the lab has one.
-  const draftKey = `kt-topo-pos:${labName}`;
+  const draftKey = `kt-topo-pos:${labId}`;
   const readDraft = useCallback((): NodePositions => {
     try {
       return JSON.parse(localStorage.getItem(draftKey) || "{}") as NodePositions;
@@ -167,11 +167,11 @@ export function TopologyGraph({
   // Fetch the lab's fixed layout. It can land after the engine's first build, so bump a nonce to
   // make the graph rebuild against it (the engine effect reads seeds through a ref).
   useEffect(() => {
-    if (!labName) return;
+    if (!labId) return;
     let live = true;
     setSavedLayout(null);
     api
-      .getLayout(labName)
+      .getLayout(labId)
       .then((l) => {
         if (!live) return;
         setSavedLayout(l.nodes);
@@ -184,13 +184,13 @@ export function TopologyGraph({
     return () => {
       live = false;
     };
-  }, [labName, toast]);
+  }, [labId, toast]);
 
   // Re-read on lab switch, model change (a device added), Re-layout, and layout arrival.
   const initialPositions = useMemo(
     () => ({ ...(savedLayout ?? {}), ...readDraft() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [labName, detail, relayoutNonce, layoutNonce, savedLayout, readDraft],
+    [labId, detail, relayoutNonce, layoutNonce, savedLayout, readDraft],
   );
 
   const posTimer = useRef<number | null>(null);
@@ -221,7 +221,7 @@ export function TopologyGraph({
   async function handleSaveLayout() {
     await runBusy(setSavingLayout, "Save layout", async () => {
       const map = livePositions.current;
-      const { nodes } = await api.saveLayout(labName, map);
+      const { nodes } = await api.saveLayout(labId, map);
       setSavedLayout(nodes);
       setDirty(false);
       clearDraft();
@@ -237,7 +237,7 @@ export function TopologyGraph({
     });
     if (!ok) return;
     await runBusy(setSavingLayout, "Remove layout", async () => {
-      await api.deleteLayout(labName);
+      await api.deleteLayout(labId);
       setSavedLayout({});
       clearDraft();
       setDirty(false);
@@ -341,7 +341,7 @@ export function TopologyGraph({
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = () => {
       api
-        .getStartupStatus(labName, selectedDeviceName, controller.signal)
+        .getStartupStatus(labId, selectedDeviceName, controller.signal)
         .then((status) => {
           setStartupStatus(status);
           if (!status.finished) timer = setTimeout(poll, 1500);
@@ -356,7 +356,7 @@ export function TopologyGraph({
       controller.abort();
       if (timer) clearTimeout(timer);
     };
-  }, [labName, selectedDeviceName, selectedDeviceRunning]);
+  }, [labId, selectedDeviceName, selectedDeviceRunning]);
 
   return (
     <div className="mt-3">

@@ -6,13 +6,13 @@ import type { MachineStats } from "../services/types";
 import { Panel } from "./Panel";
 
 interface StatsPanelProps {
-  labName: string;
+  labId: string;
   deployed: boolean;
 }
 
 // Live device statistics, streamed over a native EventSource — see `api.statsStreamUrl` for why
 // that works without any SSE parsing here.
-export function StatsPanel({ labName, deployed }: StatsPanelProps) {
+export function StatsPanel({ labId, deployed }: StatsPanelProps) {
   const [rows, setRows] = useState<Record<string, MachineStats>>({});
   const [streaming, setStreaming] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
@@ -27,7 +27,7 @@ export function StatsPanel({ labName, deployed }: StatsPanelProps) {
   function start() {
     stop();
     setRows({});
-    const src = new EventSource(api.statsStreamUrl(labName));
+    const src = new EventSource(api.statsStreamUrl(labId));
     sourceRef.current = src;
     setStreaming(true);
     src.addEventListener("stats", (ev) => {
@@ -54,7 +54,7 @@ export function StatsPanel({ labName, deployed }: StatsPanelProps) {
   }
 
   // Stop the stream when navigating away from this lab or unmounting.
-  useEffect(() => stop, [labName]);
+  useEffect(() => stop, [labId]);
 
   const sorted = Object.values(rows).sort((a, b) => a.name.localeCompare(b.name));
 

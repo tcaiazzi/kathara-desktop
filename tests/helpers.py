@@ -12,6 +12,7 @@ from typing import Optional
 from Kathara.exceptions import LabNotFoundError
 
 from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.lab_store import lab_id_for
 
 
 def zip_bytes(
@@ -43,6 +44,28 @@ def zip_bytes(
                 zf.writestr(name, content)
     buf.seek(0)
     return buf
+
+
+def lab_id(service, name: str) -> str:
+    """The id of the lab ``name`` under ``service``'s labs root — what every per-lab method takes.
+
+    Tests create labs by name (``make_lab``, ``create_lab``) and then address them by id, so this
+    derives it exactly as the service does (``lab_store.lab_id_for``). It does not need the lab to
+    exist: the id of a name that was never created is how a test asks for an unknown lab.
+    """
+    return lab_id_for(service.store.lab_dir(name))
+
+
+def register_lab(service, lab):
+    """Register a hand-built ``lab`` with ``service`` as if it lived under the labs root.
+
+    For tests that build a ``Lab`` in memory (no directory, often with a device marked as running)
+    rather than creating one on disk. It gets the id and directory of ``lab.name`` under the root —
+    which need not exist — so ``lab_id(service, lab.name)`` addresses it like any other lab.
+    """
+    lab.hash = lab_id(service, lab.name)
+    service.registry.add(lab, service.store.lab_dir(lab.name))
+    return lab
 
 
 def make_lab(service, name: str, files: dict[str, str], dirs=None, deploy: bool = False):
@@ -97,8 +120,8 @@ class FakeFacadeBase:
     def update_lab_from_api(self, lab):
         return lab
 
-    def get_lab_from_api(self, lab_name):
-        raise LabNotFoundError(f"Lab `{lab_name}` not found.")
+    def get_lab_from_api(self, lab_hash=None, lab_name=None):
+        raise LabNotFoundError(f"Lab `{lab_hash or lab_name}` not found.")
 
     def connect_machine_to_link(self, machine, link, mac_address=None):
         pass
@@ -109,7 +132,7 @@ class FakeFacadeBase:
     def copy_files(self, machine, guest_to_host):
         pass
 
-    def exec(self, machine_name, command, lab_name=None, wait=False, stream=False):
+    def exec(self, machine_name, command, lab_hash=None, lab_name=None, wait=False, stream=False):
         return (b"", b"", 0)
 
 

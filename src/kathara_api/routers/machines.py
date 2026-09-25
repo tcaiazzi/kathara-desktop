@@ -23,43 +23,43 @@ from ..schemas.machine import MachineCreate, MachineDetail, MachineUpdate, Start
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
-router = APIRouter(prefix="/labs/{lab_name}/machines", tags=["machines"])
+router = APIRouter(prefix="/labs/{lab_id}/machines", tags=["machines"])
 
 
 @router.get("/{machine_name}/shells", response_model=list[str])
 def list_shells(
-    lab_name: str, machine_name: str, service: KatharaService = Depends(get_service)
+    lab_id: str, machine_name: str, service: KatharaService = Depends(get_service)
 ) -> list[str]:
     """List the shells available in a running device (populates the live-terminal picker)."""
-    return service.available_shells(lab_name, machine_name)
+    return service.available_shells(lab_id, machine_name)
 
 
 @router.post("", response_model=MachineDetail, status_code=status.HTTP_201_CREATED)
 def add_machine(
-    lab_name: str, payload: MachineCreate, service: KatharaService = Depends(get_service)
+    lab_id: str, payload: MachineCreate, service: KatharaService = Depends(get_service)
 ) -> MachineDetail:
     """Add a device to a lab. Deployed immediately if the lab is running; otherwise persisted to
     lab.conf and deployed the next time the lab starts."""
-    machine = service.add_machine(lab_name, payload)
+    machine = service.add_machine(lab_id, payload)
     return serializers.machine_to_detail(machine)
 
 
 @router.put("/{machine_name}", response_model=MachineDetail)
 def update_machine(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     payload: MachineUpdate,
     service: KatharaService = Depends(get_service),
 ) -> MachineDetail:
     """Replace a stopped device's full option set (lab.conf metadata). Rejected with 409 while
     the lab is deployed — undeploy it first."""
-    machine = service.update_machine(lab_name, machine_name, payload)
+    machine = service.update_machine(lab_id, machine_name, payload)
     return serializers.machine_to_detail(machine)
 
 
 @router.delete("/{machine_name}", response_model=Message)
 def remove_machine(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     keep_links: bool = False,
     service: KatharaService = Depends(get_service),
@@ -67,13 +67,13 @@ def remove_machine(
     """Remove a device from a network scenario: undeploy it if running, drop it from the model
     and from ``lab.conf``, and delete its folder and startup/shutdown scripts. ``keep_links=true``
     leaves the collision domains it was attached to in place."""
-    service.remove_machine(lab_name, machine_name, keep_links=keep_links)
-    return Message(detail=f"Device `{machine_name}` removed from lab `{lab_name}`.")
+    service.remove_machine(lab_id, machine_name, keep_links=keep_links)
+    return Message(detail=f"Device `{machine_name}` removed.")
 
 
 @router.post("/{machine_name}/connect", response_model=MachineDetail)
 def connect_machine(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     link: str,
     interface_number: int | None = None,
@@ -84,7 +84,7 @@ def connect_machine(
     ``lab.conf`` and ``interface_number`` may pin its slot; on a running one the connection is live
     only and ``interface_number`` is rejected."""
     machine = service.connect_machine(
-        lab_name,
+        lab_id,
         machine_name,
         link,
         interface_number=interface_number,
@@ -95,7 +95,7 @@ def connect_machine(
 
 @router.post("/{machine_name}/disconnect", response_model=Message)
 def disconnect_machine(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     link: str,
     keep_link: bool = False,
@@ -103,80 +103,80 @@ def disconnect_machine(
 ) -> Message:
     """Detach a device from a collision domain. ``keep_link=true`` only applies to a running
     device: it keeps the collision domain deployed even when the device was the last one on it."""
-    service.disconnect_machine(lab_name, machine_name, link, keep_link=keep_link)
+    service.disconnect_machine(lab_id, machine_name, link, keep_link=keep_link)
     return Message(detail=f"Device `{machine_name}` disconnected from `{link}`.")
 
 
 @router.get("/{machine_name}/fs/list", response_model=FsListResponse)
 def list_runtime_directory(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     path: str = "/",
     service: KatharaService = Depends(get_service),
 ) -> FsListResponse:
     """List the content of a runtime directory on a running device."""
-    entries = service.fs_list_directory(lab_name, machine_name, path)
+    entries = service.fs_list_directory(lab_id, machine_name, path)
     return FsListResponse(path=service.normalize_guest_path(path), entries=entries)
 
 
 @router.get("/{machine_name}/fs/text", response_model=FsReadTextResponse)
 def read_runtime_text_file(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     path: str,
     service: KatharaService = Depends(get_service),
 ) -> FsReadTextResponse:
     """Read a UTF-8 text file from a running device."""
     normalized = service.normalize_guest_path(path)
-    return FsReadTextResponse(path=normalized, content=service.fs_read_text(lab_name, machine_name, normalized))
+    return FsReadTextResponse(path=normalized, content=service.fs_read_text(lab_id, machine_name, normalized))
 
 
 @router.get("/{machine_name}/startup-status", response_model=StartupStatus)
 def get_startup_status(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     service: KatharaService = Depends(get_service),
 ) -> StartupStatus:
     """Live startup-log tail and whether startup commands have finished, for a running device."""
     return StartupStatus(
-        log=service.get_startup_log(lab_name, machine_name),
-        finished=service.is_startup_finished(lab_name, machine_name),
+        log=service.get_startup_log(lab_id, machine_name),
+        finished=service.is_startup_finished(lab_id, machine_name),
     )
 
 
 @router.put("/{machine_name}/fs/text", response_model=Message)
 def write_runtime_text_file(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     payload: FsWriteTextRequest,
     service: KatharaService = Depends(get_service),
 ) -> Message:
     """Write or overwrite a UTF-8 text file on a running device."""
-    size = service.fs_write_text(lab_name, machine_name, payload.path, payload.content)
+    size = service.fs_write_text(lab_id, machine_name, payload.path, payload.content)
     return Message(detail=f"Wrote {size} byte(s) to `{payload.path}` on `{machine_name}`.")
 
 
 @router.post("/{machine_name}/fs/mkdir", response_model=Message)
 def mkdir_runtime_directory(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     payload: FsMkdirRequest,
     service: KatharaService = Depends(get_service),
 ) -> Message:
     """Create a directory (and any missing parents) on a running device."""
-    service.fs_mkdir(lab_name, machine_name, payload.path)
+    service.fs_mkdir(lab_id, machine_name, payload.path)
     return Message(detail=f"Directory `{payload.path}` created on `{machine_name}`.")
 
 
 @router.post("/{machine_name}/fs/move", response_model=Message)
 def move_runtime_path(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     payload: FsMoveRequest,
     service: KatharaService = Depends(get_service),
 ) -> Message:
     """Rename or move a path on a running device."""
-    service.fs_move(lab_name, machine_name, payload.source_path, payload.destination_path)
+    service.fs_move(lab_id, machine_name, payload.source_path, payload.destination_path)
     return Message(
         detail=(
             f"Moved `{payload.source_path}` to `{payload.destination_path}` "
@@ -187,13 +187,13 @@ def move_runtime_path(
 
 @router.post("/{machine_name}/fs/copy", response_model=Message)
 def copy_runtime_path(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     payload: FsCopyRequest,
     service: KatharaService = Depends(get_service),
 ) -> Message:
     """Copy a path on a running device."""
-    service.fs_copy(lab_name, machine_name, payload.source_path, payload.destination_path)
+    service.fs_copy(lab_id, machine_name, payload.source_path, payload.destination_path)
     return Message(
         detail=(
             f"Copied `{payload.source_path}` to `{payload.destination_path}` "
@@ -204,19 +204,19 @@ def copy_runtime_path(
 
 @router.delete("/{machine_name}/fs", response_model=Message)
 def delete_runtime_path(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     payload: FsDeleteRequest = Body(...),
     service: KatharaService = Depends(get_service),
 ) -> Message:
     """Delete a path from a running device."""
-    service.fs_delete(lab_name, machine_name, payload.path, recursive=payload.recursive)
+    service.fs_delete(lab_id, machine_name, payload.path, recursive=payload.recursive)
     return Message(detail=f"Deleted `{payload.path}` on `{machine_name}`.")
 
 
 @router.post("/{machine_name}/fs/upload", response_model=FsUploadResponse)
 async def upload_runtime_file(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     path: str = Form(...),
     file: UploadFile = File(...),
@@ -227,20 +227,20 @@ async def upload_runtime_file(
     # Docker network I/O (facade().copy_files), off the event loop like every other backend call
     # in an `async def` handler — otherwise it stalls every other request this single-worker
     # server is handling for its duration.
-    size = await run_in_threadpool(service.fs_upload_bytes, lab_name, machine_name, path, data)
+    size = await run_in_threadpool(service.fs_upload_bytes, lab_id, machine_name, path, data)
     return FsUploadResponse(path=service.normalize_guest_path(path), size=size)
 
 
 @router.get("/{machine_name}/fs/download")
 def download_runtime_file(
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     path: str,
     service: KatharaService = Depends(get_service),
 ) -> StreamingResponse:
     """Download a file from a running device as octet-stream."""
     normalized = service.normalize_guest_path(path)
-    data = service.fs_read_bytes(lab_name, machine_name, normalized)
+    data = service.fs_read_bytes(lab_id, machine_name, normalized)
     filename = posixpath.basename(normalized) or "download.bin"
     return StreamingResponse(
         iter([data]), media_type="application/octet-stream", headers=attachment_headers(filename)

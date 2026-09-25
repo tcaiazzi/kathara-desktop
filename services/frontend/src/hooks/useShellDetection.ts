@@ -18,9 +18,9 @@ export function useShellDetection(initial = "bash") {
 
   // Prefers "bash" if it's among the detected shells, else the first one reported. Swallows
   // detection failures — the picker falls back to the static bash/sh/ash/zsh list and `initial`.
-  const detectShell = async (labName: string, machine: string) => {
+  const detectShell = async (labId: string, machine: string) => {
     try {
-      const list = await api.listShells(labName, machine);
+      const list = await api.listShells(labId, machine);
       if (list.length) {
         setShells(list);
         chooseShell(list.includes("bash") ? "bash" : list[0]);

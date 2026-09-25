@@ -9,7 +9,7 @@ import pytest
 from kathara_api.errors import LinkInUseError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
-from tests.helpers import FakeFacadeBase, make_service
+from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
 
 
 class _NoopFacade(FakeFacadeBase):
@@ -30,7 +30,7 @@ def _service_with_lab():
         }
     )
     lab = lab_builder.build_lab(spec)
-    service.registry.add(lab)
+    register_lab(service, lab)
     return service, lab
 
 
@@ -45,7 +45,7 @@ def test_undeploy_lab_clears_all_machines_and_links():
     service, lab = _service_with_lab()
     _mark_deployed(lab)
 
-    service.undeploy_lab("testlab")
+    service.undeploy_lab(lab_id(service, "testlab"))
 
     assert all(m.api_object is None for m in lab.machines.values())
     assert all(lk.api_object is None for lk in lab.links.values())
@@ -57,7 +57,7 @@ def test_undeploy_lab_partial_keeps_shared_link_up_for_remaining_machine():
 
     # Undeploy only pc1: "shared" still has pc2 running -> must stay up.
     # "priv1" has no other machine attached -> must go down.
-    service.undeploy_lab("testlab", selected_machines={"pc1"})
+    service.undeploy_lab(lab_id(service, "testlab"), selected_machines={"pc1"})
 
     assert lab.machines["pc1"].api_object is None
     assert lab.machines["pc2"].api_object is not None
@@ -69,7 +69,7 @@ def test_remove_machine_keep_links_true_leaves_links_alone():
     service, lab = _service_with_lab()
     _mark_deployed(lab)
 
-    service.remove_machine("testlab", "pc1", keep_links=True)
+    service.remove_machine(lab_id(service, "testlab"), "pc1", keep_links=True)
 
     assert "pc1" not in lab.machines  # actually removed from the model, not just undeployed
     assert lab.links["shared"].api_object is not None
@@ -80,7 +80,7 @@ def test_remove_machine_without_keep_links_tears_down_orphaned_link():
     service, lab = _service_with_lab()
     _mark_deployed(lab)
 
-    service.remove_machine("testlab", "pc1", keep_links=False)
+    service.remove_machine(lab_id(service, "testlab"), "pc1", keep_links=False)
 
     assert "pc1" not in lab.machines  # actually removed from the model
     assert "pc1" not in lab.links["shared"].machines  # detached from the shared collision domain
@@ -97,7 +97,7 @@ def test_remove_link_refuses_when_a_running_machine_is_attached():
     _mark_deployed(lab)
 
     with pytest.raises(LinkInUseError):
-        service.remove_link("testlab", "shared")
+        service.remove_link(lab_id(service, "testlab"), "shared")
 
     # Nothing mutated: fail-fast, not a partial removal.
     assert "shared" in lab.links
@@ -109,7 +109,7 @@ def test_remove_link_detaches_interfaces_and_disappears_from_lab_when_stopped():
     service, lab = _service_with_lab()
     # Deliberately not _mark_deployed: every machine attached to "shared" is stopped.
 
-    service.remove_link("testlab", "shared")
+    service.remove_link(lab_id(service, "testlab"), "shared")
 
     assert "shared" not in lab.links
     # pc1's other interface (priv1) survives, renumbered down to fill the gap "shared" left.

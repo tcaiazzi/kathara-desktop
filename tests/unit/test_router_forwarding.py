@@ -76,9 +76,9 @@ def api():
 MESSAGE_ROUTES = [
     # machines
     ("DELETE", "/api/labs/l/machines/pc1", {}, ("remove_machine", ("l", "pc1"), {"keep_links": False}),
-     "Device `pc1` removed from lab `l`."),
+     "Device `pc1` removed."),
     ("DELETE", "/api/labs/l/machines/pc1?keep_links=true", {},
-     ("remove_machine", ("l", "pc1"), {"keep_links": True}), "Device `pc1` removed from lab `l`."),
+     ("remove_machine", ("l", "pc1"), {"keep_links": True}), "Device `pc1` removed."),
     ("POST", "/api/labs/l/machines/pc1/disconnect?link=A", {},
      ("disconnect_machine", ("l", "pc1", "A"), {"keep_link": False}), "Device `pc1` disconnected from `A`."),
     ("POST", "/api/labs/l/machines/pc1/disconnect?link=A&keep_link=true", {},
@@ -95,7 +95,7 @@ MESSAGE_ROUTES = [
      ("fs_delete", ("l", "pc1", "/tmp/d"), {"recursive": True}), "Deleted `/tmp/d` on `pc1`."),
     # links
     ("DELETE", "/api/labs/l/links/A", {}, ("remove_link", ("l", "A"), {}),
-     "Collision domain `A` removed from lab `l`."),
+     "Collision domain `A` removed."),
     # labs: the lab's own on-disk tree
     ("POST", "/api/labs/l/fs/mkdir", {"json": {"path": "/pc1/etc"}},
      ("fs_mkdir_offline", ("l", "/pc1/etc"), {}), "Directory `/pc1/etc` created."),
@@ -108,12 +108,12 @@ MESSAGE_ROUTES = [
     # labs: lifecycle
     ("POST", "/api/labs/l/undeploy", {},
      ("undeploy_lab", ("l",), {"selected_machines": None, "excluded_machines": None, "selected_links": None}),
-     "Lab `l` undeployed."),
+     "Lab undeployed."),
     ("POST", "/api/labs/l/undeploy",
      {"json": {"selected_machines": ["pc1", "pc1"], "excluded_machines": [], "selected_links": ["A"]}},
      ("undeploy_lab", ("l",), {"selected_machines": {"pc1"}, "excluded_machines": None, "selected_links": {"A"}}),
-     "Lab `l` undeployed."),
-    ("DELETE", "/api/labs/l", {}, ("delete_lab", ("l",), {}), "Lab `l` deleted."),
+     "Lab undeployed."),
+    ("DELETE", "/api/labs/l", {}, ("delete_lab", ("l",), {}), "Lab deleted."),
 ]
 
 
@@ -367,15 +367,15 @@ def test_upload_lab_resolves_the_name_and_forwards_the_archive(api, form, expect
     assert received == {"name": expected_name, "data": b"PK\x03\x04zip", "deploy": expected_deploy}
 
 
-def test_download_lab_streams_the_zip_as_an_attachment(api):
+def test_download_lab_streams_the_zip_as_an_attachment_named_after_the_lab_directory(api):
     client, service = api
-    service.returns["export_lab_zip"] = io.BytesIO(b"PK\x05\x06")
+    service.returns["export_lab_zip"] = ("mylab", io.BytesIO(b"PK\x05\x06"))
 
     res = client.get("/api/labs/l/download")
 
     assert res.content == b"PK\x05\x06"
     assert res.headers["content-type"] == "application/zip"
-    assert 'filename="l.zip"' in res.headers["content-disposition"]
+    assert 'filename="mylab.zip"' in res.headers["content-disposition"]
     assert service.calls == [("export_lab_zip", ("l",), {})]
 
 

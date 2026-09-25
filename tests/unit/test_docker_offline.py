@@ -20,6 +20,7 @@ from kathara_api.services import kathara_service as kathara_service_module
 from kathara_api.services import lab_builder, serializers
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
+from tests.helpers import lab_id, register_lab
 
 
 class _CountingDeadDaemon:
@@ -59,7 +60,7 @@ def service(tmp_path) -> KatharaService:
             ],
         }
     )
-    svc.registry.add(lab_builder.build_lab(spec))
+    register_lab(svc, lab_builder.build_lab(spec))
     return svc
 
 
@@ -83,7 +84,7 @@ def test_list_labs_returns_disk_labs_with_nothing_running(dead_daemon, service):
 
 
 def test_get_lab_or_reconstruct_returns_the_registered_model(dead_daemon, service):
-    detail = serializers.lab_to_detail(service.get_lab_or_reconstruct("offlinelab"))
+    detail = serializers.lab_to_detail(service.get_lab_or_reconstruct(lab_id(service, "offlinelab")))
 
     assert detail.deployed is False
     assert {m.name: m.running for m in detail.machines} == {"pc1": False, "pc2": False}
@@ -109,10 +110,10 @@ def test_stale_api_object_is_cleared_so_a_lost_daemon_stops_claiming_deployed(de
     """The reason ``_offline_lab_state`` exists rather than just skipping the facade call: Kathara
     never clears ``api_object`` itself, so a lab that was up before the daemon went away would keep
     reporting ``deployed``/``running`` forever."""
-    lab = service.registry.get("offlinelab")
+    lab = service.registry.get(lab_id(service, "offlinelab"))
     _mark_deployed(lab)
 
-    detail = serializers.lab_to_detail(service.get_lab_or_reconstruct("offlinelab"))
+    detail = serializers.lab_to_detail(service.get_lab_or_reconstruct(lab_id(service, "offlinelab")))
 
     assert detail.deployed is False
     assert all(m.running is False for m in detail.machines)
@@ -121,7 +122,7 @@ def test_stale_api_object_is_cleared_so_a_lost_daemon_stops_claiming_deployed(de
 
 
 def test_list_labs_clears_stale_state_too(dead_daemon, service):
-    _mark_deployed(service.registry.get("offlinelab"))
+    _mark_deployed(service.registry.get(lab_id(service, "offlinelab")))
 
     assert serializers.lab_to_summary(service.list_labs()[0]).deployed is False
 
@@ -130,7 +131,7 @@ def test_unknown_lab_is_still_a_404(dead_daemon, service):
     """An unregistered lab exists only as running containers, so with no daemon to ask there is
     genuinely no such lab — the same answer as "nothing is running under that name"."""
     with pytest.raises(LabNotFoundError):
-        service.get_lab_or_reconstruct("never-existed")
+        service.get_lab_or_reconstruct(lab_id(service, "never-existed"))
 
 
 # -- deleting a lab needs no daemon, only its directory ------------------------------------------
@@ -139,19 +140,19 @@ def test_unknown_lab_is_still_a_404(dead_daemon, service):
 def test_delete_lab_removes_it_even_with_a_dead_daemon(dead_daemon, service):
     """Deleting a lab's directory is plain disk I/O; with no daemon reachable there is nothing
     that could still be running to undeploy first, so this must not 503 like `undeploy_lab` does."""
-    lab = service.registry.get("offlinelab")
+    lab = service.registry.get(lab_id(service, "offlinelab"))
     lab_dir = service.store.ensure_lab_dir("offlinelab")
     service.store.write_lab_conf(lab_dir, lab)
     assert lab_dir.is_dir()
 
-    service.delete_lab("offlinelab")
+    service.delete_lab(lab_id(service, "offlinelab"))
 
-    assert service.registry.get("offlinelab") is None
+    assert service.registry.get(lab_id(service, "offlinelab")) is None
     assert not lab_dir.is_dir()
 
 
 def test_wipe_reports_a_dead_daemon_as_a_failure_instead_of_raising(dead_daemon, service):
-    _mark_deployed(service.registry.get("offlinelab"))
+    _mark_deployed(service.registry.get(lab_id(service, "offlinelab")))
 
     failed = service.wipe()
 
@@ -164,11 +165,11 @@ def test_wipe_reports_a_dead_daemon_as_a_failure_instead_of_raising(dead_daemon,
 @pytest.mark.parametrize(
     "operation",
     [
-        pytest.param(lambda s: s.deploy_lab("offlinelab"), id="deploy_lab"),
-        pytest.param(lambda s: s.undeploy_lab("offlinelab"), id="undeploy_lab"),
-        pytest.param(lambda s: s.exec_command("offlinelab", "pc1", ["true"]), id="exec_command"),
-        pytest.param(lambda s: s.add_link("offlinelab", "newlink"), id="add_link"),
-        pytest.param(lambda s: s.remove_link("offlinelab", "shared"), id="remove_link"),
+        pytest.param(lambda s: s.deploy_lab(lab_id(s, "offlinelab")), id="deploy_lab"),
+        pytest.param(lambda s: s.undeploy_lab(lab_id(s, "offlinelab")), id="undeploy_lab"),
+        pytest.param(lambda s: s.exec_command(lab_id(s, "offlinelab"), "pc1", ["true"]), id="exec_command"),
+        pytest.param(lambda s: s.add_link(lab_id(s, "offlinelab"), "newlink"), id="add_link"),
+        pytest.param(lambda s: s.remove_link(lab_id(s, "offlinelab"), "shared"), id="remove_link"),
     ],
 )
 def test_docker_dependent_operations_still_raise(dead_daemon, service, operation):
@@ -185,7 +186,7 @@ def test_many_reads_cost_one_connection_attempt(dead_daemon, service):
     rather than merely degraded."""
     for _ in range(5):
         service.list_labs()
-        service.get_lab_or_reconstruct("offlinelab")
+        service.get_lab_or_reconstruct(lab_id(service, "offlinelab"))
         service.system_info()
 
     assert dead_daemon.attempts == 1

@@ -26,7 +26,7 @@ export interface FsClipboard {
 }
 
 /**
- * Everything hooks/useFsTree.ts derives from its `scopeKey` (lab name, or lab+device) and needs to
+ * Everything hooks/useFsTree.ts derives from its `scopeKey` (lab id, or lab id + device) and needs to
  * read *synchronously* inside a callback — never only through React state, which only lands after
  * the render that scheduled it. Grouped into one type, reset by replacing the whole object, rather
  * than one ref per field: a per-scope ref declared, incremented and compared away from the others

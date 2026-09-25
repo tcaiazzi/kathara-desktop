@@ -7,7 +7,7 @@ import type { LabDetail } from "../services/types";
 // same React tree (via portals), so panels read this context and re-render when `detail` updates —
 // panels get live data instead of static addPanel params.
 export interface WorkspaceCtx {
-  labName: string;
+  labId: string;
   detail: LabDetail;
   selectedId: string | null;
   setSelectedId: (id: string | null) => void;

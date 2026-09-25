@@ -14,6 +14,7 @@
 import { Copy, Minus, Settings as SettingsIcon, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HealthBadge, PrivilegedBadge } from "../components/StatusBadges";
+import { useOpenLabName } from "../context/OpenLabNameContext";
 import { useDismissOnOutside } from "../hooks/useDismissOnOutside";
 import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
@@ -145,9 +146,10 @@ export function TitleBar() {
     },
   ];
 
+  const openLabName = useOpenLabName();
   const title = location.pathname.startsWith("/settings")
     ? "Settings — Kathara Desktop"
-    : decodeURIComponent(location.pathname.replace(/^\/workspace\/?/, "")) || "Kathara Desktop";
+    : openLabName || "Kathara Desktop";
 
   return (
     <div

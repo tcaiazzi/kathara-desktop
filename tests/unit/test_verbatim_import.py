@@ -10,7 +10,7 @@ import pytest
 
 from kathara_api.errors import LabAlreadyRegisteredError
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_lab, make_service, zip_bytes
+from tests.helpers import FakeFacadeBase, lab_id, make_lab, make_service, zip_bytes
 
 
 def _service(tmp_path):
@@ -120,7 +120,7 @@ def test_download_after_upload_round_trips(tmp_path):
     }
     service.upload_lab("uploaded", zip_bytes(entries))
 
-    buf = service.export_lab_zip("uploaded")
+    _name, buf = service.export_lab_zip(lab_id(service, "uploaded"))
     with zipfile.ZipFile(buf) as archive:
         for rel, content in entries.items():
             assert archive.read(rel) == content
@@ -147,7 +147,7 @@ def test_update_lab_conf_stores_the_submitted_text_verbatim(tmp_path):
         "pc1[num_terms]=3\r\n"
         "MY_META=\"kept\"\r\n"
     )
-    service.update_lab_conf("lab1", edited)
+    service.update_lab_conf(lab_id(service, "lab1"), edited)
 
     lab_dir = service.store.lab_dir("lab1")
     assert (lab_dir / "lab.conf").read_bytes().decode("utf-8") == edited
@@ -169,11 +169,11 @@ def test_live_push_boot_script_composes_shared_own_and_exec_commands(tmp_path):
         [],
     )
 
-    service.deploy_lab("lab1")  # fresh: native, no live push yet
+    service.deploy_lab(lab_id(service, "lab1"))  # fresh: native, no live push yet
     # An edit while pc1 is stopped wouldn't mark it dirty for a push (nothing's running to push
     # to) — here it's already running, so this queues the next redeploy's live push.
-    service.fs_write_text_offline("lab1", "/pc1.startup", "echo two\n")
-    service.deploy_lab("lab1")  # now "running" and dirty: live push exercises _boot_script
+    service.fs_write_text_offline(lab_id(service, "lab1"), "/pc1.startup", "echo two\n")
+    service.deploy_lab(lab_id(service, "lab1"))  # now "running" and dirty: live push exercises _boot_script
 
     facade = service._instance
     boot_scripts = [files["/tmp/.kathara_boot.sh"] for name, files in facade.copied if name == "pc1"]
@@ -194,4 +194,4 @@ def test_get_startup_scripts_is_the_verbatim_machine_startup(tmp_path):
         },
         [],
     )
-    assert service.get_startup_scripts("lab1")["pc1"] == "echo two\n"
+    assert service.get_startup_scripts(lab_id(service, "lab1"))["pc1"] == "echo two\n"

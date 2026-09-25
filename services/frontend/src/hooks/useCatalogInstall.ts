@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useToast } from "../context/ToastContext";
-import { ApiError } from "../services/api";
+import { api, ApiError } from "../services/api";
 import type { LabImportResult } from "../services/types";
 
 /** What both catalogues have in common: a stable id to send to the API, and whether the lab is
@@ -20,9 +20,19 @@ interface CatalogInstallOptions<T extends CatalogItem> {
   verbPast: string;
   /** Prefix for `toast.reportError` when the failure is not a 409. */
   errorLabel: string;
-  /** Run once the lab exists. Closing the modal, if there is one, belongs here — the gallery has
-   * to close *before* the workspace navigates. */
-  onDone: (labName: string) => void;
+  /** Run once the lab exists, with its id. Closing the modal, if there is one, belongs here — the
+   * gallery has to close *before* the workspace navigates. */
+  onDone: (labId: string) => void;
+}
+
+/** The id of the already-installed lab called `name`, or null if there is none.
+ *
+ * Only the backend can derive a lab's id (it comes from the directory's path), so a lab this
+ * client did not just create has to be looked up. By name is enough here: a catalogue installs
+ * under the labs root, where two labs cannot share a directory name. */
+async function installedLabId(name: string): Promise<string | null> {
+  const labs = await api.listLabs();
+  return labs.find((lab) => lab.name === name)?.id ?? null;
 }
 
 /** The install-or-open flow behind the welcome screen's examples and the gallery's labs.
@@ -41,9 +51,14 @@ export function useCatalogInstall<T extends CatalogItem>({
   const toast = useToast();
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  async function openInstalled(item: T) {
+    const labId = await installedLabId(fallbackName(item));
+    if (labId) onDone(labId);
+  }
+
   async function run(item: T) {
     if (item.installed) {
-      onDone(fallbackName(item));
+      await openInstalled(item).catch((e) => toast.reportError(errorLabel, e));
       return;
     }
     setBusyId(item.id);
@@ -59,11 +74,11 @@ export function useCatalogInstall<T extends CatalogItem>({
       if (result.warnings?.length) {
         toast.show(result.warnings.join(" · "), "info", "Import warnings");
       }
-      onDone(name);
+      onDone(result.id);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) {
         toast.show(`Lab "${fallbackName(item)}" already exists — opening it.`, "info");
-        onDone(fallbackName(item));
+        await openInstalled(item).catch((err) => toast.reportError(errorLabel, err));
       } else {
         toast.reportError(errorLabel, e);
       }

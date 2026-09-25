@@ -19,7 +19,7 @@ interleaving: the loser's rollback deletes the *winner's* freshly written direct
 keeping its 201 and its registry entry, with no files left on disk), or the loser's swap
 replaces the winner's files while the registry keeps the winner's model — and an N-way race
 produces raw `FileExistsError`/`FileNotFoundError` 500s instead of clean 409s. They are
-serialized per lab *name* (`_claiming_name`) rather than behind `_mutate_lock`, because the
+serialized per lab directory (`_claiming`) rather than behind `_mutate_lock`, because the
 critical section contains the on-disk write itself and holding the global lock across a large
 .zip extraction would stall unrelated labs' deploys.
 
@@ -46,7 +46,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_lab, make_service, zip_bytes
+from tests.helpers import FakeFacadeBase, lab_id, make_lab, make_service, zip_bytes
 
 
 class _BlockingFacade(FakeFacadeBase):
@@ -101,7 +101,7 @@ def _run_deploy_in_background(service: KatharaService, facade: _BlockingFacade) 
     """Starts `deploy_lab` on a second thread and waits until it's confirmed to be inside the
     facade call — i.e. actually holding `_mutate_lock` — before returning, so the caller can then
     exercise the method under test against a guaranteed-held lock."""
-    thread = threading.Thread(target=lambda: service.deploy_lab("testlab"))
+    thread = threading.Thread(target=lambda: service.deploy_lab(lab_id(service, "testlab")))
     thread.start()
     assert facade.entered.wait(timeout=2), "deploy_lab did not reach the facade call in time"
     return thread
@@ -115,20 +115,20 @@ def test_offline_edits_and_structural_changes_fail_fast_while_a_deploy_is_in_fli
     deploy_thread = _run_deploy_in_background(service, facade)
 
     checks = [
-        lambda: service.update_lab_conf("testlab", 'pc1[image]="kathara/base"\n'),
-        lambda: service.fs_write_text_offline("testlab", "/notes.txt", "hi\n"),
-        lambda: service.fs_mkdir_offline("testlab", "/scratch"),
-        lambda: service.fs_delete_offline("testlab", "/notes.txt"),
-        lambda: service.fs_move_offline("testlab", "/notes.txt", "/notes2.txt"),
-        lambda: service.add_machine("testlab", MachineCreate(name="pc2", image="kathara/base")),
-        lambda: service.update_machine("testlab", "pc1", MachineCreate(name="pc1", image="kathara/base")),
-        lambda: service.remove_machine("testlab", "pc1"),
-        lambda: service.connect_machine("testlab", "pc1", "A"),
-        lambda: service.disconnect_machine("testlab", "pc1", "A"),
-        lambda: service.add_link("testlab", "B"),
-        lambda: service.remove_link("testlab", "A"),
-        lambda: service.rename_lab("testlab", "renamed"),
-        lambda: service.delete_lab("testlab"),
+        lambda: service.update_lab_conf(lab_id(service, "testlab"), 'pc1[image]="kathara/base"\n'),
+        lambda: service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n"),
+        lambda: service.fs_mkdir_offline(lab_id(service, "testlab"), "/scratch"),
+        lambda: service.fs_delete_offline(lab_id(service, "testlab"), "/notes.txt"),
+        lambda: service.fs_move_offline(lab_id(service, "testlab"), "/notes.txt", "/notes2.txt"),
+        lambda: service.add_machine(lab_id(service, "testlab"), MachineCreate(name="pc2", image="kathara/base")),
+        lambda: service.update_machine(lab_id(service, "testlab"), "pc1", MachineCreate(name="pc1", image="kathara/base")),
+        lambda: service.remove_machine(lab_id(service, "testlab"), "pc1"),
+        lambda: service.connect_machine(lab_id(service, "testlab"), "pc1", "A"),
+        lambda: service.disconnect_machine(lab_id(service, "testlab"), "pc1", "A"),
+        lambda: service.add_link(lab_id(service, "testlab"), "B"),
+        lambda: service.remove_link(lab_id(service, "testlab"), "A"),
+        lambda: service.rename_lab(lab_id(service, "testlab"), "renamed"),
+        lambda: service.delete_lab(lab_id(service, "testlab")),
     ]
     for call in checks:
         with pytest.raises(LabTransitioningError):
@@ -146,12 +146,12 @@ def test_mutating_calls_work_again_once_the_deploy_finishes(tmp_path):
     service, facade, store = _service_with_blocking_facade(tmp_path)
     deploy_thread = _run_deploy_in_background(service, facade)
     with pytest.raises(LabTransitioningError):
-        service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+        service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
 
     facade.release.set()
     deploy_thread.join(timeout=2)
 
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
 
 
@@ -164,9 +164,9 @@ def test_transitioning_flag_is_cleared_even_if_deploy_lab_raises(tmp_path):
     service.create_lab(LabCreate(name="testlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
 
     with pytest.raises(RuntimeError):
-        service.deploy_lab("testlab")
+        service.deploy_lab(lab_id(service, "testlab"))
 
-    service.fs_write_text_offline("testlab", "/notes.txt", "hi\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
 
 
@@ -182,7 +182,7 @@ def test_transitioning_flag_is_cleared_even_if_deploy_lab_raises(tmp_path):
 
 
 def _run_undeploy_in_background(service: KatharaService, facade: "_BlockingFacade") -> threading.Thread:
-    thread = threading.Thread(target=lambda: service.undeploy_lab("testlab"))
+    thread = threading.Thread(target=lambda: service.undeploy_lab(lab_id(service, "testlab")))
     thread.start()
     assert facade.undeploy_entered.wait(timeout=2), "undeploy_lab did not reach the facade call in time"
     return thread
@@ -193,7 +193,7 @@ def test_deploy_lab_fails_fast_against_a_concurrent_deploy_of_the_same_lab(tmp_p
     deploy_thread = _run_deploy_in_background(service, facade)
 
     with pytest.raises(LabTransitioningError):
-        service.deploy_lab("testlab")
+        service.deploy_lab(lab_id(service, "testlab"))
 
     # The rejected call never blocked waiting on _mutate_lock either — it failed before trying.
     assert not facade.release.is_set()
@@ -207,7 +207,7 @@ def test_undeploy_lab_fails_fast_against_a_concurrent_undeploy_of_the_same_lab(t
     undeploy_thread = _run_undeploy_in_background(service, facade)
 
     with pytest.raises(LabTransitioningError):
-        service.undeploy_lab("testlab")
+        service.undeploy_lab(lab_id(service, "testlab"))
 
     assert not facade.undeploy_release.is_set()
 
@@ -239,7 +239,7 @@ def test_deploy_lab_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_chec
     result: dict = {}
 
     def run_second_deploy():
-        result["lab"] = service.deploy_lab("testlab")
+        result["lab"] = service.deploy_lab(lab_id(service, "testlab"))
         second_done.set()
 
     second_thread = threading.Thread(target=run_second_deploy)
@@ -275,7 +275,7 @@ def test_connect_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail
     result: dict = {}
 
     def run_connect():
-        result["machine"] = service.connect_machine("testlab", "pc1", "A")
+        result["machine"] = service.connect_machine(lab_id(service, "testlab"), "pc1", "A")
         connect_done.set()
 
     connect_thread = threading.Thread(target=run_connect)
@@ -298,7 +298,7 @@ def test_connect_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail
     # interface must have been connected live — not written into lab.conf as if pc1 were stopped.
     assert facade.calls == ["connect_live"]
     assert result["machine"].api_object is not None
-    conf_text = store.read_lab_conf_text("testlab") or ""
+    conf_text = store.read_lab_conf_text(store.lab_dir("testlab")) or ""
     assert "pc1[0]" not in conf_text, "interface was written to lab.conf despite pc1 being running"
 
 
@@ -306,9 +306,9 @@ def test_disconnect_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_f
     service, facade, store = _service_with_blocking_facade(tmp_path)
     # Give pc1 a stopped-state interface to disconnect once it's "running". pc1 isn't deployed
     # yet, so this takes the stopped branch (a lab.conf edit) and never touches the facade.
-    service.connect_machine("testlab", "pc1", "A")
+    service.connect_machine(lab_id(service, "testlab"), "pc1", "A")
     assert facade.calls == []
-    assert "pc1[0]" in (store.read_lab_conf_text("testlab") or "")
+    assert "pc1[0]" in (store.read_lab_conf_text(store.lab_dir("testlab")) or "")
 
     deploy_thread = _run_deploy_in_background(service, facade)
     monkeypatch.setattr(service, "_check_not_transitioning", lambda name: None)
@@ -316,7 +316,7 @@ def test_disconnect_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_f
     disconnect_done = threading.Event()
 
     def run_disconnect():
-        service.disconnect_machine("testlab", "pc1", "A")
+        service.disconnect_machine(lab_id(service, "testlab"), "pc1", "A")
         disconnect_done.set()
 
     disconnect_thread = threading.Thread(target=run_disconnect)
@@ -335,7 +335,7 @@ def test_disconnect_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_f
     # a live disconnect — the lab.conf interface line must survive untouched (only a runtime-only
     # change should happen against a running device, never a lab.conf edit).
     assert facade.calls == ["disconnect_live"]
-    assert "pc1[0]" in (store.read_lab_conf_text("testlab") or "")
+    assert "pc1[0]" in (store.read_lab_conf_text(store.lab_dir("testlab")) or "")
 
 
 def test_remove_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_check(tmp_path, monkeypatch):
@@ -349,7 +349,7 @@ def test_remove_machine_still_waits_for_the_lock_if_it_slips_past_the_fast_fail_
     remove_done = threading.Event()
 
     def run_remove():
-        service.remove_machine("testlab", "pc1")
+        service.remove_machine(lab_id(service, "testlab"), "pc1")
         remove_done.set()
 
     remove_thread = threading.Thread(target=run_remove)
@@ -392,7 +392,7 @@ def test_fs_upload_bytes_resolves_the_device_inside_the_lock(tmp_path, monkeypat
     facade = _CopyRecordingFacade()
     service._instance = facade
     service.create_lab(LabCreate(name="testlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
-    service.deploy_lab("testlab")
+    service.deploy_lab(lab_id(service, "testlab"))
 
     in_window, release = threading.Event(), threading.Event()
     real_normalize = service.normalize_guest_path
@@ -408,7 +408,7 @@ def test_fs_upload_bytes_resolves_the_device_inside_the_lock(tmp_path, monkeypat
 
     def run_upload():
         try:
-            outcome.append(service.fs_upload_bytes("testlab", "pc1", "/tmp/x.bin", b"\x00\x01"))
+            outcome.append(service.fs_upload_bytes(lab_id(service, "testlab"), "pc1", "/tmp/x.bin", b"\x00\x01"))
         except MachineNotRunningError as exc:
             outcome.append(exc)
 
@@ -418,7 +418,7 @@ def test_fs_upload_bytes_resolves_the_device_inside_the_lock(tmp_path, monkeypat
 
     # The device goes down while the upload sits in that window — `_mutate_lock` is still free,
     # so this undeploy runs to completion before the upload ever asks for it.
-    service.undeploy_lab("testlab")
+    service.undeploy_lab(lab_id(service, "testlab"))
 
     release.set()
     upload.join(timeout=5)
@@ -436,10 +436,10 @@ def _plain_service(tmp_path) -> KatharaService:
 
 
 def _pause_inside(store, method_name: str):
-    """Suspend `store.<method_name>` on entry, so a create can be held *inside* `_claiming_name`
+    """Suspend `store.<method_name>` on entry, so a create can be held *inside* `_claiming`
     (every one of these store calls is made from within it) while a second create is attempted.
 
-    That is the window `_claiming_name` has to close: unheld, the second create sails straight
+    That is the window `_claiming` has to close: unheld, the second create sails straight
     through the check-then-write gap while the first is suspended here.
     """
     paused, release = threading.Event(), threading.Event()
@@ -489,7 +489,7 @@ def test_a_second_import_of_the_same_name_waits_and_then_gets_a_clean_409(tmp_pa
     lab_dir = service.store.lab_dir("dup")
     assert lab_dir.is_dir(), "the loser's rollback deleted the winner's directory"
     assert lab_dir.joinpath("lab.conf").read_text() == "pcwin[image]=kathara/base\n"
-    assert set(service.registry.get("dup").machines) == {"pcwin"}
+    assert set(service.registry.get(lab_id(service, "dup")).machines) == {"pcwin"}
 
 
 def test_an_upload_racing_another_of_the_same_name_does_not_overwrite_it(tmp_path):
@@ -526,7 +526,7 @@ def test_an_upload_racing_another_of_the_same_name_does_not_overwrite_it(tmp_pat
     assert [type(e) for e in errors] == [LabAlreadyRegisteredError]
     names = {p.name for p in service.store.lab_dir("dup").iterdir()}
     assert names == {"lab.conf", "winner_was_here"}, f"the loser's files landed on disk: {names}"
-    assert set(service.registry.get("dup").machines) == {"pcwin"}
+    assert set(service.registry.get(lab_id(service, "dup")).machines) == {"pcwin"}
 
 
 def test_n_concurrent_imports_of_one_name_yield_one_success_and_the_rest_409(tmp_path):
@@ -577,7 +577,7 @@ def test_deleting_a_lab_cannot_land_inside_a_concurrent_import_of_the_same_name(
     make_lab(service, "dup", {"lab.conf": "pcold[image]=kathara/base\n"}, [])
     paused, release, real_delete = _pause_inside(service.store, "delete_lab")
 
-    deleter = threading.Thread(target=lambda: service.delete_lab("dup"))
+    deleter = threading.Thread(target=lambda: service.delete_lab(lab_id(service, "dup")))
     deleter.start()
     assert paused.wait(timeout=3)
     service.store.delete_lab = real_delete
@@ -598,4 +598,4 @@ def test_deleting_a_lab_cannot_land_inside_a_concurrent_import_of_the_same_name(
 
     assert import_done.is_set()
     assert service.store.lab_dir("dup").joinpath("lab.conf").read_text() == "pcnew[image]=kathara/base\n"
-    assert set(service.registry.get("dup").machines) == {"pcnew"}
+    assert set(service.registry.get(lab_id(service, "dup")).machines) == {"pcnew"}

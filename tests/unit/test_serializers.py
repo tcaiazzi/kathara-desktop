@@ -43,7 +43,7 @@ def test_lab_to_detail_and_summary():
     assert detail.n_machines == 1
     assert detail.n_links == 1
     assert detail.deployed is False
-    assert summary.hash == lab.hash
+    assert summary.id == lab.hash
     assert len(detail.machines) == 1
     assert len(detail.links) == 1
 

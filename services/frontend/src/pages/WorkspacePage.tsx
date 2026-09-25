@@ -67,6 +67,7 @@ import { WelcomeScreen } from "../components/WelcomeScreen";
 import { useDesktopCommand } from "../desktop/DesktopCommands";
 import { desktop, isDesktop, type DesktopDockerStatus } from "../desktop/bridge";
 import { useDockerStatus } from "../desktop/DockerStatusContext";
+import { usePublishOpenLabName } from "../context/OpenLabNameContext";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore } from "../context/WorkspaceCoreContext";
 import {
@@ -86,7 +87,7 @@ import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
-import type { LabDetail, LabSummary } from "../services/types";
+import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
 
 // --- Dock panels (each reads live lab data from WorkspaceContext) ---
@@ -95,7 +96,7 @@ function TopologyPanel() {
   return (
     <div className="kt-ws-panel-fill" data-tour="topology-panel">
       <TopologyGraph
-        labName={ws.labName}
+        labId={ws.labId}
         detail={ws.detail}
         onEditFiles={ws.openFilesPanel}
         {...ws.deviceActions}
@@ -124,7 +125,7 @@ function DevicesPanel() {
   const ws = useWorkspace();
   return (
     <div className="kt-ws-panel">
-      <DevicesTable labName={ws.labName} machines={ws.detail.machines} />
+      <DevicesTable labId={ws.labId} machines={ws.detail.machines} />
       <LinksTable links={ws.detail.links} />
     </div>
   );
@@ -134,7 +135,7 @@ function FilesPanel() {
   return (
     <div className="kt-ws-panel-fill">
       <LabExplorer
-        labName={ws.labName}
+        labId={ws.labId}
         detail={ws.detail}
         onStructuralChange={ws.onRefresh}
         onStartupFileSaved={ws.refreshStartups}
@@ -147,7 +148,7 @@ function RuntimeFsPanel() {
   return (
     <div className="kt-ws-panel-fill">
       <RuntimeFilesystemEditor
-        labName={ws.labName}
+        labId={ws.labId}
         detail={ws.detail}
         preferredMachine={ws.runtimeFsPreferredMachine}
         onSelectMachine={(m) => ws.setSelectedId(`dev:${m}`)}
@@ -159,7 +160,7 @@ function StatsPanel_() {
   const ws = useWorkspace();
   return (
     <div className="kt-ws-panel">
-      <StatsPanel labName={ws.labName} deployed={ws.detail.deployed} />
+      <StatsPanel labId={ws.labId} deployed={ws.detail.deployed} />
     </div>
   );
 }
@@ -520,7 +521,7 @@ function focusTerminals(api: DockviewApi) {
 // (topology, devices, files, runtime-fs, terminals, stats) whose layout is freely rearrangeable
 // by dragging.
 export function WorkspacePage() {
-  const { name = "" } = useParams();
+  const { labId = "" } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
@@ -585,7 +586,7 @@ export function WorkspacePage() {
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
   // WorkspacePage isn't remounted on lab change (unkeyed route), so a menu built for the
   // previous lab's items would otherwise stay open and act on it after navigation.
-  useEffect(() => setCtxMenu(null), [name]);
+  useEffect(() => setCtxMenu(null), [labId]);
 
   const dockApiRef = useRef<DockviewApi | null>(null);
 
@@ -619,7 +620,7 @@ export function WorkspacePage() {
     const controller = new AbortController();
     loadAbortRef.current = controller;
     const gen = ++loadGenRef.current;
-    if (!name) {
+    if (!labId) {
       setDetail(null);
       setNotFound(false);
       setDetailError(null);
@@ -627,7 +628,7 @@ export function WorkspacePage() {
     }
     setDetailError(null);
     try {
-      const nextDetail = await api.getLab(name, controller.signal);
+      const nextDetail = await api.getLab(labId, controller.signal);
       if (loadGenRef.current !== gen) return;
       setDetail(nextDetail);
       setNotFound(false);
@@ -642,7 +643,7 @@ export function WorkspacePage() {
       toast.reportError("Load lab", e);
       setDetailError(e instanceof ApiError ? e.message : "Couldn't load this lab.");
     }
-  }, [name, toast]);
+  }, [labId, toast]);
 
   useEffect(() => () => loadAbortRef.current?.abort(), []);
 
@@ -666,10 +667,10 @@ export function WorkspacePage() {
     const next = dockerStatus?.state ?? null;
     if (prev && prev !== "ok" && next === "ok") {
       void reloadLabs();
-      if (name) void load();
+      if (labId) void load();
     }
     prevDockerState.current = next;
-  }, [dockerStatus?.state, reloadLabs, load, name]);
+  }, [dockerStatus?.state, reloadLabs, load, labId]);
 
   useEffect(() => {
     setDetail(null);
@@ -688,8 +689,8 @@ export function WorkspacePage() {
     localStorage.setItem(LS_RAIL_W, String(railWidth));
   }, [railWidth]);
   useEffect(() => {
-    if (name) localStorage.setItem(LS_LAST_LAB, name);
-  }, [name]);
+    if (labId) localStorage.setItem(LS_LAST_LAB, labId);
+  }, [labId]);
   // Every `data-tour` target below lives inside the dock area, which only mounts once `detail`
   // is truthy (see `ctxValue && coreCtxValue` further down) — so "a lab is open" is exactly the
   // readiness signal the onboarding tour needs, both for its one-time auto-trigger and to no-op
@@ -720,18 +721,40 @@ export function WorkspacePage() {
       if (first) setSelectedId(`dev:${first.name}`);
     });
   }, [registerTourSelectFirstDevice]);
+  // A kathara://lab/<name> deep link (services/desktop's deepLinkRoute.ts) names the lab the way a
+  // person would, but the route takes its id, which only the backend derives — so the name arrives
+  // as `?lab=` and is resolved here against the list, then swapped for the lab's own route.
+  const deepLinkedName = searchParams.get("lab");
   useEffect(() => {
-    if (didRedirect.current || name || labs == null) return;
+    if (deepLinkedName == null || labs == null) return;
+    const match = labs.find((l) => l.name === deepLinkedName);
+    if (match) {
+      navigate(`/workspace/${encodeURIComponent(match.id)}`, { replace: true });
+      return;
+    }
+    toast.show(`Lab "${deepLinkedName}" not found.`, "danger");
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("lab");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [deepLinkedName, labs, navigate, setSearchParams, toast]);
+
+  useEffect(() => {
+    if (didRedirect.current || labId || labs == null || deepLinkedName != null) return;
     didRedirect.current = true;
     // An explicit request to see the welcome screen (Help menu, or its own "show it again" link)
     // wins over jumping back into the last-open lab — set *after* didRedirect so dismissing the
     // welcome later doesn't then trigger a surprise redirect on its own re-render.
     if (searchParams.get("welcome") === "1") return;
     const last = localStorage.getItem(LS_LAST_LAB);
-    if (last && labs.some((l) => l.name === last)) {
+    if (last && labs.some((l) => l.id === last)) {
       navigate(`/workspace/${encodeURIComponent(last)}`, { replace: true });
     }
-  }, [labs, name, navigate, searchParams]);
+  }, [labs, labId, deepLinkedName, navigate, searchParams]);
 
   // Zero labs is the only trigger for the welcome screen — no persisted "seen" flag: it's
   // self-healing (it comes back if the user empties their workspace, which is exactly when they
@@ -743,9 +766,9 @@ export function WorkspacePage() {
   const showWelcome = !detail && !notFound && labs != null && (labs.length === 0 || welcomeRequested);
 
   const handleLabCreated = useCallback(
-    (n: string) => {
+    (createdId: string) => {
       reloadLabs();
-      navigate(`/workspace/${encodeURIComponent(n)}`);
+      navigate(`/workspace/${encodeURIComponent(createdId)}`);
     },
     [reloadLabs, navigate],
   );
@@ -859,7 +882,7 @@ export function WorkspacePage() {
   // WorkspaceContext) and the device rail below, so right-clicking a device in either place means
   // exactly the same thing and there's one `pending`-files fetch / one action modal, not two.
   const deviceActions = useDeviceActions({
-    labName: name,
+    labId,
     detail,
     onRefresh: load,
     onEditFiles: openFilesPanel,
@@ -924,7 +947,7 @@ export function WorkspacePage() {
     return labs.filter((l) => (l.name ?? "").toLowerCase().includes(q));
   }, [labs, labFilter]);
 
-  const currentLab = useMemo(() => labs?.find((l) => l.name === name) ?? null, [labs, name]);
+  const currentLab = useMemo(() => labs?.find((l) => l.id === labId) ?? null, [labs, labId]);
   const showLabList = !currentLab || labPickerOpen;
 
   async function handleDeployToggle(opts?: { skipImageCheck?: boolean }) {
@@ -932,7 +955,7 @@ export function WorkspacePage() {
     setDeployAction(detail.deployed ? "undeploy" : "deploy");
     try {
       await deployToggle(
-        { name, deployed: detail.deployed, machines: detail.machines },
+        { id: detail.id, name: detail.name, deployed: detail.deployed, machines: detail.machines },
         setBusy,
         async () => {
           await load();
@@ -947,7 +970,7 @@ export function WorkspacePage() {
   }
 
   // After an elevation-triggered restart (see ElevationContext.tsx / services/desktop's
-  // main.ts), the shell reloads straight into /workspace/<name>?resumeDeploy=1 — continue the
+  // main.ts), the shell reloads straight into /workspace/<id>?resumeDeploy=1 — continue the
   // deploy the user was trying to do automatically instead of leaving them to notice the reload
   // finished and click Deploy again. Guarded by a ref, not just stripping the query param, so
   // this can only ever fire once per page load. `skipImageCheck: true` because the image
@@ -973,28 +996,29 @@ export function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, searchParams, setSearchParams]);
 
-  // `labName` defaults to the open lab (the header button); the rail's context menu passes the
-  // right-clicked lab, which may be a different one — in that case the open lab stays put.
-  async function handleDelete(labName: string = name) {
-    await deleteLab(labName, setBusy, async () => {
+  // The header buttons pass the open lab; the rail's context menu passes the right-clicked lab,
+  // which may be a different one — in that case the open lab stays put.
+  async function handleDelete(lab: LabRef) {
+    await deleteLab(lab, setBusy, async () => {
       await reloadLabs();
-      if (localStorage.getItem(LS_LAST_LAB) === labName) localStorage.removeItem(LS_LAST_LAB);
-      if (labName === name) navigate("/workspace");
+      if (localStorage.getItem(LS_LAST_LAB) === lab.id) localStorage.removeItem(LS_LAST_LAB);
+      if (lab.id === labId) navigate("/workspace");
     });
   }
 
-  async function handleRename(labName: string) {
-    await renameLab(labName, setBusy, async (newName) => {
+  async function handleRename(lab: LabRef) {
+    await renameLab(lab, setBusy, async (renamed) => {
       await reloadLabs();
-      // Follow the lab only if it's the one currently open (the route holds its old name).
-      if (labName === name) navigate(`/workspace/${encodeURIComponent(newName)}`, { replace: true });
+      // A rename moves the directory, and the id is derived from its path: follow the lab to its
+      // new id, but only if it's the one currently open (the route still holds the old one).
+      if (lab.id === labId) navigate(`/workspace/${encodeURIComponent(renamed.id)}`, { replace: true });
     });
   }
 
   // Undeploys every running lab (not just this one) — the labs themselves (lab.conf etc.) stay on
   // disk, so refresh the list + the currently open lab's deployed state rather than navigating away.
   async function handleWipeAll() {
-    await wipeAll(name || undefined, setBusy, async () => {
+    await wipeAll(labId || undefined, setBusy, async () => {
       await reloadLabs();
       await load();
     });
@@ -1017,17 +1041,15 @@ export function WorkspacePage() {
     await reloadLabs();
   });
 
-  async function handleDownload(labName: string = name) {
+  async function handleDownload(lab: LabRef) {
     await runBusy(setBusy, "Download lab", async () => {
-      saveBlob(await api.downloadLab(labName), `${labName}.zip`);
+      saveBlob(await api.downloadLab(lab.id), `${lab.name ?? lab.id}.zip`);
     });
   }
 
   // Right-click actions for a lab row in the rail. Acts on the clicked lab, which need not be the
   // one currently open.
   function openLabMenu(e: React.MouseEvent, lab: LabSummary) {
-    if (!lab.name) return;
-    const labName = lab.name;
     e.preventDefault();
     setCtxMenu({
       x: e.clientX,
@@ -1037,22 +1059,22 @@ export function WorkspacePage() {
           label: "Rename…",
           disabled: busy || lab.deployed,
           title: lab.deployed ? "Undeploy the lab to rename it" : undefined,
-          action: () => void handleRename(labName),
+          action: () => void handleRename(lab),
         },
-        { label: "Download .zip", disabled: busy, action: () => void handleDownload(labName) },
+        { label: "Download .zip", disabled: busy, action: () => void handleDownload(lab) },
         ...(isDesktop()
           ? [
-              { label: "Open lab folder", action: () => void desktop()?.revealLab(labName) },
+              { label: "Open lab folder", action: () => void desktop()?.revealLab(lab.id) },
               {
                 label: "Open Terminal Here",
                 action: () =>
                   void desktop()
-                    ?.openTerminalHere(labName)
+                    ?.openTerminalHere(lab.id)
                     ?.catch((e) => toast.reportError("Open terminal", e)),
               },
             ]
           : []),
-        { label: "Remove", danger: true, disabled: busy, action: () => void handleDelete(labName) },
+        { label: "Remove", danger: true, disabled: busy, action: () => void handleDelete(lab) },
       ],
     });
   }
@@ -1076,16 +1098,17 @@ export function WorkspacePage() {
   const deviceMachines = detail?.machines ?? [];
   const nonHostLinks = visibleLinks(detail?.links ?? []);
 
-  // Guards against the one-render window where the route's `name` has already changed (e.g.
+  // Guards against the one-render window where the route's `labId` has already changed (e.g.
   // navigating back to /workspace after deleting the open lab) but `detail` still holds the
   // previous lab's data — that state only gets cleared in a later effect (below). Without this
-  // check, the dock panels would briefly see a mismatched labName/detail pairing — e.g.
+  // check, the dock panels would briefly see a mismatched labId/detail pairing — e.g.
   // LabExplorer firing `getLabConf("")` at `/api/labs//lab-conf`.
-  const currentDetail = detail && detail.name === name ? detail : null;
+  const currentDetail = detail && detail.id === labId ? detail : null;
+  usePublishOpenLabName(currentDetail?.name ?? null);
 
   const ctxValue = currentDetail
     ? {
-        labName: name,
+        labId,
         detail: currentDetail,
         selectedId,
         setSelectedId: selectNode,
@@ -1108,7 +1131,7 @@ export function WorkspacePage() {
     () =>
       currentDetail
         ? {
-            labName: name,
+            labId,
             detail: currentDetail,
             onRefresh: load,
             refreshStartups: deviceActions.refreshStartups,
@@ -1117,7 +1140,7 @@ export function WorkspacePage() {
             setContextMenu: setCtxMenu,
           }
         : null,
-    [name, currentDetail, load, deviceActions.refreshStartups, runtimeFsPreferredMachine],
+    [labId, currentDetail, load, deviceActions.refreshStartups, runtimeFsPreferredMachine],
   );
 
   const runningMachines = deviceMachines.filter((m) => m.running);
@@ -1268,22 +1291,20 @@ export function WorkspacePage() {
                   ) : (
                     filteredLabs?.map((l) => (
                       <button
-                        key={l.name ?? l.hash}
-                        className={`kt-ws-row ${l.name === name ? "active" : ""}`}
+                        key={l.id}
+                        className={`kt-ws-row ${l.id === labId ? "active" : ""}`}
                         onClick={() => {
-                          if (l.name === name) {
+                          if (l.id === labId) {
                             setLabPickerOpen(false);
-                          } else if (l.name) {
-                            navigate(`/workspace/${encodeURIComponent(l.name)}`);
+                          } else {
+                            navigate(`/workspace/${encodeURIComponent(l.id)}`);
                           }
                         }}
                         onContextMenu={(e) => openLabMenu(e, l)}
                         title={
-                          l.name === name
-                            ? `${l.name} — click to hide other labs · right-click for actions`
-                            : l.name
-                              ? `${l.name} — click to open · right-click for actions`
-                              : ""
+                          l.id === labId
+                            ? `${l.name || "(unnamed)"} — click to hide other labs · right-click for actions`
+                            : `${l.name || "(unnamed)"} — click to open · right-click for actions`
                         }
                       >
                         <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
@@ -1410,7 +1431,7 @@ export function WorkspacePage() {
                     toast.show("Undeploy the lab to rename it.", "info");
                     return;
                   }
-                  void handleRename(name);
+                  void handleRename(detail);
                 }}
               >
                 {detail.name || "(unnamed)"}
@@ -1462,10 +1483,10 @@ export function WorkspacePage() {
                       <Dropdown.Item disabled={busy} onClick={() => void handleDeployToggle().catch(() => {})}>
                         {deployButtonLabel(deployAction, detail.deployed)}
                       </Dropdown.Item>
-                      <Dropdown.Item disabled={busy} onClick={() => void handleDownload()}>
+                      <Dropdown.Item disabled={busy} onClick={() => void handleDownload(detail)}>
                         Download
                       </Dropdown.Item>
-                      <Dropdown.Item className="text-danger" disabled={busy} onClick={() => void handleDelete()}>
+                      <Dropdown.Item className="text-danger" disabled={busy} onClick={() => void handleDelete(detail)}>
                         Delete
                       </Dropdown.Item>
                     </DropdownButton>
@@ -1542,14 +1563,14 @@ export function WorkspacePage() {
                         size="sm"
                         variant="outline-secondary"
                         disabled={busy}
-                        onClick={() => void handleDownload()}
+                        onClick={() => void handleDownload(detail)}
                       >
                         <Download size={14} className="me-1" />
                         Download
                       </Button>
                     </span>
                     <span data-tour="delete-btn" className="d-inline-flex">
-                      <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete()}>
+                      <Button size="sm" variant="outline-danger" disabled={busy} onClick={() => void handleDelete(detail)}>
                         <Trash2 size={14} className="me-1" />
                         Delete
                       </Button>
@@ -1560,7 +1581,7 @@ export function WorkspacePage() {
             </>
           ) : (
             <h5 className="mb-0 kt-ws-muted">
-              {notFound ? `Lab "${name}" not found` : name && detailError ? `Couldn't load "${name}"` : "No lab selected"}
+              {notFound ? "Lab not found" : labId && detailError ? "Couldn't load this lab" : "No lab selected"}
             </h5>
           )}
         </header>
@@ -1582,14 +1603,14 @@ export function WorkspacePage() {
           ) : notFound ? (
             <div className="kt-ws-empty">
               <p className="kt-ws-muted">
-                Lab <code>{name}</code> was not found.
+                This lab was not found. It may have been deleted, renamed or moved.
               </p>
               <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
                 <X size={14} className="me-1" />
                 Clear Selection
               </Button>
             </div>
-          ) : name && detailError ? (
+          ) : labId && detailError ? (
             <div className="kt-ws-empty">
               <p className="kt-ws-muted">{detailError}</p>
               <Button size="sm" variant="outline-secondary" onClick={() => void load()}>
@@ -1629,7 +1650,7 @@ export function WorkspacePage() {
       {detail && (
         <MachineOptionsEditor
           show={!!optionsEditorMachine}
-          labName={name}
+          labId={labId}
           machine={optionsEditorMachine ? detail.machines.find((m) => m.name === optionsEditorMachine) ?? null : null}
           deployed={detail.deployed}
           onClose={closeOptionsEditor}
@@ -1639,7 +1660,7 @@ export function WorkspacePage() {
       {detail && (
         <AddDeviceModal
           show={addDeviceLink.show}
-          labName={name}
+          labId={labId}
           prefillLink={addDeviceLink.prefillLink}
           onClose={closeAddDeviceModal}
           onAdded={load}

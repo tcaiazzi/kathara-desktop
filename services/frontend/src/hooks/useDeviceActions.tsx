@@ -11,7 +11,7 @@ import type { TopoActionConfig, TopoActionField } from "../components/TopologyAc
 import type { ContextMenuItem } from "../components/TopologyContextMenu";
 
 interface UseDeviceActionsOptions {
-  labName: string;
+  labId: string;
   // null while the lab detail hasn't loaded yet — every derived value degrades to empty/no-op.
   detail: LabDetail | null;
   onRefresh: () => Promise<void>;
@@ -34,7 +34,7 @@ const EMPTY_MODEL: TopoModel = { nodes: [], edges: [] };
 // sidebar's device list — so "right-click a device" means the exact same thing in both places
 // instead of two hand-synced copies that inevitably drift apart.
 export function useDeviceActions({
-  labName,
+  labId,
   detail,
   onRefresh,
   onEditFiles,
@@ -53,7 +53,7 @@ export function useDeviceActions({
   // panel) can show it (same source + precedence as the Lab Configuration tab). Inspection-only,
   // errors are ignored.
   //
-  // Keyed on `labName` alone, not `detail` — startup *scripts* are lab-static content that only
+  // Keyed on `labId` alone, not `detail` — startup *scripts* are lab-static content that only
   // changes via an explicit file edit, unlike `detail` (device/link runtime state), which gets a
   // new object identity on every refresh (deploy, undeploy, connect, a stats poll, ...). Refetching
   // on every one of those was strictly wasted work, and worse, it made `model` below settle in two
@@ -61,13 +61,13 @@ export function useDeviceActions({
   // `startups`, then this fetch resolving recomputes it *again* moments later, and each recompute
   // is a full topology-canvas rebuild in TopologyGraph/useForceLayout — a real, visible flicker.
   useEffect(() => {
-    if (!labName) {
+    if (!labId) {
       setStartups({});
       return;
     }
     let live = true;
     api
-      .getStartupScripts(labName)
+      .getStartupScripts(labId)
       .then((s) => {
         if (live) setStartups(s);
       })
@@ -75,19 +75,19 @@ export function useDeviceActions({
     return () => {
       live = false;
     };
-  }, [labName]);
+  }, [labId]);
 
   // On-demand re-fetch for callers that just changed a device's `<name>.startup` on disk (the
-  // Lab Configuration tab) — the effect above only refetches when `labName` itself changes.
+  // Lab Configuration tab) — the effect above only refetches when `labId` itself changes.
   const refreshStartups = useCallback(async () => {
-    if (!labName) return;
+    if (!labId) return;
     try {
-      const s = await api.getStartupScripts(labName);
+      const s = await api.getStartupScripts(labId);
       setStartups(s);
     } catch {
       // best-effort, same as the mount fetch above
     }
-  }, [labName]);
+  }, [labId]);
 
   const model = useMemo(() => (detail ? computeTopology(detail, startups) : EMPTY_MODEL), [detail, startups]);
 
@@ -135,7 +135,7 @@ export function useDeviceActions({
       onSubmit: async ({ name }) => {
         const clean = name.trim();
         if (!clean) return false;
-        return withRefresh(() => api.addLink(labName, clean), `Collision domain "${clean}" added.`);
+        return withRefresh(() => api.addLink(labId, clean), `Collision domain "${clean}" added.`);
       },
     });
   }
@@ -173,7 +173,7 @@ export function useDeviceActions({
         const mac = mac_address.trim() || undefined;
         if (running) {
           return withRefresh(
-            () => api.connectMachine(labName, deviceNode.name, clean, undefined, mac),
+            () => api.connectMachine(labId, deviceNode.name, clean, undefined, mac),
             `Added interface on ${deviceNode.name} → ${clean} (runtime).`,
           );
         }
@@ -183,7 +183,7 @@ export function useDeviceActions({
           return false;
         }
         return withRefresh(
-          () => api.connectMachine(labName, deviceNode.name, clean, num, mac),
+          () => api.connectMachine(labId, deviceNode.name, clean, num, mac),
           `Added eth${num} on ${deviceNode.name} to ${clean}.`,
         );
       },
@@ -236,7 +236,7 @@ export function useDeviceActions({
           }
         }
         return withRefresh(
-          () => api.connectMachine(labName, clean, domainNode.name, num, mac),
+          () => api.connectMachine(labId, clean, domainNode.name, num, mac),
           running
             ? `Added interface on ${clean} → ${domainNode.name} (runtime).`
             : `Added ${num === undefined ? "an interface" : `eth${num}`} on ${clean} to ${domainNode.name}.`,
@@ -271,7 +271,7 @@ export function useDeviceActions({
         const clean = link.trim();
         if (!clean) return false;
         return withRefresh(
-          () => api.disconnectMachine(labName, deviceNode.name, clean),
+          () => api.disconnectMachine(labId, deviceNode.name, clean),
           running ? `Disconnected ${deviceNode.name} from ${clean} (runtime).` : `Removed ${deviceNode.name}'s interface on ${clean}.`,
         );
       },
@@ -285,7 +285,7 @@ export function useDeviceActions({
       okLabel: "Remove",
     });
     if (!ok) return;
-    await withRefresh(() => api.removeMachine(labName, deviceNode.name), `Device ${deviceNode.name} removed.`);
+    await withRefresh(() => api.removeMachine(labId, deviceNode.name), `Device ${deviceNode.name} removed.`);
   }
 
   async function deployDevice(deviceNode: DeviceNode) {
@@ -298,7 +298,7 @@ export function useDeviceActions({
     // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
     const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });
     if (outcome !== "proceed") return;
-    await withRefresh(() => api.deployDevice(labName, deviceNode.name), `Device ${deviceNode.name} deployed.`);
+    await withRefresh(() => api.deployDevice(labId, deviceNode.name), `Device ${deviceNode.name} deployed.`);
   }
 
   async function undeployDevice(deviceNode: DeviceNode) {
@@ -308,7 +308,7 @@ export function useDeviceActions({
       okLabel: "Undeploy",
     });
     if (!ok) return;
-    await withRefresh(() => api.undeployDevice(labName, deviceNode.name), `Device ${deviceNode.name} undeployed.`);
+    await withRefresh(() => api.undeployDevice(labId, deviceNode.name), `Device ${deviceNode.name} undeployed.`);
   }
 
   async function removeDomain(domainNode: DomainNode) {
@@ -318,7 +318,7 @@ export function useDeviceActions({
       okLabel: "Remove",
     });
     if (!ok) return;
-    await withRefresh(() => api.removeLink(labName, domainNode.name), `Collision domain ${domainNode.name} removed.`);
+    await withRefresh(() => api.removeLink(labId, domainNode.name), `Collision domain ${domainNode.name} removed.`);
   }
 
   function runningGate(nd: DeviceNode): { disabled?: boolean; title?: string } {
@@ -345,7 +345,7 @@ export function useDeviceActions({
 
   function openTerminalPopup(deviceNode: DeviceNode) {
     if (!requireRunning(deviceNode)) return;
-    openTerminalWindow(labName, deviceNode.name);
+    openTerminalWindow(labId, deviceNode.name);
   }
 
   function openWorkspaceTerminal(deviceNode: DeviceNode) {

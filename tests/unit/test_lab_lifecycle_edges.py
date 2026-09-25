@@ -16,7 +16,7 @@ from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import kathara_service as kathara_service_module
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, make_service, zip_bytes
+from tests.helpers import FakeFacadeBase, lab_id, make_service, zip_bytes
 
 
 class _RecordingFacade(FakeFacadeBase):
@@ -31,8 +31,8 @@ class _RecordingFacade(FakeFacadeBase):
     def undeploy_lab(self, **kwargs):
         self.undeploy_calls.append(kwargs)
 
-    def get_machines_stats(self, lab_name=None, machine_name=None, user=None):
-        self.stats_labs.append(lab_name)
+    def get_machines_stats(self, lab_hash=None, machine_name=None, user=None):
+        self.stats_labs.append(lab_hash)
         yield {}
         yield {}
 
@@ -62,28 +62,28 @@ def service(tmp_path, facade):
 
 def test_deploy_refuses_selecting_and_excluding_at_once(service, facade):
     with pytest.raises(InvocationError, match="either select or exclude"):
-        service.deploy_lab("l", selected_machines={"pc1"}, excluded_machines={"pc2"})
+        service.deploy_lab(lab_id(service, "l"), selected_machines={"pc1"}, excluded_machines={"pc2"})
     assert facade.deploy_calls == []
 
 
 @pytest.mark.parametrize("option", ["selected_machines", "excluded_machines"])
 def test_deploy_refuses_devices_the_lab_does_not_have(service, facade, option):
     with pytest.raises(MachineNotFoundError, match="pc9"):
-        service.deploy_lab("l", **{option: {"pc1", "pc9"}})
+        service.deploy_lab(lab_id(service, "l"), **{option: {"pc1", "pc9"}})
     assert facade.deploy_calls == []
 
 
 def test_deploy_with_exclusions_deploys_every_other_device(service, facade):
-    service.deploy_lab("l", excluded_machines={"pc2"})
+    service.deploy_lab(lab_id(service, "l"), excluded_machines={"pc2"})
 
     assert facade.deploy_calls == [{"pc1"}]
 
 
 def test_a_refused_deploy_does_not_leave_the_lab_transitioning(service):
     with pytest.raises(InvocationError):
-        service.deploy_lab("l", selected_machines={"pc1"}, excluded_machines={"pc2"})
+        service.deploy_lab(lab_id(service, "l"), selected_machines={"pc1"}, excluded_machines={"pc2"})
 
-    service.fs_write_text_offline("l", "/notes.txt", "still editable\n")
+    service.fs_write_text_offline(lab_id(service, "l"), "/notes.txt", "still editable\n")
 
 
 # ---------------------------------------------------------------------------
@@ -100,27 +100,27 @@ def test_create_lab_whose_lab_conf_write_fails_leaves_nothing_behind(service, mo
     with pytest.raises(OSError, match="disk full"):
         service.create_lab(LabCreate(name="broken", machines=[MachineCreate(name="pc1")]))
 
-    assert service.registry.get("broken") is None
+    assert service.registry.get(lab_id(service, "broken")) is None
     assert not service.store.lab_dir("broken").exists()
 
 
 def test_rename_to_the_same_name_is_a_no_op(service):
-    lab = service.registry.get("l")
+    lab = service.registry.get(lab_id(service, "l"))
 
-    assert service.rename_lab("l", " l ") is lab
+    assert service.rename_lab(lab_id(service, "l"), " l ") is lab
     assert service.store.lab_dir("l").is_dir()
 
 
 def test_rename_whose_reload_fails_moves_the_directory_back(service, monkeypatch):
-    monkeypatch.setattr(service, "_reload_lab_from_disk", lambda name: False)
+    monkeypatch.setattr(service, "_reload_lab_from_disk", lambda lab_dir: None)
 
     with pytest.raises(ApiError, match="could not be reloaded after renaming"):
-        service.rename_lab("l", "renamed")
+        service.rename_lab(lab_id(service, "l"), "renamed")
 
     assert service.store.lab_dir("l").is_dir()
     assert not service.store.lab_dir("renamed").exists()
-    assert service.registry.get("l") is not None
-    assert service.registry.get("renamed") is None
+    assert service.registry.get(lab_id(service, "l")) is not None
+    assert service.registry.get(lab_id(service, "renamed")) is None
 
 
 # ---------------------------------------------------------------------------
@@ -129,17 +129,18 @@ def test_rename_whose_reload_fails_moves_the_directory_back(service, monkeypatch
 
 
 def test_an_unregistered_lab_with_nothing_running_is_not_found():
-    """Docker's manager answers `get_lab_from_api` for an unknown name with an *empty* lab rather
+    """Docker's manager answers `get_lab_from_api` for an unknown hash with an *empty* lab rather
     than raising, so the empty result itself has to read as a 404."""
 
     class _EmptyLabFacade(FakeFacadeBase):
-        def get_lab_from_api(self, lab_name):
-            return Lab(lab_name)
+        def get_lab_from_api(self, lab_hash=None):
+            return Lab("reconstructed_lab")
 
     service = make_service(facade=_EmptyLabFacade())
+    ghost = lab_id(service, "ghost")
 
-    with pytest.raises(LabNotFoundError, match="Lab `ghost` not found"):
-        service.get_lab_or_reconstruct("ghost")
+    with pytest.raises(LabNotFoundError, match=f"Lab `{ghost}` not found"):
+        service.get_lab_or_reconstruct(ghost)
 
 
 def test_an_unregistered_lab_with_running_devices_is_reconstructed_from_them():
@@ -149,13 +150,16 @@ def test_an_unregistered_lab_with_running_devices_is_reconstructed_from_them():
     running.new_machine("pc1")
 
     class _RunningLabFacade(FakeFacadeBase):
-        def get_lab_from_api(self, lab_name):
+        def get_lab_from_api(self, lab_hash=None):
+            self.asked_for = lab_hash
             return running
 
-    service = make_service(facade=_RunningLabFacade())
+    facade = _RunningLabFacade()
+    service = make_service(facade=facade)
 
-    assert service.get_lab_or_reconstruct("cli-lab") is running
-    assert service.registry.get("cli-lab") is None
+    assert service.get_lab_or_reconstruct(lab_id(service, "cli-lab")) is running
+    assert facade.asked_for == lab_id(service, "cli-lab")
+    assert service.registry.get(lab_id(service, "cli-lab")) is None
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +200,7 @@ def test_net_sysctls_are_empty_without_proc_sys_net(service, tmp_path, monkeypat
 
 
 def test_deploy_accepts_selecting_every_device(service, facade):
-    service.deploy_lab("l", selected_machines={"pc1", "pc2"})
+    service.deploy_lab(lab_id(service, "l"), selected_machines={"pc1", "pc2"})
 
     assert facade.deploy_calls == [{"pc1", "pc2"}]
 
@@ -212,10 +216,10 @@ def test_deploy_accepts_selecting_every_device(service, facade):
     ids=["whole lab", "selected", "excluded", "links"],
 )
 def test_undeploy_hands_its_selection_to_kathara_unchanged(service, facade, kwargs):
-    service.undeploy_lab("l", **kwargs)
+    service.undeploy_lab(lab_id(service, "l"), **kwargs)
 
     assert facade.undeploy_calls == [
-        {"lab_name": "l", "selected_machines": None, "excluded_machines": None, "selected_links": None, **kwargs}
+        {"lab_hash": lab_id(service, "l"), "selected_machines": None, "excluded_machines": None, "selected_links": None, **kwargs}
     ]
 
 
@@ -224,21 +228,21 @@ def test_undeploying_only_some_links_leaves_the_other_links_and_the_model_in_pla
     service.create_lab(LabCreate(name="net", machines=[
         MachineCreate(name="pc1", interfaces=[{"link": "A"}]), MachineCreate(name="pc2", interfaces=[{"link": "B"}]),
     ]))
-    lab = service.registry.get("net")
+    lab = service.registry.get(lab_id(service, "net"))
     for obj in [*lab.machines.values(), *lab.links.values()]:
         obj.api_object = object()
 
-    service.undeploy_lab("net", selected_links={"A"})
+    service.undeploy_lab(lab_id(service, "net"), selected_links={"A"})
 
-    assert service.registry.get("net") is lab  # a partial undeploy does not reload the lab from disk
+    assert service.registry.get(lab_id(service, "net")) is lab  # a partial undeploy does not reload the lab from disk
     assert lab.links["A"].api_object is None
     assert lab.links["B"].api_object is not None
 
 
 def test_deleting_a_lab_undeploys_that_lab_only(service, facade):
-    service.delete_lab("l")
+    service.delete_lab(lab_id(service, "l"))
 
-    assert facade.undeploy_calls == [{"lab_name": "l"}]
+    assert facade.undeploy_calls == [{"lab_hash": lab_id(service, "l")}]
 
 
 def test_stats_stream_asks_for_that_lab_and_waits_only_the_rest_of_the_interval(service, facade, monkeypatch):
@@ -247,8 +251,8 @@ def test_stats_stream_asks_for_that_lab_and_waits_only_the_rest_of_the_interval(
     monkeypatch.setattr(kathara_service_module.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(kathara_service_module.time, "sleep", sleeps.append)
 
-    assert list(service.machines_stats_stream("l")) == [[], []]
-    assert facade.stats_labs == ["l"]
+    assert list(service.machines_stats_stream(lab_id(service, "l"))) == [[], []]
+    assert facade.stats_labs == [lab_id(service, "l")]
     assert sleeps == [pytest.approx(0.75)]  # one second between samples, 0.25 of it already gone
 
 
@@ -306,8 +310,8 @@ def test_reloading_from_disk_skips_an_unloadable_lab_and_keeps_going(tmp_path):
     service = make_service(store=store)
     service._reload_from_disk()
 
-    assert service.registry.get("a_broken") is None
-    assert service.registry.get("b_good") is not None
+    assert service.registry.get(lab_id(service, "a_broken")) is None
+    assert service.registry.get(lab_id(service, "b_good")) is not None
 
 
 def test_a_name_held_by_an_unregistered_directory_is_not_free(service):

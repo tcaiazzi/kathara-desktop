@@ -8,7 +8,7 @@ import { api } from "../services/api";
 // literal, the message switch and the mount effect live here once, and neither surface keeps a
 // copy of its own.
 //
-// `labName` is a parameter rather than read from WorkspaceContext on purpose: the popup route is
+// `labId` is a parameter rather than read from WorkspaceContext on purpose: the popup route is
 // mounted outside the provider, so anything shared here must not reach for that context.
 
 interface TerminalSessionOptions {
@@ -21,13 +21,13 @@ interface TerminalSessionOptions {
   autoConnect?: boolean;
 }
 
-export function useTerminalSession(labName: string, machine: string, options: TerminalSessionOptions = {}) {
+export function useTerminalSession(labId: string, machine: string, options: TerminalSessionOptions = {}) {
   const { focusScopeRef, autoConnect = true } = options;
   const detection = useShellDetection();
   const { shell, shellRef, detectShell } = detection;
 
   const tty = useLiveTty(true, {
-    wsUrl: () => api.ttyWsUrl(labName, machine, shellRef.current),
+    wsUrl: () => api.ttyWsUrl(labId, machine, shellRef.current),
     terminalOptions: {
       cursorBlink: true,
       convertEol: false,
@@ -78,7 +78,7 @@ export function useTerminalSession(labName: string, machine: string, options: Te
     let cancelled = false;
     terminalRef.current?.write(`Opening live terminal for ${machine}...\r\n`);
     (async () => {
-      await detectShell(labName, machine);
+      await detectShell(labId, machine);
       if (!cancelled) connect();
     })();
     return () => {

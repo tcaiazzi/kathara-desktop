@@ -11,7 +11,7 @@ import type { LabDetail } from "../services/types";
 // (topology hover, a context-menu open, a rail drag) no longer forces every visible tree row to
 // re-render.
 interface WorkspaceCoreCtx {
-  labName: string;
+  labId: string;
   detail: LabDetail;
   onRefresh: () => Promise<void>;
   /** Re-fetches each device's `<name>.startup` content — call after LabExplorer saves one, so the

@@ -7,7 +7,7 @@ import type { LabConfView, LabDetail } from "../services/types";
 import { FsTreePanel } from "./FsTreePanel";
 
 interface LabExplorerProps {
-  labName: string;
+  labId: string;
   detail: LabDetail;
   onStructuralChange?: () => Promise<void>;
   /** Called after a device's own `<name>.startup` is saved, so the Device Information panel's startup
@@ -41,7 +41,7 @@ function isStartupFilePath(path: string): boolean {
 // FsTreePanel); what's specific to this tab lives here: lab.conf is read/written through its own
 // endpoint (it rebuilds the topology, and is refused while the lab is deployed) and is watched
 // for changes made elsewhere.
-export function LabExplorer({ labName, detail, onStructuralChange, onStartupFileSaved }: LabExplorerProps) {
+export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSaved }: LabExplorerProps) {
   const toast = useToast();
 
   const [labConf, setLabConf] = useState<LabConfView | null>(null);
@@ -61,12 +61,12 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
   const applyLabConf = useCallback(
     async (content: string) => {
       if (deployedRef.current) throw new Error("Undeploy the lab to edit lab.conf.");
-      await api.updateLabConf(labName, content);
+      await api.updateLabConf(labId, content);
       // Re-read to refresh our "last known server text" baseline — not to recover a "normalized"
       // version. The backend stores lab.conf verbatim: if what comes back differs from what was
       // just sent, that is a backend bug, not a client-side detail to paper over by silently
       // accepting the server's text.
-      const conf = await api.getLabConf(labName);
+      const conf = await api.getLabConf(labId);
       if (conf.content !== content) {
         toast.show("lab.conf was saved, but the server returned different text than submitted.", "danger");
       }
@@ -75,32 +75,32 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
       setConfConflict(null);
       await onStructuralChange?.();
     },
-    [labName, onStructuralChange, toast],
+    [labId, onStructuralChange, toast],
   );
 
   const source = useMemo<FsTreeSource>(
     () => ({
-      list: async (path, signal) => (await api.fsListOffline(labName, path, signal)).entries,
+      list: async (path, signal) => (await api.fsListOffline(labId, path, signal)).entries,
       readText: async (path) =>
         path === LAB_CONF_PATH
           ? labConfRef.current?.content ?? ""
-          : (await api.fsReadTextOffline(labName, path)).content,
+          : (await api.fsReadTextOffline(labId, path)).content,
       writeText: async (path, content) => {
         if (path === LAB_CONF_PATH) {
           await applyLabConf(content);
           return;
         }
-        await api.fsWriteTextOffline(labName, path, content);
+        await api.fsWriteTextOffline(labId, path, content);
         if (isStartupFilePath(path)) await onStartupFileSaved?.();
       },
-      mkdir: async (path) => void (await api.fsMkdirOffline(labName, path)),
-      move: async (source, destination) => void (await api.fsMoveOffline(labName, source, destination)),
-      copy: async (source, destination) => void (await api.fsCopyOffline(labName, source, destination)),
-      remove: async (path) => void (await api.fsDeleteOffline(labName, path, true)),
-      upload: async (path, file) => void (await api.fsUploadOffline(labName, path, file)),
-      download: (path) => api.fsDownloadOffline(labName, path),
+      mkdir: async (path) => void (await api.fsMkdirOffline(labId, path)),
+      move: async (source, destination) => void (await api.fsMoveOffline(labId, source, destination)),
+      copy: async (source, destination) => void (await api.fsCopyOffline(labId, source, destination)),
+      remove: async (path) => void (await api.fsDeleteOffline(labId, path, true)),
+      upload: async (path, file) => void (await api.fsUploadOffline(labId, path, file)),
+      download: (path) => api.fsDownloadOffline(labId, path),
       search: (path, query, caseSensitive, signal) =>
-        api.fsSearchOffline(labName, path, query, caseSensitive, signal),
+        api.fsSearchOffline(labId, path, query, caseSensitive, signal),
       canModify,
       cannotModifyReason: "lab.conf can't be modified here.",
       labels: {
@@ -143,7 +143,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
         uploadFallbackDir: () => (detail.machines[0] ? `/${detail.machines[0].name}` : "/"),
       },
     }),
-    [applyLabConf, detail.machines, labName, onStartupFileSaved],
+    [applyLabConf, detail.machines, labId, onStartupFileSaved],
   );
 
   // A token whose identity changes exactly when the tree should be re-listed: on any lab
@@ -152,7 +152,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
   // object, which would re-list on every render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const refreshKey = useMemo(() => ({}), [detail, confReloadKey]);
-  const tree = useFsTree({ source, scopeKey: labName, refreshKey });
+  const tree = useFsTree({ source, scopeKey: labId, refreshKey });
 
   // Read through refs so this effect doesn't re-run on every keystroke in the editor. Keyed off
   // `bufferPath` rather than `selected`: it's the file whose content `dirty`/`setBuffer` actually
@@ -171,7 +171,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
     const controller = new AbortController();
     (async () => {
       try {
-        const conf = await api.getLabConf(labName, controller.signal);
+        const conf = await api.getLabConf(labId, controller.signal);
         const editing = bufferPathRef.current === LAB_CONF_PATH;
         const changed = conf.content !== serverConfRef.current;
         if (editing && dirtyRef.current && changed) {
@@ -189,7 +189,7 @@ export function LabExplorer({ labName, detail, onStructuralChange, onStartupFile
     // Aborts the fetch rather than ignoring its result: switching labs quickly would otherwise
     // leave the previous lab's read running, and it is the one that answers into a dead effect.
     return () => controller.abort();
-  }, [labName, detail, confReloadKey, setBuffer, toast]);
+  }, [labId, detail, confReloadKey, setBuffer, toast]);
 
   function acceptConfConflict() {
     if (confConflict === null) return;

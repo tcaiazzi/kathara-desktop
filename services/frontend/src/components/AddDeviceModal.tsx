@@ -14,7 +14,7 @@ import { ModalSubmitFooter } from "./ModalSubmitFooter";
 
 interface AddDeviceModalProps {
   show: boolean;
-  labName: string;
+  labId: string;
   // Prefills "attach to domain" when opened from a domain's context menu.
   prefillLink: string | null;
   onClose: () => void;
@@ -26,7 +26,7 @@ interface AddDeviceModalProps {
 // behind the "Advanced options" toggle, sharing its fields with the post-creation
 // MachineOptionsEditor via MachineOptionsFields so a device can be fully configured at creation
 // time instead of add-then-edit.
-export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }: AddDeviceModalProps) {
+export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: AddDeviceModalProps) {
   const [name, setName] = useState("");
   const [link, setLink] = useState("");
   const [options, setOptions] = useState<OptionsFormState>(defaultOptionsFormState());
@@ -73,7 +73,7 @@ export function AddDeviceModal({ show, labName, prefillLink, onClose, onAdded }:
     if (outcome !== "proceed") return;
 
     await runBusy(setBusy, "Add device", async (signal) => {
-      await api.addMachine(labName, payload, signal);
+      await api.addMachine(labId, payload, signal);
       await onAdded();
       onClose();
     });

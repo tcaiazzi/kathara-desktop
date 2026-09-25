@@ -80,11 +80,16 @@ export interface LabConfView {
 
 export interface LabSummary {
   name: string | null;
-  hash: string;
+  // What every per-lab call and route takes. Derived by the backend from the lab directory's path
+  // (and equal to its Kathara hash), so a rename changes it — never build one from `name`.
+  id: string;
   n_machines: number;
   n_links: number;
   deployed: boolean;
 }
+
+// What a whole-lab action needs: `id` to address the lab, `name` to talk about it to the user.
+export type LabRef = Pick<LabSummary, "id" | "name">;
 
 export interface PortMapping {
   host_port: number;

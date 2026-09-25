@@ -15,6 +15,7 @@ from Kathara.model.Machine import Machine
 from ..errors import ApiError
 from ..schemas.lab import LabCreate
 from ..schemas.machine import MachineCreate, MachineOptionsBase
+from .lab_store import lab_id_for
 
 # A host interface spec optionally carrying a trailing VLAN tag, e.g. "eth0" or "eth0.100".
 _VLAN_SUFFIX_RE = re.compile(r"^(?P<iface>.+)\.(?P<vlan>\d+)$")
@@ -133,8 +134,18 @@ def build_lab(spec: LabCreate, path: Optional[str] = None) -> Lab:
     requires it) and makes this an OS-backed lab: ``lab.fs`` becomes a real directory instead of
     an in-memory one, so Kathara's native deploy (``Machine.pack_data``) can pack real files/
     startup scripts into the container over the Docker API.
+
+    It also decides the lab's identity. ``Lab(name, path)`` would hash the *name*, so two
+    directories with the same basename would share containers, and neither would match what
+    ``kathara lstart`` deploys from the same directory. The hash is therefore taken from the path
+    (``lab_store.lab_id_for``) and assigned after construction, the same way Kathara's own
+    ``get_lab_from_api`` sets a reconstructed lab's hash; ``lab.name`` stays the display name,
+    which nothing in Kathara's manager reads. A path-less ``Lab`` is only ever a throwaway
+    (validation, serialization) and keeps the name-derived hash.
     """
     lab = Lab(spec.name, path=path)
+    if path is not None:
+        lab.hash = lab_id_for(path)
 
     meta = spec.metadata
     lab.description = meta.description

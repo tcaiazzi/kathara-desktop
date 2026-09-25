@@ -17,41 +17,55 @@ The registry is process-local; the server therefore must run with a single worke
 """
 
 import threading
+from pathlib import Path
 from typing import Optional
 
 from Kathara.model.Lab import Lab
 
 
 class LabRegistry:
-    """Thread-safe mapping of lab name -> Lab object (+ per-lab dirty-machine tracking)."""
+    """Thread-safe mapping of lab id -> Lab object and its directory (+ per-lab dirty-machine
+    tracking).
+
+    Keyed by ``lab.hash``, which *is* the lab's id (see ``lab_store.lab_id_for``): the key and the
+    identity Kathara labels the lab's containers with can then never disagree. The directory is
+    kept beside the ``Lab`` because nothing on the ``Lab`` itself says where it lives on disk.
+    """
 
     def __init__(self) -> None:
         self._labs: dict[str, Lab] = {}
+        self._dirs: dict[str, Path] = {}
         self._dirty: dict[str, set[str]] = {}
         self._lock = threading.RLock()
 
-    def add(self, lab: Lab) -> None:
+    def add(self, lab: Lab, directory: Path) -> None:
         with self._lock:
-            self._labs[lab.name] = lab
+            self._labs[lab.hash] = lab
+            self._dirs[lab.hash] = directory
 
-    def add_if_absent(self, lab: Lab) -> bool:
-        """Add ``lab`` only if name is not already present."""
+    def add_if_absent(self, lab: Lab, directory: Path) -> bool:
+        """Add ``lab`` only if its id is not already present."""
         with self._lock:
-            if lab.name in self._labs:
+            if lab.hash in self._labs:
                 return False
-            self._labs[lab.name] = lab
+            self.add(lab, directory)
             return True
 
-    def get(self, name: str) -> Optional[Lab]:
+    def get(self, lab_id: str) -> Optional[Lab]:
         with self._lock:
-            return self._labs.get(name)
+            return self._labs.get(lab_id)
 
-    def remove(self, name: str) -> Optional[Lab]:
+    def directory(self, lab_id: str) -> Optional[Path]:
         with self._lock:
-            self._dirty.pop(name, None)
-            return self._labs.pop(name, None)
+            return self._dirs.get(lab_id)
 
-    def names(self) -> list[str]:
+    def remove(self, lab_id: str) -> Optional[Lab]:
+        with self._lock:
+            self._dirty.pop(lab_id, None)
+            self._dirs.pop(lab_id, None)
+            return self._labs.pop(lab_id, None)
+
+    def ids(self) -> list[str]:
         with self._lock:
             return list(self._labs.keys())
 
@@ -61,19 +75,19 @@ class LabRegistry:
 
     # -- dirty-machine tracking -------------------------------------------------
 
-    def mark_dirty(self, lab_name: str, machine_name: str) -> None:
+    def mark_dirty(self, lab_id: str, machine_name: str) -> None:
         """Record that ``machine_name`` was written to (via the offline lab fs) since its last
         (re)deploy — the redeploy path uses this to decide which already-running devices are
         worth live-pushing into, without caching what actually changed."""
         with self._lock:
-            self._dirty.setdefault(lab_name, set()).add(machine_name)
+            self._dirty.setdefault(lab_id, set()).add(machine_name)
 
-    def pop_dirty_machines(self, lab_name: str, machine_names: set[str]) -> set[str]:
-        """Return the subset of ``machine_names`` marked dirty for ``lab_name``, and clear them —
+    def pop_dirty_machines(self, lab_id: str, machine_names: set[str]) -> set[str]:
+        """Return the subset of ``machine_names`` marked dirty for ``lab_id``, and clear them —
         so an already-running machine that hasn't changed since its last push isn't redundantly
         live-pushed (and its startup script re-executed) on every subsequent redeploy."""
         with self._lock:
-            dirty = self._dirty.get(lab_name)
+            dirty = self._dirty.get(lab_id)
             if not dirty:
                 return set()
             touched = dirty & machine_names

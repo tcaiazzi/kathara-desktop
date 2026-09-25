@@ -105,6 +105,7 @@ skip_covered = true
 [tool.mutmut]
 paths_to_mutate = [
     "src/kathara_api/services/kathara_service.py",
+    "src/kathara_api/services/lab_builder.py",
     "src/kathara_api/services/lab_conf_edit.py",
     "src/kathara_api/services/lab_import.py",
     "src/kathara_api/services/lab_store.py",

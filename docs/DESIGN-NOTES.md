@@ -38,7 +38,7 @@ Applies to: `services/docker_tty.py`, `routers/exec.py`, `main.py`,
 ## The gallery route coordinates on the event loop
 
 `GET /labs/gallery` is `async` for a reason no other route in `routers/labs.py` shares: not to
-await a request body, the way `POST /{lab_name}/fs/upload` does, but to reach the upstream
+await a request body, the way `POST /{lab_id}/fs/upload` does, but to reach the upstream
 catalogue through `lab_gallery.fetch_catalog_async`.
 
 `_async_lock` guards only the `_inflight` pointer, never the fetch itself. A caller that finds a

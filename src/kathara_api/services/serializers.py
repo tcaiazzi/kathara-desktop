@@ -122,7 +122,7 @@ def _is_deployed(lab: Lab) -> bool:
 def lab_to_summary(lab: Lab) -> LabSummary:
     return LabSummary(
         name=lab.name,
-        hash=lab.hash,
+        id=lab.hash,
         n_machines=len(lab.machines),
         n_links=len(lab.links),
         deployed=_is_deployed(lab),
@@ -133,7 +133,7 @@ def lab_to_detail(lab: Lab) -> LabDetail:
     """Serialize a lab, including its devices and collision domains."""
     return LabDetail(
         name=lab.name,
-        hash=lab.hash,
+        id=lab.hash,
         n_machines=len(lab.machines),
         n_links=len(lab.links),
         deployed=_is_deployed(lab),

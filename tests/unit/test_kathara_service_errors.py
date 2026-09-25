@@ -8,7 +8,7 @@ from kathara_api.errors import ApiError, BinaryFileError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase, make_service
+from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
 
 
 class _FacadeEmptyMachineStats(FakeFacadeBase):
@@ -25,7 +25,7 @@ class _FacadeNoneMachineStats(FakeFacadeBase):
 
 
 class _FacadeLabFromApiFailure(FakeFacadeBase):
-    def get_lab_from_api(self, lab_name):
+    def get_lab_from_api(self, lab_hash=None):
         raise DockerDaemonConnectionError("daemon down")
 
 
@@ -46,12 +46,12 @@ def test_get_lab_or_reconstruct_propagates_non_not_found_errors():
     service = make_service(facade=_FacadeLabFromApiFailure())
 
     with pytest.raises(DockerDaemonConnectionError):
-        service.get_lab_or_reconstruct("lab1")
+        service.get_lab_or_reconstruct(lab_id(service, "lab1"))
 
 
 def test_list_labs_propagates_refresh_errors():
     service = make_service(facade=_FacadeRefreshFailure())
-    service.registry.add(Lab("lab1"))
+    register_lab(service, Lab("lab1"))
 
     with pytest.raises(DockerDaemonConnectionError):
         service.list_labs()
@@ -62,10 +62,10 @@ def test_copy_files_on_stopped_machine_raises_machine_not_running():
 
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     lab = lab_builder.build_lab(spec)
-    service.registry.add(lab)
+    register_lab(service, lab)
 
     with pytest.raises(MachineNotRunningError):
-        service.copy_files("lab1", "pc1", {"/tmp/x.txt": "hello"})
+        service.copy_files(lab_id(service, "lab1"), "pc1", {"/tmp/x.txt": "hello"})
 
 
 def _service_with_running_machine() -> KatharaService:
@@ -74,7 +74,7 @@ def _service_with_running_machine() -> KatharaService:
     lab = lab_builder.build_lab(spec)
     machine = lab.get_machine("pc1")
     machine.api_object = object()
-    service.registry.add(lab)
+    register_lab(service, lab)
     return service
 
 
@@ -82,22 +82,22 @@ def test_available_shells_returns_detected_subset_in_canonical_order():
     service = _service_with_running_machine()
     # Probe reports zsh + bash present (out of order); result must be canonical order, detected only.
     service.exec_command = lambda *a, **k: (b"zsh\nbash\n", b"", 0)  # type: ignore[method-assign]
-    assert service.available_shells("lab1", "pc1") == ["bash", "zsh"]
+    assert service.available_shells(lab_id(service, "lab1"), "pc1") == ["bash", "zsh"]
 
 
 def test_available_shells_falls_back_when_detection_yields_nothing():
     service = _service_with_running_machine()
     service.exec_command = lambda *a, **k: (b"", b"", 0)  # type: ignore[method-assign]
-    assert service.available_shells("lab1", "pc1") == ["bash", "sh", "ash", "zsh"]
+    assert service.available_shells(lab_id(service, "lab1"), "pc1") == ["bash", "sh", "ash", "zsh"]
 
 
 def test_available_shells_requires_running_machine():
     service = make_service(facade=_FacadeNoCopyOnStopped())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
-    service.registry.add(lab_builder.build_lab(spec))
+    register_lab(service, lab_builder.build_lab(spec))
 
     with pytest.raises(MachineNotRunningError):
-        service.available_shells("lab1", "pc1")
+        service.available_shells(lab_id(service, "lab1"), "pc1")
 
 
 def test_fs_read_bytes_rejects_directory_paths_before_cat():
@@ -110,7 +110,7 @@ def test_fs_read_bytes_rejects_directory_paths_before_cat():
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
     with pytest.raises(ApiError, match="is a directory"):
-        service.fs_read_bytes("lab1", "pc1", "/bin")
+        service.fs_read_bytes(lab_id(service, "lab1"), "pc1", "/bin")
 
 
 def test_fs_read_text_raises_binary_file_error_on_non_utf8_content():
@@ -125,7 +125,7 @@ def test_fs_read_text_raises_binary_file_error_on_non_utf8_content():
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
     with pytest.raises(BinaryFileError):
-        service.fs_read_text("lab1", "pc1", "/blob.bin")
+        service.fs_read_text(lab_id(service, "lab1"), "pc1", "/blob.bin")
 
 
 def test_fs_list_directory_marks_symlink_to_directory_as_directory():
@@ -143,7 +143,7 @@ def test_fs_list_directory_marks_symlink_to_directory_as_directory():
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
-    entries = service.fs_list_directory("lab1", "pc1", "/")
+    entries = service.fs_list_directory(lab_id(service, "lab1"), "pc1", "/")
     by_name = {entry.name: entry for entry in entries}
 
     assert by_name["bin"].is_dir is True
@@ -167,7 +167,7 @@ def test_fs_list_directory_dereferences_a_symlinked_query_path():
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
-    entries = service.fs_list_directory("lab1", "pc1", "/bin")
+    entries = service.fs_list_directory(lab_id(service, "lab1"), "pc1", "/bin")
     assert [entry.name for entry in entries] == ["ls"]
 
 
@@ -177,7 +177,7 @@ def test_get_startup_log_returns_empty_string_when_file_does_not_exist_yet():
     # since the whole point is to poll this while a device is still booting.
     service = _service_with_running_machine()
     service.exec_command = lambda *a, **k: (b"", b"cat: No such file or directory\n", 1)  # type: ignore[method-assign]
-    assert service.get_startup_log("lab1", "pc1") == ""
+    assert service.get_startup_log(lab_id(service, "lab1"), "pc1") == ""
 
 
 def test_get_startup_log_returns_file_content_when_present():
@@ -189,7 +189,7 @@ def test_get_startup_log_returns_file_content_when_present():
         return (b"+ ip addr add 10.0.0.1/24 dev eth0\n", b"", 0)
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
-    assert service.get_startup_log("lab1", "pc1") == "+ ip addr add 10.0.0.1/24 dev eth0\n"
+    assert service.get_startup_log(lab_id(service, "lab1"), "pc1") == "+ ip addr add 10.0.0.1/24 dev eth0\n"
 
 
 def test_is_startup_finished_checks_the_eos_marker_without_blocking():
@@ -204,31 +204,31 @@ def test_is_startup_finished_checks_the_eos_marker_without_blocking():
         return (b"", b"", 0)
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
-    assert service.is_startup_finished("lab1", "pc1") is True
+    assert service.is_startup_finished(lab_id(service, "lab1"), "pc1") is True
 
 
 def test_is_startup_finished_is_false_before_the_marker_exists():
     service = _service_with_running_machine()
     service.exec_command = lambda *a, **k: (b"", b"", 1)  # type: ignore[method-assign]
-    assert service.is_startup_finished("lab1", "pc1") is False
+    assert service.is_startup_finished(lab_id(service, "lab1"), "pc1") is False
 
 
 def test_get_startup_log_requires_running_machine():
     service = make_service(facade=_FacadeNoCopyOnStopped())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
-    service.registry.add(lab_builder.build_lab(spec))
+    register_lab(service, lab_builder.build_lab(spec))
 
     with pytest.raises(MachineNotRunningError):
-        service.get_startup_log("lab1", "pc1")
+        service.get_startup_log(lab_id(service, "lab1"), "pc1")
 
 
 def test_is_startup_finished_requires_running_machine():
     service = make_service(facade=_FacadeNoCopyOnStopped())
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
-    service.registry.add(lab_builder.build_lab(spec))
+    register_lab(service, lab_builder.build_lab(spec))
 
     with pytest.raises(MachineNotRunningError):
-        service.is_startup_finished("lab1", "pc1")
+        service.is_startup_finished(lab_id(service, "lab1"), "pc1")
 
 
 def test_get_startup_scripts_swallows_a_non_utf8_startup_without_failing_the_whole_panel():
@@ -241,9 +241,9 @@ def test_get_startup_scripts_swallows_a_non_utf8_startup_without_failing_the_who
     lab.fs.writebytes("pc2.startup", b"\xff\xfe\x00\x01")
 
     service = KatharaService()
-    service.registry.add(lab)
+    register_lab(service, lab)
 
-    assert service.get_startup_scripts("lab1") == {"pc1": "ip addr\n", "pc2": ""}
+    assert service.get_startup_scripts(lab_id(service, "lab1")) == {"pc1": "ip addr\n", "pc2": ""}
 
 
 def test_fs_list_directory_handles_none_stdout_from_exec():
@@ -256,5 +256,5 @@ def test_fs_list_directory_handles_none_stdout_from_exec():
 
     service.exec_command = _fake_exec  # type: ignore[method-assign]
 
-    entries = service.fs_list_directory("lab1", "pc1", "/home")
+    entries = service.fs_list_directory(lab_id(service, "lab1"), "pc1", "/home")
     assert entries == []

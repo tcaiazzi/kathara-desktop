@@ -83,7 +83,7 @@ describe("fitTransform", () => {
 function lab(machines: MachineDetail[], links: LinkDetail[] = []): LabDetail {
   return {
     name: "l",
-    hash: "h",
+    id: "h",
     n_machines: machines.length,
     n_links: links.length,
     deployed: false,

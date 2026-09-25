@@ -19,7 +19,7 @@ from ..dependencies import get_service, is_origin_allowed
 from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
 
-router = APIRouter(prefix="/labs/{lab_name}/machines/{machine_name}", tags=["exec"])
+router = APIRouter(prefix="/labs/{lab_id}/machines/{machine_name}", tags=["exec"])
 
 # How many tty_live_ws sessions are open right now. Mutated only from coroutines on this single
 # event loop (never from a thread), same as the `stop` flag inside tty_live_ws itself, so no lock
@@ -52,7 +52,7 @@ async def _recv_json(websocket: WebSocket):
 @router.websocket("/tty/ws")
 async def tty_live_ws(
     websocket: WebSocket,
-    lab_name: str,
+    lab_id: str,
     machine_name: str,
     shell: str = Query(default="bash"),
     service: KatharaService = Depends(get_service),
@@ -125,7 +125,7 @@ async def tty_live_ws(
         # already run on a dedicated executor; this one deliberately stays on asyncio's default,
         # since it is a one-shot lookup, not a persistent per-session thread — see
         # services/docker_tty.py for why the two must not share an executor).
-        machine_obj = await asyncio.to_thread(service.get_machine_api_object, lab_name, machine_name)
+        machine_obj = await asyncio.to_thread(service.get_machine_api_object, lab_id, machine_name)
         client = getattr(getattr(machine_obj, "client", None), "api", None)
         container_id = getattr(machine_obj, "id", None)
         if client is None or not container_id:

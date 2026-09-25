@@ -8,7 +8,7 @@ import { ModalSubmitFooter } from "./ModalSubmitFooter";
 interface UploadLabModalProps {
   show: boolean;
   onClose: () => void;
-  onCreated: (labName: string) => void;
+  onCreated: (labId: string) => void;
 }
 
 // Default a lab name from the .zip filename (strip the extension); left blank lets the backend
@@ -58,7 +58,7 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
       if (result.warnings?.length) {
         toast.show(result.warnings.join(" · "), "info", "Import warnings");
       }
-      onCreated(labName);
+      onCreated(result.id);
       handleClose();
     });
   }

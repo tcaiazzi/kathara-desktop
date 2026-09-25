@@ -2,7 +2,7 @@
 
 test_unknown_lab_404.py is narrow, tied to three specific methods (undeploy_lab, delete_lab and
 machines_stats_stream). This file generalizes the same check to every other KatharaService
-method that looks up an existing lab by name, so a method that forgets the check fails a test
+method that looks up an existing lab by id, so a method that forgets the check fails a test
 instead of shipping silently.
 
 Three tiers, cheapest/most valuable first:
@@ -24,6 +24,7 @@ from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service
 
+# Any string is a well-formed lab id, and no lab directory hashes to this one.
 UNKNOWN = "never-existed"
 MACHINE = "pc1"
 LINK = "A"
@@ -81,10 +82,9 @@ CASES: list[tuple[str, tuple]] = [
     ("machines_stats_stream", ()),
 ]
 
-# Methods whose first parameter is `name`/`lab_name` but that are *not* part of this "does an
-# existing lab exist" family, with the reason each is excluded rather than silently missing:
+# Methods whose first parameter is `lab_id` but that are *not* part of this "does an existing lab
+# exist" family, with the reason each is excluded rather than silently missing:
 SKIPPED = {
-    "upload_lab": "creates a lab under `name` — an unknown name is the success path, not a 404.",
     "exec_command": (
         "resolves straight through the Docker facade by container name "
         "(KatharaService.exec_command -> facade.exec), never via get_lab_or_reconstruct/the "
@@ -103,22 +103,31 @@ def test_unknown_lab_404s(tmp_path, method_name, extra_args):
 # -- Tier 1: keep the table above from rotting -------------------------------------------------
 
 
+def _first_param(method) -> str | None:
+    params = list(inspect.signature(method).parameters)
+    return params[1] if len(params) >= 2 else None
+
+
 def test_every_lab_lookup_method_is_covered():
-    """Every KatharaService method whose first parameter (after self) is literally `name` or
-    `lab_name` must appear in CASES or SKIPPED. A method that satisfies neither is a per-lab
-    operation nobody has checked returns 404 for `never-existed`."""
+    """Every KatharaService method whose first parameter (after self) is literally `lab_id` must
+    appear in CASES or SKIPPED. A method that satisfies neither is a per-lab operation nobody has
+    checked returns 404 for `never-existed`."""
     # The walk below only sees methods that exist, so a SKIPPED entry for a deleted method would
     # never fail — it would just sit there documenting nothing.
     stale = sorted(name for name in SKIPPED if not hasattr(KatharaService, name))
     assert stale == [], f"SKIPPED names method(s) that no longer exist: {stale}"
+
+    # The walk recognises a per-lab method by its first parameter's name, so if that name changes
+    # it finds nothing and passes having checked nothing. Every listed method must still carry it.
+    renamed = sorted(name for name, _ in CASES if _first_param(getattr(KatharaService, name)) != "lab_id")
+    assert renamed == [], f"CASES method(s) whose first parameter is no longer `lab_id`: {renamed}"
 
     covered = {name for name, _ in CASES} | set(SKIPPED)
     missing = []
     for method_name, method in inspect.getmembers(KatharaService, predicate=inspect.isfunction):
         if method_name.startswith("_") or method_name in covered:
             continue
-        params = list(inspect.signature(method).parameters)
-        if len(params) >= 2 and params[1] in ("name", "lab_name"):
+        if _first_param(method) == "lab_id":
             missing.append(method_name)
     assert missing == [], (
         f"New per-lab lookup method(s) not covered by CASES or SKIPPED: {missing}. "
@@ -129,35 +138,35 @@ def test_every_lab_lookup_method_is_covered():
 # -- Tier 3: HTTP-level slice, GET routes only (no request body to construct) -------------------
 
 GET_ROUTES = [
-    "/api/labs/{name}",
-    "/api/labs/{name}/download",
-    "/api/labs/{name}/lab-conf",
-    "/api/labs/{name}/location",
-    "/api/labs/{name}/layout",
-    "/api/labs/{name}/fs/startups",
-    "/api/labs/{name}/images",
-    f"/api/labs/{{name}}/machines/{MACHINE}/shells",
-    f"/api/labs/{{name}}/machines/{MACHINE}/startup-status",
+    "/api/labs/{lab_id}",
+    "/api/labs/{lab_id}/download",
+    "/api/labs/{lab_id}/lab-conf",
+    "/api/labs/{lab_id}/location",
+    "/api/labs/{lab_id}/layout",
+    "/api/labs/{lab_id}/fs/startups",
+    "/api/labs/{lab_id}/images",
+    f"/api/labs/{{lab_id}}/machines/{MACHINE}/shells",
+    f"/api/labs/{{lab_id}}/machines/{MACHINE}/startup-status",
 ]
 
 # Routes above whose handler has a *required* query parameter with no default — supplied here so
 # a 422 (missing query param) can never masquerade as "the 404 check works".
 GET_ROUTES_WITH_QUERY = [
-    ("/api/labs/{name}/fs/text", {"path": "/"}),
-    ("/api/labs/{name}/fs/download", {"path": "/"}),
-    ("/api/labs/{name}/fs/search", {"path": "/", "query": "ab"}),
-    (f"/api/labs/{{name}}/machines/{MACHINE}/fs/text", {"path": "/"}),
-    (f"/api/labs/{{name}}/machines/{MACHINE}/fs/download", {"path": "/"}),
+    ("/api/labs/{lab_id}/fs/text", {"path": "/"}),
+    ("/api/labs/{lab_id}/fs/download", {"path": "/"}),
+    ("/api/labs/{lab_id}/fs/search", {"path": "/", "query": "ab"}),
+    (f"/api/labs/{{lab_id}}/machines/{MACHINE}/fs/text", {"path": "/"}),
+    (f"/api/labs/{{lab_id}}/machines/{MACHINE}/fs/download", {"path": "/"}),
 ]
 
 
 @pytest.mark.parametrize("path_template", GET_ROUTES)
 def test_http_get_404s_for_an_unknown_lab(client, path_template):
-    resp = client.get(path_template.format(name=UNKNOWN))
+    resp = client.get(path_template.format(lab_id=UNKNOWN))
     assert resp.status_code == 404
 
 
 @pytest.mark.parametrize("path_template,params", GET_ROUTES_WITH_QUERY)
 def test_http_get_with_query_404s_for_an_unknown_lab(client, path_template, params):
-    resp = client.get(path_template.format(name=UNKNOWN), params=params)
+    resp = client.get(path_template.format(lab_id=UNKNOWN), params=params)
     assert resp.status_code == 404

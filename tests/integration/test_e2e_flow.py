@@ -6,6 +6,8 @@ Run with: ``pytest -m docker``
 import base64
 
 import pytest
+from Kathara.manager.Kathara import Kathara
+from Kathara.parser.netkit.LabParser import LabParser
 
 pytestmark = pytest.mark.docker
 
@@ -20,14 +22,19 @@ LAB = {
 
 @pytest.fixture(scope="module")
 def deployed_lab(client):
+    """The id of the deployed test lab."""
     # Clean up any leftover lab from a previous failed run.
-    client.request("DELETE", "/api/labs/apitest")
+    for leftover in client.get("/api/labs").json():
+        if leftover["name"] == LAB["name"]:
+            client.request("DELETE", f"/api/labs/{leftover['id']}")
 
-    assert client.post("/api/labs", json=LAB).status_code == 201
-    resp = client.post("/api/labs/apitest/deploy")
+    created = client.post("/api/labs", json=LAB)
+    assert created.status_code == 201
+    lab_id = created.json()["id"]
+    resp = client.post(f"/api/labs/{lab_id}/deploy")
     assert resp.status_code == 200, resp.text
-    yield
-    client.request("DELETE", "/api/labs/apitest")
+    yield lab_id
+    client.request("DELETE", f"/api/labs/{lab_id}")
 
 
 def test_system_endpoints(client):
@@ -38,10 +45,21 @@ def test_system_endpoints(client):
 
 
 def test_deploy_lists_machines(client, deployed_lab):
-    machines = client.get("/api/labs/apitest").json()["machines"]
+    machines = client.get(f"/api/labs/{deployed_lab}").json()["machines"]
     names = {m["name"] for m in machines}
     assert names == {"pc1", "pc2"}
     assert all(m["running"] for m in machines)
+
+
+def test_the_cli_sees_the_deployed_lab_as_its_own(client, deployed_lab):
+    """`kathara lstart`/`linfo`/`lclean` in the lab's directory hash that directory the way
+    `LabParser.parse` does, so they must find exactly the containers this app deployed."""
+    path = client.get(f"/api/labs/{deployed_lab}/location").json()["path"]
+    cli_hash = LabParser.parse(path).hash
+
+    assert cli_hash == deployed_lab
+    containers = Kathara.get_instance().get_machines_api_objects(lab_hash=cli_hash)
+    assert sorted(c.labels["name"] for c in containers) == ["pc1", "pc2"]
 
 
 def test_live_tty_websocket_smoke(client, deployed_lab):
@@ -49,7 +67,7 @@ def test_live_tty_websocket_smoke(client, deployed_lab):
     container: a real astart/aread/awrite/aresize/aclose round trip over the dedicated TTY
     executor (see docs/DESIGN-NOTES.md) must behave like any other session.
     """
-    with client.websocket_connect("/api/labs/apitest/machines/pc1/tty/ws") as ws:
+    with client.websocket_connect(f"/api/labs/{deployed_lab}/machines/pc1/tty/ws") as ws:
         assert ws.receive_json() == {"event": "ready"}
         ws.send_json({"type": "resize", "cols": 100, "rows": 30})
         ws.send_json({"type": "input", "data": "echo tty_smoke_marker\n"})

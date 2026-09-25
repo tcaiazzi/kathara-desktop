@@ -12,7 +12,7 @@ interface GalleryModalProps {
   show: boolean;
   onClose: () => void;
   /** Same contract as NewLabModal/UploadLabModal's `onCreated`: refresh the lab list and open it. */
-  onCreated: (labName: string) => void;
+  onCreated: (labId: string) => void;
 }
 
 interface CategoryGroup {
@@ -75,9 +75,9 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
     verbPast: "imported",
     errorLabel: "Import gallery lab",
     // Closing first is load-bearing: the modal has to be gone before the workspace navigates.
-    onDone: (labName) => {
+    onDone: (labId) => {
       onClose();
-      onCreated(labName);
+      onCreated(labId);
     },
   });
 

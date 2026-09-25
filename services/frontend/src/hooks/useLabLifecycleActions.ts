@@ -8,7 +8,7 @@ import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useDeployGate } from "./useDeployGate";
 import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
-import type { LabImagesStatus, VolumeMount } from "../services/types";
+import type { LabDetail, LabImagesStatus, LabRef, VolumeMount } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
 
 const PRIVILEGE_CANCELLED_MESSAGE =
@@ -26,9 +26,9 @@ const VOLUME_CANCELLED_MESSAGE =
  * and the deploy itself then reports whatever the real problem is, with the right message.
  * This is the single point where that guarantee lives.
  */
-async function labImagesOrNull(labName: string): Promise<LabImagesStatus | null> {
+async function labImagesOrNull(labId: string): Promise<LabImagesStatus | null> {
   try {
-    return await api.getLabImages(labName);
+    return await api.getLabImages(labId);
   } catch {
     return null;
   }
@@ -52,8 +52,8 @@ async function waitForDockerReady(shell: DesktopApi, timeoutMs = 15_000, interva
 // Best-effort, never lets a failure here read as the undeploy/wipe itself having failed (which
 // already succeeded by the time this runs) — see ElevationContext.tsx and backend.ts's
 // stopBackend/startBackend for why an elevated backend can't just have its privileges "turned
-// off" in place. `openLab`, if given, is where the reload (if the backend was actually elevated
-// and this triggers one) should land back on, instead of losing the current lab selection.
+// off" in place. `openLab`, if given, is the id of the lab the reload (if the backend was actually
+// elevated and this triggers one) should land back on, instead of losing the current lab selection.
 //
 // `requestReclaimAuth`, from ReclaimLabsDirContext.tsx, is only ever invoked on Linux (dropElevation
 // only ever asks for it there — macOS/Windows resolve any reclaim themselves via their own native
@@ -76,6 +76,11 @@ async function dropElevationIfAny(
   }
 }
 
+// A lab's name when it has one — a lab reconstructed from running containers alone may not.
+function labLabel(lab: LabRef): string {
+  return lab.name || lab.id;
+}
+
 // Every whole-lab action the workspace header offers: the deploy/undeploy toggle, rename, delete
 // and wipe-all, with their image pre-check, authorization prompts, toasts and confirm copy. One
 // caller (WorkspacePage) — kept out of it because the branching is long enough to bury the page.
@@ -93,8 +98,7 @@ export function useLabLifecycleActions() {
 
   const deployToggle = useCallback(
     async (
-      lab: {
-        name: string;
+      lab: LabRef & {
         deployed: boolean;
         machines: { name: string; privileged: boolean; volumes: VolumeMount[] }[];
       },
@@ -115,17 +119,17 @@ export function useLabLifecycleActions() {
       await runBusy(setBusy, lab.deployed ? "Undeploy" : "Deploy", async () => {
         if (lab.deployed) {
           try {
-            await api.undeployLab(lab.name);
+            await api.undeployLab(lab.id);
           } catch (e) {
             // A half-finished undeploy leaves devices up, so refresh before the error
             // propagates — see the deploy path below for why.
             await onDone().catch(() => {});
             throw e;
           }
-          toast.show(`Lab "${lab.name}" undeployed.`, "success");
+          toast.show(`Lab "${labLabel(lab)}" undeployed.`, "success");
           // Least-privilege: don't leave the backend running as root once nothing it's doing
           // needs that. A no-op if it wasn't elevated (the common case) or outside the desktop app.
-          await dropElevationIfAny(lab.name, requestReclaimAuth);
+          await dropElevationIfAny(lab.id, requestReclaimAuth);
           await onDone();
           return;
         }
@@ -143,7 +147,7 @@ export function useLabLifecycleActions() {
           onPhase?.("checking");
           const shell = desktop();
           if (shell) await waitForDockerReady(shell);
-          const images = await labImagesOrNull(lab.name);
+          const images = await labImagesOrNull(lab.id);
           onPhase?.("deploy");
           if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
             const outcome = await requestImageDownload(images);
@@ -172,7 +176,7 @@ export function useLabLifecycleActions() {
           const outcome = await ensureDeployAuthorized({
             privileged: needsElevation,
             volumeMachines: lab.machines,
-            resumeLab: lab.name,
+            resumeLab: lab.id,
           });
           if (outcome === "elevating") return; // a reload is already coming
           if (outcome === "cancelled") {
@@ -183,14 +187,14 @@ export function useLabLifecycleActions() {
         }
 
         try {
-          await api.deployLab(lab.name);
+          await api.deployLab(lab.id);
         } catch (e) {
           // Reactive fallback for the precheck above: a device can be made privileged via a raw
           // lab.conf edit that bypasses the UI's `privileged` field entirely. No equivalent
           // exists for volumes — `MachineDetail.volumes` read from the last `detail` is already
           // accurate, there is no "discovered only on failure" case for it.
           if (e instanceof ApiError && e.errorType === "PrivilegeError") {
-            const outcome = await requestDeployAuth({ privileged: true, volumeMachines: [], resumeLab: lab.name });
+            const outcome = await requestDeployAuth({ privileged: true, volumeMachines: [], resumeLab: lab.id });
             if (outcome === "elevating") return;
             if (outcome === "cancelled") {
               toast.show(PRIVILEGE_CANCELLED_MESSAGE, "danger");
@@ -207,7 +211,7 @@ export function useLabLifecycleActions() {
         }
         // The elevation `return`s above deliberately skip this: nothing was deployed, and on
         // the "elevating" path a full reload is already in flight.
-        toast.show(`Lab "${lab.name}" deployed.`, "success");
+        toast.show(`Lab "${labLabel(lab)}" deployed.`, "success");
         await onDone();
       });
     },
@@ -215,7 +219,8 @@ export function useLabLifecycleActions() {
   );
 
   const deleteLab = useCallback(
-    async (name: string, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
+    async (lab: LabRef, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
+      const name = labLabel(lab);
       const ok = await confirm({
         title: `Delete ${name}?`,
         message: `This undeploys and removes lab "${name}".`,
@@ -223,7 +228,7 @@ export function useLabLifecycleActions() {
       });
       if (!ok) return;
       await runBusy(setBusy, "Delete", async () => {
-        await api.deleteLab(name);
+        await api.deleteLab(lab.id);
         toast.show(`Lab "${name}" deleted.`, "success");
         await onDone();
       });
@@ -233,9 +238,11 @@ export function useLabLifecycleActions() {
 
   // Renames the lab's on-disk directory. The backend refuses (409) while the lab is deployed —
   // surfaced as an error toast by runBusy, no special-casing needed here. `onDone` receives the
-  // new name so callers can follow the lab (e.g. navigate to its new route).
+  // renamed lab, whose id is new (it is derived from the directory's path), so callers can follow
+  // it to its new route.
   const renameLab = useCallback(
-    async (name: string, setBusy: (busy: boolean) => void, onDone: (newName: string) => Promise<void>) => {
+    async (lab: LabRef, setBusy: (busy: boolean) => void, onDone: (renamed: LabDetail) => Promise<void>) => {
+      const name = labLabel(lab);
       const newName = await prompt({
         title: `Rename ${name}`,
         message: "New lab name (letters, digits, dot, dash or underscore).",
@@ -245,9 +252,9 @@ export function useLabLifecycleActions() {
       });
       if (!newName || newName === name) return;
       await runBusy(setBusy, "Rename", async () => {
-        await api.renameLab(name, newName);
+        const renamed = await api.renameLab(lab.id, newName);
         toast.show(`Lab "${name}" renamed to "${newName}".`, "success");
-        await onDone(newName);
+        await onDone(renamed);
       });
     },
     [prompt, runBusy, toast],
@@ -255,7 +262,8 @@ export function useLabLifecycleActions() {
 
   // Force-undeploys every lab kathara-desktop has deployed, not just `openLab`'s — but unlike the
   // Kathara CLI's own `kathara wipe`, it leaves scenarios started by other tools alone. `openLab`
-  // (the lab currently open, if any) is only used to land a privilege-drop reload back on it.
+  // (the id of the lab currently open, if any) is only used to land a privilege-drop reload back
+  // on it.
   const wipeAll = useCallback(
     async (openLab: string | undefined, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
       const ok = await confirm({

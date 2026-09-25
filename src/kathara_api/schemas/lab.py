@@ -43,7 +43,8 @@ class LabCreate(BaseModel):
 
 
 class LabRename(BaseModel):
-    """New name for an existing lab (validated as a safe directory name by the service)."""
+    """New name for an existing lab's directory (validated as a safe directory name by the
+    service). Renaming changes the lab's id, so the response carries the new one."""
 
     name: str
 
@@ -105,7 +106,10 @@ class LabSummary(BaseModel):
     """Compact response describing a network scenario."""
 
     name: Optional[str] = None
-    hash: str
+    # What every per-lab route takes (`/labs/{id}/…`). It is also the lab's Kathara hash, i.e. the
+    # `lab_hash` label on its containers, derived from the lab directory's path — see
+    # services/lab_store.lab_id_for.
+    id: str
     n_machines: int
     n_links: int
     deployed: bool

@@ -6,7 +6,7 @@ import type { LabDetail } from "../services/types";
 import { FsTreePanel } from "./FsTreePanel";
 
 interface RuntimeFilesystemEditorProps {
-  labName: string;
+  labId: string;
   detail: LabDetail;
   preferredMachine?: string | null;
   // Called only when the user directly picks a machine from the dropdown below (not when this
@@ -21,7 +21,7 @@ interface RuntimeFilesystemEditorProps {
 // selected, and switching devices fully resets the tree (the hook keys its state on `scopeKey`)
 // since two machines can legitimately share path namespaces — both may have an `/etc`.
 export function RuntimeFilesystemEditor({
-  labName,
+  labId,
   detail,
   preferredMachine = null,
   onSelectMachine,
@@ -57,15 +57,15 @@ export function RuntimeFilesystemEditor({
 
   const source = useMemo<FsTreeSource>(
     () => ({
-      list: async (path, signal) => (await api.fsList(labName, machine, path, signal)).entries,
-      readText: async (path) => (await api.fsReadText(labName, machine, path)).content,
-      writeText: async (path, content) => void (await api.fsWriteText(labName, machine, path, content)),
-      mkdir: async (path) => void (await api.fsMkdir(labName, machine, path)),
-      move: async (source, destination) => void (await api.fsMove(labName, machine, source, destination)),
-      copy: async (source, destination) => void (await api.fsCopy(labName, machine, source, destination)),
-      remove: async (path) => void (await api.fsDelete(labName, machine, path, true)),
-      upload: async (path, file) => void (await api.fsUpload(labName, machine, path, file)),
-      download: (path) => api.fsDownload(labName, machine, path),
+      list: async (path, signal) => (await api.fsList(labId, machine, path, signal)).entries,
+      readText: async (path) => (await api.fsReadText(labId, machine, path)).content,
+      writeText: async (path, content) => void (await api.fsWriteText(labId, machine, path, content)),
+      mkdir: async (path) => void (await api.fsMkdir(labId, machine, path)),
+      move: async (source, destination) => void (await api.fsMove(labId, machine, source, destination)),
+      copy: async (source, destination) => void (await api.fsCopy(labId, machine, source, destination)),
+      remove: async (path) => void (await api.fsDelete(labId, machine, path, true)),
+      upload: async (path, file) => void (await api.fsUpload(labId, machine, path, file)),
+      download: (path) => api.fsDownload(labId, machine, path),
       labels: {
         openFile: "Open runtime file",
         saveFile: "Save runtime file",
@@ -105,10 +105,10 @@ export function RuntimeFilesystemEditor({
         }),
       },
     }),
-    [labName, machine],
+    [labId, machine],
   );
 
-  const tree = useFsTree({ source, scopeKey: `${labName}/${machine}`, enabled: !!machine });
+  const tree = useFsTree({ source, scopeKey: `${labId}/${machine}`, enabled: !!machine });
 
   return (
     <FsTreePanel

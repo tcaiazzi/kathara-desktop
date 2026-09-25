@@ -19,7 +19,7 @@ interface WelcomeScreenProps {
   /** Opens the GalleryModal (WorkspacePage's `showGallery`). */
   onBrowseGallery: () => void;
   /** Same contract as NewLabModal/UploadLabModal's `onCreated`: refresh the lab list and open it. */
-  onLabCreated: (labName: string) => void;
+  onLabCreated: (labId: string) => void;
   /** Rendered only when the user already has labs (arrived via ?welcome=1) — a genuine first run,
    * with no labs to fall back on, has no way to dismiss itself into an empty screen. */
   onDismiss?: () => void;

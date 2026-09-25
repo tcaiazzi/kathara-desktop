@@ -20,7 +20,7 @@ TOKEN = "secret"
 
 # The one deliberate exception (see module docstring and main.py's own comment on the exec_router
 # include). test_every_websocket_route_is_deliberately_excluded keeps this set honest.
-EXCLUDED_PATHS = {f"{API_PREFIX}/labs/{{lab_name}}/machines/{{machine_name}}/tty/ws"}
+EXCLUDED_PATHS = {f"{API_PREFIX}/labs/{{lab_id}}/machines/{{machine_name}}/tty/ws"}
 
 
 def _flatten_routes(routes):

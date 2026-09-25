@@ -362,7 +362,7 @@ async function runExclusiveBootOp<T>(fn: () => Promise<T>): Promise<T> {
 /**
  * Run preflight, start the backend, and load the UI. Safe to call again on "Retry".
  *
- * `resumePath`, if given, is appended to the loaded URL (e.g. `/workspace/<lab>` from
+ * `resumePath`, if given, is appended to the loaded URL (e.g. `/workspace/<lab id>` from
  * elevation:drop below) so a backend restart triggered *from inside* an already-open lab lands
  * back there instead of the bare root every other caller of startup() wants.
  *
@@ -441,9 +441,9 @@ function senderWindow(event: IpcMainInvokeEvent): BrowserWindow | null {
 // Ceilings for the renderer-supplied strings below. Generous — none of these is a real policy
 // limit, they just stop an argument from being unbounded (see safety.ts's isBoundedString).
 const MAX_PASSWORD_LENGTH = 1024;
-// Longer than any filesystem allows for a single name, since the backend is what actually
-// judges a lab name (see `labDirectory`, which asks it rather than deriving a path here).
-const MAX_LAB_NAME_LENGTH = 512;
+// Far longer than any real lab id (a ~22-character hash): the backend is what actually judges
+// one (see `labDirectory`, which asks it rather than deriving a path here).
+const MAX_LAB_ID_LENGTH = 512;
 
 /**
  * Narrow one renderer-supplied string argument, or refuse the call.
@@ -495,7 +495,7 @@ function registerIpc(): void {
   // Driven from the renderer's elevation prompt (see ElevationContext.tsx), triggered when a
   // deploy needs a privileged device. `password` is required on Linux (fed to `sudo -S`) and
   // ignored elsewhere, where the OS shows its own native admin-password dialog instead.
-  // `resumeLab`, if given, is the lab the caller was trying to deploy — reflected into the
+  // `resumeLab`, if given, is the id of the lab the caller was trying to deploy — reflected into the
   // reload URL below so the SPA can continue that deploy on its own once it's back up, instead
   // of leaving the user to notice the reload finished and click Deploy again.
   //
@@ -507,7 +507,7 @@ function registerIpc(): void {
     "elevation:elevate",
     async (_e, passwordArg: unknown, resumeLabArg: unknown): Promise<ElevateOutcome> => {
       const password = optionalString(passwordArg, "elevation password", MAX_PASSWORD_LENGTH);
-      const resumeLab = optionalString(resumeLabArg, "lab name", MAX_LAB_NAME_LENGTH);
+      const resumeLab = optionalString(resumeLabArg, "lab id", MAX_LAB_ID_LENGTH);
       // Must not run alongside an in-flight startup()/elevation:drop — both stop/start the same
       // backend, so a concurrent pair races on which spawned process actually gets tracked.
       return runExclusiveBootOp(async () => {
@@ -577,7 +577,7 @@ function registerIpc(): void {
       openLabArg: unknown,
       skipReclaimCheckArg: unknown,
     ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean }> => {
-      const openLab = optionalString(openLabArg, "lab name", MAX_LAB_NAME_LENGTH);
+      const openLab = optionalString(openLabArg, "lab id", MAX_LAB_ID_LENGTH);
       // Strict `=== true`, not truthiness: this flag skips the root-owned-file check and the
       // prompt that goes with it, so anything that merely looks truthy must not be able to.
       const skipReclaimCheck = skipReclaimCheckArg === true;
@@ -764,14 +764,14 @@ function registerIpc(): void {
   );
   handleIpc("fs:open-labs-folder", () => openLabsDir());
 
-  // `labDirectory` asks the backend to resolve the name rather than building a path here, so the
-  // name itself is judged there; this only establishes that what arrived is a string at all.
-  handleIpc("fs:reveal-lab", async (_e, labName: unknown) => {
-    revealPath(await labDirectory(requireString(labName, "lab name", MAX_LAB_NAME_LENGTH)));
+  // `labDirectory` asks the backend to resolve the id rather than building a path here, so the
+  // id itself is judged there; this only establishes that what arrived is a string at all.
+  handleIpc("fs:reveal-lab", async (_e, labId: unknown) => {
+    revealPath(await labDirectory(requireString(labId, "lab id", MAX_LAB_ID_LENGTH)));
   });
 
-  handleIpc("terminal:open-here", async (_e, labName: unknown) => {
-    await openTerminalHere(await labDirectory(requireString(labName, "lab name", MAX_LAB_NAME_LENGTH)));
+  handleIpc("terminal:open-here", async (_e, labId: unknown) => {
+    await openTerminalHere(await labDirectory(requireString(labId, "lab id", MAX_LAB_ID_LENGTH)));
   });
 
   handleIpc("labs:get-dir", () => labsDir());
@@ -871,14 +871,14 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
 }
 
 /**
- * Ask the backend where a lab lives (GET /api/labs/{name}/location) rather than deriving the
- * path here: only the backend knows its storage root and which names it considers valid, and it
- * refuses an unsafe name instead of returning a path outside that root.
+ * Ask the backend where a lab lives (GET /api/labs/{id}/location) rather than deriving the path
+ * here: an id is a hash of the lab directory's path, so only the backend can map it back — and it
+ * only ever answers with a directory it already knows, never one built from what was sent.
  */
-async function labDirectory(labName: string): Promise<string> {
+async function labDirectory(labId: string): Promise<string> {
   const base = backendUrl();
   if (!base) throw new Error("the backend is not running");
-  const res = await fetch(`${base}/api/labs/${encodeURIComponent(labName)}/location`, {
+  const res = await fetch(`${base}/api/labs/${encodeURIComponent(labId)}/location`, {
     headers: authHeaders(),
     signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
   });

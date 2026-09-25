@@ -6,13 +6,13 @@ import type { MachineDetail } from "../services/types";
 import { Panel } from "./Panel";
 
 interface DevicesTableProps {
-  labName: string;
+  labId: string;
   machines: MachineDetail[];
 }
 
 // Read-only device table, plus a quick "Terminal" button per running device that pops out a
 // terminal window for it (see services/terminalWindow.ts).
-export function DevicesTable({ labName, machines }: DevicesTableProps) {
+export function DevicesTable({ labId, machines }: DevicesTableProps) {
   return (
     <Panel title={`Devices (${machines.length})`} className="mb-3">
       {machines.length === 0 ? (
@@ -46,7 +46,7 @@ export function DevicesTable({ labName, machines }: DevicesTableProps) {
                       size="sm"
                       variant="outline-secondary"
                       disabled={!m.running}
-                      onClick={() => openTerminalWindow(labName, m.name)}
+                      onClick={() => openTerminalWindow(labId, m.name)}
                     >
                       Terminal
                     </Button>

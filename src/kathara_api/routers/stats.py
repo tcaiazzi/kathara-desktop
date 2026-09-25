@@ -11,7 +11,7 @@ from ..dependencies import get_service, require_auth_token_or_query
 from ..services import serializers
 from ..services.kathara_service import KatharaService
 
-router = APIRouter(prefix="/labs/{lab_name}", tags=["stats"])
+router = APIRouter(prefix="/labs/{lab_id}", tags=["stats"])
 
 T = TypeVar("T")
 
@@ -38,10 +38,10 @@ async def _sse_stats_stream(request: Request, generator, serialize: Callable[[T]
 # `?token=` accepted alongside it; see require_auth_token_or_query.
 @router.get("/stats/stream", dependencies=[Depends(require_auth_token_or_query)])
 async def machines_stats_stream(
-    lab_name: str, request: Request, service: KatharaService = Depends(get_service)
+    lab_id: str, request: Request, service: KatharaService = Depends(get_service)
 ):
     """Stream live device statistics as Server-Sent Events."""
-    generator = service.machines_stats_stream(lab_name)
+    generator = service.machines_stats_stream(lab_id)
     return EventSourceResponse(
         _sse_stats_stream(request, generator, serializers.machine_stats_to_schema)
     )
