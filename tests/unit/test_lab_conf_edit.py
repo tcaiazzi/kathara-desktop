@@ -9,7 +9,7 @@ import pytest
 from Kathara.exceptions import MachineAlreadyExistsError, MachineCollisionDomainError, MachineNotFoundError
 
 from kathara_api.errors import ApiError
-from kathara_api.schemas.machine import MachineCreate, MachineUpdate, PortMapping, Ulimit
+from kathara_api.schemas.machine import MachineCreate, MachineUpdate, PortMapping, Ulimit, VolumeMount
 from kathara_api.services import lab_conf_edit as lce
 from kathara_api.services import lab_import
 
@@ -403,3 +403,194 @@ def test_operations_preserve_crlf(op):
     result = op(text)
     assert "\r\n" in result or result == ""  # "" only when an op legitimately empties the file
     assert "\r" not in result.replace("\r\n", "")  # no bare \r / stray LF-only lines introduced
+
+
+# -- whole-text results: every line an edit writes, and every line it must leave alone ------------
+
+_EDIT_BASE = 'LAB_DESCRIPTION="demo"\n# pc1 block\npc1[0]=A\npc1[image]=kathara/base\n\nr1[image]=kathara/frr\n'
+
+
+def test_replace_device_options_writes_every_modeled_option_and_nothing_else():
+    spec = MachineUpdate(
+        image="kathara/frr", mem="128m", cpus=1.5, shell="/bin/sh", num_terms=2, entrypoint="/sbin/init",
+        args="--foo bar", bridged=True, privileged=True, ipv6=False, envs={"A": "1"},
+        sysctls={"net.ipv4.ip_forward": 1}, ulimits=[Ulimit(name="nofile", soft=1, hard=2)],
+        ports=[PortMapping(host_port=8080, guest_port=80, protocol="udp")], exec_commands=["ip a"],
+        volumes=[VolumeMount(host_path="/srv", guest_path="/data", mode="rw")], metas={"custom": "x"},
+    )
+
+    assert lce.replace_device_options(_EDIT_BASE, "pc1", spec) == (
+        'LAB_DESCRIPTION="demo"\n'
+        "# pc1 block\n"
+        "pc1[0]=A\n"
+        'pc1[image]="kathara/frr"\n'
+        "pc1[mem]=128m\n"
+        "pc1[cpus]=1.5\n"
+        "pc1[shell]=/bin/sh\n"
+        "pc1[num_terms]=2\n"
+        "pc1[entrypoint]=/sbin/init\n"
+        'pc1[args]="--foo bar"\n'
+        "pc1[bridged]=True\n"
+        "pc1[privileged]=True\n"
+        "pc1[ipv6]=False\n"
+        'pc1[exec]="ip a"\n'
+        'pc1[port]="8080:80/udp"\n'
+        'pc1[env]="A=1"\n'
+        'pc1[sysctl]="net.ipv4.ip_forward=1"\n'
+        'pc1[ulimit]="nofile=1:2"\n'
+        'pc1[volume]="/srv|/data|rw"\n'
+        "pc1[custom]=x\n"
+        "\n"
+        "r1[image]=kathara/frr\n"
+    )
+
+
+def test_replace_device_options_with_nothing_set_removes_every_option_line():
+    full = lce.replace_device_options(
+        _EDIT_BASE, "pc1",
+        MachineUpdate(image="kathara/frr", mem="1g", cpus=2, shell="/bin/sh", num_terms=1, entrypoint="/x",
+                      args="y", bridged=True, privileged=True, ipv6=True, envs={"A": "1"}, metas={"custom": "x"}),
+    )
+
+    assert lce.replace_device_options(full, "pc1", MachineUpdate(image="kathara/base")) == (
+        'LAB_DESCRIPTION="demo"\n# pc1 block\npc1[0]=A\npc1[image]="kathara/base"\n\nr1[image]=kathara/frr\n'
+    )
+
+
+def test_replace_device_options_appends_a_new_group_after_the_device_lines():
+    text = "pc1[image]=x\npc1[mem]=64m\n\nr1[image]=y\n"
+
+    result = lce.replace_device_options(text, "pc1", MachineUpdate(image="x", mem="64m", envs={"A": "1", "B": "2"}))
+
+    assert result == 'pc1[image]="x"\npc1[mem]=64m\npc1[env]="A=1"\npc1[env]="B=2"\n\nr1[image]=y\n'
+
+
+def test_untouched_lines_keep_their_indentation_and_trailing_whitespace():
+    text = "  pc1[0]=A   \n\tpc1[image]=kathara/base\t# tabbed\nr1[image]=x\n"
+
+    assert lce.set_meta(text, "r1", "mem", "64m") == (
+        "  pc1[0]=A   \n\tpc1[image]=kathara/base\t# tabbed\nr1[image]=x\nr1[mem]=64m\n"
+    )
+
+
+def test_a_new_option_line_copies_the_device_block_indentation():
+    text = "  pc1[0]=A   \n\tpc1[image]=kathara/base\t# tabbed\nr1[image]=x\n"
+
+    assert lce.set_meta(text, "pc1", "mem", "64m") == (
+        "  pc1[0]=A   \n\tpc1[image]=kathara/base\t# tabbed\n\tpc1[mem]=64m\nr1[image]=x\n"
+    )
+
+
+def test_a_cr_terminated_file_keeps_its_line_endings_through_an_edit():
+    assert lce.set_meta("pc1[image]=x\rpc1[0]=A\r", "pc1", "mem", "64m") == "pc1[image]=x\rpc1[0]=A\rpc1[mem]=64m\r"
+
+
+def test_add_interface_goes_after_the_highest_numbered_one_not_the_last_line():
+    text = "pc1[1]=B\npc1[0]='A'\npc1[image]=kathara/base\n"
+
+    assert lce.add_interface(text, "pc1", None, "C") == "pc1[1]=B\npc1[2]=C\npc1[0]='A'\npc1[image]=kathara/base\n"
+
+
+def test_add_interface_to_a_device_without_interfaces_starts_its_block():
+    assert lce.add_interface("pc1[image]=kathara/base\n\nr1[image]=x\n", "pc1", None, "A") == (
+        "pc1[0]=A\npc1[image]=kathara/base\n\nr1[image]=x\n"
+    )
+
+
+def test_an_interface_with_a_mac_counts_as_a_connection_to_its_domain():
+    text = "pc1[0]=A/02:42:ac:11:00:02\npc1[1]=B\npc1[image]=x\n"
+
+    with pytest.raises(MachineCollisionDomainError, match=r"^Device `pc1` is already connected to `A`\.$"):
+        lce.add_interface(text, "pc1", None, "A")
+    assert lce.remove_interface(text, "pc1", "A") == "pc1[0]=B\npc1[image]=x\n"
+
+
+def test_renumber_interfaces_closes_a_gap():
+    assert lce.renumber_interfaces("pc1[0]=A\npc1[2]=C\npc1[image]=x\n", "pc1") == "pc1[0]=A\npc1[1]=C\npc1[image]=x\n"
+
+
+def test_set_lab_metadata_inserts_after_the_existing_lab_lines():
+    text = 'LAB_DESCRIPTION="d"\nLAB_AUTHOR="a"\n\npc1[image]=x\n'
+
+    assert lce.set_lab_metadata(text, "LAB_VERSION", "1.0") == (
+        'LAB_DESCRIPTION="d"\nLAB_AUTHOR="a"\nLAB_VERSION="1.0"\n\npc1[image]=x\n'
+    )
+
+
+def test_set_lab_metadata_without_any_lab_line_goes_first():
+    assert lce.set_lab_metadata("# top\npc1[image]=x\n", "LAB_VERSION", "1.0") == 'LAB_VERSION="1.0"\n# top\npc1[image]=x\n'
+
+
+@pytest.mark.parametrize(
+    "device, expected",
+    [
+        ("a", "b[image]=y\n\nc[image]=z\n"),
+        ("b", "a[image]=x\n\nc[image]=z\n"),
+        ("c", "a[image]=x\n\nb[image]=y\n"),
+    ],
+    ids=["first", "middle", "last"],
+)
+def test_remove_device_leaves_exactly_one_blank_line_between_blocks(device, expected):
+    assert lce.remove_device("a[image]=x\n\nb[image]=y\n\nc[image]=z\n", device) == expected
+
+
+# -- error messages ------------------------------------------------------------------------------
+
+
+def test_edit_errors_name_the_device_and_what_is_wrong():
+    with pytest.raises(MachineNotFoundError, match=r"^Device `nope` not found\.$"):
+        lce.add_interface("pc1[image]=x\n", "nope", None, "A")
+    with pytest.raises(MachineCollisionDomainError, match=r"^Device `pc1` already has an interface number 0\.$"):
+        lce.add_interface("pc1[0]=A\npc1[image]=x\n", "pc1", 0, "B")
+    with pytest.raises(MachineNotFoundError, match=r"^Device `ghost` not found\.$"):
+        lce.replace_device_options("pc1[image]=x\n", "ghost", MachineUpdate())
+    with pytest.raises(ApiError, match=r"^`LAB_BOGUS` is not a recognized lab\.conf metadata key\.$"):
+        lce.set_lab_metadata("", "LAB_BOGUS", "x")
+    with pytest.raises(ApiError, match=r"^`shared` is a reserved name, it can't be used for a device\.$"):
+        lce.add_device("pc1[image]=x\n", MachineCreate(name="shared"))
+
+
+def test_validate_lists_every_problem_in_the_resulting_text():
+    with pytest.raises(ApiError) as exc_info:
+        lce.validate("pc1[0]=A\npc1[2]=B\n!!bad\n")
+
+    assert exc_info.value.detail == (
+        'This edit would leave lab.conf unloadable: line 3: cannot parse "!!bad"; '
+        "pc1: non-sequential interface numbers (expected eth1, got eth2)"
+    )
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("pc1[image]=kathara/base\npc1[0]=A", 'pc1[image]=kathara/base\npc1[0]=A\n\npc2[image]="kathara/base"\n'),
+        ("pc1[image]=kathara/base\n\n", 'pc1[image]=kathara/base\n\npc2[image]="kathara/base"\n'),
+    ],
+    ids=["no final newline", "already ends in a blank line"],
+)
+def test_add_device_separates_the_new_block_with_exactly_one_blank_line(text, expected):
+    assert lce.add_device(text, MachineCreate(name="pc2")) == expected
+
+
+def test_a_group_at_the_top_of_the_file_is_replaced_in_place_keeping_its_indent():
+    text = '  pc1[env]="A=1"\n  pc1[image]="x"\n'
+
+    assert lce.replace_device_options(text, "pc1", MachineUpdate(image="x", envs={"B": "2", "C": "3"})) == (
+        '  pc1[env]="B=2"\n  pc1[env]="C=3"\n  pc1[image]="x"\n'
+    )
+
+
+def test_removing_the_block_after_a_leading_blank_line_does_not_double_it():
+    assert lce.remove_device("\na[image]=x\n\nb[image]=y\n", "a") == "\nb[image]=y\n"
+
+
+def test_untouched_option_metadata_and_unknown_lines_survive_an_edit_byte_for_byte():
+    text = (
+        '  LAB_DESCRIPTION="demo"   \n'
+        "FOO = 1  \n"
+        "pc1[image]=kathara/base   \n"
+        "pc1[mem]=64m\t\n"
+        "r1[image]=x\n"
+    )
+
+    assert lce.set_meta(text, "r1", "shell", "/bin/sh") == text + "r1[shell]=/bin/sh\n"
