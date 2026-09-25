@@ -1,7 +1,9 @@
-import { Bell } from "lucide-react";
-import { useRef, useState } from "react";
+import { Bell, Check, Copy } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useDismissOnOutside } from "../hooks/useDismissOnOutside";
 import { openLink, useNotifications } from "../context/ToastContext";
+import { copyText } from "../services/clipboard";
+import type { NotificationHistoryItem } from "../services/notificationHistory";
 import "./NotificationsPanel.css";
 
 // "just now" / "Xm ago" / "Xh ago" for the last 24h, else a locale date/time string.
@@ -20,7 +22,21 @@ export function NotificationsPanel() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
+  const [copiedId, setCopiedId] = useState<NotificationHistoryItem["id"] | null>(null);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   useDismissOnOutside(ref, open, () => setOpen(false));
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
+
+  const copy = (h: NotificationHistoryItem) => {
+    copyText(h.detail ? `${h.message}\n${h.detail}` : h.message)
+      .then(() => {
+        setCopiedId(h.id);
+        clearTimeout(copiedTimer.current);
+        copiedTimer.current = setTimeout(() => setCopiedId(null), 1500);
+      })
+      .catch(() => {});
+  };
 
   const toggle = () => {
     setOpen((current) => {
@@ -74,6 +90,15 @@ export function NotificationsPanel() {
                       </button>
                     )}
                   </div>
+                  <button
+                    type="button"
+                    className={`kt-notif-copy${copiedId === h.id ? " is-copied" : ""}`}
+                    aria-label="Copy notification"
+                    title={copiedId === h.id ? "Copied" : "Copy"}
+                    onClick={() => copy(h)}
+                  >
+                    {copiedId === h.id ? <Check size={13} /> : <Copy size={13} />}
+                  </button>
                 </li>
               ))}
             </ul>

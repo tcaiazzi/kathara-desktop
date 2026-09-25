@@ -142,3 +142,32 @@
 .kt-notif-action:hover {
   background: var(--kt-menu-hover-bg);
 }
+
+/* Hidden until the row is hovered or the button focused, so it doesn't clutter the list. */
+.kt-notif-copy {
+  flex: 0 0 22px;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--bs-secondary-color);
+  opacity: 0;
+}
+.kt-notif-item:hover .kt-notif-copy,
+.kt-notif-copy:focus-visible {
+  opacity: 1;
+}
+.kt-notif-copy:hover {
+  background: var(--kt-menu-hover-bg);
+  color: var(--bs-body-color);
+}
+.kt-notif-copy.is-copied {
+  opacity: 1;
+  color: var(--bs-success);
+}

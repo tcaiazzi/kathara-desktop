@@ -3,6 +3,7 @@ import { Button } from "react-bootstrap";
 import { RefreshCw } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { desktop, isDesktop } from "../desktop/bridge";
+import { copyText } from "../services/clipboard";
 
 interface FallbackProps {
   error: Error;
@@ -92,8 +93,7 @@ function CrashScreen({ error, heading, fullPage }: CrashScreenProps) {
             variant="outline-secondary"
             disabled={logText === null}
             onClick={() => {
-              desktop()
-                ?.copyToClipboard(logText ?? "")
+              copyText(logText ?? "")
                 .then(() => {
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2000);
