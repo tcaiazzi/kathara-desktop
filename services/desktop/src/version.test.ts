@@ -37,8 +37,9 @@ describe("atLeast310", () => {
     expect(atLeast310(version)).toBe(true);
   });
 
-  // 3.1 and 3.9 sort after 3.10 as strings: the comparison has to be numeric.
-  it.each(["3.9.18", "3.1.0", "2.7.18", "garbage", ""])("rejects Python %j", (version) => {
+  // 3.1 and 3.9 sort after 3.10 as strings: the comparison has to be numeric. 2.12 has a minor
+  // of 10 or more, but a 2.x major never qualifies.
+  it.each(["3.9.18", "3.1.0", "2.7.18", "2.12.0", "garbage", ""])("rejects Python %j", (version) => {
     expect(atLeast310(version)).toBe(false);
   });
 });

@@ -182,4 +182,14 @@ describe("isTrustedRendererUrl", () => {
     expect(isTrustedRendererUrl("file:///C:/Windows/System32/drivers/etc/hosts", winPages, "win32")).toBe(false);
     expect(isTrustedRendererUrl("file://evil.example/share/setup.html", winPages, "win32")).toBe(false);
   });
+
+  it.each([
+    ["a path with no drive letter", "file:///opt/kathara/build/setup.html"],
+    ["an encoded slash", "file:///C:/Program%20Files/Kathara%20Desktop%2Fsetup.html"],
+    ["an encoded backslash", "file:///C:/Program%20Files/Kathara%20Desktop%5Csetup.html"],
+  ])("does not trust, and does not throw on, a Windows file URL with %s", (_label, url) => {
+    const winPages = ["C:\\Program Files\\Kathara Desktop\\setup.html"];
+
+    expect(isTrustedRendererUrl(url, winPages, "win32")).toBe(false);
+  });
 });
