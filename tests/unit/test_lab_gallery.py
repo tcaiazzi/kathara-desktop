@@ -284,6 +284,63 @@ def test_exhausted_rate_limit_says_so(monkeypatch):
         lab_gallery.fetch_catalog()
 
 
+def _serve_tree_response(monkeypatch, response, settings=None):
+    """Answer the Trees API call with `response`, recording the headers it was sent."""
+    settings = settings or _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    sent = {}
+
+    def fake_get(url, params=None, headers=None, **kw):
+        sent.update(headers or {})
+        return response
+
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+    return sent
+
+
+def test_tree_request_carries_the_configured_token(monkeypatch):
+    settings = _FakeSettings()
+    settings.gallery_token = "  ghp_example  "
+    sent = _serve_tree_response(monkeypatch, _FakeResponse(200, json_data={"tree": _TREE}), settings)
+
+    lab_gallery.fetch_catalog()
+
+    assert sent["Authorization"] == "Bearer ghp_example"
+    assert sent["Accept"] == "application/vnd.github+json"
+
+
+def test_tree_request_without_a_token_sends_no_authorization(monkeypatch):
+    sent = _serve_tree_response(monkeypatch, _FakeResponse(200, json_data={"tree": _TREE}))
+
+    lab_gallery.fetch_catalog()
+
+    assert "Authorization" not in sent
+
+
+@pytest.mark.parametrize(
+    "response, message",
+    [
+        (_FakeResponse(404), "has no ref `main`"),
+        (_FakeResponse(403, headers={"x-ratelimit-remaining": "12"}), "returned HTTP 403"),
+        (_FakeResponse(200, text_data="<html>not json</html>"), "malformed response"),
+        (_FakeResponse(200, json_data={"sha": "abc"}), "no file tree"),
+        (_FakeResponse(200, json_data={"tree": {"not": "a list"}}), "no file tree"),
+    ],
+    ids=["missing ref", "403 with quota left", "not JSON", "no tree key", "tree not a list"],
+)
+def test_unusable_tree_response_is_unavailable_with_a_reason(monkeypatch, response, message):
+    _serve_tree_response(monkeypatch, response)
+
+    with pytest.raises(GalleryUnavailableError, match=message):
+        lab_gallery.fetch_catalog()
+
+
+def test_section_without_labs_is_an_empty_catalog(monkeypatch):
+    catalog = _catalog(monkeypatch, settings=_FakeSettings(section="no-such-section"))
+
+    assert catalog.entries == {}
+
+
 # ---------------------------------------------------------------------------
 # Cache
 # ---------------------------------------------------------------------------
@@ -390,6 +447,93 @@ def test_fetch_catalog_async_followers_never_touch_the_threadpool(monkeypatch):
     assert len(calls) == 1
     assert elapsed < block * 5  # would be ~50*block if a follower ever grabbed its own token
     assert all(r is results[0] for r in results)
+
+
+def test_fetch_catalog_async_refresh_bypasses_a_fresh_cache(monkeypatch):
+    settings = _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
+
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+
+    async def scenario():
+        first = await lab_gallery.fetch_catalog_async()
+        cached = await lab_gallery.fetch_catalog_async()
+        refreshed = await lab_gallery.fetch_catalog_async(refresh=True)
+        return first, cached, refreshed
+
+    first, cached, refreshed = asyncio.run(scenario())
+    assert cached is first
+    assert refreshed is not first
+    assert len(calls) == 2
+
+
+def test_fetch_catalog_async_reuses_a_catalog_published_while_it_waited(monkeypatch):
+    """A caller that found no cache but then waited on the coordination lock must pick up the
+    catalog another fetch published meanwhile, instead of starting a second upstream call."""
+    settings = _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    # A fresh lock: contending on one binds it to this test's event loop.
+    monkeypatch.setattr(lab_gallery, "_async_lock", asyncio.Lock())
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
+
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+
+    async def scenario():
+        await lab_gallery._async_lock.acquire()
+        waiter = asyncio.create_task(lab_gallery.fetch_catalog_async())
+        await asyncio.sleep(0.01)  # past the lock-free fast path, now waiting on the lock
+        published = lab_gallery.fetch_catalog()  # another fetch publishes a catalog
+        lab_gallery._async_lock.release()
+        return published, await asyncio.wait_for(waiter, timeout=5)
+
+    published, result = asyncio.run(scenario())
+    assert result is published
+    assert len(calls) == 1
+
+
+def test_a_cancelled_fetch_does_not_trap_later_callers(monkeypatch):
+    """Cancelling the in-flight fetch (as shutdown does) cancels its waiters and clears the
+    in-flight slot, so the next caller starts a fetch of its own rather than awaiting a dead one."""
+    settings = _FakeSettings()
+    monkeypatch.setattr(lab_gallery, "get_settings", lambda: settings)
+    entered = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def fake_get(url, **kw):
+        calls.append(url)
+        if len(calls) == 1:
+            entered.set()
+            release.wait(timeout=5)
+        return _FakeResponse(200, json_data={"tree": _TREE, "truncated": False})
+
+    monkeypatch.setattr(lab_gallery.httpx, "get", fake_get)
+
+    async def scenario():
+        waiter = asyncio.create_task(lab_gallery.fetch_catalog_async())
+        await asyncio.get_running_loop().run_in_executor(None, entered.wait, 5)
+        [fetch_task] = [t for t in asyncio.all_tasks() if t.get_coro().__name__ == "_run_fetch"]
+        fetch_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(waiter, timeout=5)
+        await asyncio.sleep(0)  # let _run_fetch's cleanup run
+        inflight_after_cancel = lab_gallery._inflight
+        release.set()  # unblock the abandoned worker thread
+        return inflight_after_cancel, await asyncio.wait_for(lab_gallery.fetch_catalog_async(), timeout=5)
+
+    inflight_after_cancel, catalog = asyncio.run(scenario())
+    assert inflight_after_cancel is None
+    assert catalog.entries
+    assert len(calls) == 2
 
 
 def test_gallery_route_deduplicates_concurrent_http_requests(client_and_service, monkeypatch):
@@ -532,6 +676,73 @@ def test_install_gallery_lab_enforces_the_per_file_size_cap(tmp_path, monkeypatc
         service.install_gallery_lab("main-labs/basic-topics/arp/kathara-lab_arp")
 
     assert not service.store.lab_dir("kathara-lab_arp").exists()
+
+
+def _client_answering(monkeypatch, get):
+    """Replace httpx.Client (the raw-file downloader) with one whose `get` is `get`."""
+
+    class _Client:
+        def __init__(self, *a, **kw):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, timeout=None, follow_redirects=None):
+            return get(url)
+
+    monkeypatch.setattr(lab_gallery.httpx, "Client", _Client)
+
+
+_ARP = "main-labs/basic-topics/arp/kathara-lab_arp"
+
+
+def test_download_refuses_a_lab_over_the_size_cap_before_fetching_anything(monkeypatch):
+    settings = _FakeSettings()
+    settings.max_bytes_per_lab = 10  # the arp lab's two files add up to more than this
+    _install_fake_repo(monkeypatch, _TREE, _FILES, settings=settings)
+    fetched = []
+    _client_answering(monkeypatch, lambda url: fetched.append(url))
+
+    with pytest.raises(GalleryUnavailableError, match="more than the"):
+        lab_gallery.download_lab_files(lab_gallery.get_entry(_ARP))
+    assert fetched == []
+
+
+def test_download_network_error_is_unavailable(monkeypatch):
+    _install_fake_repo(monkeypatch, _TREE, _FILES)
+
+    def boom(url):
+        raise httpx.ReadTimeout("timed out")
+
+    _client_answering(monkeypatch, boom)
+
+    with pytest.raises(GalleryUnavailableError, match="Could not download .*timed out"):
+        lab_gallery.download_lab_files(lab_gallery.get_entry(_ARP))
+
+
+def test_download_of_a_file_gone_upstream_is_unavailable(monkeypatch):
+    files = {k: v for k, v in _FILES.items() if not k.endswith("kathara-lab_arp/pc1.startup")}
+    _install_fake_repo(monkeypatch, _TREE, files)
+
+    with pytest.raises(GalleryUnavailableError, match="pc1.startup`: HTTP 404"):
+        lab_gallery.download_lab_files(lab_gallery.get_entry(_ARP))
+
+
+def test_download_larger_than_the_tree_declared_is_refused(monkeypatch):
+    """The size cap is checked again on what actually arrived: the tree's `size` fields are the
+    upstream's claim, and a lab that turns out bigger than it said must not get through."""
+    settings = _FakeSettings()
+    settings.max_bytes_per_lab = 50
+    lab_conf = "main-labs/big/lab/lab.conf"
+    tree = [{"path": lab_conf, "type": "blob", "size": 1}]
+    _install_fake_repo(monkeypatch, tree, {lab_conf: "x" * 100}, settings=settings)
+
+    with pytest.raises(GalleryUnavailableError, match="downloaded to"):
+        lab_gallery.download_lab_files(lab_gallery.get_entry("main-labs/big/lab"))
 
 
 @pytest.mark.parametrize("bad_id", ["../../etc", "does/not/exist"])
