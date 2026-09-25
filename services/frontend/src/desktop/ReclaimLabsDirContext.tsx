@@ -1,8 +1,9 @@
 // One small modal for one Linux-only action: `elevation:drop` (see ElevationContext.tsx's
 // neighboring concern, deploy authorization) found files an elevated session left root-owned in
-// the labs directory, and there is no native OS dialog that can collect a password on Linux the
-// way macOS/Windows's own admin prompt does — so this collects it in-app instead, feeding it
-// straight to `sudo -S` (backend.ts's reclaimLabsDirOwnershipWithPassword), never storing it.
+// the labs directory or in a lab folder opened from elsewhere, and there is no native OS dialog
+// that can collect a password on Linux the way macOS/Windows's own admin prompt does — so this
+// collects it in-app instead, feeding it straight to `sudo -S` (backend.ts's
+// reclaimOwnershipWithPassword), never storing it.
 //
 // Deliberately a separate provider from ElevationContext rather than a new mode grafted onto it:
 // this isn't gating a deploy, it's an optional cleanup the user can always decline, with its own
@@ -85,8 +86,8 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
           </Modal.Header>
           <Modal.Body>
             <p>
-              The privileged session that just ended left some files in your labs folder owned by
-              the administrator account. Enter your password to reclaim them for your own account,
+              The privileged session that just ended left some files in your labs folder, or in a
+              lab folder you opened, owned by the administrator account. Enter your password to reclaim them for your own account,
               or leave them as is and fix it yourself later — either way the app continues
               normally.
             </p>

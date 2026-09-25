@@ -42,6 +42,19 @@ export async function pickLabsDirectory(win: BrowserWindow | null): Promise<stri
 }
 
 /**
+ * Let the user pick a folder to open as a lab (File → Open Lab Folder…). Selection only: main.ts
+ * hands the pick to the backend, and that path — chosen here, in a native dialog the renderer
+ * cannot fake — is the only kind the backend's `POST /labs/open` is ever given.
+ */
+export async function pickLabFolder(win: BrowserWindow | null): Promise<string | null> {
+  const result = await withParent(dialog.showOpenDialog, win, {
+    title: "Open lab folder",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/**
  * Native picker for the host side of a device's `[volume]` bind mount (the Volumes rows in
  * MachineOptionsFields.tsx).
  *

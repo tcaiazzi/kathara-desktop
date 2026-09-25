@@ -113,7 +113,8 @@ export function TitleBar() {
       title: "File",
       items: [
         { label: "New Lab…", accel: `${mod}+N`, run: command("lab:new") },
-        { label: "Import Lab…", accel: `${mod}+O`, run: command("lab:import") },
+        { label: "Open Lab Folder…", accel: `${mod}+O`, run: () => void shell?.openLabFolder().catch(() => {}) },
+        { label: "Import Lab…", accel: `${mod}+Shift+O`, run: command("lab:import") },
         { label: "Browse Kathara Labs…", run: command("lab:browse") },
         "separator",
         { label: "Save", accel: `${mod}+S`, run: command("lab:save") },

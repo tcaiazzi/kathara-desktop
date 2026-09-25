@@ -5,11 +5,12 @@ describe("toElevateOutcome", () => {
   it("reports a success without the new backend's address or token", () => {
     const outcome = toElevateOutcome({
       ok: true,
-      handle: { port: 41234, baseUrl: "http://127.0.0.1:41234", token: "s3cr3t-t0ken" },
+      handle: { port: 41234, baseUrl: "http://127.0.0.1:41234", token: "s3cr3t-t0ken", shellToken: "sh3ll-t0ken" },
     });
 
     expect(outcome).toEqual({ ok: true });
     expect(JSON.stringify(outcome)).not.toContain("s3cr3t");
+    expect(JSON.stringify(outcome)).not.toContain("sh3ll");
   });
 
   it("passes a failure through with its reason, message and restart flag", () => {

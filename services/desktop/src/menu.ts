@@ -4,7 +4,9 @@
  * Items that act on the UI don't reimplement anything: they send a "menu:action" to the
  * renderer, where DesktopCommandsProvider (frontend src/desktop/DesktopCommands.tsx) fans it out
  * to whichever components registered that action through `useDesktopCommand`.
- * Items that act on the shell itself (logs, labs folder, DevTools) are handled here.
+ * Items that act on the shell itself (logs, labs folder, DevTools) are handled here, and so is
+ * Open Lab Folder…, through the callback main.ts passes in: the folder is picked and opened on
+ * this side, never by the renderer (see main.ts's openFolderAsLab).
  */
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron";
 import { backendLogPath } from "./backend";
@@ -38,7 +40,12 @@ function item(label: string, action: MenuAction, accelerator?: string): MenuItem
   return { label, accelerator, click: () => send(action) };
 }
 
-export function buildMenu(): void {
+export interface MenuHandlers {
+  /** File → Open Lab Folder…: main.ts's native dialog and open flow. */
+  openLabFolder: () => void;
+}
+
+export function buildMenu(handlers: MenuHandlers): void {
   const isMac = process.platform === "darwin";
 
   const template: MenuItemConstructorOptions[] = [
@@ -72,7 +79,8 @@ export function buildMenu(): void {
       label: "File",
       submenu: [
         item("New Lab…", "lab:new", "CmdOrCtrl+N"),
-        item("Import Lab…", "lab:import", "CmdOrCtrl+O"),
+        { label: "Open Lab Folder…", accelerator: "CmdOrCtrl+O", click: () => handlers.openLabFolder() },
+        item("Import Lab…", "lab:import", "CmdOrCtrl+Shift+O"),
         item("Browse Kathara Labs…", "lab:browse"),
         { type: "separator" },
         // registerAccelerator: false — the renderer owns Ctrl/Cmd+S (useSaveShortcut saves

@@ -32,6 +32,12 @@ export function handleDeepLink(win: BrowserWindow | null, raw: string): void {
   const route = parseDeepLink(raw);
   if (!route || !win) return;
   log(`deep link -> ${route}`);
+  navigateRenderer(win, route);
+}
+
+/** Bring the window forward and move the renderer to `route` — also how main.ts lands on a lab
+ * folder it just opened. */
+export function navigateRenderer(win: BrowserWindow, route: string): void {
   if (win.isMinimized()) win.restore();
   win.focus();
   // Sent to the renderer so react-router navigates in place; reloading the URL would throw

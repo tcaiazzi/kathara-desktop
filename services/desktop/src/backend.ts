@@ -14,10 +14,11 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import sudoPrompt from "@vscode/sudo-prompt";
-import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir } from "./paths";
+import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir, stateDir } from "./paths";
 import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
 import type { ElevateFailureReason, ElevateResult } from "./elevateOutcome";
+import { reclaimScript, type ReclaimTargets } from "./labFolders";
 import { redactEnvArgsForLog } from "./logRedaction";
 import { isPlainAbsolutePath, isUsablePort, quoteForShellString } from "./safety";
 
@@ -29,6 +30,11 @@ export interface BackendHandle {
    * (waitForHealth, shutdownAt, the /api/system admin check), and handed to the renderer over
    * IPC (main.ts's "auth:get-token") so it can do the same. */
   token: string;
+  /** The second per-launch secret, KATHARA_API_SHELL_TOKEN: the only thing `POST /labs/open`
+   * accepts (src/kathara_api/dependencies.py's require_shell_token). Unlike `token`, it never
+   * leaves this module — not to main.ts, not over IPC — so nothing the renderer runs can open an
+   * arbitrary host folder as a lab; `openLabFolder` below is its one use. */
+  shellToken: string;
 }
 
 function authHeaders(token: string): HeadersInit {
@@ -143,15 +149,33 @@ export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string
  * elevated process runs as the same account, just with a different token.
  */
 export async function hasForeignOwnedFiles(dirPath: string): Promise<boolean> {
-  if (process.platform === "win32") return false;
   const uid = process.getuid?.();
-  if (uid === undefined) return false;
+  if (process.platform === "win32" || uid === undefined) return false;
+  return hasFilesOwnedBy(dirPath, (owner) => owner !== uid, true);
+}
 
+/**
+ * Whether anything under `dirPath` is owned by root — the narrower question asked of a lab folder
+ * the user opened from elsewhere, which may legitimately hold other accounts' files (see
+ * labFolders.ts's reclaimScript, which only ever touches root's). A subtree that can't be listed
+ * is not counted: its own owner was already checked on the way in, and a folder the elevated
+ * backend created would be root's and so found there.
+ */
+export async function hasRootOwnedFiles(dirPath: string): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  return hasFilesOwnedBy(dirPath, (owner) => owner === 0, false);
+}
+
+async function hasFilesOwnedBy(
+  dirPath: string,
+  matches: (owner: number) => boolean,
+  unreadableMatches: boolean,
+): Promise<boolean> {
   let entries: fs.Dirent[];
   try {
     entries = await fsp.readdir(dirPath, { withFileTypes: true });
   } catch {
-    return true;
+    return unreadableMatches;
   }
   for (const entry of entries) {
     const full = path.join(dirPath, entry.name);
@@ -159,28 +183,36 @@ export async function hasForeignOwnedFiles(dirPath: string): Promise<boolean> {
     try {
       stat = await fsp.lstat(full);
     } catch {
-      return true;
+      if (unreadableMatches) return true;
+      continue;
     }
-    if (stat.uid !== uid) return true;
-    if (entry.isDirectory() && (await hasForeignOwnedFiles(full))) return true;
+    if (matches(stat.uid)) return true;
+    if (entry.isDirectory() && (await hasFilesOwnedBy(full, matches, unreadableMatches))) return true;
   }
   return false;
 }
 
-/** Resolves and validates what every reclaim attempt below needs, so neither has to repeat it. */
-function resolveReclaimTarget(labsPath: string): { ok: true; uid: number; gid: number } | { ok: false; message: string } {
+/** The current user's uid:gid, or why they couldn't be determined. */
+function currentOwner(): { ok: true; uid: number; gid: number } | { ok: false; message: string } {
   const uid = process.getuid?.();
   const gid = process.getgid?.();
   if (uid === undefined || gid === undefined) {
     return { ok: false, message: "could not determine the current user's id" };
   }
-  // Belt-and-braces like the interpreter path check in runElevatedNative below: labsDir() is
-  // already validated on the way in (see paths.ts/setLabsDir), but this is the last point before
-  // a string reaches a privileged command, so it's checked again here regardless of the caller.
-  if (!isPlainAbsolutePath(labsPath)) {
-    return { ok: false, message: `refusing to reclaim ownership of a suspicious path: ${JSON.stringify(labsPath)}` };
-  }
   return { ok: true, uid, gid };
+}
+
+/** The reclaim command for `targets`, or why there isn't one — see labFolders.ts's reclaimScript,
+ * which also refuses any path that isn't plain, since this is the last point before a string
+ * reaches a privileged command. `null` script means there is nothing to reclaim. */
+function reclaimCommand(targets: ReclaimTargets): { ok: true; script: string | null } | { ok: false; message: string } {
+  const owner = currentOwner();
+  if (!owner.ok) return owner;
+  try {
+    return { ok: true, script: reclaimScript(targets, owner.uid, owner.gid) };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -189,22 +221,22 @@ function resolveReclaimTarget(labsPath: string): { ok: true; uid: number; gid: n
  * OS-level dialog, not dependent on anything like Linux's polkit agent), so it's the only
  * mechanism this platform needs — see main.ts's `elevation:drop`, which asks the user first via a
  * plain confirm dialog, then calls this. A no-op on Windows: see `hasForeignOwnedFiles` on why
- * nothing there needs it. Linux uses `reclaimLabsDirOwnershipWithPassword` below instead — tried
- * and found unreliable here: `sudo-prompt` shells out to `pkexec`, which needs a running polkit
+ * nothing there needs it. Linux uses `reclaimOwnershipWithPassword` below instead — tried and
+ * found unreliable here: `sudo-prompt` shells out to `pkexec`, which needs a running polkit
  * authentication agent that plenty of real setups (headless, minimal window managers, WSL) don't
  * have, where it fails outright instead of prompting.
  */
-export async function reclaimLabsDirOwnershipWithPrompt(labsPath: string): Promise<{ ok: boolean; message?: string }> {
+export async function reclaimOwnershipWithPrompt(targets: ReclaimTargets): Promise<{ ok: boolean; message?: string }> {
   if (process.platform === "win32") return { ok: true };
-  const target = resolveReclaimTarget(labsPath);
-  if (!target.ok) return target;
-  const { uid, gid } = target;
+  const command = reclaimCommand(targets);
+  if (!command.ok) return command;
+  const { script } = command;
+  if (script === null) return { ok: true };
 
-  const cmd = `chown -R ${uid}:${gid} ${quoteForShellString(labsPath)}`;
   return new Promise((resolve) => {
-    sudoPrompt.exec(cmd, { name: "Kathara Desktop" }, (error) => {
+    sudoPrompt.exec(script, { name: "Kathara Desktop" }, (error) => {
       if (error) {
-        log(`failed to reclaim ownership of ${labsPath}: ${error.message}`);
+        log(`failed to reclaim ownership of lab files: ${error.message}`);
         resolve({ ok: false, message: error.message });
         return;
       }
@@ -214,26 +246,65 @@ export async function reclaimLabsDirOwnershipWithPrompt(labsPath: string): Promi
 }
 
 /**
- * Linux: the only mechanism this platform needs (see `reclaimLabsDirOwnershipWithPrompt`'s doc
- * comment on why `sudo-prompt` isn't it here). Runs `sudo -S -k chown -R uid:gid labsPath`
- * directly, feeding `password` on stdin — authenticating and running the command in the exact
- * same invocation, so unlike a `sudo -n`/cached-ticket approach it doesn't depend on this headless
+ * Linux: the only mechanism this platform needs (see `reclaimOwnershipWithPrompt`'s doc comment on
+ * why `sudo-prompt` isn't it here). Runs the reclaim script under `sudo -S -k sh -c` directly,
+ * feeding `password` on stdin — authenticating and running the command in the exact same
+ * invocation, so unlike a `sudo -n`/cached-ticket approach it doesn't depend on this headless
  * spawn sharing any session/tty state with a previous one. Shares `runSudoWithPassword` and the
  * rate limiter with `verifySudoPassword`, so this doesn't open a second password oracle alongside
  * the one Step 1 (SUDO_RATE_LIMIT_FREE_ATTEMPTS) already closed.
  */
-export async function reclaimLabsDirOwnershipWithPassword(
+export async function reclaimOwnershipWithPassword(
   password: string,
-  labsPath: string,
+  targets: ReclaimTargets,
 ): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
   if (process.platform !== "linux") return { ok: false, reason: "error", message: "not applicable on this platform" };
-  const target = resolveReclaimTarget(labsPath);
-  if (!target.ok) return { ok: false, reason: "error", message: target.message };
-  const { uid, gid } = target;
+  const command = reclaimCommand(targets);
+  if (!command.ok) return { ok: false, reason: "error", message: command.message };
+  const { script } = command;
+  if (script === null) return { ok: true };
 
-  return withSudoRateLimit(() =>
-    runSudoWithPassword(["chown", "-R", `${uid}:${gid}`, labsPath], password, "reclaim labs dir ownership"),
-  );
+  return withSudoRateLimit(() => runSudoWithPassword(["sh", "-c", script], password, "reclaim lab file ownership"));
+}
+
+/** What `openLabFolder` got back: the lab's id, or why the folder didn't open. `notALab` is the
+ * backend's NotALabError — a folder with no lab.conf and no device folders, which the caller may
+ * offer to initialize. */
+export type OpenLabFolderResult = { ok: true; labId: string } | { ok: false; notALab: boolean; message: string };
+
+/** Opening reads the whole folder (bounded by the import caps), so allow for a slow disk. */
+const OPEN_LAB_TIMEOUT_MS = 30_000;
+
+/**
+ * Open `folder` as a lab on the running backend (`POST /api/labs/open`) — the one request that
+ * carries the shell token, see BackendHandle.shellToken. `folder` must come from the shell's own
+ * side (a native dialog, the launch argv), never from the renderer.
+ */
+export async function openLabFolder(folder: string, init: boolean): Promise<OpenLabFolderResult> {
+  const current = handle;
+  if (!current) return { ok: false, notALab: false, message: "the backend is not running" };
+  let res: Response;
+  try {
+    res = await fetch(`${current.baseUrl}/api/labs/open`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(current.token),
+        "Content-Type": "application/json",
+        "X-Kathara-Shell-Token": current.shellToken,
+      },
+      body: JSON.stringify({ path: folder, init }),
+      signal: AbortSignal.timeout(OPEN_LAB_TIMEOUT_MS),
+    });
+  } catch (err) {
+    return { ok: false, notALab: false, message: err instanceof Error ? err.message : String(err) };
+  }
+  const body = (await res.json().catch(() => null)) as { id?: unknown; detail?: unknown; error_type?: unknown } | null;
+  if (res.ok && typeof body?.id === "string") return { ok: true, labId: body.id };
+  return {
+    ok: false,
+    notALab: body?.error_type === "NotALabError",
+    message: typeof body?.detail === "string" ? body.detail : `HTTP ${res.status}`,
+  };
 }
 
 /** Records a backend `stopBackend()` couldn't stop, if there's a URL to retry shutting it down
@@ -425,6 +496,8 @@ interface BackendCommand {
    * KATHARA_API_AUTH_TOKEN (see src/kathara_api/dependencies.py's require_auth_token). Every
    * later call this module makes to this exact backend instance must carry it. */
   token: string;
+  /** See BackendHandle.shellToken. */
+  shellToken: string;
   labs: string;
   /** Full environment (inherited `process.env` plus `appEnv`) — what a plain, non-elevated
    * `spawn()` gets via its own `options.env`, which Node passes straight to the child. */
@@ -498,6 +571,7 @@ async function buildBackendCommand(
   // the port still can't call it without also having read this token from the renderer's own
   // context-isolated preload bridge (see main.ts's "auth:get-token", preload.ts's getAuthToken).
   const token = crypto.randomBytes(32).toString("hex");
+  const shellToken = crypto.randomBytes(32).toString("hex");
   const labs = labsDir();
   fs.mkdirSync(labs, { recursive: true });
 
@@ -510,6 +584,8 @@ async function buildBackendCommand(
     KATHARA_API_STATIC_DIR: staticDir,
     KATHARA_API_LABS_DIR: labs,
     KATHARA_API_AUTH_TOKEN: token,
+    KATHARA_API_SHELL_TOKEN: shellToken,
+    KATHARA_API_STATE_DIR: stateDir(),
     PYTHONUNBUFFERED: "1",
     ...pythonEnv(pythonOverrides),
   };
@@ -537,7 +613,7 @@ async function buildBackendCommand(
     "--no-access-log",
   ];
 
-  return { port, baseUrl, token, labs, env, appEnv, args };
+  return { port, baseUrl, token, shellToken, labs, env, appEnv, args };
 }
 
 /** Wires the same stdout/stderr logging and exit bookkeeping onto any freshly spawned backend
@@ -596,7 +672,7 @@ export async function startBackend(python: string, staticDir: string): Promise<B
 }
 
 async function spawnBackend(python: string, staticDir: string, port: number): Promise<BackendHandle> {
-  const { baseUrl, token, labs, env, args } = await buildBackendCommand(staticDir, port);
+  const { baseUrl, token, shellToken, labs, env, args } = await buildBackendCommand(staticDir, port);
   log(`starting backend: ${python} ${args.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
@@ -611,7 +687,7 @@ async function spawnBackend(python: string, staticDir: string, port: number): Pr
   }
 
   log(`backend healthy at ${baseUrl}`);
-  handle = { port, baseUrl, token };
+  handle = { port, baseUrl, token, shellToken };
   // Only after a real health check, so a port that never actually worked is never remembered.
   rememberPort(port);
   return handle;
@@ -850,7 +926,7 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
 
   await stopBackend();
 
-  const { port, baseUrl, token, labs, env, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
+  const { port, baseUrl, token, shellToken, labs, env, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
     sitePackages: rootReadable?.sitePackages,
     pycache: elevatedPycacheDir(),
   });
@@ -884,7 +960,7 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
     }
 
     log(`elevated backend healthy at ${baseUrl}`);
-    handle = { port, baseUrl, token };
+    handle = { port, baseUrl, token, shellToken };
     return { ok: true, handle };
   } catch (err) {
     await stopBackend();
@@ -959,7 +1035,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   // No appImagePythonCache() here: an AppImage is a Linux packaging format, so on macOS and
   // Windows the shipped paths are already readable by root. The bytecode cache still needs
   // separating, for the same reason as on Linux.
-  const { port, baseUrl, token, labs, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
+  const { port, baseUrl, token, shellToken, labs, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
     pycache: elevatedPycacheDir(),
   });
   log(`starting elevated backend (native prompt): ${python} ${args.join(" ")}`);
@@ -1005,7 +1081,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     await stopBackend();
     stopping = false;
     started = true;
-    handle = { port, baseUrl, token };
+    handle = { port, baseUrl, token, shellToken };
     return { ok: true, handle };
   } catch (err) {
     // Both read *before* the cleanup below: shutting the candidate down makes its own exec

@@ -127,6 +127,17 @@ export function labsDir(): string {
   return defaultLabsDir();
 }
 
+/**
+ * Where the backend keeps state belonging to no single lab (KATHARA_API_STATE_DIR) — today the
+ * list of lab folders opened from outside the labs directory (labFolders.ts's
+ * KNOWN_LABS_FILENAME). The per-user app data directory, next to preferences.json, rather than
+ * the labs directory: that list names *which* folders the app may read and write, so it must not
+ * live inside one of them.
+ */
+export function stateDir(): string {
+  return app.getPath("userData");
+}
+
 export function logFile(): string {
   return path.join(app.getPath("logs"), "backend.log");
 }

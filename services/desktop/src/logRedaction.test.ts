@@ -23,6 +23,10 @@ describe("redactEnvArgsForLog", () => {
     ]);
   });
 
+  it("hides the shell token too", () => {
+    expect(redactEnvArgsForLog(["KATHARA_API_SHELL_TOKEN=sh3ll", "A=1"])).toEqual(["KATHARA_API_SHELL_TOKEN=***", "A=1"]);
+  });
+
   it("never lets the secret through, wherever it sits", () => {
     const logged = redactEnvArgsForLog(["A=1", "KATHARA_API_AUTH_TOKEN=s3cr3t", "B=2"]).join(" ");
     expect(logged).not.toContain("s3cr3t");

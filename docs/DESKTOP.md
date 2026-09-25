@@ -21,8 +21,14 @@ the backend start. `startBackend` then:
   to pair this one backend process with this one Electron instance, so another local
   process/tab that finds the port still can't call it without also reading the token from the
   renderer's own context-isolated preload bridge.
-- Sets `KATHARA_API_STATIC_DIR` to the built frontend and `KATHARA_API_LABS_DIR` to the
-  per-user lab directory.
+- Generates a second per-launch secret, `KATHARA_API_SHELL_TOKEN`, which — unlike the pairing
+  token — never leaves `backend.ts`: not to `main.ts`, not over IPC. It is what `POST /labs/open`
+  requires (see BACKEND.md's "Labs outside the labs root"), and `backend.ts`'s `openLabFolder`
+  is its only use, so only the main process can turn a host path into a lab the API reads and
+  writes.
+- Sets `KATHARA_API_STATIC_DIR` to the built frontend, `KATHARA_API_LABS_DIR` to the per-user lab
+  directory and `KATHARA_API_STATE_DIR` to the app's user-data directory, where the backend keeps
+  its list of lab folders opened from elsewhere (`known_labs.json`).
 
 Which interpreter runs it is decided by `prereqs.ts`'s `pythonCandidates()`, and a packaged app
 has exactly one: the interpreter **bundled inside it** (`paths.ts`'s `bundledPythonPath()` →
@@ -202,6 +208,17 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   `preferences.json`. That override honours a `{cmd}` placeholder that nothing currently fills:
   `spawnTerminal` takes an optional command, and the only entry point — *Open Terminal Here* —
   opens a plain shell. The placeholder is what an "attach to this device" entry point would use.
+- **File → Open Lab Folder…** (Ctrl/Cmd+O; *Import Lab…* is Ctrl/Cmd+Shift+O) opens any folder
+  as a lab, where it is. The folder is picked in the main process's native dialog and handed to
+  the backend from there (`main.ts`'s `openFolderAsLab`); the renderer only asks for the dialog
+  (`labs:open-folder`, no arguments). A folder that is not a lab yet is offered to be made one
+  (an empty `lab.conf`). **`kathara-desktop <folder>`** does the same from a terminal, in the
+  running instance if there is one (`labFolders.ts`'s `folderFromArgv`, relative paths resolved
+  against the calling shell's directory).
+- After an elevated session, files it left root-owned are reclaimed from the labs directory
+  (`chown -R`) **and** from every opened lab folder — there only root's own files
+  (`find -uid 0 -exec chown -h`), since a folder the user opened may legitimately hold other
+  accounts' files (`labFolders.ts`'s `reclaimScript`).
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one. The link
   carries a name, the route an id (see `docs/BACKEND.md`), so it lands on `/workspace?lab=<name>`
   and the Workspace resolves the name against the lab list.

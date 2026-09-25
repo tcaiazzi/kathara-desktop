@@ -27,10 +27,12 @@ import {
   backendUrl,
   forceKillOrphan,
   hasForeignOwnedFiles,
+  hasRootOwnedFiles,
   onBackendExit,
   onOrphanedBackend,
-  reclaimLabsDirOwnershipWithPassword,
-  reclaimLabsDirOwnershipWithPrompt,
+  openLabFolder,
+  reclaimOwnershipWithPassword,
+  reclaimOwnershipWithPrompt,
   startBackend,
   startBackendElevatedLinux,
   startBackendElevatedNative,
@@ -38,20 +40,22 @@ import {
   verifyCanElevate,
 } from "./backend";
 import { deepLinkFromArgv } from "./deepLinkRoute";
-import { handleDeepLink, registerProtocol } from "./deeplink";
+import { handleDeepLink, navigateRenderer, registerProtocol } from "./deeplink";
 import { toElevateOutcome, type ElevateOutcome } from "./elevateOutcome";
 import { ensurePathEnv } from "./env";
 import {
   openLabsDir,
   openTerminalHere,
   pickHostDirectory,
+  pickLabFolder,
   pickLabsDirectory,
   revealPath,
 } from "./integrations";
 import { handleIpc } from "./ipc";
+import { folderFromArgv, KNOWN_LABS_FILENAME, knownLabDirs, type ReclaimTargets } from "./labFolders";
 import { log, tailLog } from "./logger";
 import { buildMenu } from "./menu";
-import { crashDumpsDir, defaultLabsDir, labsDir, resolveStaticDir } from "./paths";
+import { crashDumpsDir, defaultLabsDir, labsDir, resolveStaticDir, stateDir } from "./paths";
 import { isBoundedString, isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
 import {
@@ -155,6 +159,8 @@ let win: BrowserWindow | null = null;
 let status: Status = { state: "starting", phase: "environment", message: "Starting…", startedAt: Date.now(), checks: [], firstRun: isFirstRun() };
 /** A deep link that arrived before the UI was ready, replayed once it is. */
 let pendingDeepLink: string | null = null;
+/** Same for a folder a launch asked to open (`kathara-desktop <folder>`) — see openFolderAsLab. */
+let pendingLabFolder: string | null = null;
 /** The most recent preflight result, so the elevation paths know which interpreter to re-launch
  * with and which advisories to carry into "ready" after a restart. */
 let lastPreflight: Preflight | null = null;
@@ -416,6 +422,11 @@ async function runStartup(resumePath?: string): Promise<void> {
       handleDeepLink(win, pendingDeepLink);
       pendingDeepLink = null;
     }
+    if (pendingLabFolder) {
+      const folder = pendingLabFolder;
+      pendingLabFolder = null;
+      void openFolderAsLab(folder);
+    }
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     log(`startup failed: ${error}`);
@@ -602,8 +613,8 @@ function registerIpc(): void {
         // reload below there is no page left to show one on. `skipReclaimCheck` is set on the
         // second call the renderer makes once it has already resolved this one way or another (see
         // bridge.ts's dropElevation and ReclaimLabsDirContext.tsx).
-        const labsPath = labsDir();
-        if (!skipReclaimCheck && (await hasForeignOwnedFiles(labsPath))) {
+        const targets = skipReclaimCheck ? null : await reclaimTargets();
+        if (targets && (targets.labsDir !== null || targets.openedDirs.length > 0)) {
           if (process.platform === "linux") {
             // No native dialog can collect a password on Linux (see
             // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
@@ -623,17 +634,18 @@ function registerIpc(): void {
             cancelId: 1,
             message: "Some lab files are still owned by the administrator account",
             detail:
-              "The privileged session that just ended left some files in your labs folder owned " +
-              "by the administrator account. Reclaiming them needs one more authorization prompt " +
+              "The privileged session that just ended left some files in your labs folder, or in a " +
+              "lab folder you opened, owned by the administrator account. Reclaiming them needs " +
+              "one more authorization prompt " +
               "— the app never stores your password, so being asked again here is expected, not a " +
               "bug. If you leave them as is, further edits to the affected lab (or undeploying it) " +
               "may fail until this is fixed, which you can also do yourself later.",
           });
           if (response === 0) {
-            const reclaimed = await reclaimLabsDirOwnershipWithPrompt(labsPath);
-            if (!reclaimed.ok) log(`could not reclaim ownership of the labs directory: ${reclaimed.message}`);
+            const reclaimed = await reclaimOwnershipWithPrompt(targets);
+            if (!reclaimed.ok) log(`could not reclaim ownership of lab files: ${reclaimed.message}`);
           } else {
-            log("user chose to leave root-owned files in the labs directory as is");
+            log("user chose to leave root-owned lab files as is");
           }
         }
 
@@ -652,15 +664,16 @@ function registerIpc(): void {
 
   // Linux-only companion to elevation:drop above: collects the password its own in-app modal
   // asks for when a quiet/native reclaim isn't available, and runs the actual chown with it. Not
-  // gated on is_admin/hasForeignOwnedFiles again — elevation:drop already established both right
-  // before returning needsReclaimPassword, and by the time the renderer calls this the backend
-  // hasn't been touched since, so nothing here has changed.
+  // gated on is_admin again — elevation:drop already established that right before returning
+  // needsReclaimPassword, and by the time the renderer calls this the backend hasn't been
+  // touched since. The targets are worked out again rather than carried over from that call:
+  // they are only ever derived here, in the main process, never taken from the renderer.
   handleIpc(
     "elevation:reclaim-labs-dir",
-    (_e, passwordArg: unknown): ReturnType<typeof reclaimLabsDirOwnershipWithPassword> =>
-      reclaimLabsDirOwnershipWithPassword(
+    async (_e, passwordArg: unknown): ReturnType<typeof reclaimOwnershipWithPassword> =>
+      reclaimOwnershipWithPassword(
         requireString(passwordArg, "elevation password", MAX_PASSWORD_LENGTH),
-        labsDir(),
+        await reclaimTargets(),
       ),
   );
 
@@ -763,6 +776,11 @@ function registerIpc(): void {
     pickHostDirectory(win, isPlainAbsolutePath(current) ? current : undefined),
   );
   handleIpc("fs:open-labs-folder", () => openLabsDir());
+
+  // File → Open Lab Folder… (the renderer's own title-bar menu; the native one calls
+  // pickAndOpenLabFolder directly). Takes no argument on purpose: the folder is always chosen in
+  // the main process's own dialog, never named by the renderer — see openFolderAsLab.
+  handleIpc("labs:open-folder", () => pickAndOpenLabFolder());
 
   // `labDirectory` asks the backend to resolve the id rather than building a path here, so the
   // id itself is judged there; this only establishes that what arrived is a string at all.
@@ -868,6 +886,88 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
   await stopBackend();
   await startup();
   return true;
+}
+
+function showMessage(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
+}
+
+/**
+ * Open `folder` as a lab and land the window on it — the one path every way of opening a folder
+ * shares (the native menu, the renderer's title-bar menu, `kathara-desktop <folder>`).
+ *
+ * `folder` must have been chosen on this side: the backend opens whatever path this passes, and
+ * the lab filesystem API can then read and write all of it (see backend.ts's openLabFolder). A
+ * folder that is not a lab yet is offered to be made one — the only case the backend refuses that
+ * the user can resolve on the spot; anything else is reported as it is.
+ */
+async function openFolderAsLab(folder: string): Promise<void> {
+  log(`opening lab folder ${folder}`);
+  let result = await openLabFolder(folder, false);
+  if (!result.ok && result.notALab) {
+    const { response } = await showMessage({
+      type: "question",
+      buttons: ["Make it a lab", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      message: `“${path.basename(folder)}” is not a lab yet`,
+      detail:
+        "It has no lab.conf and no device folders. Kathara Desktop can add an empty lab.conf to it, " +
+        "so you can start adding devices.",
+    });
+    if (response !== 0) return;
+    result = await openLabFolder(folder, true);
+  }
+  if (!result.ok) {
+    log(`could not open lab folder ${folder}: ${result.message}`);
+    await showMessage({ type: "error", message: "Could not open the lab folder", detail: result.message });
+    return;
+  }
+  if (win) navigateRenderer(win, `/workspace/${encodeURIComponent(result.labId)}`);
+}
+
+/** File → Open Lab Folder…: the native dialog, then openFolderAsLab. */
+async function pickAndOpenLabFolder(): Promise<void> {
+  const folder = await pickLabFolder(win);
+  if (folder) await openFolderAsLab(folder);
+}
+
+/** The folder a launch's `argv` asks to open, or null — see labFolders.ts's folderFromArgv. An
+ * unpackaged run (`electron .`) has the app path as a second leading argument. */
+function labFolderFromArgv(argv: string[], cwd: string): string | null {
+  return folderFromArgv(argv, cwd, process.defaultApp ? 2 : 1, (candidate) => {
+    try {
+      return fs.statSync(candidate).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * What an elevated session may have left root-owned: the labs directory, checked for anything
+ * not the user's (hasForeignOwnedFiles), and each lab folder opened from elsewhere, checked only
+ * for root's own files (hasRootOwnedFiles) — it is the user's folder and may hold other accounts'
+ * files legitimately. Derived here from the backend's own list of opened folders, read off disk,
+ * since this runs while the backend is being replaced.
+ */
+async function reclaimTargets(): Promise<ReclaimTargets> {
+  const labs = labsDir();
+  let opened: string[] = [];
+  try {
+    opened = knownLabDirs(fs.readFileSync(path.join(stateDir(), KNOWN_LABS_FILENAME), "utf8"));
+  } catch {
+    // No opened folders yet — the file only exists once one has been opened.
+  }
+  const openedDirs: string[] = [];
+  for (const dir of opened) {
+    if (!isPlainAbsolutePath(dir)) {
+      log(`not checking ${JSON.stringify(dir)} for root-owned files: not a path a reclaim can take`);
+      continue;
+    }
+    if (fs.existsSync(dir) && (await hasRootOwnedFiles(dir))) openedDirs.push(dir);
+  }
+  return { labsDir: (await hasForeignOwnedFiles(labs)) ? labs : null, openedDirs };
 }
 
 /**
@@ -981,14 +1081,20 @@ if (!app.requestSingleInstanceLock()) {
   log("another instance already holds the single-instance lock; exiting");
   app.quit();
 } else {
-  app.on("second-instance", (_event, argv) => {
+  app.on("second-instance", (_event, argv, workingDirectory) => {
     const url = deepLinkFromArgv(argv);
+    // Resolved against the second launch's own directory: `kathara-desktop .` means the folder
+    // that shell was in, not wherever the running instance happens to be.
+    const folder = url ? null : labFolderFromArgv(argv, workingDirectory);
     if (url) {
       // Same buffering as open-url below: if the app isn't ready yet (e.g. still on the setup
       // page during a cold start), handleDeepLink's `send` to a listener that doesn't exist yet
       // would otherwise be lost silently, with no error and no retry.
       if (status.state === "ready") handleDeepLink(win, url);
       else pendingDeepLink = url;
+    } else if (folder) {
+      if (status.state === "ready") void openFolderAsLab(folder);
+      else pendingLabFolder = folder;
     } else {
       win?.focus();
     }
@@ -1020,7 +1126,7 @@ if (!app.requestSingleInstanceLock()) {
     installNavigationPolicy(backendUrl);
     installEditContextMenu();
     // Binds the keyboard accelerators the window is about to use.
-    buildMenu();
+    buildMenu({ openLabFolder: () => void pickAndOpenLabFolder() });
 
     win = createMainWindow();
     attachWindowLifecycle(win);
@@ -1086,6 +1192,7 @@ if (!app.requestSingleInstanceLock()) {
     registerProtocol();
 
     pendingDeepLink ??= deepLinkFromArgv(process.argv);
+    pendingLabFolder ??= labFolderFromArgv(process.argv, process.cwd());
     await startup();
   });
 

@@ -721,6 +721,16 @@ export function WorkspacePage() {
       if (first) setSelectedId(`dev:${first.name}`);
     });
   }, [registerTourSelectFirstDevice]);
+  // The shell can land the window on a lab this page has never listed — a folder it just opened
+  // (File → Open Lab Folder…, `kathara-desktop <folder>`) — so a route naming an id the list
+  // doesn't have refreshes the list, once per id, for the rail to show it.
+  const refreshedForId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!labId || labs == null || labs.some((l) => l.id === labId) || refreshedForId.current === labId) return;
+    refreshedForId.current = labId;
+    void reloadLabs();
+  }, [labId, labs, reloadLabs]);
+
   // A kathara://lab/<name> deep link (services/desktop's deepLinkRoute.ts) names the lab the way a
   // person would, but the route takes its id, which only the backend derives — so the name arrives
   // as `?lab=` and is resolved here against the list, then swapped for the lab's own route. A name

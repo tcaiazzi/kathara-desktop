@@ -6,7 +6,7 @@
 
 /** Env var names whose value must never reach a log line (they still reach the actual command
  * unchanged — this only redacts what gets logged). */
-const SENSITIVE_ENV_KEYS = new Set(["KATHARA_API_AUTH_TOKEN"]);
+const SENSITIVE_ENV_KEYS = new Set(["KATHARA_API_AUTH_TOKEN", "KATHARA_API_SHELL_TOKEN"]);
 
 /** For logging an `env KEY=value ...` argv list without leaking a secret into the log file. */
 export function redactEnvArgsForLog(envArgs: string[]): string[] {
