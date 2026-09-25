@@ -12,6 +12,7 @@ describe("languageForPath", () => {
     ["/etc/init.d/run.sh", "shell"],
     ["/etc/frr/frr.conf", "plaintext"],
     ["lab.conf.bak", "plaintext"],
+    ["pc1.startup.bak", "plaintext"],
     ["startup", "plaintext"],
   ] as const)("picks the language of %s from its basename", (path, language) => {
     expect(languageForPath(path)).toBe(language);
@@ -43,5 +44,18 @@ describe("CONF_LINE_RE", () => {
     ["a global directive", 'LAB_NAME="demo"'],
   ])("rejects %s", (_label, line) => {
     expect(CONF_LINE_RE.test(line)).toBe(false);
+  });
+});
+
+describe("CONF_LINE_RE comments", () => {
+  it("separates a comment after several spaces from a quoted value", () => {
+    expect('pc1[image]="kathara/base"    # the default'.match(CONF_LINE_RE)?.slice(4)).toEqual([
+      "kathara/base",
+      "    # the default",
+    ]);
+  });
+
+  it("keeps a '#' after an unquoted value as part of the value, as the backend does", () => {
+    expect("pc1[image]=kathara/base    # x".match(CONF_LINE_RE)?.slice(4)).toEqual(["kathara/base    # x", undefined]);
   });
 });

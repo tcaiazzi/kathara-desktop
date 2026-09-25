@@ -25,3 +25,7 @@ describe("the internal host bridge stays out of sight", () => {
     expect(visibleLinks(links)).toEqual([links[0], links[2]]);
   });
 });
+
+it("the internal host bridge is the network Kathara itself creates", () => {
+  expect(HOST_BRIDGE).toBe("kathara_host_bridge");
+});

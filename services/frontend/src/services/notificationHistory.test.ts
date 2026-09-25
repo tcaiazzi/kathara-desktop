@@ -54,6 +54,8 @@ describe("withCarriedHistory", () => {
     ["an entry without an id", [{ message: "m" }]],
     ["an entry with a non-string message", [{ id: 1, message: 42 }]],
     ["a list with one bad entry", [item(1), "oops"]],
+    ["a null entry", [null]],
+    ["a number entry", [42]],
   ])("ignores %s and returns the history untouched", (_label, carried) => {
     const shown = [item(1)];
 

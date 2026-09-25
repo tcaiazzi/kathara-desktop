@@ -130,14 +130,14 @@ describe("optionsFormStateToPayload", () => {
       ],
     };
 
-    expect(optionsFormStateToPayload(form)).toMatchObject({
-      // The key is trimmed; the value is sent exactly as typed.
-      envs: { MODE: " lab " },
-      sysctls: {},
-      ulimits: [{ name: "nofile", soft: 1, hard: 2 }],
-      exec_commands: ["ip a"],
-      volumes: [{ host_path: "/srv", guest_path: "/data", mode: "rw" }],
-    });
+    const payload = optionsFormStateToPayload(form);
+    // Exact, not toMatchObject: a partial match would let an extra row (say, one with a blank
+    // key) through unnoticed. The key is trimmed; the value is sent exactly as typed.
+    expect(payload.envs).toEqual({ MODE: " lab " });
+    expect(payload.sysctls).toEqual({});
+    expect(payload.ulimits).toEqual([{ name: "nofile", soft: 1, hard: 2 }]);
+    expect(payload.exec_commands).toEqual(["ip a"]);
+    expect(payload.volumes).toEqual([{ host_path: "/srv", guest_path: "/data", mode: "rw" }]);
   });
 
   it("starts a new device from Kathara's base image with every other option unset", () => {
@@ -160,5 +160,28 @@ describe("optionsFormStateToPayload", () => {
       volumes: [],
       metas: {},
     });
+  });
+});
+
+describe("blank and whitespace-only fields", () => {
+  it("turns every whitespace-only text field into null, numbers included", () => {
+    const form: OptionsFormState = {
+      ...defaultOptionsFormState(),
+      shell: "  ", entrypoint: "\t", args: " ", numTerms: "  ", cpus: " ",
+      metas: [{ key: "  ", value: "x" }, { key: " custom ", value: "v" }],
+      volumes: [{ host_path: "  ", guest_path: "/data", mode: "rw" }],
+    };
+
+    const payload = optionsFormStateToPayload(form);
+
+    expect([payload.shell, payload.entrypoint, payload.args, payload.num_terms, payload.cpus]).toEqual([null, null, null, null, null]);
+    expect(payload.metas).toEqual({ custom: "v" });
+    expect(payload.volumes).toEqual([]);
+  });
+
+  it("shows a device's unset text options as empty strings, not \"null\"", () => {
+    const form = optionsFormStateFromMachine(machine());
+
+    expect([form.shell, form.entrypoint, form.args]).toEqual(["", "", ""]);
   });
 });

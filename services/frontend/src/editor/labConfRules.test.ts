@@ -95,8 +95,8 @@ describe("structure", () => {
     expect(errors("pc1[1]=B\npc1[0]=A")).toEqual([]);
   });
 
-  it("rejects a reserved device name", () => {
-    expect(errors("shared[0]=A")[0].message).toContain("reserved name");
+  it.each(["shared", "_test"])("rejects the reserved device name %s", (name) => {
+    expect(errors(`${name}[0]=A`)[0].message).toBe(`"${name}" is a reserved name`);
   });
 
   it("ignores blank lines and comments", () => {

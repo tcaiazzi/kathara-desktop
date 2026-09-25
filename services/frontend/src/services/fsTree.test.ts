@@ -146,3 +146,29 @@ describe("toAbsolutePath", () => {
     expect(toAbsolutePath("///")).toBe(null);
   });
 });
+
+describe("tree merging, edge cases", () => {
+  it("gives each still-present directory back its own loaded children", () => {
+    const old = [dir("a", "/a", [file("x", "/a/x")]), dir("b", "/b", [file("y", "/b/y")])];
+
+    const merged = mergeNodeList(old, [dir("a", "/a"), dir("b", "/b")]);
+
+    expect(merged.map((n) => n.children?.map((c) => c.path))).toEqual([["/a/x"], ["/b/y"]]);
+  });
+
+  it("installs children on a directory that was never listed before", () => {
+    const tree = [dir("a", "/a")];
+
+    expect(withMergedChildrenAt(tree, "/a", [file("x", "/a/x")])[0].children).toEqual([file("x", "/a/x")]);
+  });
+
+  it("leaves the tree alone when the target sits under a directory that is not loaded", () => {
+    const tree = [dir("a", "/a")];
+
+    expect(withMergedChildrenAt(tree, "/a/b", [file("x", "/a/b/x")])).toEqual(tree);
+  });
+
+  it("strips several trailing slashes", () => {
+    expect(toAbsolutePath("pc1/etc///")).toBe("/pc1/etc");
+  });
+});

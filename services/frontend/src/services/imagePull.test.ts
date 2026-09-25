@@ -22,6 +22,8 @@ describe("formatBytes", () => {
   it("survives a missing or nonsensical value", () => {
     expect(formatBytes(0)).toBe("0 B");
     expect(formatBytes(Number.NaN)).toBe("0 B");
+    expect(formatBytes(-5)).toBe("0 B");
+    expect(formatBytes(Number.POSITIVE_INFINITY)).toBe("0 B");
   });
 });
 
@@ -97,5 +99,21 @@ describe("pulledMessage", () => {
 
   it("names the one image that finished", () => {
     expect(pulledMessage("kathara/base")).toBe("Downloaded Docker image kathara/base.");
+  });
+});
+
+describe("formatBytes and progressPercent at their boundaries", () => {
+  it.each([
+    [1023, "1023 B"],
+    [1024, "1 KB"],
+    [1024 * 1024, "1 MB"],
+    [1024 * 1024 * 1024, "1 GB"],
+    [5 * 1024 ** 4, "5120 GB"], // GB is the largest unit
+  ])("formats %d as %s", (value, text) => {
+    expect(formatBytes(value)).toBe(text);
+  });
+
+  it("is indeterminate for a negative total", () => {
+    expect(progressPercent(null, 10, -5)).toBeNull();
   });
 });

@@ -136,7 +136,7 @@ describe("computeTopology", () => {
     );
 
     expect(model.nodes.map((n) => n.id)).toEqual(["dev:pc1", "cd:A"]);
-    expect(model.edges.map((e) => e.target)).toEqual(["cd:A"]);
+    expect(model.edges.map((e) => [e.target, e.ips])).toEqual([["cd:A", []]]);  // no address known yet
   });
 
   it("keeps a listed domain's own running flag and external interfaces", () => {
@@ -171,5 +171,46 @@ describe("computeTopology", () => {
       { id: "cd:EMPTY", type: "cd", name: "EMPTY", external: [], running: false, members: [], x: 0, y: 0, dx: 0, dy: 0 },
     ]);
     expect(model.edges).toEqual([]);
+  });
+});
+
+describe("topology helpers, edge cases", () => {
+  it("fits nodes whose bounding box does not start at the origin", () => {
+    const { scale, tx, ty } = fitTransform([{ x: 100, y: 50 }, { x: 300, y: 150 }], 600, 400);
+
+    // Box 200x100 + margins = 300x200 -> scale 2; its centre (200, 100) lands on (300, 200).
+    expect(scale).toBe(2);
+    expect(200 * scale + tx).toBe(300);
+    expect(100 * scale + ty).toBe(200);
+  });
+
+  it("uses the tighter axis when the height is what limits the scale", () => {
+    expect(fitTransform([{ x: 0, y: 0 }, { x: 100, y: 900 }], 500, 500).scale).toBe(0.5);
+  });
+
+  it("notices when only one of several nodes moved", () => {
+    const saved = { pc1: { x: 0, y: 0 }, pc2: { x: 50, y: 50 } };
+
+    expect(samePositions({ pc1: { x: 0, y: 0 }, pc2: { x: 90, y: 50 } }, saved)).toBe(false);
+    expect(samePositions({ pc1: { x: 0, y: 0 }, pc3: { x: 50, y: 50 } }, saved)).toBe(false);
+  });
+
+  it("reads two-digit interfaces, repeated whitespace and the short `ip add` form", () => {
+    const startup = [
+      "ip  address   add 10.0.10.1/24   dev  eth10",
+      "ip -4  addr add 10.0.0.1/24 dev eth0",
+      "ip add add 10.0.1.1/24 dev eth1",
+      "ip addr add    10.0.2.1/24 dev eth2",
+    ].join("\n");
+
+    expect(parseIfaceIps(machine(), startup)).toEqual({
+      10: ["10.0.10.1/24"], 0: ["10.0.0.1/24"], 1: ["10.0.1.1/24"], 2: ["10.0.2.1/24"],
+    });
+  });
+
+  it("lists an IP once even when the startup log echoes its command", () => {
+    const log = ["++ ip address add 10.0.0.1/24 dev eth0", "ip address add 10.0.0.1/24 dev eth0"].join("\n");
+
+    expect(parseIfaceIps(machine(), log)).toEqual({ 0: ["10.0.0.1/24"] });
   });
 });
