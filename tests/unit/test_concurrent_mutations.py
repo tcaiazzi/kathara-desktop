@@ -381,9 +381,10 @@ class _CopyRecordingFacade(FakeFacadeBase):
 
 def test_fs_upload_bytes_resolves_the_device_inside_the_lock(tmp_path, monkeypatch):
     """The binary-upload path must resolve the device *inside* `_mutate_lock`, the same way
-    `copy_files` does and `fs_write_text` gets for free by delegating to it. Resolved before the
-    lock, the `Machine` it hands the facade can have been stopped by a concurrent undeploy while
-    it waited, and the copy then runs against an `api_object` nobody confirmed was still live.
+    `copy_files` does (and `fs_write_text`, which shares the upload's `_write_in_place`). Resolved
+    before the lock, the `Machine` it hands the facade can have been stopped by a concurrent
+    undeploy while it waited, and the copy then runs against an `api_object` nobody confirmed was
+    still live.
 
     `normalize_guest_path` is the pause point because it runs before the lock either way: the
     question the test asks is whether the *device* has also been resolved by then.

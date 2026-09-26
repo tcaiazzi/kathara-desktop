@@ -28,6 +28,7 @@ import shlex
 import shutil
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
@@ -2651,21 +2652,47 @@ class KatharaService:
         _, _, exit_code = self.exec_command(lab_id, machine_name, ["test", "-f", "/tmp/EOS"], wait=False)
         return exit_code == 0
 
+    # Overwrites `$1` with the content of the staged file `$2`, then removes `$2` whatever happened.
+    # `cat >` truncates the existing file and writes into the same inode, so its mode, owner, hard
+    # links and bind mount all survive and its mtime becomes the time of the write; a missing file
+    # is created by the shell (root, mode from the umask) inside its parent, created first.
+    _FS_WRITE_SCRIPT = 'mkdir -p -- "$(dirname -- "$1")" && cat -- "$2" > "$1"; rc=$?; rm -f -- "$2"; exit $rc'
+
     def fs_write_text(self, lab_id: str, machine_name: str, path: str, content: str) -> int:
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
-        self.copy_files(lab_id, machine_name, {normalized: content})
-        return len(content.encode("utf-8"))
+        data = content.encode("utf-8")
+        self._write_in_place(lab_id, machine_name, normalized, data)
+        return len(data)
 
     def fs_upload_bytes(self, lab_id: str, machine_name: str, path: str, content: bytes) -> int:
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
-        # Re-resolved inside the lock, for the reason `copy_files` spells out: the check above is
-        # the same early 409 every other fs_* method gives, not the one the copy can rely on. The
-        # binary twin of `fs_write_text`, which gets this shape for free by delegating to
-        # `copy_files` — not reusable here, since that method encodes its values as UTF-8 text.
+        self._write_in_place(lab_id, machine_name, normalized, content)
+        return len(content)
+
+    def _write_in_place(self, lab_id: str, machine_name: str, path: str, data: bytes) -> None:
+        """Write `data` over the running device's file at `path`, keeping that file's metadata.
+
+        Not a plain `copy_files` to `path`: Docker's archive upload deletes and recreates its
+        target, which resets mode, owner and mtime (an executable script loses its `x` bit) and
+        fails outright with "device or resource busy" on the files Docker bind-mounts into every
+        container (`/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`). The upload therefore goes
+        to a uniquely named staging file under `/tmp`, and `_FS_WRITE_SCRIPT` copies it over the
+        real one in place.
+        """
+        staging = f"/tmp/.kathara-desktop-{uuid.uuid4().hex}"
+        # Re-resolved inside the lock, for the reason `copy_files` spells out: the check the caller
+        # already made is the same early 409 every other fs_* method gives, not the one the upload
+        # can rely on.
         with self._mutate_lock:
             machine = self._get_running_machine(lab_id, machine_name)
-            self._facade().copy_files(machine, {normalized: io.BytesIO(content)})
-        return len(content)
+            self._facade().copy_files(machine, {staging: io.BytesIO(data)})
+            self._exec_checked(
+                lab_id,
+                machine_name,
+                ["sh", "-lc", self._FS_WRITE_SCRIPT, "sh", path, staging],
+                wait=False,
+                action_label=f"Write file `{path}`",
+            )
 
     def fs_mkdir(self, lab_id: str, machine_name: str, path: str) -> None:
         _, normalized = self._running_guest_path(lab_id, machine_name, path)

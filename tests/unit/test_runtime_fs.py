@@ -8,6 +8,8 @@ listing's records are parsed. The listing's symlink handling, the directory/bina
 startup-log polling are covered in test_kathara_service_errors.py.
 """
 
+import re
+
 import pytest
 from Kathara.exceptions import MachineNotRunningError
 
@@ -321,18 +323,57 @@ def test_read_bytes_failure_reports_stderr_or_exit_code(service, facade, stderr,
         service.fs_read_bytes(lab_id(service, "l"), "pc1", "/nope")
 
 
-def test_write_text_copies_utf8_content_and_returns_its_byte_size(service, facade):
+_STAGING_RE = re.compile(r"^/tmp/\.kathara-desktop-[0-9a-f]{32}$")
+
+
+def _staged_write(facade) -> tuple[str, bytes, list]:
+    """The one staging upload and the one exec a runtime write must produce, unpacked."""
+    [(machine, uploads)] = facade.copies
+    [(staging, data)] = uploads.items()
+    [(exec_machine, command, _, wait)] = facade.execs
+    assert machine == exec_machine == "pc1" and wait is False
+    return staging, data, command
+
+
+def test_write_text_stages_utf8_content_then_overwrites_the_target_in_place(service, facade):
     size = service.fs_write_text(lab_id(service, "l"), "pc1", "etc/motd", "ciao è\n")
 
+    staging, data, command = _staged_write(facade)
     assert size == len("ciao è\n".encode())
-    assert facade.copies == [("pc1", {"/etc/motd": "ciao è\n".encode()})]
+    assert _STAGING_RE.match(staging) and data == "ciao è\n".encode()
+    assert command == ["sh", "-lc", KatharaService._FS_WRITE_SCRIPT, "sh", "/etc/motd", staging]
 
 
-def test_upload_bytes_copies_the_raw_content_and_returns_its_size(service, facade):
+def test_upload_bytes_stages_the_raw_content_then_overwrites_the_target_in_place(service, facade):
     size = service.fs_upload_bytes(lab_id(service, "l"), "pc1", "tmp//blob", b"\xff\x00\xfe")
 
+    staging, data, command = _staged_write(facade)
     assert size == 3
-    assert facade.copies == [("pc1", {"/tmp/blob": b"\xff\x00\xfe"})]
+    assert _STAGING_RE.match(staging) and data == b"\xff\x00\xfe"
+    assert command[-2:] == ["/tmp/blob", staging]
+
+
+def test_each_write_stages_under_its_own_name(service, facade):
+    service.fs_write_text(lab_id(service, "l"), "pc1", "/a", "1")
+    service.fs_write_text(lab_id(service, "l"), "pc1", "/b", "2")
+
+    [(_, first), (_, second)] = facade.copies
+    assert first.keys() != second.keys()
+
+
+def test_the_write_script_overwrites_in_place_and_always_removes_the_staging_file():
+    """`cat >` into the target keeps its inode (mode, owner, bind mount); the staging file goes
+    away on success and failure alike, and the exit code is the copy's, not the cleanup's."""
+    script = KatharaService._FS_WRITE_SCRIPT
+    assert 'cat -- "$2" > "$1"' in script
+    assert script.endswith('rc=$?; rm -f -- "$2"; exit $rc')
+
+
+def test_a_failing_in_place_write_names_the_path(service, facade):
+    facade.result = (b"", b"sh: cannot create /etc: Is a directory\n", 2)
+
+    with pytest.raises(ApiError, match="Write file `/etc` failed on `pc1`: sh: cannot create /etc: Is a directory"):
+        service.fs_write_text(lab_id(service, "l"), "pc1", "/etc", "x")
 
 
 # ---------------------------------------------------------------------------
