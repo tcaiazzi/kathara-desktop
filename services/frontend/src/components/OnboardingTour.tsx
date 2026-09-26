@@ -40,10 +40,15 @@ const STEPS: TourStep[] = [
     },
   },
   {
-    element: '[data-tour="import-row"]',
+    // The import row only shows alongside the lab list, which a lab being open collapses — so
+    // during the tour it is usually behind "Select other labs", and that button is the target.
+    element: () =>
+      (document.querySelector('[data-tour="import-row"]') ??
+        document.querySelector('[data-tour="lab-picker-btn"]')) as Element,
     popover: {
       title: "Add a lab",
-      description: "Start from scratch with New, import a .zip with Upload, or Browse the Kathara Labs gallery for ready-made examples.",
+      description:
+        "Start from scratch with New, import a .zip with Upload, or Browse the Kathara Labs gallery for ready-made examples. While a lab is open, they're under Select other labs.",
     },
   },
   {

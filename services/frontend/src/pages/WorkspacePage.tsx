@@ -1318,88 +1318,93 @@ export function WorkspacePage() {
                 <PanelLeftClose size={16} aria-hidden="true" />
               </button>
             </div>
-            <div className="d-flex gap-1 mb-2" data-tour="import-row" ref={importRowRef}>
-              {compactImportRow ? (
-                // DropdownButton's own `className` only reaches its outer wrapper, not the visible
-                // toggle button (see react-bootstrap's DropdownButton source), so a plain w-100
-                // there leaves the button itself content-sized — build it from Dropdown +
-                // Dropdown.Toggle instead so the toggle can be widened directly, matching the
-                // full-width "Wipe All Labs" button below it.
-                <Dropdown className="w-100">
-                  <Dropdown.Toggle size="sm" variant="primary" className="w-100">
-                    <span className="d-inline-flex align-items-center gap-1">
-                      <Plus size={14} />
-                      Add Lab
-                    </span>
-                  </Dropdown.Toggle>
-                  <Dropdown.Menu className="w-100">
-                    <Dropdown.Item onClick={() => setShowNew(true)}>
-                      <Plus size={14} className="me-2" />
-                      New lab
-                    </Dropdown.Item>
-                    {openLabFolder && (
-                      <Dropdown.Item onClick={openLabFolder}>
-                        <FolderOpen size={14} className="me-2" />
-                        Open lab folder
+            {/* Only alongside the lab list: with a lab open the rail is about that lab, and the
+                import actions come back with "Select other labs" (in the desktop app, the File menu
+                and its shortcuts reach the same modals either way). */}
+            {showLabList && (
+              <div className="d-flex gap-1 mb-2" data-tour="import-row" ref={importRowRef}>
+                {compactImportRow ? (
+                  // DropdownButton's own `className` only reaches its outer wrapper, not the visible
+                  // toggle button (see react-bootstrap's DropdownButton source), so a plain w-100
+                  // there leaves the button itself content-sized — build it from Dropdown +
+                  // Dropdown.Toggle instead so the toggle can be widened directly, matching the
+                  // full-width "Wipe All Labs" button below it.
+                  <Dropdown className="w-100">
+                    <Dropdown.Toggle size="sm" variant="primary" className="w-100">
+                      <span className="d-inline-flex align-items-center gap-1">
+                        <Plus size={14} />
+                        Add Lab
+                      </span>
+                    </Dropdown.Toggle>
+                    <Dropdown.Menu className="w-100">
+                      <Dropdown.Item onClick={() => setShowNew(true)}>
+                        <Plus size={14} className="me-2" />
+                        New lab
                       </Dropdown.Item>
+                      {openLabFolder && (
+                        <Dropdown.Item onClick={openLabFolder}>
+                          <FolderOpen size={14} className="me-2" />
+                          Open lab folder
+                        </Dropdown.Item>
+                      )}
+                      <Dropdown.Item onClick={() => setShowUpload(true)}>
+                        <Upload size={14} className="me-2" />
+                        Upload lab
+                      </Dropdown.Item>
+                      <Dropdown.Item onClick={() => setShowGallery(true)}>
+                        <Globe size={14} className="me-2" />
+                        Browse Kathara-Labs
+                      </Dropdown.Item>
+                    </Dropdown.Menu>
+                  </Dropdown>
+                ) : (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="flex-fill"
+                      onClick={() => setShowNew(true)}
+                      title="Create a new empty lab from scratch"
+                    >
+                      <Plus size={14} className="me-1" />
+                      New
+                    </Button>
+                    {openLabFolder && (
+                      <Button
+                        size="sm"
+                        variant="outline-secondary"
+                        className="flex-fill"
+                        onClick={openLabFolder}
+                        title="Open a folder anywhere on your computer as a lab, where it is"
+                      >
+                        <FolderOpen size={14} className="me-1" />
+                        Open
+                      </Button>
                     )}
-                    <Dropdown.Item onClick={() => setShowUpload(true)}>
-                      <Upload size={14} className="me-2" />
-                      Upload lab
-                    </Dropdown.Item>
-                    <Dropdown.Item onClick={() => setShowGallery(true)}>
-                      <Globe size={14} className="me-2" />
-                      Browse Kathara-Labs
-                    </Dropdown.Item>
-                  </Dropdown.Menu>
-                </Dropdown>
-              ) : (
-                <>
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    className="flex-fill"
-                    onClick={() => setShowNew(true)}
-                    title="Create a new empty lab from scratch"
-                  >
-                    <Plus size={14} className="me-1" />
-                    New
-                  </Button>
-                  {openLabFolder && (
                     <Button
                       size="sm"
                       variant="outline-secondary"
                       className="flex-fill"
-                      onClick={openLabFolder}
-                      title="Open a folder anywhere on your computer as a lab, where it is"
+                      onClick={() => setShowUpload(true)}
+                      title="Upload a lab from a .zip archive or folder on your computer"
                     >
-                      <FolderOpen size={14} className="me-1" />
-                      Open
+                      <Upload size={14} className="me-1" />
+                      Upload
                     </Button>
-                  )}
-                  <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    className="flex-fill"
-                    onClick={() => setShowUpload(true)}
-                    title="Upload a lab from a .zip archive or folder on your computer"
-                  >
-                    <Upload size={14} className="me-1" />
-                    Upload
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    className="flex-fill"
-                    onClick={() => setShowGallery(true)}
-                    title="Browse and import a ready-made lab from the Kathara-Labs gallery"
-                  >
-                    <Globe size={14} className="me-1" />
-                    Browse
-                  </Button>
-                </>
-              )}
-            </div>
+                    <Button
+                      size="sm"
+                      variant="outline-secondary"
+                      className="flex-fill"
+                      onClick={() => setShowGallery(true)}
+                      title="Browse and import a ready-made lab from the Kathara-Labs gallery"
+                    >
+                      <Globe size={14} className="me-1" />
+                      Browse
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
             {/* Hidden with no labs: on a first run this red, destructive button was the most
                 prominent control on an otherwise empty screen. Deliberately gated on "has labs"
                 rather than "has deployed labs" — this is also the recovery tool for when the
@@ -1487,6 +1492,7 @@ export function WorkspacePage() {
                     size="sm"
                     variant="outline-secondary"
                     className="w-100 mb-2"
+                    data-tour="lab-picker-btn"
                     onClick={() => setLabPickerOpen(true)}
                   >
                     <List size={14} className="me-1" />
