@@ -102,9 +102,6 @@
 .kt-ws-row--static {
   cursor: default;
 }
-.kt-ws-row--static:hover {
-  background: transparent;
-}
 .kt-ws-row-name {
   flex: 1;
   min-width: 0;
@@ -117,12 +114,16 @@
 .kt-ws-row--problem {
   opacity: 0.6;
 }
-/* Where a lab lives (LabRowLabel), under its name. */
+/* Where a lab lives (LabRowLabel), under its name: whole when it fits, otherwise cut from the
+   start, since the end of a path is what tells two folders apart. The rtl direction is what moves
+   the ellipsis to the start; the <bdi> inside keeps the path itself reading left to right. */
 .kt-ws-row-path {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  direction: rtl;
+  text-align: left;
   font-size: 11px;
   color: var(--bs-secondary-color);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labFolderHint, labNamed } from "./labPlace";
+import { labFolder, labNamed } from "./labPlace";
 import type { LabSummary } from "./types";
 
 function lab(id: string, name: string, managed: boolean, problem: string | null = null): LabSummary {
@@ -18,22 +18,39 @@ describe("labNamed", () => {
   });
 });
 
-describe("labFolderHint", () => {
+describe("labFolder", () => {
   it.each([
-    ["/home/u/work/net/ospf", "…/work/net"],
-    ["/home/u/ospf", "/home/u"],
+    ["/home/u/work/net/ospf", "/home/u/work/net"],
+    ["/home/u/work/net/ospf/", "/home/u/work/net"],
     ["/work/ospf", "/work"],
     ["/ospf", "/"],
-    ["/home/u/work/net/ospf/", "…/work/net"],
-  ])("shows the last two segments of %s's parent", (path, hint) => {
-    expect(labFolderHint(path)).toBe(hint);
+  ])("shows the whole parent of %s", (path, folder) => {
+    expect(labFolder(path)).toBe(folder);
   });
 
   it.each([
-    ["C:\\Users\\u\\labs\\ospf", "…\\u\\labs"],
+    ["C:\\Users\\u\\labs\\ospf", "C:\\Users\\u\\labs"],
     ["C:\\labs\\ospf", "C:\\labs"],
-    ["\\\\server\\share\\ospf", "\\server\\share"],
-  ])("keeps a Windows path's separator for %s", (path, hint) => {
-    expect(labFolderHint(path)).toBe(hint);
+    ["C:\\ospf", "C:\\"],
+    ["\\\\server\\share\\ospf", "\\\\server\\share"],
+  ])("keeps a Windows path's separator for %s", (path, folder) => {
+    expect(labFolder(path)).toBe(folder);
+  });
+
+  it("has nothing to show for a bare name", () => {
+    expect(labFolder("ospf")).toBe("");
+  });
+
+  it.each([
+    ["/home/u/work/net/ospf", "/home/u", "~/work/net"],
+    ["/home/u/ospf", "/home/u", "~"],
+    ["/home/u/ospf", "/home/u/", "~"],
+    ["/home/user2/ospf", "/home/u", "/home/user2"],
+    ["/srv/labs/ospf", "/home/u", "/srv/labs"],
+    ["/work/ospf", "/", "/work"],
+    ["C:\\Users\\u\\labs\\ospf", "C:\\Users\\u", "~\\labs"],
+    ["C:\\labs\\ospf", "C:\\", "C:\\labs"],
+  ])("shows %s under home %s as %s", (path, home, folder) => {
+    expect(labFolder(path, home)).toBe(folder);
   });
 });

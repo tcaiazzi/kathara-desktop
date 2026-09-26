@@ -82,6 +82,7 @@ import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useElementSize } from "../hooks/useElementSize";
+import { useHomeDir } from "../hooks/useHomeDir";
 import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
@@ -90,7 +91,7 @@ import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
-import { labFolderHint } from "../services/labPlace";
+import { labFolder } from "../services/labPlace";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
 
@@ -525,18 +526,24 @@ function focusTerminals(api: DockviewApi) {
 
 interface LabRowLabelProps {
   lab: LabSummary;
+  // Shown as "~" in the folder (useHomeDir); null shows it whole.
+  home: string | null;
 }
 
 // A rail row's name, plus the folder the lab sits in, which is what tells two labs with the same
 // name apart (services/labPlace.ts).
-function LabRowLabel({ lab }: LabRowLabelProps) {
-  const folder = lab.path ? labFolderHint(lab.path) : null;
+function LabRowLabel({ lab, home }: LabRowLabelProps) {
+  const folder = lab.path ? labFolder(lab.path, home) : null;
   const problem = lab.problem ? PROBLEM_LABEL[lab.problem] ?? lab.problem : null;
   const hint = [folder, problem].filter(Boolean).join(" · ");
   return (
     <span className="kt-ws-row-name">
       {lab.name || "(unnamed)"}
-      {hint && <span className="kt-ws-row-path">{hint}</span>}
+      {hint && (
+        <span className="kt-ws-row-path">
+          <bdi>{hint}</bdi>
+        </span>
+      )}
     </span>
   );
 }
@@ -653,6 +660,7 @@ export function WorkspacePage() {
   const registerTourSelectFirstDevice = useOnboardingTourSelectFirstDevice();
   const autoTourRequested = useRef(false);
   const isAdmin = useIsAdmin();
+  const homeDir = useHomeDir();
 
   const [showNew, setShowNew] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
@@ -1464,7 +1472,7 @@ export function WorkspacePage() {
                           onContextMenu={(e) => openLabMenu(e, l)}
                         >
                           <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
-                          <LabRowLabel lab={l} />
+                          <LabRowLabel lab={l} home={homeDir} />
                           <span className="kt-ws-row-meta">{l.n_machines}</span>
                         </button>
                       </LabRowTip>
@@ -1475,6 +1483,15 @@ export function WorkspacePage() {
             ) : (
               currentLab && (
                 <>
+                  <Button
+                    size="sm"
+                    variant="outline-secondary"
+                    className="w-100 mb-2"
+                    onClick={() => setLabPickerOpen(true)}
+                  >
+                    <List size={14} className="me-1" />
+                    Select other labs
+                  </Button>
                   <div className="kt-ws-list">
                     <LabRowTip lab={currentLab} action="" suppressed={ctxMenu != null}>
                       <div
@@ -1482,20 +1499,11 @@ export function WorkspacePage() {
                         onContextMenu={(e) => openLabMenu(e, currentLab)}
                       >
                         <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
-                        <LabRowLabel lab={currentLab} />
+                        <LabRowLabel lab={currentLab} home={homeDir} />
                         <span className="kt-ws-row-meta">{currentLab.n_machines}</span>
                       </div>
                     </LabRowTip>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline-secondary"
-                    className="w-100 mt-2"
-                    onClick={() => setLabPickerOpen(true)}
-                  >
-                    <List size={14} className="me-1" />
-                    Select other labs
-                  </Button>
                 </>
               )
             )}

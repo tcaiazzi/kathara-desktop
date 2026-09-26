@@ -714,6 +714,9 @@ function registerIpc(): void {
   handleIpc("shell:app-info", () => ({
     version: app.getVersion(),
     platform: process.platform,
+    // The user's own home, which the renderer abbreviates to "~" in paths it shows. Asked here
+    // rather than of the backend, which may be running elevated with root's home.
+    home: app.getPath("home"),
   }));
 
   // Pull, not push: checkForUpdate() is memoized and was already kicked off in

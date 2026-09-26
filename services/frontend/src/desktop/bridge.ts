@@ -33,7 +33,7 @@ export interface DesktopApi {
   isDesktop: true;
   platform: string;
   /** Window/shell actions behind the app-drawn menu bar (see TitleBar.tsx). */
-  getAppInfo(): Promise<{ version: string; platform: string }>;
+  getAppInfo(): Promise<{ version: string; platform: string; home: string }>;
   zoom(direction: "in" | "out" | "reset"): Promise<void>;
   toggleFullScreen(): Promise<void>;
   toggleDevTools(): Promise<void>;

@@ -14,23 +14,30 @@ export function labNamed(labs: LabSummary[], name: string): LabSummary | undefin
 }
 
 /**
- * The folder a lab sits in, short enough for a rail row:
- * the last two segments of its parent directory, behind an ellipsis when there are more
- * ("/home/u/work/net/ospf" → "…/work/net"). Two lab folders with the same name are told apart by
- * exactly this, so it is the parent that is shown — the name is already on the row.
+ * The folder a lab sits in: its parent directory, whole, with the user's `home` shown as "~"
+ * ("/home/u/work/ospf" → "~/work"). Two lab folders with the same name are told apart by exactly
+ * this, so it is the parent that is shown — the name is already on the row. The rail cuts it from
+ * the start when it doesn't fit (.kt-ws-row-path).
  *
  * A host path, not a lab-relative one (services/paths.ts): it may be a Windows one, so both
- * separators are understood and the one the path uses is the one shown.
+ * separators are understood and kept as the path has them.
  */
-export function labFolderHint(path: string): string {
-  const separator = path.includes("\\") && !path.includes("/") ? "\\" : "/";
-  const segments = path.split(/[\\/]/).filter(Boolean);
-  const parent = segments.slice(0, -1);
-  if (parent.length === 0) return separator;
-  const absolute = path.startsWith("/") || path.startsWith("\\");
-  if (parent.length <= 2) {
-    // A drive letter ("C:") already reads as the root; a POSIX path needs its leading slash back.
-    return (absolute ? separator : "") + parent.join(separator);
-  }
-  return `…${separator}${parent.slice(-2).join(separator)}`;
+export function labFolder(path: string, home: string | null = null): string {
+  const trimmed = path.replace(/[\\/]+$/, "") || path;
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (cut < 0) return "";
+  const parent = trimmed.slice(0, cut);
+  // A root keeps its separator: "/" and "C:\" read as folders, "" and "C:" don't.
+  const folder = parent === "" || /^[A-Za-z]:$/.test(parent) ? trimmed.slice(0, cut + 1) : parent;
+  return home ? withTilde(folder, home) : folder;
+}
+
+/** `path` with a leading `home` shown as "~", only where home ends at a separator. */
+function withTilde(path: string, home: string): string {
+  const base = home.replace(/[\\/]+$/, "");
+  // A home at the root (HOME=/) would turn every path into "~…", which says nothing.
+  if (!base || /^[A-Za-z]:$/.test(base)) return path;
+  if (path === base) return "~";
+  const next = path[base.length];
+  return path.startsWith(base) && (next === "/" || next === "\\") ? `~${path.slice(base.length)}` : path;
 }

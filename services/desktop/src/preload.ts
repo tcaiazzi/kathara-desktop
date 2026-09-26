@@ -109,7 +109,7 @@ const api = {
     ipcRenderer.invoke("elevation:verify", password),
 
   // -- window / shell actions behind the app-drawn menu bar --
-  getAppInfo: (): Promise<{ version: string; platform: string }> =>
+  getAppInfo: (): Promise<{ version: string; platform: string; home: string }> =>
     ipcRenderer.invoke("shell:app-info"),
   zoom: (direction: "in" | "out" | "reset") => ipcRenderer.invoke("window:zoom", direction),
   toggleFullScreen: () => ipcRenderer.invoke("window:toggle-full-screen"),
