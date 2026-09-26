@@ -12,7 +12,15 @@
 
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { CATEGORY_ICON } from "../services/deviceIcon";
-import { fitTransform, type NodePositions, type TopoEdge, type TopoModel, type TopoNode } from "../services/topology";
+import {
+  fitTransform,
+  planSeeds,
+  type NodePositions,
+  type SeedPosition,
+  type TopoEdge,
+  type TopoModel,
+  type TopoNode,
+} from "../services/topology";
 import { tooltipHtml } from "../services/topologyTooltip";
 
 const SVGNS = "http://www.w3.org/2000/svg";
@@ -78,6 +86,18 @@ interface UseForceLayoutOptions {
   // Currently-selected node id (if any), so a rebuild can restore it instead of unconditionally
   // clearing the selection when the selected node still exists in the new model.
   selectedId?: string | null;
+  // Identity of the graph being shown (the lab id). A rebuild only inherits the previous engine's
+  // positions and camera within the same scope: node ids such as `dev:pc1` repeat across labs.
+  scopeKey?: string;
+}
+
+// What a rebuild can inherit from the engine it replaces — see `lastStateRef`.
+interface EngineSnapshot {
+  scope: string | null;
+  camera: { tx: number; ty: number; scale: number };
+  positions: Record<string, SeedPosition>;
+  settled: boolean;
+  autoFit: boolean;
 }
 
 interface UseForceLayout {
@@ -118,13 +138,12 @@ export function useForceLayout(
   // touching `detail`, the startups fetch resolving after it). Only the former should reset pan/
   // zoom to "fit all"; the latter should leave the camera exactly where the user left it.
   const lastNonceRef = useRef(relayoutNonce);
-  // The outgoing engine's camera, captured by *this effect's own cleanup* (below) rather than read
-  // from `engineRef.current` at the top of a later run — React always runs an effect's cleanup
-  // before its next invocation, so `engineRef.current` is already null by the time a later run
-  // would try to read it there. `engine.tx/ty/scale` are read at cleanup time, not closure-capture
-  // time, so this also picks up any live pan/zoom/drag that happened after the engine was built,
-  // not just its state at construction.
-  const lastCameraRef = useRef<{ tx: number; ty: number; scale: number } | null>(null);
+  // The outgoing engine's camera, node positions and settle state, captured by *this effect's own
+  // cleanup* (below) rather than read from `engineRef.current` at the top of a later run — React
+  // always runs an effect's cleanup before its next invocation, so `engineRef.current` is already
+  // null by the time a later run would try to read it there. Everything is read at cleanup time,
+  // not closure-capture time, so it includes any pan/zoom/drag and settling since the build.
+  const lastStateRef = useRef<EngineSnapshot | null>(null);
 
   // Always-current callbacks/options for the DOM event listeners below, without forcing the whole
   // rebuild effect to re-run (and the simulation to restart) on every render.
@@ -139,9 +158,12 @@ export function useForceLayout(
 
     const isExplicitRelayout = lastNonceRef.current !== relayoutNonce;
     lastNonceRef.current = relayoutNonce;
-    // Restored below (instead of resetting to the default 0,0,1 + auto-fit) when this rebuild is
-    // just a data refresh rather than an explicit relayout request.
-    const prevCamera = !isExplicitRelayout ? lastCameraRef.current : null;
+    const scope = optionsRef.current.scopeKey ?? null;
+    // A rebuild that is just a data refresh of the same graph (a startup saved, a device added)
+    // carries the previous engine forward: its camera, and each surviving node's live position.
+    // An explicit relayout request, or another lab, starts over.
+    const prev = lastStateRef.current;
+    const carried = !isExplicitRelayout && prev && prev.scope === scope ? prev : null;
 
     canvas.replaceChildren();
     callbacksRef.current.onDismissContextMenu();
@@ -154,20 +176,24 @@ export function useForceLayout(
     // read a node's label, not spread to fill whatever canvas/panel size is available.
     const k = Math.min(140, Math.max(66, 0.44 * Math.sqrt((W * H) / n)));
 
-    // Seed positions: restore saved ones where available, else lay out on a jittered circle. A
-    // restored node is *pinned* (`fixed`): the physics never moves it, so adding one device cannot
-    // nudge an arranged topology — the newcomer settles around the frozen graph instead.
-    const saved = optionsRef.current.initialPositions || {};
-    let savedCount = 0;
+    // Seed positions (see planSeeds): the previous engine's live ones, else the saved ones, else a
+    // jittered circle. A pinned node (`fixed`) is never moved by the physics, so adding one device
+    // cannot nudge an arranged topology — the newcomer settles around the frozen graph instead.
+    const seeds = planSeeds(
+      model.nodes.map((nd) => nd.id),
+      carried,
+      optionsRef.current.initialPositions || {},
+    );
+    let pinnedCount = 0;
     const byId: Record<string, TopoNode> = {};
     model.nodes.forEach((nd, i) => {
-      const p = saved[nd.id];
+      const p = seeds[nd.id];
       nd.fixed = false;
-      if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+      if (p) {
         nd.x = p.x;
         nd.y = p.y;
-        nd.fixed = true;
-        savedCount++;
+        nd.fixed = p.fixed;
+        if (p.fixed) pinnedCount++;
       } else {
         const a = (i / n) * Math.PI * 2;
         const jitter = ((i * 41) % 13) / 13;
@@ -179,10 +205,10 @@ export function useForceLayout(
       nd.dy = 0;
       byId[nd.id] = nd;
     });
-    const allSaved = savedCount === n;
-    // Cold start when the whole layout was restored (nothing left to move); otherwise a full settle
-    // — only the unpinned newcomers actually move, so there is no need to hold the heat back.
-    const temp = allSaved ? 0 : Math.max(W, H) * 0.11;
+    const allPinned = pinnedCount === n;
+    // Cold start when every node is pinned (nothing left to move); otherwise a full settle — only
+    // the unpinned nodes actually move, so there is no need to hold the heat back.
+    const temp = allPinned ? 0 : Math.max(W, H) * 0.11;
 
     const adj: Record<string, Set<string>> = {};
     for (const nd of model.nodes) adj[nd.id] = new Set();
@@ -241,9 +267,9 @@ export function useForceLayout(
       edges: model.edges,
       byId,
       adj,
-      tx: prevCamera?.tx ?? 0,
-      ty: prevCamera?.ty ?? 0,
-      scale: prevCamera?.scale ?? 1,
+      tx: carried?.camera.tx ?? 0,
+      ty: carried?.camera.ty ?? 0,
+      scale: carried?.camera.scale ?? 1,
       raf: null,
       dragging: null,
       selected: null,
@@ -258,10 +284,11 @@ export function useForceLayout(
       ro: null,
       // Fit once on settle for a genuinely fresh/relaid-out graph: a layout restored from
       // `lab.layout` may have been arranged on a differently-sized canvas, and fitEngine only
-      // pans/zooms (stored coordinates are untouched). Skipped when this rebuild only carried a
-      // data refresh forward (prevCamera set) — the user's own pan/zoom already applies and must
-      // not be overridden by a fit the caller never asked for.
-      autoFit: prevCamera === null,
+      // pans/zooms (stored coordinates are untouched). A rebuild that carries the previous engine
+      // forward keeps the user's own pan/zoom and must not override it with a fit nobody asked
+      // for — unless that engine had not come to rest yet, in which case its own pending first
+      // fit is inherited rather than lost.
+      autoFit: carried === null || (!carried.settled && carried.autoFit),
       settledOnce: false,
     };
     engineRef.current = engine;
@@ -681,7 +708,7 @@ export function useForceLayout(
     }
 
     render();
-    if (allSaved) {
+    if (allPinned) {
       // Nothing to settle — reflect (and, unless a data-refresh rebuild is preserving the user's
       // own camera, fit) the restored layout immediately.
       engine.settledOnce = true;
@@ -695,7 +722,15 @@ export function useForceLayout(
       activeDragCleanup = null;
       if (engine.raf) cancelAnimationFrame(engine.raf);
       if (engine.ro) engine.ro.disconnect();
-      lastCameraRef.current = { tx: engine.tx, ty: engine.ty, scale: engine.scale };
+      const positions: Record<string, SeedPosition> = {};
+      for (const nd of engine.nodes) positions[nd.id] = { x: nd.x, y: nd.y, fixed: !!nd.fixed };
+      lastStateRef.current = {
+        scope,
+        camera: { tx: engine.tx, ty: engine.ty, scale: engine.scale },
+        positions,
+        settled: engine.settledOnce,
+        autoFit: engine.autoFit,
+      };
       engineRef.current = null;
       canvas.replaceChildren();
     };

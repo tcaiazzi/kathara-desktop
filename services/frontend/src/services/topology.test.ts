@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { machine } from "../test/fixtures";
 import { HOST_BRIDGE } from "./constants";
-import { computeTopology, type DeviceNode, type DomainNode, fitTransform, parseIfaceIps, samePositions } from "./topology";
+import {
+  computeTopology,
+  type DeviceNode,
+  type DomainNode,
+  fitTransform,
+  matchesSavedLayout,
+  parseIfaceIps,
+  planSeeds,
+} from "./topology";
 import type { LabDetail, LinkDetail, MachineDetail } from "./types";
 
 describe("parseIfaceIps", () => {
@@ -34,19 +42,57 @@ describe("parseIfaceIps", () => {
   });
 });
 
-describe("samePositions", () => {
+describe("matchesSavedLayout", () => {
   it("compares coordinates as integers, so sub-pixel drift is not a change", () => {
-    expect(samePositions({ pc1: { x: 10.2, y: 20.4 } }, { pc1: { x: 9.6, y: 19.5 } })).toBe(true);
-    expect(samePositions({ pc1: { x: 10, y: 20 } }, { pc1: { x: 11, y: 20 } })).toBe(false);
+    expect(matchesSavedLayout({ pc1: { x: 10.2, y: 20.4 } }, { pc1: { x: 9.6, y: 19.5 } })).toBe(true);
+    expect(matchesSavedLayout({ pc1: { x: 10, y: 20 } }, { pc1: { x: 11, y: 20 } })).toBe(false);
   });
 
-  it("differs when the two maps place different nodes", () => {
-    expect(samePositions({ pc1: { x: 0, y: 0 } }, { pc2: { x: 0, y: 0 } })).toBe(false);
-    expect(samePositions({ pc1: { x: 0, y: 0 } }, { pc1: { x: 0, y: 0 }, pc2: { x: 5, y: 5 } })).toBe(false);
+  it("ignores saved nodes that are no longer on screen", () => {
+    expect(matchesSavedLayout({ pc1: { x: 0, y: 0 } }, { pc1: { x: 0, y: 0 }, "cd:D": { x: 5, y: 5 } })).toBe(true);
+  });
+
+  it("differs when a node on screen is not in the saved layout", () => {
+    expect(matchesSavedLayout({ pc1: { x: 0, y: 0 } }, { pc2: { x: 0, y: 0 } })).toBe(false);
+    expect(matchesSavedLayout({ pc1: { x: 0, y: 0 }, pc2: { x: 5, y: 5 } }, { pc1: { x: 0, y: 0 } })).toBe(false);
   });
 
   it("never matches a missing saved layout", () => {
-    expect(samePositions({}, null)).toBe(false);
+    expect(matchesSavedLayout({}, null)).toBe(false);
+  });
+});
+
+describe("planSeeds", () => {
+  const live = (x: number, y: number, fixed = false) => ({ x, y, fixed });
+
+  it("keeps a surviving node where it was, pinned once the old graph had come to rest", () => {
+    const carried = { positions: { a: live(10, 20) }, settled: true };
+
+    expect(planSeeds(["a"], carried, { a: { x: 99, y: 99 } })).toEqual({ a: { x: 10, y: 20, fixed: true } });
+  });
+
+  it("lets a graph that was still settling keep settling, keeping only the nodes already pinned", () => {
+    const carried = { positions: { a: live(10, 20), b: live(30, 40, true) }, settled: false };
+
+    expect(planSeeds(["a", "b"], carried, {})).toEqual({
+      a: { x: 10, y: 20, fixed: false },
+      b: { x: 30, y: 40, fixed: true },
+    });
+  });
+
+  it("places a node the old graph didn't have from the saved positions, pinned", () => {
+    const carried = { positions: { a: live(10, 20) }, settled: true };
+
+    expect(planSeeds(["a", "b"], carried, { b: { x: 5, y: 6 } }).b).toEqual({ x: 5, y: 6, fixed: true });
+  });
+
+  it("leaves a node with no known position to be laid out fresh", () => {
+    expect(planSeeds(["a"], null, {})).toEqual({ a: null });
+    expect(planSeeds(["a"], null, { a: { x: Number.NaN, y: 1 } })).toEqual({ a: null });
+  });
+
+  it("uses only the saved positions for a fresh layout", () => {
+    expect(planSeeds(["a"], null, { a: { x: 1, y: 2 } })).toEqual({ a: { x: 1, y: 2, fixed: true } });
   });
 });
 
@@ -193,8 +239,8 @@ describe("topology helpers, edge cases", () => {
   it("notices when only one of several nodes moved", () => {
     const saved = { pc1: { x: 0, y: 0 }, pc2: { x: 50, y: 50 } };
 
-    expect(samePositions({ pc1: { x: 0, y: 0 }, pc2: { x: 90, y: 50 } }, saved)).toBe(false);
-    expect(samePositions({ pc1: { x: 0, y: 0 }, pc3: { x: 50, y: 50 } }, saved)).toBe(false);
+    expect(matchesSavedLayout({ pc1: { x: 0, y: 0 }, pc2: { x: 90, y: 50 } }, saved)).toBe(false);
+    expect(matchesSavedLayout({ pc1: { x: 0, y: 0 }, pc3: { x: 50, y: 50 } }, saved)).toBe(false);
   });
 
   it("reads two-digit interfaces, repeated whitespace and the short `ip add` form", () => {

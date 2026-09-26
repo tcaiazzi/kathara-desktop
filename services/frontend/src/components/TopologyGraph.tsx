@@ -23,7 +23,7 @@ import {
   deviceStateLabel,
   formatIface,
   formatPort,
-  samePositions,
+  matchesSavedLayout,
   type NodePositions,
 } from "../services/topology";
 import type { LabDetail, StartupStatus } from "../services/types";
@@ -186,33 +186,34 @@ export function TopologyGraph({
     };
   }, [labId, toast]);
 
-  // Re-read on lab switch, model change (a device added), Re-layout, and layout arrival.
+  // What a *fresh* layout starts from: re-read on lab switch, Re-layout and layout arrival. A
+  // rebuild that only carries new data (a device added, a startup saved) doesn't depend on it
+  // being current — the engine carries its own live positions across those (useForceLayout).
   const initialPositions = useMemo(
     () => ({ ...(savedLayout ?? {}), ...readDraft() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [labId, detail, relayoutNonce, layoutNonce, savedLayout, readDraft],
   );
 
-  const posTimer = useRef<number | null>(null);
+  // Called only when the graph comes to rest and when a drag ends, so the draft is written straight
+  // away: a delayed write would leave a window in which a rebuild reads an outdated draft, and
+  // could land after Re-layout or Save had already cleared it.
   const savePositions = useCallback(
     (map: NodePositions) => {
       livePositions.current = map;
       // "Unsaved" only means something once the lab *has* a fixed layout to diverge from.
       const hasFixed = !!savedLayout && Object.keys(savedLayout).length > 0;
-      const matchesFixed = hasFixed && samePositions(map, savedLayout);
+      const matchesFixed = hasFixed && matchesSavedLayout(map, savedLayout);
       setDirty(hasFixed && !matchesFixed);
       if (matchesFixed) {
         clearDraft(); // the graph is exactly the fixed layout — nothing local left to remember
         return;
       }
-      if (posTimer.current) window.clearTimeout(posTimer.current);
-      posTimer.current = window.setTimeout(() => {
-        try {
-          localStorage.setItem(draftKey, JSON.stringify(map));
-        } catch {
-          /* ignore quota/serialization errors */
-        }
-      }, 400);
+      try {
+        localStorage.setItem(draftKey, JSON.stringify(map));
+      } catch {
+        /* ignore quota/serialization errors */
+      }
     },
     [clearDraft, draftKey, savedLayout],
   );
@@ -273,7 +274,7 @@ export function TopologyGraph({
         else openAddDevice(nd.name);
       },
     },
-    { initialPositions, onPositionsChange: savePositions, selectedId },
+    { initialPositions, onPositionsChange: savePositions, selectedId, scopeKey: labId },
   );
 
   useEffect(() => {

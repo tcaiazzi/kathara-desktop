@@ -64,6 +64,10 @@
   display: block;
   cursor: grab;
   touch-action: none;
+  /* A drag, a pan or a double-click that starts on a node's label must move or open the node, not
+     select its text. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .kt-topo-svg-mount > svg.dragging {
   cursor: grabbing;

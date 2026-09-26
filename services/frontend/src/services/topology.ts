@@ -171,15 +171,61 @@ export function computeTopology(
 /** Node id → canvas position: what the layout engine reports and what `lab.layout` stores. */
 export type NodePositions = Record<string, { x: number; y: number }>;
 
-// Do two position maps describe the same layout? Coordinates are compared as integers (that is what
-// the engine reports and what is stored), so a sub-pixel drift never marks the layout as unsaved.
-export function samePositions(a: NodePositions, b: NodePositions | null): boolean {
-  if (!b) return false;
-  const keys = Object.keys(a);
-  if (keys.length !== Object.keys(b).length) return false;
-  return keys.every(
-    (id) => b[id] && Math.round(a[id].x) === Math.round(b[id].x) && Math.round(a[id].y) === Math.round(b[id].y),
-  );
+// Does the graph as laid out now (`live`, every node on screen) still match the lab's fixed layout?
+// Only the nodes on screen are compared: `saved` may also hold nodes that no longer exist (a
+// device removed since, a draft domain that was never kept), and those must not make the layout
+// read as unsaved forever — saving writes only `live`, which drops them. A node on screen that
+// `saved` doesn't place is a change. Coordinates are compared as integers (that is what the engine
+// reports and what is stored), so a sub-pixel drift never marks the layout as unsaved.
+export function matchesSavedLayout(live: NodePositions, saved: NodePositions | null): boolean {
+  if (!saved) return false;
+  return Object.keys(live).every((id) => {
+    const s = saved[id];
+    return !!s && Math.round(live[id].x) === Math.round(s.x) && Math.round(live[id].y) === Math.round(s.y);
+  });
+}
+
+/** A node's position as the layout engine holds it: `fixed` nodes are never moved by the physics. */
+export interface SeedPosition {
+  x: number;
+  y: number;
+  fixed: boolean;
+}
+
+/** What a rebuilt engine inherits from the one it replaces (see hooks/useForceLayout.ts). */
+export interface CarriedLayout {
+  positions: Record<string, SeedPosition>;
+  /** Whether the replaced engine had come to rest at least once. */
+  settled: boolean;
+}
+
+/**
+ * Where each node of a rebuilt graph starts; null means "no position known, lay it out fresh".
+ *
+ * A node still on screen from the engine being replaced keeps its live position, so a rebuild that
+ * only carries new data (a startup file saved, a device added) moves nothing. It is pinned if it
+ * already was, or if that graph had come to rest — then only newcomers settle around it; a graph
+ * still settling keeps settling instead of freezing half-way. Otherwise `initial` (the lab's fixed
+ * layout plus the local draft) places the node, pinned. `carried` is null for a fresh layout.
+ */
+export function planSeeds(
+  ids: readonly string[],
+  carried: CarriedLayout | null,
+  initial: NodePositions,
+): Record<string, SeedPosition | null> {
+  const plan: Record<string, SeedPosition | null> = {};
+  for (const id of ids) {
+    const live = carried?.positions[id];
+    const stored = initial[id];
+    if (live && Number.isFinite(live.x) && Number.isFinite(live.y)) {
+      plan[id] = { x: live.x, y: live.y, fixed: live.fixed || !!carried?.settled };
+    } else if (stored && Number.isFinite(stored.x) && Number.isFinite(stored.y)) {
+      plan[id] = { x: stored.x, y: stored.y, fixed: true };
+    } else {
+      plan[id] = null;
+    }
+  }
+  return plan;
 }
 
 /** The viewport transform that fits every node into a `width`×`height` canvas: the nodes' bounding
