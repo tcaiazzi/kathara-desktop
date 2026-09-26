@@ -527,10 +527,10 @@ interface LabRowLabelProps {
   lab: LabSummary;
 }
 
-// A rail row's name, plus — for a folder opened from outside the labs folder — where it is, which
-// is what tells two such labs with the same name apart (services/labPlace.ts).
+// A rail row's name, plus the folder the lab sits in, which is what tells two labs with the same
+// name apart (services/labPlace.ts).
 function LabRowLabel({ lab }: LabRowLabelProps) {
-  const folder = !lab.managed && lab.path ? labFolderHint(lab.path) : null;
+  const folder = lab.path ? labFolderHint(lab.path) : null;
   const problem = lab.problem ? PROBLEM_LABEL[lab.problem] ?? lab.problem : null;
   const hint = [folder, problem].filter(Boolean).join(" · ");
   return (
@@ -1421,7 +1421,7 @@ export function WorkspacePage() {
                           (l.id === labId
                             ? `${l.name || "(unnamed)"} — click to hide other labs · right-click for actions`
                             : `${l.name || "(unnamed)"} — click to open · right-click for actions`) +
-                          (!l.managed && l.path ? `\n${l.path}` : "")
+                          (l.path ? `\n${l.path}` : "")
                         }
                       >
                         <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
@@ -1439,7 +1439,7 @@ export function WorkspacePage() {
                     <div
                       className="kt-ws-row kt-ws-row--static"
                       onContextMenu={(e) => openLabMenu(e, currentLab)}
-                      title={!currentLab.managed && currentLab.path ? currentLab.path : undefined}
+                      title={currentLab.path ?? undefined}
                     >
                       <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
                       <LabRowLabel lab={currentLab} />

@@ -96,6 +96,9 @@
   color: var(--bs-body-color);
   font-weight: 600;
 }
+.kt-ws-row.active:hover {
+  background: color-mix(in srgb, var(--bs-primary) 24%, transparent);
+}
 .kt-ws-row--static {
   cursor: default;
 }
@@ -114,7 +117,7 @@
 .kt-ws-row--problem {
   opacity: 0.6;
 }
-/* Where a lab opened from outside the labs folder lives (LabRowLabel), under its name. */
+/* Where a lab lives (LabRowLabel), under its name. */
 .kt-ws-row-path {
   display: block;
   overflow: hidden;

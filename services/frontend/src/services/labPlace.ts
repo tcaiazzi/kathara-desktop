@@ -14,7 +14,7 @@ export function labNamed(labs: LabSummary[], name: string): LabSummary | undefin
 }
 
 /**
- * The folder a lab opened from outside the labs root sits in, short enough for a rail row:
+ * The folder a lab sits in, short enough for a rail row:
  * the last two segments of its parent directory, behind an ellipsis when there are more
  * ("/home/u/work/net/ospf" → "…/work/net"). Two lab folders with the same name are told apart by
  * exactly this, so it is the parent that is shown — the name is already on the row.
