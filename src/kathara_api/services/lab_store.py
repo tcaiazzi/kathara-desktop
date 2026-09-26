@@ -99,6 +99,14 @@ def is_within(path: Path, base: Path) -> bool:
     return resolved == resolved_base or resolved_base in resolved.parents
 
 
+def _is_link(path: Path) -> bool:
+    """Whether ``path`` is itself a link to a directory elsewhere: a symlink, or on Windows a
+    junction (``mklink /J``), which ``shutil.rmtree`` refuses just the same. ``os.path.isjunction``
+    exists from Python 3.12 only, and there is no junction to find where it doesn't."""
+    isjunction = getattr(os.path, "isjunction", None)
+    return os.path.islink(path) or (isjunction is not None and isjunction(path))
+
+
 def sanitize_lab_name(name: str) -> str:
     """Validate a lab name as a safe single path segment, or raise ``ApiError``."""
     candidate = (name or "").strip()
@@ -267,7 +275,8 @@ class LabStore:
         """Whether ``directory`` is one of the root's own lab directories (see ``lab_dirs``).
 
         By where it is listed, not where it resolves to: a lab under the root that is itself a
-        symlink to elsewhere is still one of the root's — deleted, never closed.
+        symlink to elsewhere is still one of the root's — deleted (the link, never what it points
+        to, see ``delete_lab``), never closed.
         """
         return Path(os.path.abspath(directory)).parent.resolve() == self.root.resolve()
 
@@ -507,7 +516,14 @@ class LabStore:
 
     @staticmethod
     def delete_lab(directory: Path) -> None:
-        if directory.exists():
+        """Remove a lab directory and everything in it — or, when the directory is a link to a
+        folder elsewhere (see ``is_under_root``), only the link: the folder it points to is the
+        user's own, and ``rmtree`` would refuse the link anyway. Checked before ``exists``, which
+        follows the link, so a link to a folder that is gone is removed too.
+        """
+        if _is_link(directory):
+            os.unlink(directory)
+        elif directory.exists():
             shutil.rmtree(directory)
 
     @staticmethod

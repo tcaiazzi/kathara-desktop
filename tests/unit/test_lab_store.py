@@ -107,6 +107,30 @@ def test_delete_lab_removes_directory(tmp_path):
     assert store.lab_names() == []
 
 
+def test_deleting_a_lab_that_is_a_symlink_removes_the_link_and_leaves_its_target(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    target = tmp_path / "elsewhere" / "demo"
+    target.mkdir(parents=True)
+    (target / "lab.conf").write_text("pc1[0]=\"A\"\n")
+    store.ensure_root()
+    (store.root / "demo").symlink_to(target, target_is_directory=True)
+
+    store.delete_lab(store.root / "demo")
+
+    assert not os.path.lexists(store.root / "demo")
+    assert (target / "lab.conf").read_text() == "pc1[0]=\"A\"\n"
+
+
+def test_deleting_a_symlink_whose_target_is_gone_removes_the_link(tmp_path):
+    store = LabStore(tmp_path / "labs")
+    store.ensure_root()
+    (store.root / "demo").symlink_to(tmp_path / "nowhere", target_is_directory=True)
+
+    store.delete_lab(store.root / "demo")
+
+    assert not os.path.lexists(store.root / "demo")
+
+
 def test_extract_zip_flat_layout(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.extract_zip("demo", zip_bytes({"lab.conf": b'pc1[0]="A"\n', "pc1.startup": b"echo hi\n"}))

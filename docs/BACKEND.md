@@ -208,7 +208,7 @@ that `None` up instead of falling back to a sensible default.
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
 | POST | `/api/labs/{lab}/rename` | Rename the lab directory; the lab gets a new id (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` (with the new `id`) |
 | POST | `/api/labs/{lab}/close` | Close a lab opened from outside the labs root: undeploy it and forget it, folder untouched (409 for a lab under the root) | — | `Message` |
-| DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk; 409 for a folder opened from outside the labs root) | — | `Message` |
+| DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk — a lab that is a symlink in the labs root loses the link, never what it points to; 409 for a folder opened from outside the labs root) | — | `Message` |
 
 ## Machines — `/api/labs/{lab}/machines`
 

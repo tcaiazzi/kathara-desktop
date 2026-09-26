@@ -570,6 +570,22 @@ def test_a_lab_under_the_root_that_is_a_symlink_is_still_the_roots(tmp_path):
         service.close_lab(lab_id)
 
 
+def test_deleting_a_lab_under_the_root_that_is_a_symlink_removes_only_the_link(tmp_path):
+    service = _service(tmp_path)
+    real = _folder(tmp_path, "elsewhere-lab")
+    service.store.root.mkdir(parents=True)
+    (service.store.root / "linked").symlink_to(real, target_is_directory=True)
+    service._reload_from_disk()
+    lab_id = lab_id_for(service.store.root / "linked")
+
+    service.delete_lab(lab_id)
+
+    assert not os.path.lexists(service.store.root / "linked")
+    assert (real / "lab.conf").read_text() == LAB_CONF
+    assert service.registry.get(lab_id) is None
+    assert _service(tmp_path).list_labs() == []  # and it does not come back on a restart
+
+
 def test_a_state_dir_that_cannot_be_written_does_not_stop_a_folder_opening(tmp_path, monkeypatch):
     service = _service(tmp_path)
     folder = _folder(tmp_path)

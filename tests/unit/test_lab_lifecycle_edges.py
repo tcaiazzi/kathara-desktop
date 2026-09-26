@@ -245,6 +245,25 @@ def test_deleting_a_lab_undeploys_that_lab_only(service, facade):
     assert facade.undeploy_calls == [{"lab_hash": lab_id(service, "l")}]
 
 
+def test_a_delete_that_fails_part_way_keeps_the_lab_listed_and_says_why(service, facade, monkeypatch):
+    """Files an elevated session left owned by root stop the removal half-way; what is left is
+    still a lab, so it stays listed — the same model — and the delete can be retried."""
+    demo = lab_id(service, "l")
+    model = service.registry.get(demo)
+
+    def refuse(directory):
+        raise PermissionError(13, "Permission denied", str(directory / "pc1" / "root-owned"))
+
+    monkeypatch.setattr(service.store, "delete_lab", refuse)
+
+    with pytest.raises(ApiError, match=r"could not be deleted completely: Permission denied .*root-owned"):
+        service.delete_lab(demo)
+
+    assert service.registry.get(demo) is model
+    assert [lab.hash for lab in service.list_labs()] == [demo]
+    assert facade.undeploy_calls == [{"lab_hash": demo}]
+
+
 def test_stats_stream_asks_for_that_lab_and_waits_only_the_rest_of_the_interval(service, facade, monkeypatch):
     clock = iter([100.0, 100.0, 100.25, 100.25])
     sleeps = []

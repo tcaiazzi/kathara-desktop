@@ -2219,10 +2219,26 @@ class KatharaService:
         # Claimed like a create does: unregistering and removing the directory are what *release*
         # it, and without the lock they can land in the middle of a concurrent import into the
         # same directory — deleting what that import had just written.
+        #
+        # Unregistered before the directory goes, never after: the disk watcher would otherwise
+        # find a registered lab with no folder and report it missing (handle_disk_change). A
+        # removal that fails part-way — typically files an elevated session left owned by root —
+        # puts the same model back, so what is left stays listed and the delete can be retried;
+        # reloading it from disk instead could fail on a lab.conf already removed.
         with self._claiming(lab_id):
-            self.registry.remove(lab_id)
-            if lab_dir is not None:
+            label = self._lab_label(lab_id)
+            lab = self.registry.remove(lab_id)
+            if lab_dir is None:
+                return
+            try:
                 self.store.delete_lab(lab_dir)
+            except OSError as exc:
+                if lab is not None and lab_dir.is_dir():
+                    self.registry.add(lab, lab_dir)
+                raise ApiError(
+                    f"`{label}` could not be deleted completely: {exc.strerror or exc} ({exc.filename}). "
+                    "What is left is still listed; try again once that is fixed."
+                ) from exc
 
     # -- machines -------------------------------------------------------------
 
