@@ -12,7 +12,11 @@ import shutil
 import threading
 
 import pytest
+from fastapi.testclient import TestClient
 
+from kathara_api import main as main_module
+from kathara_api.config import get_settings
+from kathara_api.dependencies import get_service
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.lab_events import LabEvents
@@ -408,6 +412,56 @@ def test_a_lab_gone_since_the_poll_is_nothing_to_do(service):
 
 def test_the_watcher_polls_every_loaded_lab(service):
     assert service.watched_labs() == {lab_id(service, "demo"): service.store.lab_dir("demo")}
+
+
+# -- started with the app ----------------------------------------------------------------------
+
+
+class _WatcherStub:
+    """Stands in for LabWatcher in the app's lifespan: records how it was built and run."""
+
+    built: list["_WatcherStub"] = []
+
+    def __init__(self, labs, on_change, interval):
+        self.labs, self.on_change, self.interval = labs, on_change, interval
+        self.running = False
+        _WatcherStub.built.append(self)
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+
+@pytest.fixture
+def watcher_stub(monkeypatch):
+    _WatcherStub.built = []
+    monkeypatch.setattr(main_module, "LabWatcher", _WatcherStub)
+    return _WatcherStub
+
+
+def test_the_app_watches_the_service_s_labs_for_as_long_as_it_is_up(watcher_stub, monkeypatch):
+    monkeypatch.setattr(get_settings(), "lab_watch_interval", 2.5)
+    service = get_service()
+
+    with TestClient(main_module.create_app()):
+        [watcher] = watcher_stub.built
+        assert watcher.running
+        assert watcher.interval == 2.5
+        assert watcher.labs == service.watched_labs
+        assert watcher.on_change == service.handle_disk_change
+
+    assert not watcher.running
+
+
+def test_an_interval_of_zero_starts_no_watcher(watcher_stub, monkeypatch):
+    monkeypatch.setattr(get_settings(), "lab_watch_interval", 0)
+
+    with TestClient(main_module.create_app()):
+        pass
+
+    assert watcher_stub.built == []
 
 
 # -- the event stream --------------------------------------------------------------------------
