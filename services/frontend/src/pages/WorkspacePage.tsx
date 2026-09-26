@@ -47,8 +47,8 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Button, Dropdown, DropdownButton, Form } from "react-bootstrap";
+import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge, Button, Dropdown, DropdownButton, Form, OverlayTrigger, Tooltip } from "react-bootstrap";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { DevicesTable } from "../components/DevicesTable";
 import { LabExplorer } from "../components/LabExplorer";
@@ -538,6 +538,46 @@ function LabRowLabel({ lab }: LabRowLabelProps) {
       {lab.name || "(unnamed)"}
       {hint && <span className="kt-ws-row-path">{hint}</span>}
     </span>
+  );
+}
+
+interface LabRowTipProps {
+  lab: LabSummary;
+  // What a left click on the row does, as the card's last line says it; empty for a row that
+  // isn't clickable.
+  action: string;
+  // Kept closed while a context menu is open, which it would otherwise sit next to.
+  suppressed: boolean;
+  children: ReactElement;
+}
+
+// A rail row's hover card: the lab's name, its full folder and its state, which the row only has
+// room to abbreviate (LabRowLabel).
+function LabRowTip({ lab, action, suppressed, children }: LabRowTipProps) {
+  const [show, setShow] = useState(false);
+  const state = lab.problem
+    ? `Not loaded: ${PROBLEM_LABEL[lab.problem] ?? lab.problem}`
+    : `${lab.deployed ? "Running" : "Stopped"} · ${lab.n_machines} ${lab.n_machines === 1 ? "device" : "devices"}`;
+  return (
+    <OverlayTrigger
+      placement="right"
+      delay={{ show: 400, hide: 0 }}
+      show={show && !suppressed}
+      onToggle={setShow}
+      overlay={
+        <Tooltip id={`lab-tip-${lab.id}`} className="kt-lab-tip">
+          <div className="kt-lab-tip-name">{lab.name || "(unnamed)"}</div>
+          {lab.path && <div className="kt-lab-tip-path">{lab.path}</div>}
+          <div className="kt-lab-tip-state">
+            <span className={`kt-ws-dot ${lab.problem ? "problem" : lab.deployed ? "running" : "stopped"}`} />
+            {state}
+          </div>
+          <div className="kt-lab-tip-hint">{action ? `${action} · ` : ""}Right-click for actions</div>
+        </Tooltip>
+      }
+    >
+      {children}
+    </OverlayTrigger>
   );
 }
 
@@ -1401,33 +1441,33 @@ export function WorkspacePage() {
                     <div className="kt-ws-muted">{labs.length === 0 ? "No labs yet." : "No matches."}</div>
                   ) : (
                     filteredLabs?.map((l) => (
-                      <button
+                      <LabRowTip
                         key={l.id}
-                        className={`kt-ws-row ${l.id === labId ? "active" : ""} ${l.problem ? "kt-ws-row--problem" : ""}`}
-                        onClick={() => {
-                          if (l.problem) {
-                            toast.show(
-                              `"${l.name || "(unnamed)"}" ${PROBLEM_EXPLANATION[l.problem] ?? "isn't loaded."}`,
-                              "info",
-                            );
-                          } else if (l.id === labId) {
-                            setLabPickerOpen(false);
-                          } else {
-                            navigate(`/workspace/${encodeURIComponent(l.id)}`);
-                          }
-                        }}
-                        onContextMenu={(e) => openLabMenu(e, l)}
-                        title={
-                          (l.id === labId
-                            ? `${l.name || "(unnamed)"} — click to hide other labs · right-click for actions`
-                            : `${l.name || "(unnamed)"} — click to open · right-click for actions`) +
-                          (l.path ? `\n${l.path}` : "")
-                        }
+                        lab={l}
+                        action={l.problem ? "Click to see why" : l.id === labId ? "Click to hide other labs" : "Click to open"}
+                        suppressed={ctxMenu != null}
                       >
-                        <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
-                        <LabRowLabel lab={l} />
-                        <span className="kt-ws-row-meta">{l.n_machines}</span>
-                      </button>
+                        <button
+                          className={`kt-ws-row ${l.id === labId ? "active" : ""} ${l.problem ? "kt-ws-row--problem" : ""}`}
+                          onClick={() => {
+                            if (l.problem) {
+                              toast.show(
+                                `"${l.name || "(unnamed)"}" ${PROBLEM_EXPLANATION[l.problem] ?? "isn't loaded."}`,
+                                "info",
+                              );
+                            } else if (l.id === labId) {
+                              setLabPickerOpen(false);
+                            } else {
+                              navigate(`/workspace/${encodeURIComponent(l.id)}`);
+                            }
+                          }}
+                          onContextMenu={(e) => openLabMenu(e, l)}
+                        >
+                          <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
+                          <LabRowLabel lab={l} />
+                          <span className="kt-ws-row-meta">{l.n_machines}</span>
+                        </button>
+                      </LabRowTip>
                     ))
                   )}
                 </div>
@@ -1436,15 +1476,16 @@ export function WorkspacePage() {
               currentLab && (
                 <>
                   <div className="kt-ws-list">
-                    <div
-                      className="kt-ws-row kt-ws-row--static"
-                      onContextMenu={(e) => openLabMenu(e, currentLab)}
-                      title={currentLab.path ?? undefined}
-                    >
-                      <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
-                      <LabRowLabel lab={currentLab} />
-                      <span className="kt-ws-row-meta">{currentLab.n_machines}</span>
-                    </div>
+                    <LabRowTip lab={currentLab} action="" suppressed={ctxMenu != null}>
+                      <div
+                        className="kt-ws-row kt-ws-row--static"
+                        onContextMenu={(e) => openLabMenu(e, currentLab)}
+                      >
+                        <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
+                        <LabRowLabel lab={currentLab} />
+                        <span className="kt-ws-row-meta">{currentLab.n_machines}</span>
+                      </div>
+                    </LabRowTip>
                   </div>
                   <Button
                     size="sm"

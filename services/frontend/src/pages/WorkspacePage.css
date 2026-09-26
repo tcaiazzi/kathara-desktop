@@ -143,6 +143,56 @@
 .kt-ws-dot.stopped {
   background: var(--kt-node-stopped);
 }
+.kt-ws-dot.problem {
+  background: var(--bs-warning);
+}
+/* A lab row's hover card (LabRowTip): a panel-styled card rather than Bootstrap's dark bubble, so
+   it reads as part of the rail. No arrow — Bootstrap's is a borderless triangle, which looks
+   detached against a bordered card. */
+.kt-lab-tip {
+  --bs-tooltip-bg: var(--kt-panel-bg);
+  --bs-tooltip-color: var(--bs-body-color);
+  --bs-tooltip-opacity: 1;
+  --bs-tooltip-max-width: 360px;
+  --bs-tooltip-padding-x: 12px;
+  --bs-tooltip-padding-y: 10px;
+  --bs-tooltip-border-radius: 8px;
+}
+.kt-lab-tip .tooltip-arrow {
+  display: none;
+}
+.kt-lab-tip .tooltip-inner {
+  text-align: left;
+  border: 1px solid var(--bs-border-color);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.kt-lab-tip-name {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+.kt-lab-tip-path {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--bs-secondary-color);
+  overflow-wrap: anywhere;
+}
+.kt-lab-tip-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.kt-lab-tip-hint {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--bs-border-color);
+  font-size: 11px;
+  color: var(--bs-secondary-color);
+}
 .kt-ws-mini-btn {
   flex: 0 0 auto;
   display: inline-flex;
