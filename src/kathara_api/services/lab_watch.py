@@ -19,7 +19,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from ..lab_conf_options import LAB_CONF_FILENAME
 
@@ -36,13 +36,22 @@ def is_watched(name: str) -> bool:
     return name == LAB_CONF_FILENAME or (name.endswith(STARTUP_SUFFIX) and len(name) > len(STARTUP_SUFFIX))
 
 
-def snapshot(directory: Path) -> dict[str, _Signature]:
-    """The signature of every watched file directly in ``directory``; empty if it can't be listed."""
+def snapshot(directory: Path) -> Optional[dict[str, _Signature]]:
+    """The signature of every watched file directly in ``directory``: empty when the directory is
+    not there, None when it is but can't be listed right now.
+
+    Kept apart because they mean opposite things. A folder that is gone has lost every file — that
+    is a change to report. A folder that fails to list (a network drive hiccup, a permission
+    changed for a moment) says nothing about its files, and reporting them all as gone would
+    announce a broken lab that is fine.
+    """
     signatures: dict[str, _Signature] = {}
     try:
         entries = list(os.scandir(directory))
-    except OSError:
+    except (FileNotFoundError, NotADirectoryError):
         return signatures
+    except OSError:
+        return None
     for entry in entries:
         if not is_watched(entry.name):
             continue
@@ -59,9 +68,10 @@ def snapshot(directory: Path) -> dict[str, _Signature]:
 class LabWatcher:
     """Polls every lab ``labs()`` names, and calls ``on_change(lab_id, changed_names)``.
 
-    ``changed_names`` covers files that appeared, changed or disappeared since the previous poll.
-    A lab seen for the first time only sets the baseline — it was just loaded, so there is nothing
-    to catch up on. ``on_change`` returns the names it could not deal with yet (the lab is
+    ``changed_names`` covers files that appeared, changed or disappeared since the previous poll —
+    every one of them, when the lab's folder itself is gone. A lab seen for the first time only
+    sets the baseline — it was just loaded, so there is nothing to catch up on — and a lab whose
+    folder can't be listed is skipped, its baseline left as it was (see ``snapshot``). ``on_change`` returns the names it could not deal with yet (the lab is
     mid-deploy, or deployed and its lab.conf has to wait): their baseline stays where it was, so
     the same change is offered again next poll instead of being lost, while every other name
     moves on and is not reported twice.
@@ -86,6 +96,8 @@ class LabWatcher:
             del self._seen[lab_id]
         for lab_id, directory in labs.items():
             current = snapshot(directory)
+            if current is None:
+                continue
             previous = self._seen.get(lab_id)
             if previous is None:
                 self._seen[lab_id] = current

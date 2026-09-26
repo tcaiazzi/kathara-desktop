@@ -6,7 +6,7 @@
 import type { ToastVariant } from "./notificationHistory";
 import type { LabEvent, LabEventKind } from "./types";
 
-const KINDS: ReadonlySet<LabEventKind> = new Set(["conf-reloaded", "conf-pending", "conf-invalid", "startup"]);
+const KINDS: ReadonlySet<LabEventKind> = new Set(["conf-reloaded", "conf-pending", "conf-invalid", "startup", "missing"]);
 
 /** An event from the stream, or null for anything that isn't one. The data is JSON from the
  *  network, typed `unknown` until every field has been checked. */
@@ -28,7 +28,8 @@ export function parseLabEvent(data: unknown): LabEvent | null {
 /** What to tell the user about an event for the open lab, or null when a refresh says it all.
  *  A startup script changing is routine — it just shows up — whereas a lab.conf the app did or
  *  could not apply changes what the topology means, so that is always said out loud; only one
- *  that can't be loaded at all is an error. */
+ *  that can't be loaded at all is an error. A folder that is gone is said out loud too, but not as
+ *  an error: nothing about the lab is broken, and it comes back with the folder. */
 export function labEventNotice(event: LabEvent): { message: string; variant: ToastVariant } | null {
   switch (event.kind) {
     case "conf-reloaded":
@@ -45,6 +46,11 @@ export function labEventNotice(event: LabEvent): { message: string; variant: Toa
       };
     case "startup":
       return null;
+    case "missing":
+      return {
+        message: `The lab's folder is no longer there. ${event.detail ?? "It is listed as missing until it comes back."}`,
+        variant: "info",
+      };
   }
 }
 

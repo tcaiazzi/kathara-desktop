@@ -8,6 +8,7 @@ it (``KatharaService.handle_disk_change``), and the event stream that tells the 
 import asyncio
 import json
 import os
+import shutil
 import threading
 
 import pytest
@@ -150,6 +151,38 @@ def test_a_lab_that_is_no_longer_listed_is_forgotten_and_starts_over(lab_dir):
     watcher.poll_once()
 
     assert recorder.calls == []  # back to a fresh baseline, not a stale comparison
+
+
+def test_a_folder_that_is_gone_reports_every_file_as_changed(lab_dir):
+    recorder = _Recorder()
+    watcher = LabWatcher(lambda: {"L": lab_dir}, recorder)
+    watcher.poll_once()
+
+    shutil.rmtree(lab_dir)
+    watcher.poll_once()
+
+    assert recorder.calls == [("L", {"lab.conf", "pc1.startup"})]
+
+
+def test_a_folder_that_cannot_be_listed_for_a_moment_is_skipped_not_taken_for_empty(lab_dir, monkeypatch):
+    """A listing that fails says nothing about the files: nothing is reported, and once the folder
+    lists again the baseline is the one from before, so nothing is reported then either."""
+    recorder = _Recorder()
+    watcher = LabWatcher(lambda: {"L": lab_dir}, recorder)
+    watcher.poll_once()
+    real_scandir = os.scandir
+
+    def unlistable(path):
+        if os.fspath(path) == os.fspath(lab_dir):
+            raise PermissionError(13, "Permission denied", os.fspath(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", unlistable)
+    watcher.poll_once()
+    monkeypatch.setattr(os, "scandir", real_scandir)
+    watcher.poll_once()
+
+    assert recorder.calls == []
 
 
 def test_the_thread_polls_until_stopped(lab_dir):
@@ -337,6 +370,36 @@ def test_a_lab_waits_rather_than_stall_the_watcher_behind_another_labs_deploy(se
     finally:
         release.set()
         holder.join()
+
+
+def test_a_stopped_lab_whose_folder_is_gone_is_dropped_and_reported_missing(service):
+    events = _collecting(service)
+    demo = lab_id(service, "demo")
+    shutil.rmtree(service.store.lab_dir("demo"))
+
+    assert service.handle_disk_change(demo, {"lab.conf", "pc1.startup"}) == set()
+
+    assert service.registry.get(demo) is None
+    assert service.list_labs() == []
+    assert events == [{"lab_id": demo, "kind": "missing", "files": ["lab.conf", "pc1.startup"], "detail": None}]
+
+
+def test_a_deployed_lab_whose_folder_is_gone_stays_listed_until_it_stops(service):
+    """Dropping it while its containers run would leave them with nothing listing them, so it is
+    reported once, kept, and dropped when it stops — from the app or with `kathara lclean`."""
+    events = _collecting(service)
+    demo = lab_id(service, "demo")
+    service.registry.get(demo).machines["pc1"].api_object = object()
+    shutil.rmtree(service.store.lab_dir("demo"))
+
+    assert service.handle_disk_change(demo, {"lab.conf"}) == {"lab.conf"}
+    assert service.handle_disk_change(demo, {"lab.conf"}) == {"lab.conf"}  # still up: told once
+    assert service.registry.get(demo) is not None
+    service.registry.get(demo).machines["pc1"].api_object = None  # its containers went away
+    assert service.handle_disk_change(demo, {"lab.conf"}) == set()
+
+    assert service.registry.get(demo) is None
+    assert [(e["kind"], e["detail"] is not None) for e in events] == [("missing", True), ("missing", False)]
 
 
 def test_a_lab_gone_since_the_poll_is_nothing_to_do(service):

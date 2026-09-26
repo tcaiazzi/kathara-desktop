@@ -929,19 +929,22 @@ export function WorkspacePage() {
   const { deviceContextItems, findDeviceNode, domainContextItems, findDomainNode, actionConfig, setActionConfig } =
     deviceActions;
 
-  // A lab's lab.conf or startup scripts changed on disk outside the app (hooks/useLabEvents; the
-  // backend has already reloaded the lab, or says why it didn't). The list refreshes for any lab
-  // whose topology was reloaded — its device count may have changed; the open lab also reloads
-  // its detail (LabExplorer then follows lab.conf, with its own conflict check) or hands the
-  // changed startup scripts to the device preview and the file editor.
+  // A lab's lab.conf or startup scripts changed on disk outside the app, or its folder went away
+  // (hooks/useLabEvents; the backend has already reloaded the lab, or says why it didn't). The
+  // list refreshes for any lab whose topology was reloaded — its device count may have changed —
+  // or whose folder is gone, which moves it to "missing" or off the list; the open lab also
+  // reloads its detail (LabExplorer then follows lab.conf, with its own conflict check; a lab no
+  // longer loaded lands on the not-found screen) or hands the changed startup scripts to the
+  // device preview and the file editor.
   const [startupChange, setStartupChange] = useState<StartupChange | null>(null);
   useEffect(() => setStartupChange(null), [labId]);
   useLabEvents((event) => {
-    if (event.kind === "conf-reloaded") void reloadLabs();
+    const listChanged = event.kind === "conf-reloaded" || event.kind === "missing";
+    if (listChanged) void reloadLabs();
     if (event.lab_id !== labId) return;
     const notice = labEventNotice(event);
     if (notice) toast.show(notice.message, notice.variant, "Changed on disk");
-    if (event.kind === "conf-reloaded") void load();
+    if (listChanged) void load();
     if (event.kind === "startup") {
       void deviceActions.refreshStartups();
       setStartupChange((prev) => ({ paths: changedStartupPaths(event), seq: (prev?.seq ?? 0) + 1 }));

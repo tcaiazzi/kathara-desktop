@@ -100,8 +100,10 @@ export interface LabSummary {
 // lab.conf or startup scripts changed on disk outside this app. `conf-reloaded` — the topology was
 // rebuilt from the new lab.conf; `conf-pending` — not applied because the lab is deployed;
 // `conf-invalid` — not applied because it doesn't load (`detail` says why); `startup` — the listed
-// `<device>.startup` / `shared.startup` files changed.
-export type LabEventKind = "conf-reloaded" | "conf-pending" | "conf-invalid" | "startup";
+// `<device>.startup` / `shared.startup` files changed; `missing` — the lab's folder is gone. A
+// stopped lab is then listed as missing (an opened folder) or not at all (a lab in the labs
+// folder); a deployed one stays as it is until it stops, which `detail` says.
+export type LabEventKind = "conf-reloaded" | "conf-pending" | "conf-invalid" | "startup" | "missing";
 
 export interface LabEvent {
   lab_id: string;

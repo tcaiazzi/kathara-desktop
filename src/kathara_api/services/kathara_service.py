@@ -236,9 +236,11 @@ class KatharaService:
             known = KnownLabs(state_dir / KNOWN_LABS_FILENAME if state_dir is not None else None)
         self.known = known
         # Changes to labs made outside this app, for GET /api/events — see handle_disk_change —
-        # and the labs whose outside lab.conf edit is waiting for them to be undeployed.
+        # the labs whose outside lab.conf edit is waiting for them to be undeployed, and the
+        # deployed labs whose folder is gone, waiting the same way to be dropped from the list.
         self.events = LabEvents()
         self._conf_pending: set[str] = set()
+        self._missing_pending: set[str] = set()
         # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
         # restart. Safe at import time: builds model objects only (no facade/Docker), and reads
         # nothing if the storage root does not exist yet.
@@ -1005,7 +1007,11 @@ class KatharaService:
           into a device that is already running (``registry.mark_dirty``); ``shared.startup`` runs
           on every device, so it marks all of them.
 
-        Every outcome but a silent one is published (``events``), a pending ``lab.conf`` once.
+        A lab whose folder is gone altogether — moved, deleted, on a drive since unmounted — is
+        neither: see ``_lab_dir_gone``.
+
+        Every outcome but a silent one is published (``events``), a pending ``lab.conf`` or a
+        missing folder once.
         Everything is handed back while the lab is mid deploy/undeploy, or when ``_mutate_lock``
         can't be had promptly — never blocking the watcher, which serves every lab.
         """
@@ -1021,6 +1027,9 @@ class KatharaService:
                 self._conf_pending.discard(lab_id)
                 self._load_opened_lab(lab_id)
                 return set()  # otherwise closed, deleted or renamed since the poll: nothing to update
+            if not lab_dir.is_dir():
+                return self._lab_dir_gone(lab_id, files)
+            self._missing_pending.discard(lab_id)
             pending: set[str] = set()
             if LAB_CONF_FILENAME in files and not self._lab_conf_changed_on_disk(lab_id, lab_dir):
                 pending.add(LAB_CONF_FILENAME)
@@ -1034,6 +1043,32 @@ class KatharaService:
             return pending
         finally:
             self._mutate_lock.release()
+
+    def _lab_dir_gone(self, lab_id: str, files: set[str]) -> set[str]:
+        """The folder of the registered lab ``lab_id`` is no longer there. Called holding
+        ``_mutate_lock``.
+
+        A stopped lab is dropped from the registry, which leaves it where a restart would: an
+        opened folder is listed as missing (``unloaded_opened_labs``) and loads by itself when it
+        comes back (``_load_opened_lab``); a lab under the root is simply gone. A deployed one
+        stays registered, or its containers would run on with nothing listing them and no way to
+        stop them from the app — so every name is handed back, and it is dropped once it stops,
+        from the app or the CLI. Refreshed first for that reason (see ``_lab_conf_changed_on_disk``).
+        """
+        lab = self.get_lab_or_reconstruct(lab_id)
+        if any(m.api_object is not None for m in lab.machines.values()):
+            if lab_id not in self._missing_pending:
+                self._missing_pending.add(lab_id)
+                self._publish_disk_event(
+                    lab_id, "missing", sorted(files),
+                    "Undeploy it to remove it from the list; its devices are still running.",
+                )
+            return set(files)
+        self._missing_pending.discard(lab_id)
+        self._conf_pending.discard(lab_id)
+        self.registry.remove(lab_id)
+        self._publish_disk_event(lab_id, "missing", sorted(files))
+        return set()
 
     def _load_opened_lab(self, lab_id: str) -> None:
         """Load an opened folder that didn't load before, now that its files changed — it came
@@ -1071,7 +1106,7 @@ class KatharaService:
         if own:
             return True
         if reloaded is None:
-            detail = "; ".join(errors) if errors else "it could not be loaded — see the backend log."
+            detail = "; ".join(errors) if errors else "see the backend log."
             self._publish_disk_event(lab_id, "conf-invalid", [LAB_CONF_FILENAME], detail)
         else:
             self._publish_disk_event(lab_id, "conf-reloaded", [LAB_CONF_FILENAME])

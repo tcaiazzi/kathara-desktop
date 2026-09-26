@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { changedStartupPaths, labEventNotice, parseLabEvent } from "./labEvents";
+import type { LabEvent } from "./types";
 
 const startup = { lab_id: "L", kind: "startup", files: ["pc1.startup"], detail: null };
 
@@ -30,6 +31,13 @@ describe("labEventNotice", () => {
     expect(labEventNotice({ ...conf, kind: "conf-invalid", detail: "line 2: bad" })?.message).toMatch(/line 2: bad$/);
     expect(labEventNotice({ ...conf, kind: "conf-invalid" })?.message).toMatch(/loaded\.$/);
     expect(labEventNotice({ ...startup, kind: "startup" })).toBeNull();
+  });
+
+  it("says a folder that is gone out loud but not as an error, with what the backend adds", () => {
+    const missing: LabEvent = { lab_id: "L", kind: "missing", files: ["lab.conf"], detail: null };
+    expect(parseLabEvent(JSON.stringify(missing))).toEqual(missing);
+    expect(labEventNotice(missing)).toMatchObject({ variant: "info", message: expect.stringMatching(/listed as missing/) });
+    expect(labEventNotice({ ...missing, detail: "Undeploy it first." })?.message).toMatch(/no longer there\. Undeploy it first\.$/);
   });
 });
 

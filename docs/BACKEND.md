@@ -75,7 +75,12 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   the lab is deployed (`conf-pending`, then retried every poll until the lab is stopped, from the
   app or the CLI); not if the file doesn't parse (`conf-invalid`, current model kept). The watcher
   takes `_mutate_lock` only if it is free within a moment, so another lab's long deploy never
-  stalls it. A changed `<device>.startup` marks that device dirty for the next redeploy (`shared.startup` marks all of them). Each outcome is published on
+  stalls it. A changed `<device>.startup` marks that device dirty for the next redeploy
+  (`shared.startup` marks all of them). A lab whose folder is gone (`missing`) is dropped from the
+  registry, which leaves it where a restart would: an opened folder is listed as missing and loads
+  by itself when it comes back, a lab under the root is gone; a deployed one stays registered until
+  it is stopped, so its containers can still be. A folder that exists but can't be listed for a
+  moment is skipped for that poll, not taken for empty. Each outcome is published on
   `GET /api/events` (`services/lab_events.py`), one SSE stream for all labs, `?token=` accepted
   like the stats stream. The watcher's thread is started by the app's lifespan (`main.py`), so
   building a `KatharaService` alone — a test — starts none.
@@ -177,7 +182,7 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/labs/gallery` | Upstream Kathara-Labs catalog (cached; `refresh=true` bypasses the cache), each entry flagged `installed` | `?refresh=false` | `GalleryCatalog` |
 | POST | `/api/labs/gallery` | Install a lab from the upstream gallery (409 if the name exists) | `GalleryInstall {id, name?}` | `LabImportResult` (201) |
 | POST | `/api/labs/open` | Open a host folder as a lab, in place (desktop shell only: `X-Kathara-Shell-Token`; 422 `NotALabError` for a folder that is not a lab unless `init`) | `LabOpen {path, init?}` | `LabImportResult` |
-| GET | `/api/events` | Lab events as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`. Accepts `?token=` | — | SSE stream |
+| GET | `/api/events` | Lab events as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`/`missing`. Accepts `?token=` | — | SSE stream |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
 | GET | `/api/labs/{lab}/location` | Host path of the lab directory (desktop shell only) | — | `LabLocation {path}` |

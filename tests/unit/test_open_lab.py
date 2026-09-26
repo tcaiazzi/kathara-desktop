@@ -23,6 +23,7 @@ from kathara_api.services import serializers
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.known_labs import KnownLabs
 from kathara_api.services.lab_store import LabStore, lab_id_for
+from kathara_api.services.lab_watch import LabWatcher
 from tests.helpers import FakeFacadeBase
 
 LAB_CONF = 'pc1[image]="kathara/base"\npc1[0]="A"\n'
@@ -621,6 +622,30 @@ def test_a_broken_remembered_folder_loads_by_itself_once_its_lab_conf_is_fixed(t
 
     assert service.registry.get(lab_id) is not None
     assert [e["kind"] for e in published] == ["conf-reloaded"]
+
+
+def test_an_opened_folder_moved_away_is_listed_missing_and_loads_again_when_it_is_back(tmp_path):
+    service = _service(tmp_path)
+    folder = _folder(tmp_path)
+    lab_id = service.open_lab(str(folder))[0].hash
+    published = []
+    service.events.publish = published.append
+    watcher = LabWatcher(service.watched_labs, service.handle_disk_change)
+    watcher.poll_once()
+
+    moved = folder.with_name("moved")
+    folder.rename(moved)
+    watcher.poll_once()
+
+    assert service.registry.get(lab_id) is None
+    assert service.unloaded_opened_labs() == [(lab_id, folder, "missing")]
+    assert [e["kind"] for e in published] == ["missing"]
+
+    moved.rename(folder)
+    watcher.poll_once()
+
+    assert service.registry.get(lab_id) is not None
+    assert [e["kind"] for e in published] == ["missing", "conf-reloaded"]
 
 
 def test_a_leftover_temporary_file_does_not_block_saving_the_list(tmp_path):
