@@ -153,13 +153,15 @@ Makefile is a step of one of them.
 |---|---|
 | `build` *(default)* | The everyday build: frontend SPA + Electron shell, no packaging |
 | `check` | Everything CI gates a PR on — see [Checks and tests](#checks-and-tests) |
+| `coverage` | The three test suites with coverage, report only — see [Checks and tests](#checks-and-tests) |
+| `mutation` | Mutation testing of all three trees, never in CI — see [Mutation testing](#mutation-testing) |
 | `install` | `npm ci` in both Node trees (`install-frontend` / `install-desktop` for one) |
 | `frontend` / `shell` | Just one half of `build` |
 | `dist-linux` / `dist-mac` / `dist-win` | A full installer for that OS, from wheel to artifact |
 | `appimage` | Linux AppImage for the host arch only — faster than `dist-linux` |
 | `wheel` | The backend wheel the packaging steps consume |
 | `fetch-python` / `vendor-deps` | The bundled interpreter and its dependency closure (packaging only; `*-host` variants do the host arch alone) |
-| `clean` | Build output. `clean-wheel` / `clean-python` / `clean-deps` are narrower; `distclean` is all of it |
+| `clean` | Build output. `clean-wheel` / `clean-python` / `clean-deps` are narrower; `distclean` is all of it; `clean-mutation` removes what `mutation` leaves behind |
 
 ## Checks and tests
 
@@ -205,3 +207,32 @@ Electron main process: it covers only modules that import nothing from `electron
 `src/safety.ts`, so it runs under plain Node. Logic worth testing that sits in a module needing
 the Electron runtime is moved into one of those first. Anything that needs a real window, IPC or
 a child process is checked by running the app.
+
+### Mutation testing
+
+Coverage says which lines the tests run; mutation testing says which of them the tests would
+notice breaking. Each tool plants one small change at a time — a flipped comparison, a dropped
+branch, an emptied string — and reruns the suite; a change no test fails on is a *survivor*.
+
+```bash
+pip install -e '.[dev,mutation]'   # once: mutmut, pinned (Linux/macOS only — it forks)
+make install                       # once: Stryker is a devDependency of both Node trees
+
+make mutation                      # all three, or one at a time:
+make mutation-frontend             # Stryker, services/frontend/stryker.config.mjs
+make mutation-desktop              # Stryker, services/desktop/stryker.config.mjs
+make mutation-backend              # mutmut, [tool.mutmut] in pyproject.toml
+make clean-mutation                # remove the working copy and the reports
+```
+
+What gets mutated is deliberately narrow. Stryker mutates the modules that have a sibling
+`.test.ts`, the pure helpers each suite is written for; mutmut mutates the backend modules listed
+in `[tool.mutmut]`, a chosen subset where most of the backend's own decisions live. Stryker's HTML
+reports land in `services/frontend/reports/mutation/` and `services/desktop/reports/mutation/`;
+for the backend, `mutmut results` lists the survivors and `mutmut show <name>` shows one.
+`mutation-backend` always starts from scratch (it removes `mutants/` first), so its numbers are
+those of the current tests.
+
+It never runs in CI, and nothing here fails on a low score: many survivors are equivalent mutants
+that no test could tell apart from the original, so read them one by one rather than chasing the
+number.
