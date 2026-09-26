@@ -56,6 +56,40 @@
   color: var(--bs-body-color);
 }
 
+/* The root listing failed: the reason plus a retry, styled as an error card like the rail's
+   lab-list failure (.kt-ws-error) so it doesn't read as an empty folder or a pending load. */
+.kt-explorer-error {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  max-height: calc(100% - 1rem);
+  border: 1px solid color-mix(in srgb, var(--bs-danger) 35%, var(--bs-border-color));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bs-danger) 8%, transparent);
+}
+.kt-explorer-error-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.kt-explorer-error-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bs-danger);
+}
+.kt-explorer-error-text {
+  margin: 0;
+  min-height: 0;
+  overflow: auto;
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .kt-explorer-spin {
   animation: kt-explorer-spin 0.8s linear infinite;
 }

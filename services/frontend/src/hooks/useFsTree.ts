@@ -103,6 +103,11 @@ export interface UseFsTree {
   treeRef: React.MutableRefObject<TreeApi<FsNode> | undefined>;
   data: FsNode[];
   loaded: boolean;
+  /** Why the root listing failed, or null. Kept apart from `loaded` so the panel can show the
+   *  reason and a retry instead of an endless "Loading…". */
+  loadError: string | null;
+  /** Re-attempt the root listing after `loadError`. */
+  retryRoot: () => void;
   busy: boolean;
   /** The *primary* selected path, file or directory — what rename/delete/download act on, and
    *  what `defaultDir()` resolves for new-file/new-folder/upload (the folder itself, or a selected
@@ -211,6 +216,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const treeRef = useRef<TreeApi<FsNode> | undefined>(undefined);
 
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped by `retryRoot` to re-run the root-listing effect without touching scope or refreshKey.
+  const [rootAttempt, setRootAttempt] = useState(0);
   const [tree, setTree] = useState<FsNode[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
@@ -293,6 +301,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   useEffect(() => {
     setTree([]);
     setLoaded(false);
+    setLoadError(null);
     setSelected(null);
     setSelectedPaths([]);
     setClipboard(null);
@@ -315,9 +324,11 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       try {
         const entries = await sourceRef.current.list("/", controller.signal);
         setTree((prev) => mergeNodeList(prev, entries.map(entryToNode)));
+        setLoadError(null);
         setLoaded(true);
       } catch (e) {
         if (isAbortError(e)) return;
+        setLoadError(e instanceof ApiError ? e.message : String(e));
         toast.reportError(sourceRef.current.labels.openFile, e);
       }
     })();
@@ -325,7 +336,12 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scopeKey, enabled, refreshKey]);
+  }, [scopeKey, enabled, refreshKey, rootAttempt]);
+
+  const retryRoot = useCallback(() => {
+    setLoadError(null);
+    setRootAttempt((n) => n + 1);
+  }, []);
 
   const hasSearch = !!source.search;
   const toggleSearchMode = useCallback(() => setSearchMode((prev) => !prev), []);
@@ -1002,6 +1018,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     treeRef,
     data,
     loaded,
+    loadError,
+    retryRoot,
     busy,
     selected,
     selectedPaths,

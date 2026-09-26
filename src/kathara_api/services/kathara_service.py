@@ -2530,22 +2530,44 @@ class KatharaService:
             raise ApiError(f"{action_label} failed on `{machine_name}`: {err or f'exit code {exit_code}'}")
         return stdout, stderr
 
+    # Lists the directory given as `$1`, one record per entry: kind, target kind, size, octal mode,
+    # mtime and name, tab-separated, each record ending in NUL.
+    #
+    # The name goes last and each record ends in NUL, the one byte a filename cannot contain: a
+    # name may hold tabs or newlines, but the five fields before it never do, so splitting on the
+    # first five tabs always leaves the name whole.
+    #
+    # Two branches because `-printf` exists only in GNU find: BusyBox images (Alpine and anything
+    # built on it) reject it. The fallback emits the same records from shell builtins plus
+    # `stat -c`, whose output here is digits and spaces only, so word-splitting it is safe whatever
+    # the name holds. Both branches dereference `$1` itself when it is a symlink (Debian/Ubuntu's
+    # merged-usr `/bin -> usr/bin`) without following symlinks among the children: GNU find through
+    # `-H` — plain `find` (`-P`) treats a symlinked start path as a leaf at depth 0, which
+    # `-mindepth 1` then excludes, so the listing would come back empty — and the fallback by
+    # `cd`-ing into it and inspecting each child with `[ -L ]` before `[ -d ]`.
+    _FS_LIST_SCRIPT = (
+        "if find / -maxdepth 0 -printf '' >/dev/null 2>&1; then\n"
+        "  exec find -H \"$1\" -mindepth 1 -maxdepth 1 -printf '%y\\t%Y\\t%s\\t%m\\t%T@\\t%f\\0'\n"
+        "fi\n"
+        "cd -- \"$1\" || exit 1\n"
+        "for f in .[!.]* ..?* *; do\n"
+        "  [ -e \"$f\" ] || [ -L \"$f\" ] || continue\n"
+        "  if [ -L \"$f\" ]; then k=l; elif [ -d \"$f\" ]; then k=d; else k=f; fi\n"
+        "  if [ -d \"$f\" ]; then t=d; else t=f; fi\n"
+        "  st=$(stat -c '%s %a %Y' -- \"$f\" 2>/dev/null) || st=\n"
+        "  set -- $st\n"
+        "  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\0' \"$k\" \"$t\" \"$1\" \"$2\" \"$3\" \"$f\"\n"
+        "done\n"
+    )
+
     def fs_list_directory(self, lab_id: str, machine_name: str, path: str) -> list[FsEntry]:
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
-        quoted = shlex.quote(normalized)
-        # `-H` dereferences `path` itself when it's a symlink (e.g. Debian/Ubuntu's merged-usr
-        # `/bin -> usr/bin`) without following symlinks encountered among the listed children —
-        # plain `find` (`-P`) treats a symlinked `path` as a leaf at depth 0, so with `-mindepth 1`
-        # excluding that depth-0 node, listing a symlinked directory silently returns zero entries.
-        #
-        # The name goes last and each entry ends in NUL, the one byte a filename cannot contain: a
-        # name may hold tabs or newlines, but the five fields before it never do, so splitting on
-        # the first five tabs always leaves the name whole.
-        cmd = f"find -H {quoted} -mindepth 1 -maxdepth 1 -printf '%y\\t%Y\\t%s\\t%m\\t%T@\\t%f\\0'"
+        # The path travels as a positional argument (`$1`, after `$0`), never spliced into the
+        # script text, so it needs no shell quoting.
         stdout, _ = self._exec_checked(
             lab_id,
             machine_name,
-            ["sh", "-lc", cmd],
+            ["sh", "-lc", self._FS_LIST_SCRIPT, "sh", normalized],
             wait=False,
             action_label=f"List directory `{normalized}`",
         )
@@ -2571,7 +2593,8 @@ class KatharaService:
                     # Treat symlinks to directories as directories for UI navigation.
                     is_dir=kind == "d" or (kind == "l" and target_kind == "d"),
                     size=size,
-                    mode=mode,
+                    # Empty when the fallback branch found no usable `stat` in the image.
+                    mode=mode or None,
                     mtime=mtime,
                 )
             )

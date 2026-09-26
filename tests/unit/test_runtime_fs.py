@@ -3,8 +3,8 @@
 Every runtime-filesystem method turns into a command exec'd in the device (or a copy into it),
 so these tests use a facade that records each exec/copy and returns a scripted result. They
 check the exact command each method runs (paths normalized, `--` before user paths, `shlex`
-quoting where a shell is involved), how a non-zero exit becomes an error, and how `find`'s
-output is parsed. The listing's symlink handling, the directory/binary read errors and the
+quoting where a shell is involved), how a non-zero exit becomes an error, and how the directory
+listing's records are parsed. The listing's symlink handling, the directory/binary read errors and the
 startup-log polling are covered in test_kathara_service_errors.py.
 """
 
@@ -248,19 +248,47 @@ def test_listing_keeps_names_with_tabs_newlines_and_spaces_whole(service, facade
     ]
 
 
-def test_listing_asks_find_for_nul_terminated_records_with_the_name_last(service, facade):
+def test_listing_asks_both_branches_for_nul_terminated_records_with_the_name_last(service, facade):
     service.fs_list_directory(lab_id(service, "l"), "pc1", "/")
 
-    [(_, [_, _, cmd], _, _)] = facade.execs
-    assert cmd.endswith("-printf '%y\\t%Y\\t%s\\t%m\\t%T@\\t%f\\0'")
+    [(_, [_, _, script, _, _], _, _)] = facade.execs
+    # GNU find, when it supports -printf.
+    assert "find -H \"$1\" -mindepth 1 -maxdepth 1 -printf '%y\\t%Y\\t%s\\t%m\\t%T@\\t%f\\0'" in script
+    # The BusyBox fallback: same six fields, name last, NUL-terminated.
+    assert "stat -c '%s %a %Y'" in script
+    assert "printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\0' \"$k\" \"$t\" \"$1\" \"$2\" \"$3\" \"$f\"" in script
 
 
-def test_listing_quotes_the_path_inside_the_find_command(service, facade):
+def test_listing_passes_the_path_as_a_positional_argument_not_inside_the_script(service, facade):
     service.fs_list_directory(lab_id(service, "l"), "pc1", "/tmp/a b")
 
-    [(_, [shell, flag, cmd], _, wait)] = facade.execs
-    assert (shell, flag, wait) == ("sh", "-lc", False)
-    assert cmd.startswith("find -H '/tmp/a b' -mindepth 1 -maxdepth 1 -printf ")
+    [(_, [shell, flag, script, argv0, path], _, wait)] = facade.execs
+    assert (shell, flag, argv0, path, wait) == ("sh", "-lc", "sh", "/tmp/a b", False)
+    assert "/tmp/a b" not in script
+
+
+def test_listing_parses_the_busybox_fallback_records(service, facade):
+    """The fallback reports an integer mtime, `l`/`d`/`f` kinds only, and empty size/mode/mtime
+    when the image has no usable `stat` — all of which still parse into entries."""
+    facade.result = (
+        b"d\td\t4096\t755\t1790429801\tsub\0"
+        b"l\td\t3\t777\t1790429801\tlsub\0"
+        b"l\tf\t7\t777\t1790429801\tbroken\0"
+        b"f\tf\t0\t750\t1790429801\tplain\0"
+        b"f\tf\t\t\t\tno-stat\0",
+        b"",
+        0,
+    )
+
+    entries = service.fs_list_directory(lab_id(service, "l"), "pc1", "/q")
+
+    assert [(e.name, e.is_dir, e.size, e.mode, e.mtime) for e in entries] == [
+        ("lsub", True, 3, "777", 1790429801.0),
+        ("sub", True, 4096, "755", 1790429801.0),
+        ("broken", False, 7, "777", 1790429801.0),
+        ("no-stat", False, None, None, None),
+        ("plain", False, 0, "750", 1790429801.0),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -416,7 +444,7 @@ def test_each_runtime_operation_runs_one_non_blocking_exec_on_the_right_device(s
     assert facade.streams == [False]
 
 
-def test_listing_runs_its_find_on_the_right_device_without_blocking(service, facade):
+def test_listing_runs_its_script_on_the_right_device_without_blocking(service, facade):
     service.fs_list_directory(lab_id(service, "l"), "pc1", "/srv")
 
     [(machine, command, lab, wait)] = facade.execs

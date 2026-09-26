@@ -215,7 +215,25 @@ export function FsTreePanel({
                   setContextMenu({ x: e.clientX, y: e.clientY, items: createItems(tree, "/") });
                 }}
               >
-                {!tree.loaded ? (
+                {tree.loadError !== null ? (
+                  // Title and Retry first: the reason can be long and the panel short, and only the
+                  // reason scrolls, so the way out stays in view.
+                  <div className="kt-explorer-error m-2">
+                    <div className="kt-explorer-error-head">
+                      <span className="kt-explorer-error-title">Couldn't list this filesystem</span>
+                      <Button
+                        size="sm"
+                        variant="outline-danger"
+                        className="flex-shrink-0 text-nowrap"
+                        onClick={tree.retryRoot}
+                      >
+                        <RefreshCw size={13} className="me-1" />
+                        Retry
+                      </Button>
+                    </div>
+                    <p className="kt-explorer-error-text">{tree.loadError}</p>
+                  </div>
+                ) : !tree.loaded ? (
                   <p className="text-muted small p-2">Loading…</p>
                 ) : (
                   <RowActionsCtx.Provider value={tree.rowActions}>
