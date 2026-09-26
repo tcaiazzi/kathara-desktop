@@ -75,6 +75,31 @@ class SettingsLockedError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class InvalidSettingsError(ApiError):
+    """Raised by a Settings save carrying a value Kathara would refuse (see
+    services/settings_store.invalid_settings). Distinct from Kathara's own SettingsError, whose
+    message is about the settings file and tells the user to fix it before launching."""
+
+
+class SettingsFileInvalidError(ApiError):
+    """Raised when kathara.conf exists but is not a JSON object: logged and reported on the
+    Settings page at startup, and returned by a Settings save.
+
+    Refused rather than overwritten: the file is the Kathara CLI's too, and whatever the user was
+    in the middle of writing there would be lost. Nothing is applied either, so the page never
+    shows a value the next start would not have.
+    """
+
+    status_code = status.HTTP_409_CONFLICT
+
+
+class SettingsPersistError(ApiError):
+    """Raised by a Settings save when kathara.conf cannot be written (permissions, full disk, ...).
+    Nothing is applied, for the same reason as SettingsFileInvalidError."""
+
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
 class LabAlreadyRegisteredError(ApiError):
     """Raised when creating a lab whose name already exists in the registry."""
 

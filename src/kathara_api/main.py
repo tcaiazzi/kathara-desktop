@@ -57,8 +57,10 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    # Apply Kathara setting overrides before the backend is first used.
+    # Load the saved Kathara settings, then the environment's overrides on top, before the backend
+    # is first used.
     settings = get_settings()
+    get_service().load_persisted_settings()
     overrides = settings.kathara_overrides()
     if overrides:
         get_service().apply_startup_settings(overrides)

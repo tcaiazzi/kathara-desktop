@@ -12,6 +12,7 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
+import { toSettingsUpdate } from "../services/settings";
 import type { SettingsView, SystemInfo } from "../services/types";
 
 // Not a setting either: a one-off action, so it sits outside the <Form> and is never tied to
@@ -248,12 +249,9 @@ export function SettingsPage() {
           return;
         }
       }
-      // `last_checked` is Kathara's own "when did I last check for a release" bookkeeping: it is
-      // shown above, never edited here, and PUTting it back would write a client-side echo over
-      // whatever the backend has since recorded. `remote_url`/`cert_path` are read-only from this
-      // app (see SettingsUpdate's own docstring) — the backend would 422 either back anyway, but
-      // there is no reason to send fields the form only ever displays.
-      const { last_checked: _lastChecked, remote_url: _remoteUrl, cert_path: _certPath, ...payload } = form;
+      // Only the editable fields go back: `last_checked` would write a client-side echo over
+      // whatever the backend has since recorded, and the rest are reports the backend 422s.
+      const payload = toSettingsUpdate(form);
       let updated: SettingsView;
       try {
         updated = await api.updateSettings(payload);
@@ -297,7 +295,11 @@ export function SettingsPage() {
     <div className="container pt-4">
       <BackToWorkspace className="mb-4" />
       <h2>Settings</h2>
-      <p className="text-muted">Kathara framework settings for this backend session.</p>
+      <p className="text-muted">
+        Kathara framework settings, saved to{" "}
+        {form.settings_file ? <code>{form.settings_file}</code> : "Kathara's settings file"} — the same file the
+        Kathara CLI uses.
+      </p>
 
       <AppearanceSettings />
 
@@ -325,6 +327,19 @@ export function SettingsPage() {
 
       <DesktopLabsDirSettings />
 
+      {form.settings_file_error && (
+        <Alert variant="warning">
+          Kathara's settings file could not be read, so the defaults are in use and saving fails
+          until the file is fixed or deleted — restart the app afterwards to load it.{" "}
+          {form.settings_file_error}
+        </Alert>
+      )}
+      {form.settings_warnings?.map((warning) => (
+        <Alert key={warning} variant="warning">
+          {warning}
+        </Alert>
+      ))}
+
       {lockedError && (
         <Alert variant="warning" dismissible onClose={() => setLockedError(null)}>
           {lockedError}
@@ -348,7 +363,7 @@ export function SettingsPage() {
             </Form.Select>
             <Form.Text className="text-muted">
               Locked to the active manager above once it has initialized for this backend session
-              (essentially always, since loading this page triggers that) — restart the backend to
+              (essentially always, since loading this page triggers that) — restart the app to
               switch managers. Every other setting below can be changed at any time.
             </Form.Text>
           </Form.Group>
@@ -527,8 +542,8 @@ export function SettingsPage() {
                 {form.cert_path && <Form.Control readOnly className="font-monospace" value={form.cert_path} />}
                 <Form.Text className="text-muted">
                   Every deploy, exec and wipe this backend performs targets this daemon instead of
-                  the local one. Set outside this app (~/.config/kathara.conf) — not editable here;
-                  change it there and restart the backend.
+                  the local one. Set outside this app, in Kathara's settings file — not editable
+                  here; change it there and restart the app.
                 </Form.Text>
               </Form.Group>
             )}

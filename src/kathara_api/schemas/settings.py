@@ -27,6 +27,9 @@ class SettingsView(BaseModel):
     plus the Docker addon (the only manager this project supports), so a response never carries a
     key this schema doesn't already know about.
 
+    The Kathara settings are the ones saved in ``settings_file`` (``kathara.conf``, shared with
+    the Kathara CLI) — see ``KatharaService.load_persisted_settings``.
+
     ``remote_url``/``cert_path`` are readable here but absent from ``SettingsUpdate`` below: see
     that class's docstring for why.
     """
@@ -55,14 +58,20 @@ class SettingsView(BaseModel):
     network_plugin: Optional[str] = None
     # This project's own upload/import caps (ApiSettings in config.py) — not a Kathara
     # `Setting`/`DockerSettingsAddon` field at all, surfaced here purely so they share one editable
-    # page with everything else. Unlike every field above, a change here does NOT persist to
-    # Kathara's own settings file and does NOT survive a backend restart: it mutates the in-process
-    # `ApiSettings` singleton directly, and reverts to `KATHARA_API_MAX_*` (or the built-in default)
-    # the next time the process starts. That's an acceptable trade-off for a cap whose only purpose
-    # is bounding a single running process's memory/disk use, not a durable preference.
+    # page with everything else. Unlike every field above, a change here is NOT saved to
+    # kathara.conf and does NOT survive a backend restart: it mutates the in-process `ApiSettings`
+    # singleton directly, and reverts to `KATHARA_API_MAX_*` (or the built-in default) the next
+    # time the process starts. That's an acceptable trade-off for a cap whose only purpose is
+    # bounding a single running process's memory/disk use, not a durable preference.
     max_files_per_lab: Optional[int] = None
     max_bytes_per_file: Optional[int] = None
     max_bytes_per_lab: Optional[int] = None
+    # Read-only, about the file itself rather than a setting: its path; why it could not be read
+    # (the defaults are in use and saving is refused until it is fixed); and the values in it this
+    # session ignores, one sentence each.
+    settings_file: Optional[str] = None
+    settings_file_error: Optional[str] = None
+    settings_warnings: list[str] = []
 
     # A future/older Kathara version could plausibly add or drop an addon field; tolerate an
     # unknown key here (in the response we build ourselves) rather than fail the whole request —
@@ -71,7 +80,7 @@ class SettingsView(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    """Settings overrides forwarded to ``Setting.load_from_dict``.
+    """Settings changes forwarded to ``Setting.load_from_dict`` and saved to ``kathara.conf``.
 
     Every field Kathara's ``Setting.load_from_dict`` would actually apply is named explicitly, and
     ``extra="forbid"`` rejects anything else with a 422. ``extra="allow"`` here would let a client

@@ -60,9 +60,23 @@ export interface SettingsView {
   max_files_per_lab?: number;
   max_bytes_per_file?: number;
   max_bytes_per_lab?: number;
+  // Read-only, about kathara.conf itself: its path, why it could not be read (defaults in use,
+  // saving refused until fixed), and the values in it this session ignores.
+  settings_file?: string;
+  settings_file_error?: string | null;
+  settings_warnings?: string[];
 }
 
-export type SettingsUpdate = Partial<Omit<SettingsView, "last_checked" | "remote_url" | "cert_path">>;
+// The fields SettingsView only reports, never part of an update — see services/settings.ts.
+export type SettingsReadOnlyKey =
+  | "last_checked"
+  | "remote_url"
+  | "cert_path"
+  | "settings_file"
+  | "settings_file_error"
+  | "settings_warnings";
+
+export type SettingsUpdate = Partial<Omit<SettingsView, SettingsReadOnlyKey>>;
 
 interface LabMetadata {
   description: string | null;

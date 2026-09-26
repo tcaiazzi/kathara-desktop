@@ -88,6 +88,12 @@ class ApiSettings(BaseSettings):
     manager_type: Optional[str] = None
     default_image: Optional[str] = Field(default=None)
 
+    # Directory holding the kathara.conf this process reads at startup and writes on every Settings
+    # save (services/settings_store.py). Unset means Kathara's own, the one the Kathara CLI uses.
+    # Kathara resolves that one from the password database, not $HOME, so this is the only way to
+    # keep a test or a throwaway profile away from the user's real file.
+    kathara_conf_dir: Optional[str] = None
+
     # Shared secret pairing a single launched backend with its own frontend (the desktop app
     # generates one per launch — see services/desktop/src/backend.ts). Unset by default: every
     # other deployment (Docker Compose, dev) keeps the no-auth default untouched (see

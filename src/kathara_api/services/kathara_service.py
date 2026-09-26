@@ -13,11 +13,13 @@ Design notes:
   facade call is made with, so a lab is found the same way whichever of the three is asking.
 - All facade calls block; routers invoke these methods from FastAPI's threadpool (sync handlers)
   or via ``iterate_in_threadpool`` for streams.
-- Most Kathara settings are read fresh at the point of use by the framework itself, so
-  ``update_settings`` can change them at any time. ``manager_type`` is the one exception:
-  ``Kathara.get_instance()`` picks the concrete manager class exactly once and Kathara has no
-  supported way to swap it out afterward for the life of the process, so changing it once the
-  facade has been instantiated is rejected rather than silently doing nothing.
+- Kathara settings live in ``kathara.conf``, the file the Kathara CLI uses too: read once at
+  startup (``load_persisted_settings``), written by every ``update_settings``. Most are read
+  fresh at the point of use by the framework itself, so ``update_settings`` can change them at
+  any time. ``manager_type`` is the one exception: ``Kathara.get_instance()`` picks the concrete
+  manager class exactly once and Kathara has no supported way to swap it out afterward for the
+  life of the process, so changing it once the facade has been instantiated is rejected rather
+  than silently doing nothing.
 """
 
 import io
@@ -59,6 +61,7 @@ from ..config import get_settings
 from ..errors import (
     ApiError,
     BinaryFileError,
+    InvalidSettingsError,
     LabAlreadyRegisteredError,
     LabCloseRefusedError,
     LabConfLockedError,
@@ -68,7 +71,9 @@ from ..errors import (
     LinkInUseError,
     NotALabError,
     PathNotFoundError,
+    SettingsFileInvalidError,
     SettingsLockedError,
+    SettingsPersistError,
 )
 from ..lab_conf_options import LAB_CONF_FILENAME
 from ..schemas.examples import ExampleSummary
@@ -86,6 +91,7 @@ from . import (
     lab_gallery,
     lab_import,
     lab_store,
+    settings_store,
 )
 from .docker_tty import SHELL_PATHS
 from .known_labs import KNOWN_LABS_FILENAME, KnownLabs
@@ -242,6 +248,14 @@ class KatharaService:
         self.events = LabEvents()
         self._conf_pending: set[str] = set()
         self._missing_pending: set[str] = set()
+        # kathara.conf bookkeeping — see load_persisted_settings and update_settings. `_pinned`
+        # holds the Kathara settings whose value this session did not take from the file (an
+        # environment override, the forced Docker manager): a save leaves the file's own value for
+        # them. `_conf_error` is why the file could not be read, which blocks saving over it;
+        # `_conf_warnings` are the file's values this session ignores, keyed by setting.
+        self._pinned: set[str] = set()
+        self._conf_error: Optional[str] = None
+        self._conf_warnings: dict[str, str] = {}
         # Repopulate the in-memory registry from any labs persisted on disk, so they survive a
         # restart. Safe at import time: builds model objects only (no facade/Docker), and reads
         # nothing if the storage root does not exist yet.
@@ -405,18 +419,71 @@ class KatharaService:
         self._clear_undeployed_state(lab, set(lab.machines))
         return lab
 
+    def load_persisted_settings(self) -> None:
+        """Load the saved settings from ``kathara.conf`` (``settings_store.conf_path``) at startup.
+
+        No file means Kathara's defaults, and no file is created: the first Settings save writes
+        it, as the CLI's own first run does. A file that is not JSON also means the defaults —
+        the app must still start — and blocks saving until it is fixed (``update_settings``).
+
+        A value Kathara would refuse is ignored in favour of the default, with a warning on the
+        Settings page; the next save replaces it with a valid one. A manager other than Docker is
+        ignored the same way, but never replaced: this app drives Docker only, while the file is
+        also the Kathara CLI's, which may well be using Kubernetes.
+        """
+        path = settings_store.conf_path()
+        with self._mutate_lock:
+            try:
+                values = settings_store.read_conf(path)
+            except SettingsFileInvalidError as exc:
+                logger.warning("Using Kathara's default settings: %s", exc)
+                self._conf_error = str(exc)
+                return
+            if values is None:
+                return
+            values = dict(values)
+            for key, reason in settings_store.invalid_settings(values).items():
+                logger.warning("Ignoring `%s` in %s: %s", key, path, reason)
+                self._conf_warnings[key] = (
+                    f"{key} in Kathara's settings file is ignored: {reason} Saving settings replaces it."
+                )
+                del values[key]
+            manager = values.get("manager_type", "docker")
+            if manager != "docker":
+                logger.warning("%s sets manager_type=%r; Kathara Desktop uses Docker.", path, manager)
+                self._conf_warnings["manager_type"] = (
+                    f"Kathara's settings file sets the manager to {manager}, which Kathara Desktop "
+                    "does not support yet: the app uses Docker anyway. The file keeps its value, so "
+                    "the Kathara CLI is not affected."
+                )
+                self._pinned.add("manager_type")
+                values["manager_type"] = "docker"
+            Setting.get_instance().load_from_dict(values)
+
     def apply_startup_settings(self, settings: dict[str, Any]) -> None:
-        """Apply settings before the facade is created (used at app startup)."""
+        """Apply the environment's overrides (``ApiSettings.kathara_overrides``) at startup.
+
+        They win over ``kathara.conf`` for this session only, so they are pinned: a save leaves the
+        file's own value for them in place unless the user changes one on the Settings page.
+        """
         if settings:
-            Setting.get_instance().load_from_dict(settings)
+            with self._mutate_lock:
+                Setting.get_instance().load_from_dict(settings)
+                self._pinned.update(settings)
 
     # The subset of SettingsUpdate's fields that belong to this project's own ApiSettings
     # (config.py), not to Kathara's Setting/DockerSettingsAddon — update_settings/get_settings_view
     # route these to/from the ApiSettings singleton instead of Setting.load_from_dict/_to_dict.
     _API_SETTINGS_KEYS = frozenset({"max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"})
 
+    @staticmethod
+    def _kathara_settings_dict() -> dict[str, Any]:
+        """Every Kathara setting's current value: the core ``Setting`` plus its manager addon."""
+        setting = Setting.get_instance()
+        return setting.addons.merge(setting._to_dict())
+
     def update_settings(self, settings: dict[str, Any]) -> None:
-        """Override settings at runtime.
+        """Change settings at runtime and save the Kathara ones to ``kathara.conf``.
 
         Every Kathara setting except ``manager_type`` is read fresh by the Kathara framework at
         the point of use, so it's safe to change any of them at any time. ``manager_type`` picks
@@ -425,13 +492,19 @@ class KatharaService:
         actual change to it is rejected once the facade has been instantiated, rather than
         silently accepted but never taking effect.
 
+        Values Kathara would refuse (``settings_store.invalid_settings``) are rejected before
+        anything changes. A change is saved and applied, or neither: when the file cannot be
+        written the previous values are restored, so the page never shows a setting the next start
+        would not have. The file is merged into rather than replaced — keys this app doesn't know
+        stay, and so do the file's own values for the pinned keys (``_pinned``) and
+        ``last_checked``, the CLI's bookkeeping.
+
         ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` (``_API_SETTINGS_KEYS``)
         aren't Kathara settings at all — they're this project's own ``ApiSettings`` (config.py),
         just exposed on the same page. They're set directly on the ``get_settings()``
         singleton, which every request already reads fresh (``main.py``'s body-size middleware,
-        ``LabStore.extract_zip``), rather than passed to
-        ``Setting.load_from_dict`` — which has no idea these attributes exist. This mutation is
-        in-process only: it does not persist past a restart (see ``SettingsView``'s docstring).
+        ``LabStore.extract_zip``), and never written to ``kathara.conf``: they last until the
+        process exits (see ``SettingsView``'s docstring).
         """
         # Unlike every other mutator here, this doesn't touch a Lab — it touches the process-wide
         # Setting singleton and the ApiSettings singleton, both otherwise unguarded. Two concurrent
@@ -444,22 +517,57 @@ class KatharaService:
                 if kathara_settings["manager_type"] != current:
                     raise SettingsLockedError(
                         "`manager_type` cannot be changed after the Kathara manager has been "
-                        "initialized for this backend session — restart the backend to switch "
+                        "initialized for this backend session — restart the app to switch "
                         "managers. Other settings can still be updated freely."
                     )
+            problems = settings_store.invalid_settings(kathara_settings)
+            if problems:
+                raise InvalidSettingsError(" ".join(problems.values()))
             if kathara_settings:
-                Setting.get_instance().load_from_dict(kathara_settings)
+                self._save_kathara_settings(kathara_settings)
             api_settings = get_settings()
             for key in self._API_SETTINGS_KEYS:
                 if key in settings:
                     setattr(api_settings, key, settings[key])
 
+    def _save_kathara_settings(self, changes: dict[str, Any]) -> None:
+        """Apply ``changes`` to ``Setting`` and write the result to ``kathara.conf``, restoring
+        the previous values if the write fails. Called under ``_mutate_lock``."""
+        path = settings_store.conf_path()
+        previous = self._kathara_settings_dict()
+        changed = {key for key, value in changes.items() if previous.get(key) != value}
+        Setting.get_instance().load_from_dict(changes)
+        pinned = self._pinned - changed
+        try:
+            on_disk = settings_store.read_conf(path) or {}
+            current = self._kathara_settings_dict()
+            to_save = {**on_disk, **{k: v for k, v in current.items() if k not in pinned}}
+            for key in (*pinned, "last_checked"):
+                if key in on_disk:
+                    to_save[key] = on_disk[key]
+                elif key in pinned:
+                    to_save.pop(key, None)
+            settings_store.write_conf(path, to_save)
+        except SettingsFileInvalidError as exc:
+            Setting.get_instance().load_from_dict(previous)
+            raise SettingsFileInvalidError(
+                f"Settings not saved: {exc} Fix or delete it, then save again."
+            ) from None
+        except OSError as exc:
+            Setting.get_instance().load_from_dict(previous)
+            raise SettingsPersistError(f"Settings not saved: cannot write `{path}` ({exc}).") from None
+        self._pinned = pinned
+        self._conf_error = None
+        for key in current.keys() - pinned:
+            self._conf_warnings.pop(key, None)
+
     def get_settings_view(self) -> dict[str, Any]:
-        setting = Setting.get_instance()
-        # _to_dict() holds core settings; addons.merge() adds manager-specific ones.
-        view = setting.addons.merge(setting._to_dict())
+        view = self._kathara_settings_dict()
         api_settings = get_settings()
         view.update({key: getattr(api_settings, key) for key in self._API_SETTINGS_KEYS})
+        view["settings_file"] = str(settings_store.conf_path())
+        view["settings_file_error"] = self._conf_error
+        view["settings_warnings"] = list(self._conf_warnings.values())
         return view
 
     def system_info(self) -> dict[str, Any]:
