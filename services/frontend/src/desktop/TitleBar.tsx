@@ -15,6 +15,7 @@ import { Copy, Minus, Settings as SettingsIcon, Square, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { HealthBadge, PrivilegedBadge } from "../components/StatusBadges";
 import { useOpenLabName } from "../context/OpenLabNameContext";
+import { useGuardedLinkClick } from "../context/UnsavedChangesContext";
 import { useDismissOnOutside } from "../hooks/useDismissOnOutside";
 import { Badge } from "react-bootstrap";
 import { Link, useLocation } from "react-router-dom";
@@ -46,6 +47,7 @@ export function TitleBar() {
   const docker = useDockerStatus();
   const dispatch = useDesktopDispatch();
   const location = useLocation();
+  const guardedClick = useGuardedLinkClick();
   const shell = desktop();
 
   const [open, setOpen] = useState<string | null>(null);
@@ -162,6 +164,7 @@ export function TitleBar() {
     >
       <Link
         to="/workspace"
+        onClick={guardedClick("/workspace")}
         className="kt-titlebar-brand kt-titlebar-nodrag"
         title="Kathara Desktop"
       >
@@ -232,6 +235,7 @@ export function TitleBar() {
         <NotificationsPanel />
         <Link
           to="/settings"
+          onClick={guardedClick("/settings")}
           className={`kt-titlebar-icon-btn${location.pathname.startsWith("/settings") ? " active" : ""}`}
           title="Settings"
           aria-label="Settings"

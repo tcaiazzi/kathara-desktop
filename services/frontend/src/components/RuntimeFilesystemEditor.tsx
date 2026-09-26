@@ -40,21 +40,6 @@ export function RuntimeFilesystemEditor({
     if (!machine || !runningMachines.includes(machine)) setMachine(runningMachines[0]);
   }, [machine, runningMachines]);
 
-  // Tracks the last `preferredMachine` value actually applied, so this effect only fires again
-  // when the *value* changes (a fresh "Show Runtime Filesystem" click) — not on every re-render
-  // where `runningMachines` merely gets a new array identity (it's recomputed from `detail.machines`
-  // on every lab refresh, even when the running-machine set is unchanged). Without this guard, a
-  // manual device switch via the dropdown below (which never updates `preferredMachine`) would get
-  // silently overridden — and its unsaved edits discarded — by the next unrelated lab refresh.
-  const appliedPreferredRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!preferredMachine) return;
-    if (appliedPreferredRef.current === preferredMachine) return;
-    if (!runningMachines.includes(preferredMachine)) return;
-    appliedPreferredRef.current = preferredMachine;
-    setMachine(preferredMachine);
-  }, [preferredMachine, runningMachines]);
-
   const source = useMemo<FsTreeSource>(
     () => ({
       list: async (path, signal) => (await api.fsList(labId, machine, path, signal)).entries,
@@ -77,6 +62,7 @@ export function RuntimeFilesystemEditor({
         move: "Move runtime path",
         paste: "Paste runtime path",
         saved: (path) => `Saved ${path} on ${machine}.`,
+        unsaved: (path) => `${path} on ${machine}`,
         newFilePrompt: {
           title: "Create runtime file",
           message: "Absolute path on the running device, e.g.: /etc/frr/frr.conf",
@@ -109,6 +95,26 @@ export function RuntimeFilesystemEditor({
   );
 
   const tree = useFsTree({ source, scopeKey: `${labId}/${machine}`, enabled: !!machine });
+  const confirmLeave = tree.confirmLeave;
+
+  // Tracks the last `preferredMachine` value acted on, so this effect only fires again when the
+  // *value* changes (a fresh "Show Runtime Filesystem" click) — not on every re-render where
+  // `runningMachines` merely gets a new array identity (it's recomputed from `detail.machines` on
+  // every lab refresh, even when the running-machine set is unchanged). Otherwise a manual device
+  // switch via the dropdown below (which never updates `preferredMachine`) would be overridden by
+  // the next unrelated lab refresh. Marked as acted on before asking, so declining the discard
+  // confirmation doesn't bring the same question straight back.
+  const appliedPreferredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!preferredMachine) return;
+    if (appliedPreferredRef.current === preferredMachine) return;
+    if (!runningMachines.includes(preferredMachine)) return;
+    appliedPreferredRef.current = preferredMachine;
+    if (preferredMachine === machine) return;
+    void confirmLeave().then((ok) => {
+      if (ok) setMachine(preferredMachine);
+    });
+  }, [confirmLeave, machine, preferredMachine, runningMachines]);
 
   return (
     <FsTreePanel
@@ -123,8 +129,13 @@ export function RuntimeFilesystemEditor({
           value={machine}
           disabled={!runningMachines.length}
           onChange={(e) => {
-            setMachine(e.target.value);
-            onSelectMachine?.(e.target.value);
+            const next = e.target.value;
+            // Controlled: declining leaves `machine`, and so the select, where it was.
+            void confirmLeave().then((ok) => {
+              if (!ok) return;
+              setMachine(next);
+              onSelectMachine?.(next);
+            });
           }}
         >
           {runningMachines.length ? (

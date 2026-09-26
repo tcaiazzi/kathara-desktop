@@ -137,10 +137,13 @@ export interface DesktopApi {
    * deployed-labs prompt. Rejects if the directory isn't usable. */
   setLabsDir(path: string): Promise<boolean>;
   resetLabsDir(): Promise<boolean>;
-  /** All three return an unsubscribe function. */
+  /** All four return an unsubscribe function. */
   onMenuAction(cb: (action: DesktopMenuAction) => void): () => void;
   onDeepLink(cb: (route: string) => void): () => void;
   onWindowStateChange(cb: (state: { maximized: boolean; fullscreen: boolean }) => void): () => void;
+  /** The window is about to close (its close button, Quit, the OS): resolve true to let it. The
+   * shell holds the close until then — see context/UnsavedChangesContext.tsx. */
+  onCloseRequest(handler: () => Promise<boolean>): () => void;
 }
 
 declare global {

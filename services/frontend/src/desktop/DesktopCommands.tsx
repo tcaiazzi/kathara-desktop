@@ -6,8 +6,8 @@
 // Registration is in a ref rather than state on purpose: a page mounting must not re-render
 // the whole app, and a command with no page mounted to handle it is simply a no-op.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import { useToast } from "../context/ToastContext";
+import { useGuardedNavigate } from "../context/UnsavedChangesContext";
 import { api } from "../services/api";
 import { labNamed } from "../services/labPlace";
 import { desktop, type DesktopMenuAction } from "./bridge";
@@ -23,7 +23,9 @@ interface Registry {
 const DesktopCommandsContext = createContext<Registry | null>(null);
 
 export function DesktopCommandsProvider({ children }: { children: React.ReactNode }) {
-  const navigate = useNavigate();
+  // Settings and deep links (a kathara:// link, File → Open Lab Folder…) both leave the open lab,
+  // so they ask about unsaved edits first, like every in-app navigation.
+  const navigate = useGuardedNavigate();
   const toast = useToast();
   // A set per action, not one handler: "Save" is offered by every editor panel on screen, and
   // each decides for itself whether it owns the command (it checks whether focus is inside it),
@@ -44,7 +46,7 @@ export function DesktopCommandsProvider({ children }: { children: React.ReactNod
     (action: DesktopMenuAction) => {
       // Navigation is the provider's own job: it needs no page to be mounted.
       if (action === "view:settings") {
-        navigate("/settings");
+        void navigate("/settings");
         return;
       }
       for (const handler of handlers.current.get(action) ?? []) void handler();
@@ -69,14 +71,14 @@ export function DesktopCommandsProvider({ children }: { children: React.ReactNod
       const url = new URL(route, window.location.origin);
       const name = url.pathname === "/workspace" ? url.searchParams.get("lab") : null;
       if (name === null) {
-        navigate(route);
+        void navigate(route);
         return;
       }
       void api
         .listLabs()
         .then((labs) => {
           const lab = labNamed(labs, name);
-          if (lab) navigate(`/workspace/${encodeURIComponent(lab.id)}`);
+          if (lab) void navigate(`/workspace/${encodeURIComponent(lab.id)}`);
           else toast.show(`Lab "${name}" not found.`, "danger");
         })
         .catch((e) => toast.reportError("Open lab", e));

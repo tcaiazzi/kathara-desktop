@@ -156,6 +156,17 @@ const api = {
   onDeepLink: (cb: (route: string) => void) => subscribe<string>("deeplink", cb),
   onWindowStateChange: (cb: (state: { maximized: boolean; fullscreen: boolean }) => void) =>
     subscribe<{ maximized: boolean; fullscreen: boolean }>("window:state", cb),
+  /** The window is about to close: `handler` decides, typically by asking the user about unsaved
+   * edits in the app's own dialog. Acknowledged at once so the shell knows an answer is coming
+   * (see main.ts's askRendererBeforeClose); a handler that throws lets the window close. */
+  onCloseRequest: (handler: () => Promise<boolean>) =>
+    subscribe<string>("window:close-request", (id) => {
+      void ipcRenderer.invoke("window:close-ack", id);
+      void handler().then(
+        (allow) => ipcRenderer.invoke("window:close-response", id, allow),
+        () => ipcRenderer.invoke("window:close-response", id, true),
+      );
+    }),
 };
 
 // No exported type for `api` on purpose: the renderer is a separate npm package and cannot import

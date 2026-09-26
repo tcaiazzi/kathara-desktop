@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import katharaLogo from "../assets/kathara-logo.png";
 import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useOnboardingTour } from "../context/OnboardingTourContext";
+import { useGuardedLinkClick } from "../context/UnsavedChangesContext";
 import { useTheme } from "../hooks/useTheme";
 import { ImageDownloadBadge } from "./ImageDownloadBadge";
 import { NotificationsPanel } from "./NotificationsPanel";
@@ -14,19 +15,26 @@ import { HealthBadge, PrivilegedBadge } from "./StatusBadges";
 export function AppNavbar() {
   const { theme, dark } = useTheme();
   const { requestTour } = useOnboardingTour();
+  const guardedClick = useGuardedLinkClick();
 
   return (
     <Navbar bg={theme} variant={theme} expand="sm" className="mb-3">
       <Container fluid>
-        <Navbar.Brand as={Link} to="/workspace" className="kt-navbar-brand" title="Kathara Desktop">
+        <Navbar.Brand
+          as={Link}
+          to="/workspace"
+          onClick={guardedClick("/workspace")}
+          className="kt-navbar-brand"
+          title="Kathara Desktop"
+        >
           {/* Dark theme uses the white-wordmark logo so it reads on the dark navbar without a chip. */}
           <img src={dark ? katharaLogoDark : katharaLogo} alt="Kathara" height={30} />
         </Navbar.Brand>
         <Nav className="me-auto">
-          <Nav.Link as={Link} to="/workspace">
+          <Nav.Link as={Link} to="/workspace" onClick={guardedClick("/workspace")}>
             Workspace
           </Nav.Link>
-          <Nav.Link as={Link} to="/settings">
+          <Nav.Link as={Link} to="/settings" onClick={guardedClick("/settings")}>
             Settings
           </Nav.Link>
         </Nav>

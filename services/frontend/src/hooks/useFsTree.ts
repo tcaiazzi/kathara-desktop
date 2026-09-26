@@ -3,6 +3,7 @@ import type { NodeApi, TreeApi } from "react-arborist";
 import { useConfirm } from "../context/ConfirmContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
+import { useRegisterUnsaved } from "../context/UnsavedChangesContext";
 import { ApiError, isAbortError } from "../services/api";
 import { saveBlob } from "../services/download";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../services/fsTree";
 import { baseName, isSubPath, remapPath } from "../services/paths";
 import type { FsEntry, FsSearchMatch } from "../services/types";
+import { describeUnsaved } from "../services/unsaved";
 import { useBusyAction } from "./useBusyAction";
 import { useConfirmDiscard } from "./useConfirmDiscard";
 
@@ -51,6 +53,9 @@ export interface FsTreeSource {
   /** Tooltip on the actions `canModify` disables, saying why. Required only when `canModify`
    * refuses something — the reason is the caller's to give, not this hook's to guess. */
   cannotModifyReason?: string;
+  /** Asked before every save; resolving false cancels it. For a surface that knows the file may
+   *  have changed underneath the edit and must not overwrite that silently. */
+  confirmWrite?(path: string): Promise<boolean>;
   labels: FsTreeLabels;
 }
 
@@ -68,6 +73,9 @@ interface FsTreeLabels {
   paste: string;
   /** Success line after a save — a function so a caller can vary it per path. */
   saved(path: string): string;
+  /** How a dirty buffer is named in the "Discard unsaved changes?" confirmation, which can list
+   *  buffers from several panels at once — so it says where the file is, not just its path. */
+  unsaved(path: string): string;
   /** Copy for the create/upload prompts. */
   newFilePrompt: { title: string; message: string; placeholder(dir: string): string };
   newDirectoryPrompt: { title: string; message: string; placeholder(dir: string): string };
@@ -178,6 +186,10 @@ export interface UseFsTree {
   handlePaste: (destDirOverride?: string) => Promise<void>;
   /** Re-fetch every already-loaded directory, preserving expand state. */
   reload: () => Promise<void>;
+  /** Before re-scoping this panel from outside (e.g. browsing another device): resolves true when
+   *  the buffer is clean or the user agrees to discard it. Only this panel's buffer is asked
+   *  about — the app-wide gate is context/UnsavedChangesContext's. */
+  confirmLeave: () => Promise<boolean>;
 }
 
 // What the module-level row renderer (react-arborist needs a stable component identity, so it
@@ -485,6 +497,21 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const loadedTextRef = useRef(loadedText);
   loadedTextRef.current = loadedText;
 
+  const dirty = !!bufferPath && editorText !== loadedText;
+  // Reported app-wide so switching lab, opening Settings or closing the window asks first — see
+  // context/UnsavedChangesContext.tsx.
+  useRegisterUnsaved(dirty && bufferPath ? source.labels.unsaved(bufferPath) : null);
+
+  const confirmLeave = useCallback(async () => {
+    const path = scoped.current.bufferPath;
+    if (!path || editorTextRef.current === loadedTextRef.current) return true;
+    return confirm({
+      title: "Discard unsaved changes?",
+      message: describeUnsaved([sourceRef.current.labels.unsaved(path)]),
+      okLabel: "Discard",
+    });
+  }, [confirm]);
+
   // The discard-confirmation prompt is about the *buffer*, not about `selected` — they can differ
   // (see FsTreeScopeState.bufferPath), and asking about the wrong file silently overwrites a
   // stale buffer.
@@ -572,6 +599,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const handleSave = useCallback(async () => {
     const path = scoped.current.bufferPath;
     if (!path) return;
+    const confirmWrite = sourceRef.current.confirmWrite;
+    if (confirmWrite && !(await confirmWrite(path))) return;
     const content = editorTextRef.current;
     await runBusy(setBusy, sourceRef.current.labels.saveFile, async () => {
       await sourceRef.current.writeText(path, content);
@@ -1032,7 +1061,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     setBuffer,
     bufferPath,
     loadedText,
-    dirty: !!bufferPath && editorText !== loadedText,
+    dirty,
     selectFile,
     canModify,
     hasDownload,
@@ -1064,5 +1093,6 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     handleCut,
     handlePaste,
     reload,
+    confirmLeave,
   };
 }

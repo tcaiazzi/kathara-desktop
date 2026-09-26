@@ -79,6 +79,7 @@ import {
   useOnboardingTourSelectFirstDevice,
 } from "../context/OnboardingTourContext";
 import { useToast } from "../context/ToastContext";
+import { useConfirmDiscardAll, useGuardedNavigate } from "../context/UnsavedChangesContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { useDeviceActions } from "../hooks/useDeviceActions";
 import { useElementSize } from "../hooks/useElementSize";
@@ -604,6 +605,12 @@ const PROBLEM_EXPLANATION: Record<string, string> = {
 export function WorkspacePage() {
   const { labId = "" } = useParams();
   const navigate = useNavigate();
+  // For every navigation the user starts: switching lab re-scopes the Lab Configuration and Runtime
+  // Filesystem panels, which drops their editor buffers — see context/UnsavedChangesContext.tsx.
+  // Plain `navigate` stays for the ones that follow a lab the user has already acted on (a
+  // redirect on load, a rename or removal that already asked).
+  const guardedNavigate = useGuardedNavigate();
+  const confirmDiscardAll = useConfirmDiscardAll();
   const [searchParams, setSearchParams] = useSearchParams();
   const toast = useToast();
   const { theme: ktTheme } = useTheme();
@@ -851,9 +858,9 @@ export function WorkspacePage() {
   const handleLabCreated = useCallback(
     (createdId: string) => {
       reloadLabs();
-      navigate(`/workspace/${encodeURIComponent(createdId)}`);
+      void guardedNavigate(`/workspace/${encodeURIComponent(createdId)}`);
     },
-    [reloadLabs, navigate],
+    [reloadLabs, guardedNavigate],
   );
 
   const openFilesPanel = useCallback(() => {
@@ -1106,6 +1113,9 @@ export function WorkspacePage() {
   // with its directory; a folder opened from elsewhere is the user's own, so it is only closed —
   // the backend refuses the other way round for each (see LabSummary.managed).
   async function handleRemove(lab: LabRef & { managed: boolean }) {
+    // Closing keeps the folder, so an unsaved edit to one of its files would be lost for no
+    // reason; deleting takes the files with it, so its own confirmation says all there is.
+    if (!lab.managed && lab.id === labId && !(await confirmDiscardAll())) return;
     const remove = lab.managed ? deleteLab : closeLab;
     await remove(lab, setBusy, async () => {
       await reloadLabs();
@@ -1123,6 +1133,9 @@ export function WorkspacePage() {
     : undefined;
 
   async function handleRename(lab: LabRef) {
+    // Asked before the rename, not at the navigation after it: by then the files have moved and
+    // the old route no longer resolves, so there would be nothing to stay on.
+    if (lab.id === labId && !(await confirmDiscardAll())) return;
     await renameLab(lab, setBusy, async (renamed) => {
       await reloadLabs();
       if (localStorage.getItem(LS_LAST_LAB) === lab.id) localStorage.setItem(LS_LAST_LAB, renamed.id);
@@ -1444,7 +1457,7 @@ export function WorkspacePage() {
                             } else if (l.id === labId) {
                               setLabPickerOpen(false);
                             } else {
-                              navigate(`/workspace/${encodeURIComponent(l.id)}`);
+                              void guardedNavigate(`/workspace/${encodeURIComponent(l.id)}`);
                             }
                           }}
                           onContextMenu={(e) => openLabMenu(e, l)}
@@ -1771,7 +1784,7 @@ export function WorkspacePage() {
               <p className="kt-ws-muted">
                 This lab was not found. It may have been deleted, renamed or moved.
               </p>
-              <Button size="sm" variant="outline-secondary" onClick={() => navigate("/workspace")}>
+              <Button size="sm" variant="outline-secondary" onClick={() => void guardedNavigate("/workspace")}>
                 <X size={14} className="me-1" />
                 Clear Selection
               </Button>

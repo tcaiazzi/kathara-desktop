@@ -18,6 +18,7 @@ import {
   shell,
   type IpcMainInvokeEvent,
 } from "electron";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -282,6 +283,43 @@ function setPhase(phase: BootPhase, message: string, extra?: { checks?: Check[] 
 let onSetupPage = false;
 
 /**
+ * Set once a quit has got past the "labs still deployed" question (the `before-quit` handler
+ * below), so the quit that follows doesn't ask it twice. Cleared when the window then refuses to
+ * close (unsaved edits the user chose to keep), so the next quit asks again.
+ */
+let quitConfirmed = false;
+
+/** How long the renderer has to acknowledge a close request before the window closes anyway —
+ * see askRendererBeforeClose. Only the acknowledgement is timed, never the user's answer. */
+const CLOSE_ACK_TIMEOUT_MS = 2000;
+
+/** Close requests sent to the renderer and not yet answered, by request id. */
+const pendingCloseRequests = new Map<string, { ack: () => void; settle: (allow: boolean) => void }>();
+
+/**
+ * Ask the SPA whether the window may close, resolving with its answer.
+ *
+ * The SPA answers through its own confirmation dialog when an editor holds unsaved edits
+ * (context/UnsavedChangesContext.tsx), so the question looks like the rest of the app instead of
+ * a native message box. It acknowledges the request first and answers when the user has decided,
+ * which can take as long as it takes; a page that never acknowledges (still loading, hung, or not
+ * the SPA) must not be able to keep the window open, so only the acknowledgement has a timeout.
+ */
+function askRendererBeforeClose(target: BrowserWindow): Promise<boolean> {
+  return new Promise((resolve) => {
+    const id = randomUUID();
+    const settle = (allow: boolean) => {
+      clearTimeout(timer);
+      pendingCloseRequests.delete(id);
+      resolve(allow);
+    };
+    const timer = setTimeout(() => settle(true), CLOSE_ACK_TIMEOUT_MS);
+    pendingCloseRequests.set(id, { ack: () => clearTimeout(timer), settle });
+    target.webContents.send("window:close-request", id);
+  });
+}
+
+/**
  * Show the setup page, unless it is already the page on screen.
  *
  * The guard is what makes this safe to call from every failure path, including the cold-start
@@ -310,6 +348,47 @@ function attachWindowLifecycle(target: BrowserWindow): void {
   // gets reset — no bookkeeping needed at those call sites.
   target.webContents.on("did-navigate", (_e, url) => {
     if (!url.startsWith("file://")) onSetupPage = false;
+  });
+  // Closing the window — its close button, Quit, the OS — asks the SPA first, which shows its own
+  // "Discard unsaved changes?" dialog when an editor has unsaved edits. The close is held until
+  // the answer arrives, and re-issued once it is a yes. A quit already confirmed past the
+  // deployed-labs question continues as a quit, so on macOS (where closing the last window
+  // doesn't quit) it doesn't stop at a closed window. The setup and splash pages hold no editor.
+  let closeApproved = false;
+  let closeAsked = false;
+  target.on("close", (event) => {
+    if (closeApproved || target.webContents.getURL().startsWith("file://")) return;
+    event.preventDefault();
+    // A second close while the question is still up is the same request, not a new one.
+    if (closeAsked) return;
+    closeAsked = true;
+    void askRendererBeforeClose(target).then((allow) => {
+      closeAsked = false;
+      if (!allow) {
+        quitConfirmed = false;
+        return;
+      }
+      closeApproved = true;
+      if (quitConfirmed) app.quit();
+      else target.close();
+    });
+  });
+  // The renderer also cancels `beforeunload` while an editor holds unsaved edits, which is what
+  // still guards a reload or a navigation this shell starts itself (an elevation restart, the
+  // setup page after a crash) — a close is settled above before it gets that far. Electron shows
+  // no prompt of its own for a cancelled unload: left unhandled, the reload silently does nothing.
+  // Synchronous, because `preventDefault` has to be decided before this handler returns.
+  target.webContents.on("will-prevent-unload", (event) => {
+    const choice = dialog.showMessageBoxSync(target, {
+      type: "warning",
+      buttons: ["Discard Changes", "Stay"],
+      defaultId: 1,
+      cancelId: 1,
+      message: "Discard unsaved changes?",
+      detail: "An editor has changes that haven't been saved. They will be lost.",
+    });
+    // preventDefault here means "ignore the page's objection", i.e. go ahead and unload.
+    if (choice === 0) event.preventDefault();
   });
   // Diagnostic only — deliberately does not touch `status`/showSetup. runStartup's own try/catch
   // (around its `win.loadURL(handle.baseUrl)`) already turns a load failure *during boot* into
@@ -765,6 +844,15 @@ function registerIpc(): void {
   handleIpc("window:maximize", (e) => senderWindow(e)?.maximize());
   handleIpc("window:unmaximize", (e) => senderWindow(e)?.unmaximize());
   handleIpc("window:close", (e) => senderWindow(e)?.close());
+  // The SPA's side of askRendererBeforeClose: an acknowledgement as soon as a close request
+  // arrives, then the user's answer. Unknown ids (an answer arriving after the timeout already
+  // closed the question) are ignored, and anything but a literal `true` keeps the window open.
+  handleIpc("window:close-ack", (_e, id: unknown) => {
+    if (typeof id === "string") pendingCloseRequests.get(id)?.ack();
+  });
+  handleIpc("window:close-response", (_e, id: unknown, allow: unknown) => {
+    if (typeof id === "string") pendingCloseRequests.get(id)?.settle(allow === true);
+  });
   handleIpc("window:is-maximized", (e) => senderWindow(e)?.isMaximized() ?? false);
   // Read once on mount by TitleBar.tsx, which can come up against an already-fullscreen window
   // (a reload, a restart after a labs-dir change) and would otherwise miss the state entirely.
@@ -1244,7 +1332,6 @@ if (!app.requestSingleInstanceLock()) {
     await startup();
   });
 
-  let quitConfirmed = false;
   app.on("before-quit", (event) => {
     if (quitConfirmed) return;
     event.preventDefault();

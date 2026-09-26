@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "react-bootstrap";
+import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import type { StartupChange } from "../context/WorkspaceCoreContext";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
@@ -47,6 +48,7 @@ function isStartupFilePath(path: string): boolean {
 // for changes made elsewhere.
 export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSaved, startupChange }: LabExplorerProps) {
   const toast = useToast();
+  const confirm = useConfirm();
 
   const [labConf, setLabConf] = useState<LabConfView | null>(null);
   // Last content known to be on disk — the baseline both the conflict check and the post-save
@@ -55,10 +57,6 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
   const [confConflict, setConfConflict] = useState<string | null>(null);
   const [confReloadKey, setConfReloadKey] = useState(0);
 
-  // lab.conf's content is the editor buffer for `/lab.conf`, so the source below has to reach the
-  // *current* value without being rebuilt (and the whole tree re-created) on every keystroke.
-  const labConfRef = useRef<LabConfView | null>(labConf);
-  labConfRef.current = labConf;
   const deployedRef = useRef(detail.deployed);
   deployedRef.current = detail.deployed;
 
@@ -85,10 +83,17 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
   const source = useMemo<FsTreeSource>(
     () => ({
       list: async (path, signal) => (await api.fsListOffline(labId, path, signal)).entries,
-      readText: async (path) =>
-        path === LAB_CONF_PATH
-          ? labConfRef.current?.content ?? ""
-          : (await api.fsReadTextOffline(labId, path)).content,
+      readText: async (path) => {
+        if (path !== LAB_CONF_PATH) return (await api.fsReadTextOffline(labId, path)).content;
+        // Opening lab.conf starts a new edit: what is read now is the version "changed on disk
+        // since you started editing" is measured against, so it becomes the baseline — and any
+        // conflict left from an earlier, discarded edit no longer applies.
+        const conf = await api.getLabConf(labId);
+        serverConfRef.current = conf.content;
+        setLabConf(conf);
+        setConfConflict(null);
+        return conf.content;
+      },
       writeText: async (path, content) => {
         if (path === LAB_CONF_PATH) {
           await applyLabConf(content);
@@ -107,6 +112,26 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
         api.fsSearchOffline(labId, path, query, caseSensitive, signal),
       canModify,
       cannotModifyReason: "lab.conf can't be modified here.",
+      // Saving lab.conf replaces whatever is on disk, so a version written there since it was last
+      // read is asked about first. Re-read here rather than trusting the conflict banner: the
+      // banner only appears once the watcher's change reaches this tab, and never for an outside
+      // edit that leaves lab.conf unparseable — the one the watcher reports as a problem instead.
+      confirmWrite: async (path) => {
+        if (path !== LAB_CONF_PATH) return true;
+        let onDisk: string;
+        try {
+          onDisk = (await api.getLabConf(labId)).content;
+        } catch {
+          // Can't tell: let the save go ahead and report its own failure, if any.
+          return true;
+        }
+        if (onDisk === serverConfRef.current) return true;
+        return confirm({
+          title: "Overwrite lab.conf?",
+          message: "lab.conf changed on disk since you started editing. Saving replaces that version with yours.",
+          okLabel: "Overwrite",
+        });
+      },
       labels: {
         openFile: "Open file",
         saveFile: "Save file",
@@ -118,6 +143,7 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
         move: "Move",
         paste: "Paste",
         saved: (path) => (path === LAB_CONF_PATH ? "Applied lab.conf — topology updated." : `Saved ${path}.`),
+        unsaved: (path) => `${path} in ${detail.name ?? "this lab"}`,
         newFilePrompt: {
           title: "Create file",
           message: "New file path (relative to the lab), e.g.: pc1/etc/frr/frr.conf, pc1.startup, notes.txt",
@@ -147,7 +173,7 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
         uploadFallbackDir: () => (detail.machines[0] ? `/${detail.machines[0].name}` : "/"),
       },
     }),
-    [applyLabConf, detail.machines, labId, onStartupFileSaved],
+    [applyLabConf, confirm, detail.machines, detail.name, labId, onStartupFileSaved],
   );
 
   // A token whose identity changes exactly when the tree should be re-listed: on any lab

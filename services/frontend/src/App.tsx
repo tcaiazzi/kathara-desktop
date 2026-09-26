@@ -17,6 +17,7 @@ import { TitleBar } from "./desktop/TitleBar";
 import { UpdateChecker } from "./desktop/UpdateChecker";
 import { PromptProvider } from "./context/PromptContext";
 import { ToastProvider } from "./context/ToastContext";
+import { UnsavedChangesProvider } from "./context/UnsavedChangesContext";
 import { SettingsPage } from "./pages/SettingsPage";
 import { TerminalWindowPage } from "./pages/TerminalWindowPage";
 import { WorkspacePage } from "./pages/WorkspacePage";
@@ -66,6 +67,9 @@ export function App() {
     <ToastProvider>
       <ConfirmProvider>
         <PromptProvider>
+          {/* Every navigation that would drop an editor's unsaved buffer asks through this first —
+              including the shell's menu and deep links, hence above DesktopCommandsProvider. */}
+          <UnsavedChangesProvider>
           {/* Owns the pre-deploy Docker image flow: the confirmation, the download progress,
               and the "ready to deploy" message. `deployToggle` awaits it before the privilege
               prompt below — there is no point elevating the backend and then spending minutes
@@ -123,6 +127,7 @@ export function App() {
               </ReclaimLabsDirProvider>
             </ElevationProvider>
           </ImageDownloadProvider>
+          </UnsavedChangesProvider>
         </PromptProvider>
       </ConfirmProvider>
     </ToastProvider>
