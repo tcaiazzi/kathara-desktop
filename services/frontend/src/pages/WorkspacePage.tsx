@@ -608,7 +608,7 @@ export function WorkspacePage() {
   const toast = useToast();
   const { theme: ktTheme } = useTheme();
   const { run: runBusy } = useBusyAction();
-  const { deployToggle, deleteLab, closeLab, renameLab, wipeAll } = useLabLifecycleActions();
+  const { deployToggle, deleteLab, closeLab, renameLab } = useLabLifecycleActions();
 
   const [labs, setLabs] = useState<LabSummary[] | null>(null);
   const [labsError, setLabsError] = useState<string | null>(null);
@@ -1132,15 +1132,6 @@ export function WorkspacePage() {
     });
   }
 
-  // Undeploys every running lab (not just this one) — the labs themselves (lab.conf etc.) stay on
-  // disk, so refresh the list + the currently open lab's deployed state rather than navigating away.
-  async function handleWipeAll() {
-    await wipeAll(labId || undefined, setBusy, async () => {
-      await reloadLabs();
-      await load();
-    });
-  }
-
   // Electron's native menu (File / Lab) drives the same handlers as the on-screen controls.
   // No-ops in the browser build. Deploy and Undeploy are separate menu items over one toggle,
   // so each checks the current state — otherwise "Deploy" on a running lab would tear it down.
@@ -1404,24 +1395,6 @@ export function WorkspacePage() {
                   </>
                 )}
               </div>
-            )}
-            {/* Hidden with no labs: on a first run this red, destructive button was the most
-                prominent control on an otherwise empty screen. Deliberately gated on "has labs"
-                rather than "has deployed labs" — this is also the recovery tool for when the
-                registry disagrees with reality (containers alive, list says undeployed), which
-                is exactly the case the tighter check would hide it in. */}
-            {labs != null && labs.length > 0 && (
-              <Button
-                size="sm"
-                variant="outline-danger"
-                className="w-100 mb-2"
-                disabled={busy}
-                onClick={handleWipeAll}
-                title="Force-undeploys every lab running in kathara-desktop, not just this one"
-              >
-                <Trash2 size={14} className="me-1" />
-                Wipe All Labs
-              </Button>
             )}
             {showLabList ? (
               <>

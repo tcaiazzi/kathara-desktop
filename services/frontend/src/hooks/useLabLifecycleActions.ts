@@ -281,15 +281,14 @@ export function useLabLifecycleActions() {
     [prompt, runBusy, toast],
   );
 
-  // Force-undeploys every lab kathara-desktop has deployed, not just `openLab`'s — but unlike the
-  // Kathara CLI's own `kathara wipe`, it leaves scenarios started by other tools alone. `openLab`
-  // (the id of the lab currently open, if any) is only used to land a privilege-drop reload back
-  // on it.
+  // Force-undeploys every lab kathara-desktop has deployed — but unlike the Kathara CLI's own
+  // `kathara wipe`, it leaves scenarios started by other tools alone. Offered from Settings, where
+  // no lab is open: a privilege-drop reload lands on the default route.
   const wipeAll = useCallback(
-    async (openLab: string | undefined, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
+    async (setBusy: (busy: boolean) => void) => {
       const ok = await confirm({
         title: "Wipe all labs?",
-        message: "This force-undeploys every lab running in kathara-desktop, not just the one open here.",
+        message: "This force-undeploys every lab running in kathara-desktop. Lab files stay on disk.",
         okLabel: "Wipe all",
       });
       if (!ok) return;
@@ -300,8 +299,7 @@ export function useLabLifecycleActions() {
         } else {
           toast.show("All labs wiped.", "success");
         }
-        await dropElevationIfAny(openLab, requestReclaimAuth);
-        await onDone();
+        await dropElevationIfAny(undefined, requestReclaimAuth);
       });
     },
     [confirm, requestReclaimAuth, runBusy, toast],

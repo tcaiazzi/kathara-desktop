@@ -1,4 +1,4 @@
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Form } from "react-bootstrap";
 import { Link } from "react-router-dom";
@@ -9,9 +9,43 @@ import { desktop, isDesktop } from "../desktop/bridge";
 import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useAvailableImageSections } from "../hooks/useAvailableImages";
 import { useBusyAction } from "../hooks/useBusyAction";
+import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
 import type { SettingsView, SystemInfo } from "../services/types";
+
+// Not a setting either: a one-off action, so it sits outside the <Form> and is never tied to
+// "Save settings". It is the recovery tool for when the lab list disagrees with Docker (containers
+// alive, list says undeployed), which is why it is offered unconditionally rather than only when
+// some lab reads as deployed. Nothing to refresh afterwards: the workspace refetches the lab list
+// when it mounts again.
+function TroubleshootSettings() {
+  const { wipeAll } = useLabLifecycleActions();
+  const [busy, setBusy] = useState(false);
+  return (
+    <Panel title="Troubleshoot" className="mb-3">
+      <div className="d-flex align-items-center gap-3">
+        <div className="flex-grow-1">
+          <div>Wipe all labs</div>
+          <Form.Text className="text-muted">
+            Force-undeploys every lab running in kathara-desktop. Lab files stay on disk, and
+            scenarios started by other tools are left alone.
+          </Form.Text>
+        </div>
+        <Button
+          size="sm"
+          variant="outline-danger"
+          className="flex-shrink-0"
+          disabled={busy}
+          onClick={() => void wipeAll(setBusy)}
+        >
+          <Trash2 size={14} className="me-1" />
+          Wipe all
+        </Button>
+      </div>
+    </Panel>
+  );
+}
 
 // Client-only UI preference (localStorage, see useTheme) — not a Kathara framework setting, so it
 // has no GET/PUT /settings field and lives in its own panel outside the <Form> below, applied
@@ -505,6 +539,10 @@ export function SettingsPage() {
           {busy ? "Saving..." : "Save Settings"}
         </Button>
       </Form>
+
+      <div className="mt-4">
+        <TroubleshootSettings />
+      </div>
 
       <div className="border-top mt-4 pt-4">
         <BackToWorkspace />
