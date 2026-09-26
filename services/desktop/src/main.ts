@@ -615,7 +615,7 @@ function registerIpc(): void {
         if (targets && (targets.labsDir !== null || targets.openedDirs.length > 0)) {
           if (process.platform === "linux") {
             // No native dialog can collect a password on Linux (see
-            // reclaimLabsDirOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
+            // reclaimOwnershipWithPrompt's doc comment on why sudo-prompt isn't used here
             // either) — tell the renderer to ask instead.
             return { dropped: false, needsReclaimPassword: true, reclaimPaths: reclaimPaths(targets) };
           }

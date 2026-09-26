@@ -98,10 +98,12 @@ branch = true
 show_missing = true
 skip_covered = true
 
-# Read by `make mutation-backend`, never by CI. The modules with the backend's actual logic:
-# schemas/, errors.py and main.py are declarations and wiring, where nearly every mutant is either
-# rejected by pydantic at import or equivalent. `also_copy` puts the rest of the package next to
-# the mutated files in mutants/src, so imports of the unmutated modules still resolve.
+# Read by `make mutation-backend`, never by CI. A chosen subset, not every module: the ones where
+# most of the backend's own decisions live. A module missing from the list is simply not mutated —
+# add it here to run it. schemas/, errors.py and main.py stay out on purpose: they are declarations
+# and wiring, where nearly every mutant is either rejected by pydantic at import or equivalent.
+# `also_copy` puts the rest of the package next to the mutated files in mutants/src, so imports of
+# the unmutated modules still resolve.
 [tool.mutmut]
 paths_to_mutate = [
     "src/kathara_api/services/kathara_service.py",

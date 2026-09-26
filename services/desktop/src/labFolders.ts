@@ -22,11 +22,10 @@ const WINDOWS_DRIVE_RE = /^[a-z]:([\\/]|$)/i;
  * by value, never by position: Chromium puts its own switches ahead of the app path in a second
  * instance's argv, so a fixed count would drop a switch and keep the app's own folder. Flags —
  * Chromium's, and whatever a desktop entry adds (`--no-sandbox`) — are not folders, and neither is
- * anything with a URL
- * scheme. That last rule is a security one, not a nicety: the OS hands the app every `kathara:`
- * link a web page opens, and one without `//` (`kathara:../../../home/u/x`) is neither a deep link
- * (deepLinkRoute.ts wants `kathara://`) nor, once resolved, anything but an attacker-chosen
- * absolute path. The last remaining argument is the one, resolved against `cwd` (the *calling*
+ * anything with a URL scheme. That last rule is a security one, not a nicety: the OS hands the app
+ * every `kathara:` link a web page opens, and one without `//` (`kathara:../../../home/u/x`) is
+ * neither a deep link (deepLinkRoute.ts wants `kathara://`) nor, once resolved, anything but an
+ * attacker-chosen absolute path. The last remaining argument is the one, resolved against `cwd` (the *calling*
  * shell's, for a second instance), and only if it really is a directory.
  */
 export function folderFromArgv(

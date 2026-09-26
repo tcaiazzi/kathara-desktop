@@ -744,7 +744,7 @@ async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok
 
 /**
  * Shared gate for *every* "test a password against sudo" entry point — `verifySudoPassword`,
- * `reclaimLabsDirOwnershipWithPassword` and `verifyCanElevate`'s macOS/Windows branch — so adding
+ * `reclaimOwnershipWithPassword` and `verifyCanElevate`'s macOS/Windows branch — so adding
  * a new one never opens a second password oracle alongside the one this already closes: they all
  * count against, and are locked out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
  */

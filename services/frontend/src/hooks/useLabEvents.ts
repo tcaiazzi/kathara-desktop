@@ -7,10 +7,13 @@ import type { LabEvent } from "../services/types";
  *  startup scripts changed on disk outside this app), for as long as the caller is mounted.
  *
  *  One stream for every lab rather than one per open lab: the list needs to hear about labs that
- *  aren't open too. EventSource reconnects on its own after a dropped connection (a backend
- *  restart, an elevation), so nothing here retries; an event missed in between only means a
- *  refresh that happens on the next one. `onEvent` is read through a ref, so a caller can pass an
- *  inline callback without reopening the stream on every render. */
+ *  aren't open too. Nothing here retries. EventSource reconnects on its own when the connection
+ *  drops but the backend stays where it was (a dev server's `--reload`); the desktop app never
+ *  keeps a page across a backend restart or an elevation — the new backend is on another port,
+ *  and the shell reloads the window there or shows its setup page (services/desktop/src/main.ts)
+ *  — so this hook mounts afresh with the new URL and token. An event missed in between only
+ *  means a refresh that happens on the next one. `onEvent` is read through a ref, so a caller can
+ *  pass an inline callback without reopening the stream on every render. */
 export function useLabEvents(onEvent: (event: LabEvent) => void): void {
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
