@@ -16,6 +16,7 @@ import { useEffect, useRef } from "react";
 import { labConfCompletion } from "../editor/labConfComplete";
 import { labConf } from "../editor/labConfLanguage";
 import { labConfLinter } from "../editor/labConfLint";
+import { detectLineBreak, withLineBreak, type LineBreak } from "../editor/lineBreaks";
 import { editorTheme } from "../editor/theme";
 import { useAvailableImageList } from "../hooks/useAvailableImages";
 import { useTheme } from "../hooks/useTheme";
@@ -49,6 +50,11 @@ function languageExtensions(language: EditorLanguage, images: string[]): Extensi
   return [];
 }
 
+// The document as the caller's `value` spells it: CodeMirror's own `\n` joins, re-joined with `eol`.
+function docText(state: EditorState, eol: LineBreak): string {
+  return withLineBreak(state.doc.toString(), eol);
+}
+
 // A CodeMirror 6 editor wrapping the app's plain <textarea>-shaped API (value/onChange/readOnly/
 // placeholder). Reconfigures language/theme/readOnly/placeholder via Compartments without recreating
 // the view. Deliberately binds no Mod-s so Ctrl/Cmd+S bubbles to the callers' useSaveShortcut.
@@ -65,6 +71,10 @@ export function CodeEditor({
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // The line ending of the file in the editor, so `docText` hands `value` back exactly as it came
+  // in — see editor/lineBreaks.ts. Set from each value arriving from outside, never from our own
+  // onChange round-trip.
+  const eolRef = useRef<LineBreak>(detectLineBreak(value));
 
   // Stable compartments for the reconfigurable slots.
   const langComp = useRef(new Compartment());
@@ -91,7 +101,7 @@ export function CodeEditor({
         editableComp.current.of([EditorView.editable.of(!readOnly), EditorState.readOnly.of(readOnly)]),
         placeholderComp.current.of(placeholder ? cmPlaceholder(placeholder) : []),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+          if (update.docChanged) onChangeRef.current(docText(update.state, eolRef.current));
         }),
       ],
     });
@@ -115,7 +125,9 @@ export function CodeEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    if (value !== view.state.doc.toString()) {
+    if (value !== docText(view.state, eolRef.current)) {
+      // Before the dispatch: its own onChange must already re-join lines the way `value` does.
+      eolRef.current = detectLineBreak(value);
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
     }
   }, [value]);
