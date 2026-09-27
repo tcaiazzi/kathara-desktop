@@ -24,6 +24,10 @@ export interface WorkspaceCtx {
   openTerminal: (machine: string) => void;
   /** End every terminal, in the Terminals tab and detached alike. */
   closeAllTerminals: () => void;
+  /** Detach a terminal from the Terminals tab into a dock panel of its own, beside the tab. */
+  moveTerminalToPanel: (sessionId: string) => void;
+  /** Put a detached terminal back into the Terminals tab. */
+  moveTerminalToTab: (sessionId: string) => void;
   /** Switch to the Runtime Filesystem dock panel, preselecting `machine`. */
   openRuntimeFsPanel: (machine: string) => void;
   /** DOM node of the Inspector dock panel, or null when that panel is closed. The

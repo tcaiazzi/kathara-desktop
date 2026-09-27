@@ -35,6 +35,10 @@ export interface TerminalRegistry {
   /** Ends a session: its socket closes and its scrollback is gone. */
   close: (id: string) => void;
   activate: (id: string) => void;
+  /** Moves a session between the Terminals tab and a panel of its own, without touching the session
+   *  itself. Moving into the tab makes it the one shown there; moving out shows its neighbour. The
+   *  caller adds or closes the dock panel; this only records where the session belongs. */
+  move: (id: string, location: TerminalLocation) => void;
   /** Replaces the whole state, for a layout restored from storage. Seeds the per-machine counters
    *  from it, so a session opened afterwards cannot take a restored session's id. */
   adopt: (sessions: TerminalSessionEntry[], activeId: string | null) => void;
@@ -103,6 +107,16 @@ export function useTerminalRegistry(): TerminalRegistry {
     setState((prev) => (prev.activeId === id ? prev : { ...prev, activeId: id }));
   }, []);
 
+  const move = useCallback((id: string, location: TerminalLocation) => {
+    setState((prev) => {
+      if (!prev.sessions.some((s) => s.id === id && s.location !== location)) return prev;
+      return {
+        sessions: prev.sessions.map((s) => (s.id === id ? { ...s, location } : s)),
+        activeId: location === "tabs" ? id : activeAfterClose(tabIds(prev.sessions), id, prev.activeId),
+      };
+    });
+  }, []);
+
   const adopt = useCallback(
     (sessions: TerminalSessionEntry[], activeId: string | null) => {
       const keep = new Set(sessions.map((s) => s.id));
@@ -122,8 +136,8 @@ export function useTerminalRegistry(): TerminalRegistry {
   }, []);
 
   return useMemo(
-    () => ({ ...state, statuses, open, close, activate, adopt, setStatus, hostFor }),
-    [state, statuses, open, close, activate, adopt, setStatus, hostFor],
+    () => ({ ...state, statuses, open, close, activate, move, adopt, setStatus, hostFor }),
+    [state, statuses, open, close, activate, move, adopt, setStatus, hostFor],
   );
 }
 

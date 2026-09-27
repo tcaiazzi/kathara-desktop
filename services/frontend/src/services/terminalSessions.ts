@@ -12,6 +12,13 @@ export interface TerminalSessionInfo {
   num: number;
 }
 
+/** The Terminals tab's dockview panel id, which a saved layout records. */
+export const TERMINALS_PANEL_ID = "terminals";
+
+/** The drag payload type of a row dragged out of the Terminals tab's list; its value is the session
+ *  id. Its own type, so the dock accepts this drag and no other outside one. */
+export const TERMINAL_DRAG_TYPE = "application/x-kathara-terminal";
+
 const TERMINAL_PANEL_PREFIX = "terminal:";
 // The machine part is greedy, so a device name containing ":" still parses: only the last
 // segment is the instance number.
@@ -80,4 +87,21 @@ export function activeAfterClose(ids: string[], closedId: string, activeId: stri
   const rest = ids.filter((id) => id !== closedId);
   if (!rest.length) return null;
   return rest[Math.min(index, rest.length - 1)] ?? rest[0];
+}
+
+/** A dock panel being dropped, as dockview describes the drop: onto a tab (`targetPanelId` is that
+ *  tab's panel), onto a group's content (`activePanelId` is the panel it shows), or elsewhere. */
+export interface PanelDrop {
+  kind: string;
+  position: string;
+  targetPanelId?: string;
+  activePanelId?: string;
+}
+
+/** Whether a drop puts a detached terminal back into the Terminals tab: onto that tab itself, or onto
+ *  the middle of its content while it is showing. An edge of its content still splits, as for any
+ *  other panel, so a terminal can still be docked beside the tab. */
+export function isDropIntoTerminalsTab(drop: PanelDrop): boolean {
+  if (drop.kind === "tab") return drop.targetPanelId === TERMINALS_PANEL_ID;
+  return drop.kind === "content" && drop.position === "center" && drop.activePanelId === TERMINALS_PANEL_ID;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   activeAfterClose,
+  isDropIntoTerminalsTab,
   parseTerminalsTabParams,
   sessionOfTerminalPanel,
   terminalPanelId,
@@ -76,5 +77,25 @@ describe("activeAfterClose", () => {
 
   it("leaves nothing active when the only session closes", () => {
     expect(activeAfterClose(["a"], "a", "a")).toBeNull();
+  });
+});
+
+describe("isDropIntoTerminalsTab", () => {
+  it("takes a drop onto the Terminals tab itself", () => {
+    expect(isDropIntoTerminalsTab({ kind: "tab", position: "center", targetPanelId: "terminals" })).toBe(true);
+  });
+
+  it("takes a drop onto the middle of the Terminals tab's content while it shows", () => {
+    expect(isDropIntoTerminalsTab({ kind: "content", position: "center", activePanelId: "terminals" })).toBe(true);
+  });
+
+  it("leaves an edge of that content to split, as for any panel", () => {
+    expect(isDropIntoTerminalsTab({ kind: "content", position: "right", activePanelId: "terminals" })).toBe(false);
+  });
+
+  it("leaves drops on any other tab, group or header space alone", () => {
+    expect(isDropIntoTerminalsTab({ kind: "tab", position: "center", targetPanelId: "topology" })).toBe(false);
+    expect(isDropIntoTerminalsTab({ kind: "content", position: "center", activePanelId: "devices" })).toBe(false);
+    expect(isDropIntoTerminalsTab({ kind: "header_space", position: "center", activePanelId: "terminals" })).toBe(false);
   });
 });

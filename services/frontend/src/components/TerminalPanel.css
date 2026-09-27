@@ -98,3 +98,39 @@
   background: var(--kt-menu-hover-bg);
   color: var(--bs-body-color);
 }
+
+/* The Terminals tab with no terminal in it (TerminalsEmpty), laid out like the welcome screen's
+   call to action, at a panel's scale. */
+.kt-terms-empty {
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  text-align: center;
+}
+.kt-terms-empty-icon {
+  color: var(--bs-secondary-color);
+  opacity: 0.7;
+}
+.kt-terms-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.kt-terms-empty-lead {
+  max-width: 44ch;
+  margin: 0 0 4px;
+  font-size: 13px;
+  color: var(--bs-secondary-color);
+}
+
+/* The Terminals tab's device menus (DeviceMenu), rendered in the page body. The toggle leaves at
+   least half the window, less its own height, above or below it, and Popper flips the menu to
+   that side; capping the menu to it keeps the whole menu on screen, scrolling past that. */
+.kt-terms-menu {
+  max-height: calc(50vh - 24px);
+  overflow-y: auto;
+}

@@ -112,10 +112,12 @@ const STEPS: TourStep[] = [
     },
   },
   {
-    element: '[data-tour="terminal-btn"]',
+    element: groupElement("terminals-tab"),
+    tourPanel: "terminals",
     popover: {
       title: "Terminals",
-      description: "Open a shell on any running device — you can have several at once, listed in the Terminals tab.",
+      description:
+        "Shells on your running devices, all in one tab — open one here, or from a device's right-click menu. Drag one out of the list to give it a panel of its own.",
     },
   },
   {

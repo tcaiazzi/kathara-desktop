@@ -13,8 +13,10 @@
 import {
   DockviewDefaultTab,
   DockviewReact,
+  positionToDirection,
   themeDark,
   themeLight,
+  type AddPanelPositionOptions,
   type DockviewApi,
   type DockviewGroupPanel,
   type DockviewReadyEvent,
@@ -43,7 +45,6 @@ import {
   ShieldAlert,
   Square,
   SquareTerminal,
-  SquareX,
   Trash2,
   Upload,
   X,
@@ -99,9 +100,13 @@ import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import {
+  TERMINAL_DRAG_TYPE,
+  TERMINALS_PANEL_ID,
+  isDropIntoTerminalsTab,
   parseTerminalsTabParams,
   sessionOfTerminalPanel,
   terminalPanelId,
+  terminalTitle,
   terminalsTabParams,
 } from "../services/terminalSessions";
 import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
@@ -210,7 +215,7 @@ function isFixedPanel(id: string): boolean {
   return !id.startsWith("terminal:");
 }
 
-// Onboarding tour targets for the shared tab strip (node-info/devices/files/runtime-fs/stats) —
+// Onboarding tour targets for the shared tab strip (node-info/devices/files/runtime-fs/stats/terminals) —
 // the tab itself, not its (usually hidden, since only one tab in the group is active) content, so
 // the spotlight always lands on something clickable and visible. See DockTab below.
 const TOUR_TAB_ID: Record<string, string> = {
@@ -219,6 +224,7 @@ const TOUR_TAB_ID: Record<string, string> = {
   files: "files-tab",
   "runtime-fs": "runtime-fs-tab",
   stats: "stats-tab",
+  [TERMINALS_PANEL_ID]: "terminals-tab",
 };
 
 // Tab renderer for every panel: the close button appears only on the panels that are actually
@@ -227,9 +233,27 @@ const TOUR_TAB_ID: Record<string, string> = {
 // a per-panel opt-in could never reach a panel that was already persisted without one, leaving
 // it with a close button its siblings lack.
 function DockTab(props: IDockviewPanelHeaderProps) {
+  const ws = useWorkspace();
+  const session = sessionOfTerminalPanel(props.api.id);
+  // A detached terminal's tab offers the way back without a drag, as the list's rows offer the way
+  // out (TerminalsPanel).
+  const onContextMenu = session
+    ? (e: React.MouseEvent) => {
+        e.preventDefault();
+        ws.setContextMenu({
+          x: e.clientX,
+          y: e.clientY,
+          items: [
+            { label: "Move to Terminals Tab", action: () => ws.moveTerminalToTab(session.id) },
+            { label: "Close Terminal", danger: true, action: () => props.api.close() },
+          ],
+        });
+      }
+    : undefined;
   return (
     <DockviewDefaultTab
       {...props}
+      onContextMenu={onContextMenu}
       hideClose={isFixedPanel(props.api.id)}
       data-tour={TOUR_TAB_ID[props.api.id]}
     />
@@ -328,9 +352,9 @@ type LayoutPreset = (typeof LAYOUT_PRESETS)[number]["key"];
 // A group at/under this height is considered collapsed (header strip only).
 const COLLAPSE_THRESHOLD = 60;
 
-// Below this width, the lab header's action row (Terminal/Layout/Deploy/Download/Delete) collapses
+// Below this width, the lab header's action row (Layout/Deploy/Download/Delete) collapses
 // into a single dropdown — see the `compactActions` header ref below.
-const HEADER_ACTIONS_COMPACT_WIDTH = 900;
+const HEADER_ACTIONS_COMPACT_WIDTH = 660;
 
 // Below this window width the rail closes by itself, and above it reopens, to leave the room to the
 // lab — unless the user has opened or closed it by hand since the page loaded, which wins.
@@ -367,7 +391,7 @@ function buildDefaultLayout(api: DockviewApi) {
   api.addPanel({ id: "files", component: "files", title: "Lab Configuration", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime Filesystem", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "stats", component: "stats", title: "Statistics", position: { referencePanel: "devices", direction: "within" } });
-  api.addPanel({ id: "terminals", component: "terminals", title: TERMINALS_TITLE, position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: TERMINALS_PANEL_ID, component: "terminals", title: TERMINALS_TITLE, position: { referencePanel: "devices", direction: "within" } });
   if (api.height) {
     api.getPanel("topology")?.api.group.api.setSize({ height: Math.round(api.height * TOPOLOGY_HEIGHT_FRACTION) });
   }
@@ -401,14 +425,14 @@ function showNodeInfo(api: DockviewApi) {
 // showNodeInfo it always foregrounds the tab, even over the topology: it only runs when the user has
 // just asked for a terminal.
 function showTerminals(api: DockviewApi) {
-  const terminals = api.getPanel("terminals");
+  const terminals = api.getPanel(TERMINALS_PANEL_ID);
   if (terminals) {
     terminals.api.setActive();
     return;
   }
   const devices = api.getPanel("devices");
   api.addPanel({
-    id: "terminals",
+    id: TERMINALS_PANEL_ID,
     component: "terminals",
     title: TERMINALS_TITLE,
     position: devices ? { referencePanel: "devices", direction: "within" } : undefined,
@@ -467,7 +491,7 @@ function resetLayout(api: DockviewApi) {
   if (!devices || !topo) return;
   // Reset shouldn't leave the inspector hidden — bring it back if it was closed.
   if (!api.getPanel("node-info")) showNodeInfo(api);
-  for (const id of ["node-info", "files", "runtime-fs", "stats", "terminals"]) {
+  for (const id of ["node-info", "files", "runtime-fs", "stats", TERMINALS_PANEL_ID]) {
     api.getPanel(id)?.api.moveTo({ group: devices.api.group });
   }
   for (const p of terminalPanelsOf(api)) p.api.moveTo({ group: devices.api.group });
@@ -502,7 +526,7 @@ function focusEditing(api: DockviewApi) {
 // The Terminals tab takes the whole screen; everything else joins it as background tabs.
 function focusTerminals(api: DockviewApi) {
   showTerminals(api);
-  const terminals = api.getPanel("terminals");
+  const terminals = api.getPanel(TERMINALS_PANEL_ID);
   if (!terminals) return;
   mergeOthersInto(api, terminals.api.group, new Set([terminals.api.group]));
   terminals.api.setActive();
@@ -647,7 +671,7 @@ export function WorkspacePage() {
   // import unmounting WorkspacePage, an ErrorBoundary catch, a route change) — same leaked-
   // listener shape useForceLayout.ts's activeDragCleanup guards against for the topology canvas.
   const railDragCleanupRef = useRef<(() => void) | null>(null);
-  // Below this header width, the whole lab-action row (Terminal/Layout/Deploy/Download/Delete)
+  // Below this header width, the whole lab-action row (Layout/Deploy/Download/Delete)
   // collapses into a single "more actions" dropdown instead of squeezing/deforming — same pattern
   // as TopologyGraph's own compact toolbar, measured via ResizeObserver rather than viewport width
   // since this reacts to the sidebar being resized too, not just the browser window.
@@ -985,7 +1009,7 @@ export function WorkspacePage() {
   }, []);
 
   const terminals = useTerminalRegistry();
-  const { open: openSession, close: closeSession, adopt: adoptSessions } = terminals;
+  const { open: openSession, close: closeSession, move: moveSession, adopt: adoptSessions } = terminals;
   // The latest sessions, for the callbacks below that must not change identity with them.
   const terminalSessionsRef = useRef(terminals.sessions);
   terminalSessionsRef.current = terminals.sessions;
@@ -1004,11 +1028,51 @@ export function WorkspacePage() {
     closeTerminalSessions(dockApi, terminalSessionsRef.current, closeSession);
   }, [closeSession]);
 
+  // Sessions whose detached panel is being closed only to move them back into the Terminals tab.
+  // The panel's removal must not end them (see onDockReady); the registry's own state cannot say
+  // so yet, since the close runs synchronously, before the move has re-rendered.
+  const rejoiningTerminals = useRef(new Set<string>());
+
+  // Take a session out of the Terminals tab into a dock panel of its own, at `position`, or beside
+  // the Terminals tab without one. Its host moves into the new panel: nothing reconnects.
+  const moveTerminalToPanel = useCallback(
+    (id: string, position?: AddPanelPositionOptions) => {
+      const dockApi = dockApiRef.current;
+      const session = terminalSessionsRef.current.find((s) => s.id === id);
+      if (!dockApi || session?.location !== "tabs") return;
+      const tab = dockApi.getPanel(TERMINALS_PANEL_ID);
+      moveSession(id, "panel");
+      dockApi.addPanel({
+        id: terminalPanelId(id),
+        component: "terminal",
+        title: terminalTitle(session),
+        position: position ?? (tab ? { referenceGroup: tab.api.group, direction: "right" } : undefined),
+      });
+    },
+    [moveSession],
+  );
+
+  // Put a detached session back into the Terminals tab, as the one it shows, and close its panel.
+  const moveTerminalToTab = useCallback(
+    (id: string) => {
+      const dockApi = dockApiRef.current;
+      if (!dockApi) return;
+      const panel = dockApi.getPanel(terminalPanelId(id));
+      moveSession(id, "tabs");
+      if (panel) {
+        rejoiningTerminals.current.add(id);
+        panel.api.close();
+      }
+      showTerminals(dockApi);
+    },
+    [moveSession],
+  );
+
   // The Terminals tab's sessions live in its dockview params, so the saved layout carries them and a
   // reload brings them back (onDockReady). A params change is itself a layout change, which saves
   // the layout; the comparison keeps an unrelated re-render from saving it again.
   useEffect(() => {
-    const panel = dockApiRef.current?.getPanel("terminals");
+    const panel = dockApiRef.current?.getPanel(TERMINALS_PANEL_ID);
     if (!panel) return;
     const inTab = terminals.sessions.filter((s) => s.location === "tabs");
     const params = terminalsTabParams(inTab, terminals.activeId);
@@ -1092,18 +1156,58 @@ export function WorkspacePage() {
       }
     });
 
-    // Closing a terminal's panel ends its session. Subscribed before the prune below, whose closes
+    // Closing a detached terminal's panel ends its session, unless the panel closes because the
+    // session is moving back into the Terminals tab. Subscribed before the prune below, whose closes
     // must end their sessions too.
     event.api.onDidRemovePanel((panel) => {
       const session = sessionOfTerminalPanel(panel.id);
-      if (session) closeSession(session.id);
+      if (!session) return;
+      if (rejoiningTerminals.current.delete(session.id)) return;
+      closeSession(session.id);
+    });
+
+    // A row dragged out of the Terminals tab's list is the one outside drag the dock takes: it
+    // shows dockview's own drop overlay, and dropping detaches that terminal into a panel there.
+    // A drop on the dock's outer edge has no group and docks along that edge.
+    event.api.onUnhandledDragOver((e) => {
+      if (e.nativeEvent instanceof DragEvent && e.nativeEvent.dataTransfer?.types.includes(TERMINAL_DRAG_TYPE)) {
+        e.accept();
+      }
+    });
+    event.api.onDidDrop((e) => {
+      if (!(e.nativeEvent instanceof DragEvent)) return;
+      const id = e.nativeEvent.dataTransfer?.getData(TERMINAL_DRAG_TYPE);
+      if (!id) return;
+      const direction = positionToDirection(e.position);
+      const position: AddPanelPositionOptions | undefined = e.group
+        ? { referenceGroup: e.group, direction }
+        : direction !== "within"
+          ? { direction }
+          : undefined;
+      moveTerminalToPanel(id, position);
+    });
+
+    // A detached terminal dropped onto the Terminals tab, or the middle of its content, goes back
+    // into it instead of becoming another tab beside it.
+    event.api.onWillDrop((e) => {
+      const session = sessionOfTerminalPanel(e.getData()?.panelId ?? "");
+      if (!session) return;
+      const drop = {
+        kind: e.kind,
+        position: e.position,
+        targetPanelId: e.panel?.id,
+        activePanelId: e.group?.activePanel?.id,
+      };
+      if (!isDropIntoTerminalsTab(drop)) return;
+      e.preventDefault();
+      moveTerminalToTab(session.id);
     });
 
     // A restored layout brings back the Terminals tab's sessions, in its params, and every detached
     // terminal's panel; the registry adopts one session for each. That also keeps a terminal opened
     // afterwards from taking a restored panel's id (dockview throws "panel with id ... already
     // exists" on the collision). A session found in both places is the detached one.
-    const tab = parseTerminalsTabParams(event.api.getPanel("terminals")?.params);
+    const tab = parseTerminalsTabParams(event.api.getPanel(TERMINALS_PANEL_ID)?.params);
     const detached = terminalPanelsOf(event.api).flatMap((p) => sessionOfTerminalPanel(p.id) ?? []);
     const detachedIds = new Set(detached.map((s) => s.id));
     const restoredSessions: TerminalSessionEntry[] = [
@@ -1122,7 +1226,7 @@ export function WorkspacePage() {
       const orphans = orphanSessions(restoredSessions, new Set(detailRef.current.machines.map((m) => m.name)));
       closeTerminalSessions(event.api, orphans, closeSession);
     }
-  }, [adoptSessions, closeSession]);
+  }, [adoptSessions, closeSession, moveTerminalToPanel, moveTerminalToTab]);
 
   // By name, so a lab keeps its place in the rail whatever order the backend happens to list them
   // in (a rename, or a lab adopted from the labs folder, would otherwise land at the end).
@@ -1344,6 +1448,8 @@ export function WorkspacePage() {
         registerSelectionGuard,
         openTerminal,
         closeAllTerminals,
+        moveTerminalToPanel,
+        moveTerminalToTab,
         openRuntimeFsPanel,
         nodeInfoHost,
         setNodeInfoHost,
@@ -1381,8 +1487,6 @@ export function WorkspacePage() {
       selectNodeQuietly,
     ],
   );
-
-  const runningMachines = deviceMachines.filter((m) => m.running);
 
   const layoutPresetItems = LAYOUT_PRESETS.map((preset) => (
     <Dropdown.Item key={preset.key} onClick={() => applyPreset(preset.key)}>
@@ -1740,18 +1844,6 @@ export function WorkspacePage() {
                       }
                       align="end"
                     >
-                      <Dropdown.Header>Terminals</Dropdown.Header>
-                      {runningMachines.length ? (
-                        runningMachines.map((m) => (
-                          <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
-                            Open terminal: {m.name}
-                          </Dropdown.Item>
-                        ))
-                      ) : (
-                        <Dropdown.Item disabled>No running devices</Dropdown.Item>
-                      )}
-                      <Dropdown.Item onClick={closeAllTerminals}>Close All Terminals</Dropdown.Item>
-                      <Dropdown.Divider />
                       <Dropdown.Header>Layout</Dropdown.Header>
                       {layoutPresetItems}
                       <Dropdown.Divider />
@@ -1775,7 +1867,6 @@ export function WorkspacePage() {
                         target as "skip to next step" (see OnboardingTour.tsx), so a tour run at a
                         narrow width steps past them instead of getting stuck on a selector that
                         matches nothing. */}
-                    <span data-tour="terminal-btn" style={{ display: "none" }} />
                     <span data-tour="layout-btn" style={{ display: "none" }} />
                     <span data-tour="deploy-btn" style={{ display: "none" }} />
                     <span data-tour="download-btn" style={{ display: "none" }} />
@@ -1783,29 +1874,6 @@ export function WorkspacePage() {
                   </>
                 ) : (
                   <>
-                    <span data-tour="terminal-btn" className="d-inline-flex">
-                      <DropdownButton
-                        size="sm"
-                        variant="outline-secondary"
-                        title={
-                          <>
-                            <SquareTerminal size={14} className="me-1" />
-                            Terminal
-                          </>
-                        }
-                        disabled={!runningMachines.length}
-                      >
-                        {runningMachines.map((m) => (
-                          <Dropdown.Item key={m.name} onClick={() => openTerminal(m.name)}>
-                            {m.name}
-                          </Dropdown.Item>
-                        ))}
-                      </DropdownButton>
-                    </span>
-                    <Button size="sm" variant="outline-secondary" onClick={closeAllTerminals}>
-                      <SquareX size={14} className="me-1" />
-                      Close All Terminals
-                    </Button>
                     <span data-tour="layout-btn" className="d-inline-flex">
                       <DropdownButton
                         size="sm"
