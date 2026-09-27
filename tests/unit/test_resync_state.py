@@ -148,3 +148,105 @@ def test_a_refresh_keeps_devices_whose_containers_still_run():
 
     assert listed.machines["pc1"].api_object is not None
     assert all(m.api_object is None for name, m in listed.machines.items() if name != "pc1")
+
+
+# -- collision domains detached at runtime ------------------------------------------------------
+
+
+class _AttachmentsFacade(FakeFacadeBase):
+    """Mimics the interface bookkeeping of Kathara's ``DockerManager.update_lab_from_api``: it
+    reads ``.link`` off every interface slot, drops the collision domains a device's container is
+    no longer attached to with ``Machine.remove_interface`` (which leaves the slot ``None``), and
+    adds back under their number the ones attached that the model lacks."""
+
+    def __init__(self, attached: dict[str, dict[str, int]]):
+        self.attached = attached  # device name -> {collision domain: interface number}
+        self.refreshes = 0
+
+    def update_lab_from_api(self, lab):
+        self.refreshes += 1
+        for device in lab.machines.values():
+            static = {iface.link for iface in device.interfaces.values()}
+            current = self.attached[device.name]
+            for link in static:
+                if link.name not in current:
+                    device.remove_interface(link)
+            static_names = {link.name for link in static}
+            for name, number in current.items():
+                if name not in static_names:
+                    device.add_interface(lab.get_or_new_link(name), number=number)
+        return lab
+
+
+def _two_domain_lab(service):
+    spec = LabCreate.model_validate(
+        {
+            "name": "twodomains",
+            "machines": [
+                {"name": "pc1", "interfaces": [{"link": "A", "number": 0}, {"link": "B", "number": 1}]},
+                {"name": "pc2", "interfaces": [{"link": "A", "number": 0}]},
+            ],
+        }
+    )
+    lab = lab_builder.build_lab(spec)
+    register_lab(service, lab)
+    return lab
+
+
+def test_a_collision_domain_detached_at_runtime_leaves_no_empty_interface_slot():
+    """Every refresh after the one that finds the detach still reads the model without failing."""
+    facade = _AttachmentsFacade({"pc1": {"A": 0}, "pc2": {"A": 0}})
+    service = make_service(facade=facade)
+    lab = _two_domain_lab(service)
+
+    service.get_lab_or_reconstruct(lab.hash)
+    service.get_lab_or_reconstruct(lab.hash)
+
+    assert [(num, iface.link.name) for num, iface in lab.machines["pc1"].interfaces.items()] == [(0, "A")]
+
+
+def test_a_collision_domain_attached_again_comes_back_under_its_own_number():
+    facade = _AttachmentsFacade({"pc1": {"A": 0}, "pc2": {"A": 0}})
+    service = make_service(facade=facade)
+    lab = _two_domain_lab(service)
+    service.get_lab_or_reconstruct(lab.hash)
+
+    facade.attached["pc1"] = {"A": 0, "B": 1}
+    service.get_lab_or_reconstruct(lab.hash)
+
+    assert lab.machines["pc1"].interfaces[1].link.name == "B"
+
+
+class _ReadDuringDeployFacade(_AttachmentsFacade):
+    """A deploy that, half-way through, has only attached each device's first collision domain,
+    and meanwhile serves a read of the same lab — a startup-log poll, say."""
+
+    service = None
+
+    def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
+        self.attached = {"pc1": {"A": 0}, "pc2": {"A": 0}}
+        before = self.refreshes
+        self.service.get_lab_or_reconstruct(lab.hash)
+        self.refreshes_during_deploy = self.refreshes - before
+
+
+def test_a_read_during_a_deploy_leaves_the_lab_model_to_the_deploy():
+    facade = _ReadDuringDeployFacade({"pc1": {"A": 0, "B": 1}, "pc2": {"A": 0}})
+    service = make_service(facade=facade)
+    facade.service = service
+    lab = _two_domain_lab(service)
+
+    service.deploy_lab(lab.hash)
+
+    assert facade.refreshes_during_deploy == 0
+    assert sorted(lab.machines["pc1"].interfaces) == [0, 1]
+
+
+def test_a_deploy_still_refreshes_the_lab_it_is_deploying():
+    facade = _AttachmentsFacade({"pc1": {"A": 0, "B": 1}, "pc2": {"A": 0}})
+    service = make_service(facade=facade)
+    lab = _two_domain_lab(service)
+
+    service.deploy_lab(lab.hash)
+
+    assert facade.refreshes == 1

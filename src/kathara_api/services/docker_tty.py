@@ -6,6 +6,7 @@ everything that reaches into the Docker SDK's exec API and its raw transport soc
 
 import asyncio
 import io
+import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -17,8 +18,10 @@ from ..config import get_settings
 # get_machine_api_object, used to open the *next* terminal. A live session holds one of these
 # threads for as long as it stays open (read() blocks in a loop), so without this isolation a
 # handful of open terminals can starve every other blocking Docker call in the process (see
-# docs/DESIGN-NOTES.md). Sized from settings so it doubles as the session cap enforced in
-# routers/exec.py:tty_live_ws — read when the first session opens, not at import: the settings
+# docs/DESIGN-NOTES.md). Sized at twice the session cap enforced in routers/exec.py:tty_live_ws:
+# every open session keeps one worker in its read loop, and the other half serves writes and
+# resizes, so with every allowed session open a keystroke still finds a free worker instead of
+# waiting for some shell to print. Read when the first session opens, not at import: the settings
 # singleton is read at point of use everywhere else precisely because it is mutable, and pinning
 # it here would also force it into existence before the process has finished configuring itself.
 #
@@ -35,7 +38,7 @@ def _get_tty_executor() -> ThreadPoolExecutor:
     with _tty_executor_lock:
         if _TTY_EXECUTOR is None:
             _TTY_EXECUTOR = ThreadPoolExecutor(
-                max_workers=get_settings().tty_max_sessions, thread_name_prefix="kathara-tty"
+                max_workers=2 * get_settings().tty_max_sessions, thread_name_prefix="kathara-tty"
             )
         return _TTY_EXECUTOR
 
@@ -186,6 +189,20 @@ class DockerTtySession:
         self._client.exec_resize(self._exec_id, height=rows, width=cols)
 
     def close(self) -> None:
+        # Shut the connection down before closing it. close() alone only drops this wrapper, while
+        # http.client still holds the socket underneath, so a read blocked in another thread would
+        # stay blocked for good, holding its worker. shutdown() makes that read return b"". The
+        # shell itself outlives the connection either way: Docker leaves an exec's process running
+        # when its client goes. A transport without shutdown() (a Windows named pipe) is just
+        # closed.
+        for target in _iter_socket_transports(self._socket):
+            shutdown = getattr(target, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown(socket.SHUT_RDWR)
+                except (OSError, TypeError, ValueError):  # already closed, or not a BSD socket
+                    pass
+                break
         close = getattr(self._socket, "close", None)
         if callable(close):
             close()
@@ -208,4 +225,6 @@ class DockerTtySession:
         await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.resize, cols, rows)
 
     async def aclose(self) -> None:
-        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.close)
+        # On the default executor, not the TTY one: this is what unblocks the session's read, so
+        # queued behind that read (and every other session's) it could wait indefinitely.
+        await asyncio.get_running_loop().run_in_executor(None, self.close)

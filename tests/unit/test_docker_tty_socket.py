@@ -8,6 +8,10 @@ it raises when none works. No Docker involved; the thread-pool routing of the as
 covered separately in test_docker_tty_executor.py.
 """
 
+import socket
+import threading
+import time
+
 import pytest
 
 from kathara_api.services import docker_tty
@@ -279,6 +283,30 @@ def test_session_close_closes_the_socket():
     session.close()
 
     assert closed == [True]
+
+
+def test_session_close_unblocks_a_read_waiting_in_another_thread_and_ends_the_connection():
+    """The exec socket is a `SocketIO` over the connection's socket, as `exec_start(socket=True)`
+    returns it; closing the session must release a read already blocked on it, and end the
+    connection for the Docker daemon at the other end."""
+    ours, shell_end = socket.socketpair()
+    session = DockerTtySession(_FakeApiClient(sock=socket.SocketIO(ours, "rwb")), "c1", "bash")
+    session.start()
+    read = []
+    reader = threading.Thread(target=lambda: read.append(session.read(64)))
+    reader.start()
+    time.sleep(0.05)
+
+    session.close()
+    reader.join(timeout=2)
+
+    try:
+        assert not reader.is_alive()
+        assert read == [b""]
+        assert shell_end.recv(1) == b""
+    finally:
+        ours.close()
+        shell_end.close()
 
 
 def test_session_close_is_safe_before_start_and_on_a_socket_without_close():

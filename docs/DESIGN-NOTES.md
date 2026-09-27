@@ -10,7 +10,8 @@ For the endpoint reference see `BACKEND.md`; for the Electron startup sequence s
 
 `services/docker_tty.py` owns a `ThreadPoolExecutor` separate from the one `asyncio.to_thread`
 uses by default, and every TTY session call goes through its `astart` / `aread` / `awrite` /
-`aresize` / `aclose` wrappers.
+`aresize` wrappers. `aclose` is the exception and runs on the default executor: closing is what
+unblocks the session's read, so it must never queue behind reads on the TTY pool.
 
 A live session holds one of those threads for as long as the terminal stays open, because `read()`
 blocks in a loop waiting for output that may never come. Asyncio's default executor is shared by
@@ -18,8 +19,10 @@ every other blocking Docker call in the process, including the container lookup 
 *next* terminal — so a handful of open terminals sharing that pool starve the rest of the backend.
 The two pools must not be merged.
 
-The pool is sized from `ApiSettings`, which doubles as the concurrent-session cap enforced in
-`routers/exec.py`. It is built when the first session opens rather than at import, so the size
+The pool is sized at twice `ApiSettings.tty_max_sessions`, the concurrent-session cap enforced in
+`routers/exec.py`: every open session keeps one worker in its read, and the other half serves
+writes and resizes, so a keystroke finds a free worker even with every allowed session open. It is
+built when the first session opens rather than at import, so the size
 comes from the settings singleton at point of use like every other read of it, and rebuilt the
 same way after a shutdown, because `create_app()` runs more than once per process in the test
 suite and a one-shot executor would leave every app instance after the first unable to schedule
@@ -27,6 +30,12 @@ TTY work.
 
 The one-shot container lookup in `routers/exec.py` deliberately stays on the default executor: it
 returns promptly and is not a per-session thread.
+
+Closing a session shuts its socket down (`DockerTtySession.close`) before closing it. Closing alone
+does not release the read blocked in the pool, since the HTTP connection underneath still holds the
+socket, so every closed terminal would keep a worker for good; the shutdown makes that read return.
+The shell in the container outlives the session either way, as Docker leaves an exec's process
+running when its client disconnects.
 
 Shutdown is explicit, from `main.py`'s lifespan hook, rather than left to `ThreadPoolExecutor`'s
 `atexit` handler — that one waits for every worker to return, and a blocked TTY read returns only

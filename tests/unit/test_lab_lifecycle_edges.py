@@ -6,6 +6,7 @@ the host sysctl discovery behind the device editor's autocomplete. No Docker.
 """
 
 import asyncio
+import itertools
 
 import pytest
 from Kathara.exceptions import (
@@ -38,10 +39,9 @@ class _RecordingFacade(FakeFacadeBase):
     def undeploy_lab(self, **kwargs):
         self.undeploy_calls.append(kwargs)
 
-    def get_machines_stats(self, lab_hash=None, machine_name=None, user=None):
+    def get_machines_api_objects(self, lab_hash=None, lab_name=None, lab=None, all_users=False):
         self.stats_labs.append(lab_hash)
-        yield {}
-        yield {}
+        return []
 
     def get_formatted_manager_name(self):
         return "Docker (Kathara)"
@@ -450,8 +450,8 @@ def test_stats_stream_asks_for_that_lab_and_waits_only_the_rest_of_the_interval(
     monkeypatch.setattr(kathara_service_module.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(kathara_service_module.time, "sleep", sleeps.append)
 
-    assert list(service.machines_stats_stream(lab_id(service, "l"))) == [[], []]
-    assert facade.stats_labs == [lab_id(service, "l")]
+    assert list(itertools.islice(service.machines_stats_stream(lab_id(service, "l")), 2)) == [[], []]
+    assert facade.stats_labs == [lab_id(service, "l")] * 2
     assert sleeps == [pytest.approx(0.75)]  # one second between samples, 0.25 of it already gone
 
 

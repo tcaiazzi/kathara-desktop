@@ -3,6 +3,7 @@
 import json
 from typing import Callable, TypeVar
 
+import anyio
 from fastapi import APIRouter, Depends, Request
 from sse_starlette.sse import EventSourceResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
@@ -26,7 +27,11 @@ async def _sse_stats_stream(request: Request, generator, serialize: Callable[[T]
             payload = [serialize(s).model_dump() for s in stats if s is not None]
             yield {"event": "stats", "data": json.dumps(payload)}
     finally:
-        await run_in_threadpool(generator.close)
+        # Shielded: on a client disconnect sse-starlette cancels the task this runs in, and an
+        # unshielded await here would be cancelled before the close ever ran, leaving the Docker
+        # stats streams the generator holds open (see KatharaService.machines_stats_stream).
+        with anyio.CancelScope(shield=True):
+            await run_in_threadpool(generator.close)
 
 
 # `async def` because the response body *is* an async generator: `_sse_stats_stream` above has

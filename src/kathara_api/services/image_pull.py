@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from typing import Any, Iterable, Iterator, Optional
 
 from docker.errors import APIError, ImageNotFound, NotFound
@@ -509,12 +509,15 @@ def pull_images(manager: Any, images: list[str]) -> list[str]:
                         f"Image `{name}` doesn't exist on its registry, or it's private."
                     ) from None
                 raise
-            for line in client.api.pull(name, stream=True, decode=True):
-                if not isinstance(line, dict):
-                    continue
-                error = line.get("error")
-                if error:
-                    raise ImagePullError(f"Failed to download `{name}`: {error}")
-                note(line)
+            # Closed on every way out, an in-stream error included: the generator holds the pull's
+            # HTTP response, which is otherwise released only once the generator is collected.
+            with closing(client.api.pull(name, stream=True, decode=True)) as progress:
+                for line in progress:
+                    if not isinstance(line, dict):
+                        continue
+                    error = line.get("error")
+                    if error:
+                        raise ImagePullError(f"Failed to download `{name}`: {error}")
+                    note(line)
             pulled.append(name)
     return pulled

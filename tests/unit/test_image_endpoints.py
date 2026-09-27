@@ -65,16 +65,27 @@ class _FakeDockerImage:
 
 
 class _FakeApi:
+    """``client.api.pull(stream=True)``: a generator over the scripted progress lines of each
+    image, recording in ``closed`` each image whose stream was closed, and whether the pull was
+    still under way at that moment."""
+
     def __init__(self, streams=None, on_pull=None):
         self.streams = streams or {}
         self.on_pull = on_pull
         self.pulled = []
+        self.closed = []
 
     def pull(self, name, stream=True, decode=True):
         self.pulled.append(name)
         if self.on_pull is not None:
             self.on_pull(name)
-        return iter(self.streams.get(name, []))
+        return self._progress(name)
+
+    def _progress(self, name):
+        try:
+            yield from self.streams.get(name, [])
+        finally:
+            self.closed.append((name, image_pull.snapshot()["active"]))
 
 
 class _FakeFacade(FakeFacadeBase):
@@ -384,6 +395,19 @@ def test_in_stream_error_becomes_an_api_error(tmp_path):
 
     assert "rate limit" in str(excinfo.value)
     assert image_pull.snapshot()["active"] is False
+
+
+def test_a_pull_that_fails_mid_stream_closes_its_progress_stream_before_it_ends(tmp_path):
+    docker_image = _FakeDockerImage(remote={"kathara/base": "sha256:new"})
+    api = _FakeApi(
+        streams={"kathara/base": [{"error": "toomanyrequests: rate limit"}, {"status": "never read"}]}
+    )
+    service = _service(tmp_path, docker_image, api)
+
+    with pytest.raises(Exception):
+        service.pull_images(["kathara/base"])
+
+    assert api.closed == [("kathara/base", True)]
 
 
 # ---------------------------------------------------------------------------

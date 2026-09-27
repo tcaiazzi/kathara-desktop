@@ -12,6 +12,7 @@ import base64
 import hmac
 import json
 
+import anyio
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from ..config import get_settings
@@ -24,9 +25,9 @@ router = APIRouter(prefix="/labs/{lab_id}/machines/{machine_name}", tags=["exec"
 # How many tty_live_ws sessions are open right now. Mutated only from coroutines on this single
 # event loop (never from a thread), same as the `stop` flag inside tty_live_ws itself, so no lock
 # is needed. Checked against settings.tty_max_sessions, which also sizes the dedicated TTY
-# executor in services/docker_tty.py — a ThreadPoolExecutor queues work past max_workers instead
-# of rejecting it, which would otherwise make session N+1 look like a hung terminal instead of a
-# clean, immediate refusal.
+# executor in services/docker_tty.py (two workers per session) — a ThreadPoolExecutor queues work
+# past max_workers instead of rejecting it, which would otherwise make session N+1 look like a hung
+# terminal instead of a clean, immediate refusal.
 _tty_active_sessions = 0
 
 
@@ -188,16 +189,20 @@ async def tty_live_ws(
     finally:
         _tty_active_sessions -= 1
         stop = True
-        if output_task is not None:
-            output_task.cancel()
-            try:
-                await output_task
-            # We just cancelled it ourselves; anything else is a genuine failure pump_output
-            # already reported via an "error" event before returning normally.
-            except asyncio.CancelledError:
-                pass
-        if session is not None:
-            await session.aclose()
+        # Shielded: the server cancels this task when the connection goes away or the app stops,
+        # and the session must still be closed then, or its shell and its read thread live on.
+        # Safe to wait for, since closing never queues behind a read (DockerTtySession.aclose).
+        with anyio.CancelScope(shield=True):
+            if output_task is not None:
+                output_task.cancel()
+                try:
+                    await output_task
+                # We just cancelled it ourselves; anything else is a genuine failure pump_output
+                # already reported via an "error" event before returning normally.
+                except asyncio.CancelledError:
+                    pass
+            if session is not None:
+                await session.aclose()
         try:
             await websocket.send_text(json.dumps({"event": "closed"}))
         except Exception:

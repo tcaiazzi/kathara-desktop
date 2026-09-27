@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from kathara_api.dependencies import get_service
 from kathara_api.main import create_app
 from kathara_api.routers import exec as exec_router
+from kathara_api.services import docker_tty
 from kathara_api.services.docker_tty import DockerTtySession
 
 
@@ -83,6 +84,56 @@ def test_async_methods_return_the_same_values_as_their_sync_counterparts():
     chunk, resize = asyncio.run(scenario())
     assert chunk == b"payload"
     assert resize == (100, 40)
+
+
+class _BlockedReader(DockerTtySession):
+    """A session whose `read()` blocks until `close()` — an open terminal whose shell is idle."""
+
+    def __init__(self):
+        self.released = threading.Event()
+
+    def read(self, size: int = 4096) -> bytes:
+        self.released.wait(timeout=5)
+        return b""
+
+    def write(self, data: bytes) -> None:
+        pass
+
+    def close(self) -> None:
+        self.released.set()
+
+
+@pytest.fixture
+def _one_session_cap(monkeypatch):
+    """A fresh TTY executor sized for a single session."""
+    docker_tty.shutdown_tty_executor()
+    monkeypatch.setattr(docker_tty, "get_settings", lambda: _FakeSettings(tty_max_sessions=1))
+    yield
+    docker_tty.shutdown_tty_executor()
+
+
+def test_input_reaches_a_session_while_every_allowed_session_is_reading(_one_session_cap):
+    async def scenario():
+        session = _BlockedReader()
+        reading = asyncio.ensure_future(session.aread())
+        await asyncio.sleep(0.05)
+        await asyncio.wait_for(session.awrite(b"ls\n"), timeout=2)
+        await session.aclose()
+        await reading
+
+    asyncio.run(scenario())
+
+
+def test_closing_a_session_does_not_wait_for_a_worker_of_the_tty_executor(_one_session_cap):
+    async def scenario():
+        sessions = [_BlockedReader(), _BlockedReader()]
+        reads = [asyncio.ensure_future(s.aread()) for s in sessions]  # every worker now reading
+        await asyncio.sleep(0.05)
+        await asyncio.wait_for(sessions[0].aclose(), timeout=2)
+        await sessions[1].aclose()
+        await asyncio.gather(*reads)
+
+    asyncio.run(scenario())
 
 
 # ---------------------------------------------------------------------------

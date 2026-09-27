@@ -32,6 +32,7 @@ import shutil
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Generator, Optional, Union
@@ -39,7 +40,7 @@ from typing import Any, BinaryIO, Callable, Generator, Optional, Union
 import fs.copy
 import fs.errors
 import fs.path
-from docker.errors import APIError
+from docker.errors import APIError, DockerException
 from docker.models.containers import Container
 from Kathara.exceptions import (
     DockerDaemonConnectionError,
@@ -51,6 +52,7 @@ from Kathara.exceptions import (
     MachineOptionError,
     PrivilegeError,
 )
+from Kathara.manager.docker.stats.DockerMachineStats import DockerMachineStats
 from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
 from Kathara.model.Link import Link
@@ -391,6 +393,11 @@ class KatharaService:
         finally:
             lock.release()
 
+    def _is_transitioning(self, lab_id: str) -> bool:
+        """Whether ``lab_id`` is inside ``deploy_lab``/``undeploy_lab`` right now."""
+        with self._transitioning_lock:
+            return lab_id in self._transitioning
+
     def _check_not_transitioning(self, lab_id: str) -> None:
         """Fail fast — without ever touching `_mutate_lock` — if `lab_id` is mid deploy/undeploy.
 
@@ -398,9 +405,7 @@ class KatharaService:
         calling this *after* taking that lock would just wait out the very hang it exists to
         avoid (deploy_lab/undeploy_lab hold `_mutate_lock` for their whole duration).
         """
-        with self._transitioning_lock:
-            busy = lab_id in self._transitioning
-        if busy:
+        if self._is_transitioning(lab_id):
             raise LabTransitioningError(
                 f"Lab `{self._lab_label(lab_id)}` is being deployed or undeployed. Try again once it finishes."
             )
@@ -1170,9 +1175,8 @@ class KatharaService:
         Everything is handed back while the lab is mid deploy/undeploy, or when ``_mutate_lock``
         can't be had promptly — never blocking the watcher, which serves every lab.
         """
-        with self._transitioning_lock:
-            if lab_id in self._transitioning:
-                return set(files)
+        if self._is_transitioning(lab_id):
+            return set(files)
         if not self._mutate_lock.acquire(timeout=self._DISK_CHANGE_LOCK_WAIT_S):
             return set(files)
         try:
@@ -1347,8 +1351,11 @@ class KatharaService:
     def _compact_interfaces(machine: Machine) -> None:
         """Drop ``None`` interface slots left by Kathara's ``Machine.remove_interface`` (it nulls a
         slot to preserve numbering). Those ``None`` slots crash a later ``update_lab_from_api``
-        (``x.link`` on ``None``), so we compact after any disconnect/removal — an in-our-layer
-        workaround for that upstream behavior (the sibling repo is left untouched)."""
+        (``x.link`` on ``None``), and keep Kathara from adding the collision domain back under the
+        same number if it is attached again. So they are compacted after every disconnect or
+        removal, this app's own and the ones ``update_lab_from_api`` makes itself on finding a
+        collision domain detached at runtime (``_refresh_from_api``) — a workaround in this layer
+        for that upstream behavior, with Kathara itself left untouched."""
         machine.interfaces = {num: iface for num, iface in machine.interfaces.items() if iface is not None}
 
     @staticmethod
@@ -2075,13 +2082,16 @@ class KatharaService:
             if dirty:
                 self.registry.mark_dirty(lab_id, dirty)
 
-    def get_lab_or_reconstruct(self, lab_id: str) -> Lab:
+    def get_lab_or_reconstruct(self, lab_id: str, *, refresh_in_transition: bool = False) -> Lab:
         """Return the registered Lab (refreshed from the backend) or reconstruct it.
 
         Raises LabNotFoundError if the lab is neither registered nor running. A reconstructed lab
         is whatever Kathara runs under ``lab_hash=lab_id`` — e.g. one started with ``kathara
         lstart`` in a directory this backend has never loaded — and carries the placeholder name
         Kathara's ``get_lab_from_api`` gives it, since nothing on a container records a lab name.
+
+        ``refresh_in_transition`` is for ``deploy_lab`` alone, which looks its own lab up while it
+        is marked as transitioning: see ``_refresh_from_api``.
         """
         lab = self.registry.get(lab_id)
         if lab is not None:
@@ -2090,7 +2100,7 @@ class KatharaService:
                 # Docker is unreachable: the registered model came from disk and is the whole
                 # answer, minus the live overlay. See _facade_or_offline/_offline_lab_state.
                 return self._offline_lab_state(lab)
-            self._refresh_from_api(facade, lab)
+            self._refresh_from_api(facade, lab, in_own_transition=refresh_in_transition)
             return lab
 
         # Not registered: try to rebuild from the running backend state. Nothing to fall back on
@@ -2120,8 +2130,16 @@ class KatharaService:
             self._refresh_from_api(facade, lab)
         return labs
 
-    def _refresh_from_api(self, facade: Kathara, lab: Lab) -> None:
+    def _refresh_from_api(self, facade: Kathara, lab: Lab, *, in_own_transition: bool = False) -> None:
         """Overlay what is actually running under ``lab.hash`` onto the registered model.
+
+        Skipped while the lab is mid deploy/undeploy, unless the caller is that transition itself
+        (``in_own_transition``). A deploy creates each container attached to its first collision
+        domain only and attaches the others once it has started (Kathara's ``DockerMachine.start``),
+        so a refresh in between sees those interfaces as detached at runtime and has Kathara drop
+        them from the model — the very model the deploy is iterating to attach them. The
+        transition keeps the model current on its own: Kathara sets each device's ``api_object``
+        as it creates the container, and ``undeploy_lab`` clears them when it is done.
 
         ``update_lab_from_api`` only ever *sets* ``api_object`` — on a fresh container object for
         each device still running — and never clears it for one whose container is gone. A lab's
@@ -2137,6 +2155,8 @@ class KatharaService:
         drives (see ``system_info``) — replaces on every refresh; anything else cannot be known
         to be gone this way and is left as it is.
         """
+        if not in_own_transition and self._is_transitioning(lab.hash):
+            return
         before = {name: m.api_object for name, m in lab.machines.items() if isinstance(m.api_object, Container)}
         try:
             facade.update_lab_from_api(lab)
@@ -2145,6 +2165,17 @@ class KatharaService:
             # instead enriches with whatever containers exist (none) and never raises. Either way
             # nothing is running, which the stale check below then reflects.
             pass
+        # A collision domain detached from a running device outside this app (``docker network
+        # disconnect``, a deploy that failed half-way) leaves an empty slot behind: see
+        # _compact_interfaces. Dropped here, before the next refresh trips over it.
+        for machine in lab.machines.values():
+            lost = [num for num, iface in machine.interfaces.items() if iface is None]
+            if lost:
+                logger.info(
+                    "Device `%s` of lab `%s` has lost interface(s) %s at runtime",
+                    machine.name, self._lab_label(lab.hash), ", ".join(f"eth{num}" for num in lost),
+                )
+                self._compact_interfaces(machine)
         stale = {
             name for name, obj in before.items() if name in lab.machines and lab.machines[name].api_object is obj
         }
@@ -2218,7 +2249,7 @@ class KatharaService:
                 if selected_machines and excluded_machines:
                     raise InvocationError("You can either select or exclude devices.")
 
-                lab = self.get_lab_or_reconstruct(lab_id)
+                lab = self.get_lab_or_reconstruct(lab_id, refresh_in_transition=True)
                 all_names = set(lab.machines.keys())
 
                 # Mirror the facade's own validation (it would otherwise never run for this call,
@@ -3137,16 +3168,26 @@ class KatharaService:
 
     # -- stats ----------------------------------------------------------------
 
-    # Kathara's own `DockerMachine.get_machines_stats` has no delay for an *empty* container
-    # list -- a bare `while True: yield dict()` -- so without a floor below, opening this stream
-    # against an undeployed (or since-undeployed) lab pins a CPU core and hammers the Docker
-    # daemon with back-to-back container listings. This restores the ~1 sample/second cadence
-    # Docker's own stats API already imposes once machines are running (DockerMachineStats reads
-    # from `container.stats(stream=True)`), so the floor is a no-op in the deployed steady state
-    # -- a real sample already takes at least that long to arrive.
+    # Without a floor, a lab with nothing running lists its containers back to back: an empty
+    # listing answers at once, so the stream would pin a CPU core and hammer the Docker daemon.
+    # Once devices run, Docker's own stats stream already sends about one sample per second, so
+    # the floor costs nothing in the deployed steady state.
     _MIN_STATS_INTERVAL_S = 1.0
+    # How many devices' stats streams are opened side by side: the first sample of each blocks
+    # for about a second, so opening them one after the other would delay a large lab's first
+    # snapshot by that many seconds.
+    _STATS_OPEN_CONCURRENCY = 8
 
     def machines_stats_stream(self, lab_id: str) -> Generator[list, None, None]:
+        """Stream snapshots of the running devices' ``DockerMachineStats``, one list per sample.
+
+        Reads each container's Docker stats stream itself rather than through Kathara's
+        ``get_machines_stats``, for two reasons. A device whose container goes away between two
+        listings (a device removed or undeployed while the stream is open) must only lose its own
+        row: in Kathara's generator the ``NotFound`` from opening its stats ends the whole stream.
+        And closing this generator closes every Docker stats stream it opened, which releases the
+        underlying HTTP connections at once; Kathara's keeps them in a local it never closes.
+        """
         # A plain (non-generator) function, deliberately: this must raise *synchronously*, when
         # the caller calls it, not lazily on first iteration. `routers/stats.py` wraps the
         # returned generator straight into an already-started `EventSourceResponse` — by the time
@@ -3156,14 +3197,57 @@ class KatharaService:
         if self.registry.get(lab_id) is None and self._lab_dir(lab_id) is None:
             self.get_lab_or_reconstruct(lab_id)  # raises LabNotFoundError unless running under this id
 
+        def _open(container: Container) -> Optional[DockerMachineStats]:
+            try:
+                return DockerMachineStats(container)
+            except (DockerException, StopIteration) as exc:
+                logger.debug("No stats for container %s: %s", container.name, exc)
+                return None
+
+        def _close(stats: DockerMachineStats) -> None:
+            try:
+                stats.stats.close()
+            except Exception as exc:  # a stream that failed to close is still dropped
+                logger.debug("Closing the stats stream of %s failed: %s", stats.container_name, exc)
+
         def _stream():
+            open_stats: dict[str, DockerMachineStats] = {}  # by container id
             last_yield = 0.0
-            for stats_dict in self._facade().get_machines_stats(lab_hash=lab_id):
-                elapsed = time.monotonic() - last_yield
-                if elapsed < self._MIN_STATS_INTERVAL_S:
-                    time.sleep(self._MIN_STATS_INTERVAL_S - elapsed)
-                last_yield = time.monotonic()
-                yield list(stats_dict.values())
+            try:
+                while True:
+                    containers = self._facade().get_machines_api_objects(lab_hash=lab_id)
+                    listed = {container.id for container in containers}
+                    for container_id in [cid for cid in open_stats if cid not in listed]:
+                        _close(open_stats.pop(container_id))
+
+                    fresh = [container for container in containers if container.id not in open_stats]
+                    if fresh:
+                        workers = min(len(fresh), self._STATS_OPEN_CONCURRENCY)
+                        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="kathara-stats") as pool:
+                            opened = list(pool.map(_open, fresh))
+                        for container, stats in zip(fresh, opened):
+                            if stats is not None:
+                                open_stats[container.id] = stats
+
+                    # Freshly opened ones already hold their first sample.
+                    fresh_ids = {container.id for container in fresh}
+                    for container_id, stats in list(open_stats.items()):
+                        if container_id in fresh_ids:
+                            continue
+                        try:
+                            stats.update()
+                        except (DockerException, StopIteration) as exc:
+                            logger.debug("Stats of %s ended: %s", stats.container_name, exc)
+                            _close(open_stats.pop(container_id))
+
+                    elapsed = time.monotonic() - last_yield
+                    if elapsed < self._MIN_STATS_INTERVAL_S:
+                        time.sleep(self._MIN_STATS_INTERVAL_S - elapsed)
+                    last_yield = time.monotonic()
+                    yield list(open_stats.values())
+            finally:
+                for stats in open_stats.values():
+                    _close(stats)
 
         return _stream()
 
