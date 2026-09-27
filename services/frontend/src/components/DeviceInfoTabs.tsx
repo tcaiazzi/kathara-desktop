@@ -323,7 +323,13 @@ export function DeviceInfoTabs({
   );
 }
 
-function TabTitle({ icon: Icon, label, dirty = false }: { icon: LucideIcon; label: string; dirty?: boolean }) {
+interface TabTitleProps {
+  icon: LucideIcon;
+  label: string;
+  dirty?: boolean;
+}
+
+function TabTitle({ icon: Icon, label, dirty = false }: TabTitleProps) {
   return (
     <span className="d-inline-flex align-items-center">
       <Icon size={14} className="me-1" aria-hidden />
@@ -337,7 +343,12 @@ function TabTitle({ icon: Icon, label, dirty = false }: { icon: LucideIcon; labe
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+interface SectionProps {
+  title: string;
+  children: ReactNode;
+}
+
+function Section({ title, children }: SectionProps) {
   return (
     <div className="iface">
       <div style={{ fontWeight: 600 }}>{title}</div>
@@ -346,7 +357,12 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function OverviewTab({ node, machine }: { node: DeviceNode; machine: MachineDetail | null }) {
+interface OverviewTabProps {
+  node: DeviceNode;
+  machine: MachineDetail | null;
+}
+
+function OverviewTab({ node, machine }: OverviewTabProps) {
   return (
     <>
       <Kv k="Type" v={node.typeLabel} />
@@ -419,8 +435,12 @@ function OverviewTab({ node, machine }: { node: DeviceNode; machine: MachineDeta
   );
 }
 
+interface IpMismatchNoteProps {
+  mismatch: IfaceIpMismatch;
+}
+
 // The warning beside an interface's startup IP when the running device has other addresses on it.
-function IpMismatchNote({ mismatch }: { mismatch: IfaceIpMismatch }) {
+function IpMismatchNote({ mismatch }: IpMismatchNoteProps) {
   const id = useId();
   const running = mismatch.live.join(", ") || "no address";
   const text = `Running ${running}, startup ${mismatch.declared.join(", ")}. ${IP_MISMATCH_HINT}`;

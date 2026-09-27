@@ -8,6 +8,7 @@ import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { useTheme } from "../hooks/useTheme";
 import { api } from "../services/api";
 import { DOCS_URL } from "../services/constants";
+import { plural } from "../services/format";
 import type { ExampleLab } from "../services/types";
 import "./WelcomeScreen.css";
 
@@ -105,7 +106,7 @@ export function WelcomeScreen({
                     <div className="kt-welcome-example-name">{example.id}</div>
                     {example.description && <div className="kt-welcome-example-desc">{example.description}</div>}
                     <div className="kt-welcome-example-meta">
-                      {example.n_machines} device{example.n_machines === 1 ? "" : "s"}
+                      {plural(example.n_machines, "device")}
                       {example.author ? ` · by ${example.author}` : ""}
                     </div>
                   </div>

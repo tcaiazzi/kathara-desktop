@@ -397,7 +397,7 @@ export interface SeedPosition {
 }
 
 /** What a rebuilt engine inherits from the one it replaces (see hooks/useForceLayout.ts). */
-export interface CarriedLayout {
+interface CarriedLayout {
   positions: Record<string, SeedPosition>;
   /** Whether the replaced engine had come to rest at least once. */
   settled: boolean;

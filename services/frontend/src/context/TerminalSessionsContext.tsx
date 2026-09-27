@@ -28,7 +28,7 @@ import {
 
 /** Where a session is shown: in the Terminals tab, or detached into a dock panel of its own
  *  (`terminal:<machine>:<n>`). */
-export type TerminalLocation = "tabs" | "panel";
+type TerminalLocation = "tabs" | "panel";
 
 export interface TerminalSessionEntry extends TerminalSessionInfo {
   location: TerminalLocation;
@@ -37,7 +37,7 @@ export interface TerminalSessionEntry extends TerminalSessionInfo {
 /** "idle" is neither connected nor dialling: never connected, disconnected, or the device stopped. */
 export type TerminalStatus = "connected" | "connecting" | "idle";
 
-export interface TerminalRegistry {
+interface TerminalRegistry {
   /** Every session, in the order they were opened. */
   sessions: TerminalSessionEntry[];
   /** The Terminals tab's split groups, in list order. */

@@ -4,7 +4,6 @@ import {
   activeAfterRemoval,
   addGroup,
   dropSide,
-  groupedIds,
   leafIds,
   loadTree,
   moveBeside,
@@ -177,11 +176,6 @@ describe("saving and loading a tree", () => {
 });
 
 describe("group bookkeeping", () => {
-  it("lists every pane of every group, in order", () => {
-    const groups = addGroup(splitIn([one("a")], "a", "b", "column"), "c");
-    expect(groupedIds(groups)).toEqual(["a", "b", "c"]);
-  });
-
   it("gives a new group an id no other group holds, which resizing finds it by", () => {
     // "a" has left the group it created, which keeps its id; "a" coming back needs another.
     const left = moveBeside([...splitIn([one("a")], "a", "b", "row"), one("c")], "a", "c", "right");

@@ -98,9 +98,9 @@ interface Engine {
   ro: ResizeObserver | null;
   autoFit: boolean;
   settledOnce: boolean;
-  // Set once the user places the view themselves (wheel, pan, the zoom buttons, the search box's
-  // centring) and cleared by Fit: until then the view follows the graph and the canvas — a resize
-  // or a device added refits it — and afterwards it stays where the user put it.
+  // Set once the user places the view themselves (wheel, pan, the zoom buttons) and cleared by
+  // Fit: until then the view follows the graph and the canvas — a resize or a device added refits
+  // it — and afterwards it stays where the user put it.
   userCamera: boolean;
 }
 
@@ -153,8 +153,6 @@ interface UseForceLayout {
   select: (id: string | null) => void;
   /** Zoom about the canvas center by a factor (>1 in, <1 out). */
   zoom: (factor: number) => void;
-  // Pan a node to the canvas center at the current scale (used by the search box).
-  centerOn: (id: string) => void;
 }
 
 function applyTransform(engine: Engine): void {
@@ -941,15 +939,5 @@ export function useForceLayout(
     applyTransform(engine);
   }, []);
 
-  const centerOn = useCallback((id: string) => {
-    const engine = engineRef.current;
-    const nd = engine?.byId[id];
-    if (!engine || !nd) return;
-    engine.userCamera = true;
-    engine.tx = engine.W / 2 - nd.x * engine.scale;
-    engine.ty = engine.H / 2 - nd.y * engine.scale;
-    applyTransform(engine);
-  }, []);
-
-  return { canvasRef, fit, select, zoom, centerOn };
+  return { canvasRef, fit, select, zoom };
 }

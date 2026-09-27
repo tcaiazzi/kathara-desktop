@@ -7,6 +7,17 @@ export function baseName(p: string): string {
   return parts[parts.length - 1] || "";
 }
 
+/** The directory holding `path`: `/` for a top-level entry (and for `/` itself). */
+export function parentOf(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx <= 0 ? "/" : path.slice(0, idx);
+}
+
+/** `name` inside `dir`, without doubling the slash when `dir` is the root. */
+export function joinPath(dir: string, name: string): string {
+  return dir === "/" ? `/${name}` : `${dir}/${name}`;
+}
+
 export function normalizeDir(p: string): string {
   if (!p || p === "/") return "/";
   return p.endsWith("/") ? p.slice(0, -1) : p;
@@ -36,5 +47,5 @@ export function remapPath(path: string, from: string, to: string): string | null
   // `fromNorm`'s length already excludes a trailing slash; the root case is the only one where
   // the leading slash IS `fromNorm` itself, so the generic `fromNorm.length + 1` would double-cut.
   const suffix = path.slice(fromNorm === "/" ? 1 : fromNorm.length + 1);
-  return toNorm === "/" ? `/${suffix}` : `${toNorm}/${suffix}`;
+  return joinPath(toNorm, suffix);
 }

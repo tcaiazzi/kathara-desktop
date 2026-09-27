@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { baseName, isSubPath, normalizeDir, remapPath } from "./paths";
+import { baseName, isSubPath, normalizeDir, parentOf, remapPath } from "./paths";
+
+describe("parentOf", () => {
+  it("returns the containing directory", () => {
+    expect(parentOf("/pc1/etc/motd")).toBe("/pc1/etc");
+  });
+
+  it("returns the root for a top-level entry", () => {
+    expect(parentOf("/pc1")).toBe("/");
+  });
+});
 
 describe("baseName", () => {
   it("returns the last non-empty segment", () => {

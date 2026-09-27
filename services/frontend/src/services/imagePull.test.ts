@@ -65,15 +65,15 @@ describe("downloadKind", () => {
     outdated: [],
   };
 
-  it("reports missing-only", () => {
+  it("asks for a download when images are only missing", () => {
     expect(downloadKind({ ...base, missing: ["kathara/base"] })).toBe("missing");
   });
 
-  it("reports outdated-only", () => {
+  it("asks for an update when images are only outdated", () => {
     expect(downloadKind({ ...base, outdated: ["kathara/base"] })).toBe("outdated");
   });
 
-  it("reports both", () => {
+  it("asks for both when some images are missing and others outdated", () => {
     expect(downloadKind({ ...base, missing: ["a"], outdated: ["b"] })).toBe("both");
   });
 });
@@ -84,7 +84,7 @@ describe("deployButtonLabel", () => {
     expect(deployButtonLabel("images", false)).toBe("Downloading images…");
   });
 
-  it("covers the in-flight phases", () => {
+  it("says a deploy or undeploy is under way while it runs", () => {
     expect(deployButtonLabel("deploy", false)).toBe("Deploying…");
     expect(deployButtonLabel("undeploy", true)).toBe("Undeploying…");
   });

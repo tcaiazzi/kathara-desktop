@@ -16,7 +16,11 @@ const KV_COLUMNS: import("./RowListEditor").RowColumn<KeyValueRow>[] = [
   { key: "value", label: "Value" },
 ];
 
-function InfoTip({ text }: { text: string }) {
+interface InfoTipProps {
+  text: string;
+}
+
+function InfoTip({ text }: InfoTipProps) {
   const id = useId();
   return (
     <OverlayTrigger placement="top" overlay={<Tooltip id={`option-tip-${id}`}>{text}</Tooltip>}>

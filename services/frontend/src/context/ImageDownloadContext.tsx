@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { useToast } from "./ToastContext";
 import { useImagePullProgress } from "../hooks/useImagePullProgress";
 import { api, ApiError } from "../services/api";
+import { plural } from "../services/format";
 import {
   downloadKind,
   formatBytes,
@@ -58,7 +59,11 @@ const TITLES: Record<ImageDownloadKind, string> = {
   both: "Download device images",
 };
 
-function ImageList({ names }: { names: string[] }) {
+interface ImageListProps {
+  names: string[];
+}
+
+function ImageList({ names }: ImageListProps) {
   return (
     <ul className="kt-image-dl-list">
       {names.map((name) => (
@@ -301,7 +306,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
                 className="mt-3"
                 checked={includeUpdates}
                 onChange={(e) => setIncludeUpdates(e.currentTarget.checked)}
-                label={`Also update ${updateCount} image${updateCount === 1 ? "" : "s"} that ${
+                label={`Also update ${plural(updateCount, "image")} that ${
                   updateCount === 1 ? "has" : "have"
                 } a newer version`}
               />

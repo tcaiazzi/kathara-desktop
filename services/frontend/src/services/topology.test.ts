@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { machine } from "../test/fixtures";
+import { labDetail, machine } from "../test/fixtures";
 import { HOST_BRIDGE } from "./constants";
 import {
   canonicalIpv6,
@@ -171,20 +171,7 @@ describe("fitTransform", () => {
 });
 
 function lab(machines: MachineDetail[], links: LinkDetail[] = []): LabDetail {
-  return {
-    name: "l",
-    id: "h",
-    path: null,
-    managed: true,
-    n_machines: machines.length,
-    n_links: links.length,
-    deployed: false,
-    n_running: 0,
-    metadata: { description: null, version: null, author: null, email: null, web: null },
-    machines,
-    links,
-    deploy_failed_machines: [],
-  };
+  return labDetail({ name: "l", id: "h", machines, links });
 }
 
 const iface = (num: number, link: string, mac: string | null = null) => ({ num, link, mac_address: mac });

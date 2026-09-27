@@ -19,9 +19,9 @@ const READ_ONLY: Record<SettingsReadOnlyKey, true> = {
 };
 
 /** This app's own upload & import caps (the backend's ApiSettings), in bytes / a file count. */
-export const LIMIT_KEYS = ["max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"] as const;
-export type LimitKey = (typeof LIMIT_KEYS)[number];
-export type UploadLimits = Pick<SettingsUpdate, LimitKey>;
+const LIMIT_KEYS = ["max_files_per_lab", "max_bytes_per_file", "max_bytes_per_lab"] as const;
+type LimitKey = (typeof LIMIT_KEYS)[number];
+type UploadLimits = Pick<SettingsUpdate, LimitKey>;
 
 function isLimitKey(key: string): key is LimitKey {
   return (LIMIT_KEYS as readonly string[]).includes(key);
@@ -59,7 +59,7 @@ export function afterLimitsSave(form: SettingsView, saved: SettingsView): Settin
 }
 
 /** The Settings page's tabs: this app's own settings, and Kathara's. */
-export const SETTINGS_TABS = ["app", "kathara"] as const;
+const SETTINGS_TABS = ["app", "kathara"] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];
 
 function isSettingsTab(value: unknown): value is SettingsTab {

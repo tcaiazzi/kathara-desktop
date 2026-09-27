@@ -2,7 +2,7 @@
 // LabExplorer, a running device's filesystem in RuntimeFilesystemEditor). Pure functions only —
 // the state machine around them lives in hooks/useFsTree.ts.
 
-import { isSubPath } from "./paths";
+import { isSubPath, parentOf } from "./paths";
 import type { FsEntry } from "./types";
 
 // One node in the tree. `children` is `undefined` until this directory has been listed at least
@@ -74,11 +74,6 @@ export function freshScopeState(): FsTreeScopeState {
     scrollSeq: 0,
     searchGen: 0,
   };
-}
-
-export function parentOf(path: string): string {
-  const idx = path.lastIndexOf("/");
-  return idx <= 0 ? "/" : path.slice(0, idx);
 }
 
 export function findNode(nodes: FsNode[], path: string): FsNode | null {

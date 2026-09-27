@@ -31,11 +31,6 @@ export function leafIds(node: SplitNode): string[] {
   return node.kind === "leaf" ? [node.id] : node.children.flatMap(leafIds);
 }
 
-/** Every session id across the groups, in list order. */
-export function groupedIds(groups: TerminalGroup[]): string[] {
-  return groups.flatMap((g) => leafIds(g.root));
-}
-
 export function groupOf(groups: TerminalGroup[], id: string): TerminalGroup | undefined {
   return groups.find((g) => leafIds(g.root).includes(id));
 }

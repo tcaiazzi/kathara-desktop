@@ -161,19 +161,18 @@ class ErrorBoundaryImpl extends Component<BoundaryProps, BoundaryState> {
   }
 }
 
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  fallback?: ComponentType<FallbackProps>;
+}
+
 // Two boundaries exist in this app: this one (used around WorkspacePage in App.tsx) scopes a
 // crash to the workspace so app chrome (nav, TitleBar, DockerStatusBanner) survives it, and a
 // second, app-wide one in main.tsx catches everything this one structurally can't reach —
 // provider bodies and their sibling modals, SettingsPage, TerminalWindowPage, chrome itself. Any
 // uncaught exception outside both would otherwise unmount the entire app with nothing to catch
 // it — a blank, frozen page with no way to recover short of a full reload.
-export function ErrorBoundary({
-  children,
-  fallback = WorkspaceErrorFallback,
-}: {
-  children: ReactNode;
-  fallback?: ComponentType<FallbackProps>;
-}) {
+export function ErrorBoundary({ children, fallback = WorkspaceErrorFallback }: ErrorBoundaryProps) {
   const location = useLocation();
   return (
     <ErrorBoundaryImpl resetKey={location.pathname} fallback={fallback}>

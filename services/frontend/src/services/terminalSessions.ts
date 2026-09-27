@@ -59,7 +59,7 @@ export function terminalTitle(session: TerminalSessionInfo): string {
 
 /** What the Terminals tab keeps in its dockview params: its split groups, in list order, and the
  *  session it shows. */
-export interface TerminalsTabParams {
+interface TerminalsTabParams {
   groups: SavedSplitNode[];
   activeId: string | null;
 }
@@ -106,7 +106,7 @@ export function parseTerminalsTabParams(params: unknown): {
 
 /** A dock panel being dropped, as dockview describes the drop: onto a tab (`targetPanelId` is that
  *  tab's panel), onto a group's content (`activePanelId` is the panel it shows), or elsewhere. */
-export interface PanelDrop {
+interface PanelDrop {
   kind: string;
   position: string;
   targetPanelId?: string;

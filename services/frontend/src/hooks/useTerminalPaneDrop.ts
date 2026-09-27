@@ -9,7 +9,7 @@ import { dropSide, type DropSide } from "../services/terminalSplits";
 // overlay of its own over a pane (TERMINAL_DROP_TARGET_ATTR), so the two never both claim a drop.
 
 /** Where a dragged terminal would go if dropped now: against `side` of the pane showing `id`. */
-export interface PaneDrop {
+interface PaneDrop {
   id: string;
   side: DropSide;
 }

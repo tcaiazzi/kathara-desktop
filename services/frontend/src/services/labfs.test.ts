@@ -1,6 +1,6 @@
 import { FileCog, FileText, Map as MapIcon, Terminal } from "lucide-react";
 import { describe, expect, it } from "vitest";
-import { machine } from "../test/fixtures";
+import { labDetail, machine } from "../test/fixtures";
 import { deviceFilesOnDisk, fileIcon, labTreeKey, machineStartupText } from "./labfs";
 import type { FsEntry, LabDetail, MachineDetail } from "./types";
 
@@ -65,21 +65,16 @@ describe("deviceFilesOnDisk", () => {
 });
 
 describe("labTreeKey", () => {
-  const lab = (machines: MachineDetail[], overrides: Partial<LabDetail> = {}): LabDetail => ({
-    name: "net",
-    id: "id",
-    path: "/labs/net",
-    managed: true,
-    n_machines: machines.length,
-    n_links: 0,
-    deployed: machines.some((m) => m.running),
-    n_running: machines.filter((m) => m.running).length,
-    metadata: { description: null, version: null, author: null, email: null, web: null },
-    machines,
-    links: [],
-    deploy_failed_machines: [],
-    ...overrides,
-  });
+  const lab = (machines: MachineDetail[], overrides: Partial<LabDetail> = {}): LabDetail =>
+    labDetail({
+      name: "net",
+      id: "id",
+      path: "/labs/net",
+      machines,
+      deployed: machines.some((m) => m.running),
+      n_running: machines.filter((m) => m.running).length,
+      ...overrides,
+    });
   const pc1 = machine({ name: "pc1" });
   const pc2 = machine({ name: "pc2" });
 

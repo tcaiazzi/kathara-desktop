@@ -5,7 +5,6 @@ import {
   findNode,
   freshScopeState,
   mergeNodeList,
-  parentOf,
   toAbsolutePath,
   withMergedChildrenAt,
   type FsNode,
@@ -48,16 +47,6 @@ describe("entryToNode", () => {
   it("carries over name/path/dir and nothing else", () => {
     const entry: FsEntry = { name: "etc", path: "/pc1/etc", is_dir: true, size: 4096, mode: null, mtime: null };
     expect(entryToNode(entry)).toEqual({ name: "etc", path: "/pc1/etc", dir: true });
-  });
-});
-
-describe("parentOf", () => {
-  it("returns the containing directory", () => {
-    expect(parentOf("/pc1/etc/motd")).toBe("/pc1/etc");
-  });
-
-  it("returns the root for a top-level entry", () => {
-    expect(parentOf("/pc1")).toBe("/");
   });
 });
 

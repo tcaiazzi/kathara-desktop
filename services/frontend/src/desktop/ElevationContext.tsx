@@ -65,7 +65,11 @@ const OK_LABELS: Record<Mode, string> = {
   "volumes-no-shell": "Continue",
 };
 
-function VolumeList({ machines }: { machines: { name: string; volumes: VolumeMount[] }[] }) {
+interface VolumeListProps {
+  machines: { name: string; volumes: VolumeMount[] }[];
+}
+
+function VolumeList({ machines }: VolumeListProps) {
   return (
     <ul className="mb-0">
       {machines.flatMap((m) =>

@@ -231,6 +231,10 @@ const SHARED_CDS_OPTIONS = [
 // in MB since that's the unit an operator actually thinks in.
 const BYTES_PER_MB = 1024 * 1024;
 
+interface BackToWorkspaceProps {
+  className?: string;
+}
+
 // Settings is a full-page detour from the Workspace (no tab strip to click back through, and in
 // the Electron shell no navbar "Workspace" link either), so the way back is spelled out — once at
 // the top and again past the end of the form, which is long enough that the top one is scrolled
@@ -239,7 +243,7 @@ const BYTES_PER_MB = 1024 * 1024;
 // Plain "/workspace" rather than history.back(): the Workspace restores the last-open lab on its
 // own, so this lands where the user left off even when Settings was opened from the native menu or
 // a kathara:// deep link, with nothing to go back to.
-function BackToWorkspace({ className = "" }: { className?: string }) {
+function BackToWorkspace({ className = "" }: BackToWorkspaceProps) {
   return (
     <Link
       to="/workspace"

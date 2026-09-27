@@ -3,6 +3,12 @@
 
 import type { LabSummary } from "./types";
 
+/** A lab's name as the workspace shows it: an empty one would leave its row, tooltip or header
+ *  blank, so it reads "(unnamed)" instead. */
+export function labDisplayName(lab: Pick<LabSummary, "name">): string {
+  return lab.name || "(unnamed)";
+}
+
 /**
  * The lab a person means by `name` (a kathara://lab/<name> link), or undefined. A name is unique
  * only under the labs root — a folder opened from elsewhere may carry the same one — so a lab

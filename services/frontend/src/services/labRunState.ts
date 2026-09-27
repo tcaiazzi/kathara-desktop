@@ -3,9 +3,10 @@
 // a time as well as all together — and only a recorded deploy failure (LabSummary.deploy_error)
 // turns it into something to warn about.
 
+import { plural } from "./format";
 import type { LabSummary } from "./types";
 
-export type LabRunState = "running" | "partial" | "stopped";
+type LabRunState = "running" | "partial" | "stopped";
 
 type RunFields = Pick<LabSummary, "n_machines" | "n_running">;
 
@@ -24,7 +25,7 @@ export function labRunLabel(lab: RunFields): string {
 
 /** The hover card's state line: "Running · 3 devices", "2 of 3 devices running", "Stopped · 1 device". */
 export function labRunSummary(lab: RunFields): string {
-  const devices = `${lab.n_machines} ${lab.n_machines === 1 ? "device" : "devices"}`;
+  const devices = plural(lab.n_machines, "device");
   const state = labRunState(lab);
   if (state === "partial") return `${lab.n_running} of ${devices} running`;
   return `${state === "running" ? "Running" : "Stopped"} · ${devices}`;

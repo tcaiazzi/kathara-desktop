@@ -347,10 +347,14 @@ function groupByFile(matches: FsSearchMatch[]): [string, FsSearchMatch[]][] {
   return order.map((path) => [path, byPath.get(path)!]);
 }
 
+interface SearchResultsViewProps {
+  tree: UseFsTree;
+}
+
 // Replaces the tree with a flat, VS-Code-style "search in files" results list — search input,
 // case-sensitivity toggle, and matches grouped by file. Clicking a match opens that file in the
 // editor pane and jumps to the matching line (see useFsTree's `selectFile`/`scrollTarget`).
-function SearchResultsView({ tree }: { tree: UseFsTree }) {
+function SearchResultsView({ tree }: SearchResultsViewProps) {
   return (
     <div className="d-flex flex-column" style={{ flex: 1, minHeight: 0 }}>
       <Form.Control
@@ -488,7 +492,11 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
   );
 });
 
-function NodeEditInput({ node }: { node: NodeApi<FsNode> }) {
+interface NodeEditInputProps {
+  node: NodeApi<FsNode>;
+}
+
+function NodeEditInput({ node }: NodeEditInputProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     inputRef.current?.focus();

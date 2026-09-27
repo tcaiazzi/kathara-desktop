@@ -114,7 +114,7 @@ import { removeFrom } from "../services/terminalSplits";
 import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import type { LabFilesChange } from "../services/labFilesSync";
-import { compareLabsByName, labFolder } from "../services/labPlace";
+import { compareLabsByName, labDisplayName, labFolder } from "../services/labPlace";
 import { hasDeployFailure, labDotState, labRunLabel, labRunState, labRunSummary } from "../services/labRunState";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
@@ -551,7 +551,7 @@ function LabRowLabel({ lab, home }: LabRowLabelProps) {
   const hint = [folder, problem].filter(Boolean).join(" · ");
   return (
     <span className="kt-ws-row-name">
-      {lab.name || "(unnamed)"}
+      {labDisplayName(lab)}
       {hint && (
         <span className="kt-ws-row-path">
           <bdi>{hint}</bdi>
@@ -584,7 +584,7 @@ function LabRowTip({ lab, action, suppressed, children }: LabRowTipProps) {
       onToggle={setShow}
       overlay={
         <Tooltip id={`lab-tip-${lab.id}`} className="kt-lab-tip">
-          <div className="kt-lab-tip-name">{lab.name || "(unnamed)"}</div>
+          <div className="kt-lab-tip-name">{labDisplayName(lab)}</div>
           {lab.path && <div className="kt-lab-tip-path">{lab.path}</div>}
           <div className="kt-lab-tip-state">
             <span className={`kt-ws-dot ${labDotState(lab)}`} />
@@ -1681,7 +1681,7 @@ export function WorkspacePage() {
                           onClick={() => {
                             if (l.problem) {
                               toast.show(
-                                `"${l.name || "(unnamed)"}" ${PROBLEM_EXPLANATION[l.problem] ?? "isn't loaded."}`,
+                                `"${labDisplayName(l)}" ${PROBLEM_EXPLANATION[l.problem] ?? "isn't loaded."}`,
                                 "info",
                               );
                             } else if (l.id === labId) {
@@ -1822,7 +1822,7 @@ export function WorkspacePage() {
                 title={
                   detail.deployed
                     ? "Undeploy the lab to rename it"
-                    : `${detail.name || "(unnamed)"} — click to rename`
+                    : `${labDisplayName(detail)} — click to rename`
                 }
                 onClick={() => {
                   if (detail.deployed) {
@@ -1832,7 +1832,7 @@ export function WorkspacePage() {
                   void handleRename(detail);
                 }}
               >
-                {detail.name || "(unnamed)"}
+                {labDisplayName(detail)}
               </h5>
               <Badge
                 bg={

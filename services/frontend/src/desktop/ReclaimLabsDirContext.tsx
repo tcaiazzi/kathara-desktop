@@ -18,7 +18,7 @@ import { desktop } from "./bridge";
 type ReclaimOutcome = "reclaimed" | "skipped";
 /** Who left the files root-owned: the privileged session that just ended, or running devices
  *  (they write a lab's shared/ folder as root) when the backend couldn't change one. */
-export type ReclaimReason = "elevation" | "devices";
+type ReclaimReason = "elevation" | "devices";
 /** `paths` are the folders the reclaim would touch — shown, so the user knows what they authorize. */
 type ReclaimAuthApi = (paths: string[], reason?: ReclaimReason) => Promise<ReclaimOutcome>;
 const ReclaimAuthCtx = createContext<ReclaimAuthApi | null>(null);

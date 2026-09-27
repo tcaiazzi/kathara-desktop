@@ -5,7 +5,7 @@
 // the single subscription to the shell and dispatches to whatever is currently registered.
 // Registration is in a ref rather than state on purpose: a page mounting must not re-render
 // the whole app, and a command with no page mounted to handle it is simply a no-op.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useToast } from "../context/ToastContext";
 import { useGuardedNavigate } from "../context/UnsavedChangesContext";
 import { useTheme } from "../hooks/useTheme";
@@ -23,7 +23,7 @@ interface Registry {
 
 const DesktopCommandsContext = createContext<Registry | null>(null);
 
-export function DesktopCommandsProvider({ children }: { children: React.ReactNode }) {
+export function DesktopCommandsProvider({ children }: { children: ReactNode }) {
   // Settings and deep links (a kathara:// link, File → Open Lab Folder…) both leave the open lab,
   // so they ask about unsaved edits first, like every in-app navigation.
   const navigate = useGuardedNavigate();

@@ -5,6 +5,7 @@ import { CatalogInstallButton } from "./CatalogInstallButton";
 import { ChevronDown, ChevronRight, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
 import { api, ApiError } from "../services/api";
+import { plural } from "../services/format";
 import type { GalleryLab } from "../services/types";
 import "./GalleryModal.css";
 
@@ -149,7 +150,7 @@ export function GalleryModal({ show, onClose, onCreated }: GalleryModalProps) {
                         <div className="kt-gallery-row-main">
                           <div className="kt-gallery-row-name">{lab.name}</div>
                           <div className="kt-gallery-row-meta">
-                            {lab.n_files} file{lab.n_files === 1 ? "" : "s"}
+                            {plural(lab.n_files, "file")}
                             {" · "}
                             <a href={lab.repo_url} target="_blank" rel="noopener noreferrer">
                               View on GitHub <ExternalLink size={11} />

@@ -9,7 +9,7 @@ import { api, ApiError } from "../services/api";
 import { languageForPath } from "../services/editorLanguage";
 import { EditorPane } from "./EditorPane";
 
-export type DeviceScriptKind = "startup" | "shutdown";
+type DeviceScriptKind = "startup" | "shutdown";
 
 interface DeviceScriptSectionProps {
   labId: string;

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { labSummary } from "../test/fixtures";
 import { compareLabsByName, labFolder, labNamed } from "./labPlace";
 import type { LabSummary } from "./types";
 
 function lab(id: string, name: string, managed: boolean, problem: string | null = null): LabSummary {
-  return { id, name, managed, problem, path: `/x/${name}`, n_machines: 0, n_links: 0, deployed: false, n_running: 0 };
+  return labSummary({ id, name, managed, problem, path: `/x/${name}` });
 }
 
 describe("labNamed", () => {

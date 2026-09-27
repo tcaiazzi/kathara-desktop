@@ -13,14 +13,13 @@ import {
   findNode,
   freshScopeState,
   mergeNodeList,
-  parentOf,
   toAbsolutePath,
   withMergedChildrenAt,
   type FsClipboard,
   type FsNode,
   type FsTreeScopeState,
 } from "../services/fsTree";
-import { baseName, isSubPath, remapPath } from "../services/paths";
+import { baseName, isSubPath, joinPath, parentOf, remapPath } from "../services/paths";
 import type { FsEntry, FsSearchMatch } from "../services/types";
 import { describeUnsaved } from "../services/unsaved";
 import { useBusyAction } from "./useBusyAction";
@@ -407,8 +406,6 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     };
   }, [searchMode, searchQuery, searchCaseSensitive, toast]);
 
-  const data = useMemo(() => tree, [tree]);
-
   // Bring a path into view (opening its ancestor folders) and sync the tree's own selection state
   // to match — react-arborist owns selection/open state internally, so whenever *our* `selected`
   // changes for a reason other than the user clicking a row directly, it has to be told. Reruns as
@@ -741,7 +738,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       if (!file) return;
 
       const dir = defaultDir(true);
-      const suggested = dir === "/" ? `/${file.name}` : `${dir}/${file.name}`;
+      const suggested = joinPath(dir, file.name);
       const { title, message } = sourceRef.current.labels.uploadPrompt;
       const clean = await promptForPath({
         title: title(file.name),
@@ -890,7 +887,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       const name = baseName(sourcePath);
       if (!name) return;
       const destDirPath = parentId ?? "/";
-      await movePath(sourcePath, destDirPath === "/" ? `/${name}` : `${destDirPath}/${name}`);
+      await movePath(sourcePath, joinPath(destDirPath, name));
     },
     [movePath],
   );
@@ -903,7 +900,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         return;
       }
       const destDirPath = parentOf(id);
-      await movePath(id, destDirPath === "/" ? `/${clean}` : `${destDirPath}/${clean}`);
+      await movePath(id, joinPath(destDirPath, clean));
     },
     [movePath, toast],
   );
@@ -950,7 +947,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           for (const srcPath of cb.paths) {
             const name = baseName(srcPath);
             if (!name) continue;
-            const destPath = destDir === "/" ? `/${name}` : `${destDir}/${name}`;
+            const destPath = joinPath(destDir, name);
             if (destPath === srcPath) continue; // already here — skip, never self-copy/move
             if (!canModify(destPath)) {
               toast.show(`Can't paste over ${destPath}.`, "danger");
@@ -1093,7 +1090,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   return {
     treeRef,
-    data,
+    data: tree,
     loaded,
     loadError,
     retryRoot,

@@ -32,7 +32,7 @@ describe("nextFocusable", () => {
 });
 
 describe("firstFocusable / lastFocusable", () => {
-  it("find the ends, skipping what can't take focus", () => {
+  it("finds the first and the last item that can take focus", () => {
     expect(firstFocusable([false, true, true])).toBe(1);
     expect(lastFocusable([true, true, false])).toBe(1);
   });
