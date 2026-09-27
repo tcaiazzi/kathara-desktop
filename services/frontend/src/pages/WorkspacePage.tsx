@@ -546,9 +546,7 @@ interface LabRowLabelProps {
 // A rail row's name, plus the folder the lab sits in, which is what tells two labs with the same
 // name apart (services/labPlace.ts).
 function LabRowLabel({ lab, home }: LabRowLabelProps) {
-  // Only a folder opened from elsewhere says where it is: every managed lab sits in the same labs
-  // folder, so repeating it under each name says nothing (the hover card still has it).
-  const folder = lab.path && !lab.managed ? labFolder(lab.path, home) : null;
+  const folder = lab.path ? labFolder(lab.path, home) : null;
   const problem = lab.problem ? PROBLEM_LABEL[lab.problem] ?? lab.problem : null;
   const hint = [folder, problem].filter(Boolean).join(" · ");
   return (
