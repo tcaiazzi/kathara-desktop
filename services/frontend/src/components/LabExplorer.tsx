@@ -5,6 +5,7 @@ import { useToast } from "../context/ToastContext";
 import type { StartupChange } from "../context/WorkspaceCoreContext";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
 import { api, ApiError, isAbortError } from "../services/api";
+import { labTreeKey } from "../services/labfs";
 import type { LabConfView, LabDetail } from "../services/types";
 import { FsTreePanel } from "./FsTreePanel";
 
@@ -176,12 +177,14 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
     [applyLabConf, confirm, detail.machines, detail.name, labId, onStartupFileSaved],
   );
 
-  // A token whose identity changes exactly when the tree should be re-listed: on any lab
-  // lifecycle action (`detail` gets a new identity on every refresh, and several of them rewrite
-  // lab.conf) and on the toolbar's ↻. Not `detail` itself, so the ↻ counts too, and not an inline
-  // object, which would re-list on every render.
+  // A token whose identity changes exactly when the tree should be re-listed: when a new `detail`
+  // may come with a different-looking folder (labTreeKey — not `detail` itself, which is a new
+  // object on every refresh) and when a startup script changes on disk outside the tree. Not the
+  // toolbar's ↻, which re-lists through `tree.reload()` itself; not an inline object, which would
+  // re-list on every render.
+  const treeKey = labTreeKey(detail);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const refreshKey = useMemo(() => ({}), [detail, confReloadKey, startupChange]);
+  const refreshKey = useMemo(() => ({}), [treeKey, startupChange]);
   const tree = useFsTree({ source, scopeKey: labId, refreshKey });
 
   // Read through refs so this effect doesn't re-run on every keystroke in the editor. Keyed off

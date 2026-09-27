@@ -175,10 +175,17 @@ export function DeviceInfoTabs({
   }, [confirm, registerSelectionGuard]);
 
   const { refreshStartups } = actions;
+  // Saving a script that exists only changes what is in it; which scripts exist changes on the
+  // Save that creates one, so only that one re-lists the lab root.
+  const startupExists = onDisk?.startup === true;
+  const shutdownExists = onDisk?.shutdown === true;
   const onStartupSaved = useCallback(() => {
-    relist();
+    if (!startupExists) relist();
     void refreshStartups();
-  }, [relist, refreshStartups]);
+  }, [startupExists, relist, refreshStartups]);
+  const onShutdownSaved = useCallback(() => {
+    if (!shutdownExists) relist();
+  }, [shutdownExists, relist]);
 
   const { ref: filesRef, width: filesWidth } = useElementSize<HTMLDivElement>();
 
@@ -265,7 +272,7 @@ export function DeviceInfoTabs({
               device={device}
               kind="shutdown"
               exists={onDisk?.shutdown ?? null}
-              onSaved={relist}
+              onSaved={onShutdownSaved}
               onDirtyChange={onShutdownDirty}
             />
             {startupLog}
