@@ -160,9 +160,9 @@ export interface Ulimit {
 }
 
 // Mirrors backend schemas/machine.py's MachineOptionsBase — every device "option"/meta this API
-// models explicitly, shared by the add-device payload and the update-device payload (and, with
-// `name`/`interfaces`/`running`/`status` layered on, MachineDetail below) so the field list lives
-// in exactly one place on this side too.
+// models explicitly, shared by the add-device payload and the update-device payload. MachineDetail
+// below layers `name`/`interfaces`/`running`/`status` on top, so on this side the field list lives
+// in exactly one place (the backend's MachineDetail repeats it field by field).
 export interface MachineOptionsPayload {
   image: string | null;
   mem: string | null;
@@ -327,8 +327,10 @@ export interface StartupStatus {
 export type LiveAddresses = Record<string, Record<string, string[]>>;
 
 // Docker image state for a lab, ahead of a deploy. Only `missing` (mandatory) and `outdated`
-// (optional) are actionable; `unknown` means the registry couldn't be consulted (offline, or
-// slower than the backend's time budget) and is deliberately not reported as `ok`.
+// (optional) are actionable; `not-found` is a missing image the registry won't serve, so no
+// download is offered for it (see LabImagesStatus.not_found); `unknown` means the registry
+// couldn't be consulted (offline, or slower than the backend's time budget) and is deliberately
+// not reported as `ok`.
 type ImageState = "ok" | "missing" | "not-found" | "outdated" | "unknown";
 
 interface LabImageStatus {

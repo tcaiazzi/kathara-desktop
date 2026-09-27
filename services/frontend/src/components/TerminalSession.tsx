@@ -44,6 +44,8 @@ export function TerminalSession({ id, machine, host, toolbarHost, inSplit, focus
   // user can reconnect once it's running again.
   useEffect(() => {
     if (!running) disconnect();
+    // `disconnect` is a fresh function every render but only works through useLiveTty's refs, so
+    // any render's copy does the same; only `running` decides when to run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
@@ -54,6 +56,7 @@ export function TerminalSession({ id, machine, host, toolbarHost, inSplit, focus
     if (!focusSeq) return;
     const frame = requestAnimationFrame(() => terminalRef.current?.focus());
     return () => cancelAnimationFrame(frame);
+    // `terminalRef` is a ref, stable for the session's life; only a new `focusSeq` asks for focus.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusSeq]);
 
@@ -65,6 +68,8 @@ export function TerminalSession({ id, machine, host, toolbarHost, inSplit, focus
     const ro = new ResizeObserver(() => fit());
     ro.observe(el);
     return () => ro.disconnect();
+    // Mount-only: `containerRef` is a ref, and `fit` — a fresh function every render — only works
+    // through useLiveTty's refs, so the first render's copy stays correct.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

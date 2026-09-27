@@ -46,6 +46,8 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
     setLink(prefillLink || "");
     setOptions(defaultOptionsFormState());
     setAdvancedOpen(false);
+    // Reseeds only when the dialog opens: `prefillLink` is read at that moment, and a later change
+    // to it must not overwrite a collision domain the user has already picked.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show]);
 

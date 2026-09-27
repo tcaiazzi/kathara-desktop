@@ -363,15 +363,15 @@ const HEADER_ACTIONS_COMPACT_WIDTH = 660;
 // lab — unless the user has opened or closed it by hand since the page loaded, which wins.
 const RAIL_AUTO_CLOSE_WIDTH = 1100;
 
-// Below this width, the rail's import row (New/Open/Upload/Browse) collapses into a single
+// Below this width, the rail's import row (New/Open/Import/Browse) collapses into a single
 // "Add Lab" dropdown instead of squeezing/deforming — same pattern as compactActions above. ~242px
 // is the row's natural unsquished width with 3 sm buttons (icon+label), ~324px with the desktop
 // app's 4th, Open; padded for font-rendering variance.
 const IMPORT_ROW_COMPACT_WIDTH = isDesktop() ? 340 : 260;
 
 // Fraction of the total height the topology row gets when it's first split off from the shared
-// tab group below it — matches the shipped default screenshot (topology noticeably taller than
-// the tabs).
+// tab group below it: the graph is the workspace's main view, so it stays noticeably taller than
+// the tabs.
 const TOPOLOGY_HEIGHT_FRACTION = 0.62;
 
 // The node-info panel's tab title, in one place: a saved layout records the title it was saved with,
@@ -401,8 +401,7 @@ function buildDefaultLayout(api: DockviewApi) {
   api.getPanel("devices")?.api.setActive();
 }
 
-// Re-open the Inspector panel if it was closed (as a tab alongside Lab Details/Lab
-// Configuration/…).
+// Re-open the Inspector panel if it was closed (as a tab alongside Lab Details/Lab Configuration/…).
 // No-op if it already exists. Doesn't foreground it when it's sharing a tab group with Topology —
 // e.g. dragged there manually — since that would hide the topology view a selection likely just
 // came from; the node-info content itself is a portal (NodeInfoPanel) that updates regardless of
@@ -461,8 +460,9 @@ function exitMaximized(api: DockviewApi) {
   if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
 }
 
-// --- Preset layouts (reposition existing panels via moveTo — no unmount, so terminal sessions
-// survive). All are no-ops when there's nothing to arrange. ---
+// --- Preset layouts, plus the terminal-panel helpers the page uses alongside them. The presets
+// reposition existing panels via moveTo — no unmount, so terminal sessions survive — and are all
+// no-ops when there's nothing to arrange. ---
 const terminalPanelsOf = (api: DockviewApi) => api.panels.filter((p) => p.id.startsWith("terminal:"));
 
 // End every session in `sessions`. A detached one ends by closing its panel, whose removal ends the
@@ -539,7 +539,7 @@ function focusTerminals(api: DockviewApi) {
 
 interface LabRowLabelProps {
   lab: LabSummary;
-  // Shown as "~" in the folder (useHomeDir); null shows it whole.
+  /** Shown as "~" in the folder (useHomeDir); null shows it whole. */
   home: string | null;
 }
 
@@ -563,10 +563,10 @@ function LabRowLabel({ lab, home }: LabRowLabelProps) {
 
 interface LabRowTipProps {
   lab: LabSummary;
-  // What a left click on the row does, as the card's last line says it; empty for a row that
-  // isn't clickable.
+  /** What a left click on the row does, as the card's last line says it; empty for a row that
+   *  isn't clickable. */
   action: string;
-  // Kept closed while a context menu is open, which it would otherwise sit next to.
+  /** Kept closed while a context menu is open, which it would otherwise sit next to. */
   suppressed: boolean;
   children: ReactElement;
 }
@@ -742,9 +742,9 @@ export function WorkspacePage() {
 
   // Guards against out-of-order responses: switching lab A -> B quickly could otherwise let A's
   // slower fetch land after B's and clobber the workspace with the wrong lab's data. The
-  // generation counter alone only guarded the `setState` calls; `loadAbortRef` additionally
-  // aborts the actual in-flight fetch (superseded or the component unmounting) instead of just
-  // ignoring its result.
+  // generation counter guards the `setState` calls; `loadAbortRef` also aborts the in-flight
+  // fetch itself (superseded, or the component unmounting), so it doesn't run on only to have its
+  // result ignored.
   const loadGenRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
@@ -1085,7 +1085,7 @@ export function WorkspacePage() {
 
   // Single useDeviceActions instance for the whole workspace — shared by the topology canvas (via
   // WorkspaceContext) and the device rail below, so right-clicking a device in either place means
-  // exactly the same thing and there's one `pending`-files fetch / one action modal, not two.
+  // exactly the same thing and there's one startup-scripts fetch / one action modal, not two.
   const deviceActions = useDeviceActions({
     labId,
     detail,
@@ -1304,6 +1304,8 @@ export function WorkspacePage() {
       toast.show("Administrator privileges granted — deploying now.", "success");
       void handleDeployToggle({ skipImageCheck: true }).catch(() => {});
     }
+    // `handleDeployToggle` and `toast` are left out: the ref lets this run once per page load, and
+    // the render that runs it is the one that saw `detail` arrive, whose copies are current.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail, searchParams, setSearchParams]);
 
@@ -1452,9 +1454,9 @@ export function WorkspacePage() {
 
   // Guards against the one-render window where the route's `labId` has already changed (e.g.
   // navigating back to /workspace after deleting the open lab) but `detail` still holds the
-  // previous lab's data — that state only gets cleared in a later effect (below). Without this
-  // check, the dock panels would briefly see a mismatched labId/detail pairing — e.g.
-  // LabExplorer firing `getLabConf("")` at `/api/labs//lab-conf`.
+  // previous lab's data — that state only gets cleared in a later effect (the one above that
+  // re-runs on `load`). Without this check, the dock panels would briefly see a mismatched
+  // labId/detail pairing — e.g. LabExplorer firing `getLabConf("")` at `/api/labs//lab-conf`.
   const currentDetail = detail && detail.id === labId ? detail : null;
   usePublishOpenLabName(currentDetail?.name ?? null);
 

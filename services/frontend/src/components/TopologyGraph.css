@@ -1,5 +1,6 @@
-/* Light theme, using the shared tokens in src/styles/theme.css.
-   Scoped under .kt-topo-wrap to avoid bleeding into react-bootstrap's own styles. */
+/* Colours come from the shared tokens in src/styles/theme.css, so the graph follows the light and
+   dark themes. Class names are prefixed (kt-topo-/kt-devinfo- for the panel, n- for the SVG
+   nodes) so they stay clear of react-bootstrap's own styles. */
 
 .kt-topo-wrap {
   display: flex;

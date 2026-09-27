@@ -62,17 +62,17 @@ interface TopologyGraphProps extends DeviceActionsProps {
   configureRequest: { device: string; seq: number } | null;
   /** Installs the guard the workspace asks before selecting another node — see DeviceInfoTabs. */
   registerSelectionGuard: (guard: SelectionGuard | null) => void;
-  // Shows/dismisses the shared context menu (rendered once by the workspace page).
+  /** Shows/dismisses the shared context menu (rendered once by the workspace page). */
   setContextMenu: (menu: ContextMenuState | null) => void;
-  // Optional controlled selection (node id `dev:<name>` / `cd:<name>`). When provided, an external
-  // list (e.g. the Workspace rail) can drive/read the selected node. Omit for internal selection,
-  // where the component tracks the selected node itself.
+  /** Optional controlled selection (node id `dev:<name>` / `cd:<name>`). When provided, an external
+   *  list (e.g. the Workspace rail) can drive/read the selected node. Omit for internal selection,
+   *  where the component tracks the selected node itself. */
   selectedId?: string | null;
   /** May refuse (resolving false): the canvas then puts its highlight back on the current node. */
   onSelectId?: (id: string | null) => void | Promise<boolean>;
-  // DOM node of the Inspector dock panel. When set, the inspector is portaled into it
-  // (so it can be dragged/closed like any dock panel); when null (panel closed) the inspector is
-  // hidden and the canvas takes the full width.
+  /** DOM node of the Inspector dock panel. When set, the inspector is portaled into it
+   *  (so it can be dragged/closed like any dock panel); when null (panel closed) the inspector is
+   *  hidden and the canvas takes the full width. */
   nodeInfoHost?: HTMLElement | null;
 }
 
@@ -99,11 +99,11 @@ const LIVE_ADDRESSES_BOOT_POLL_MS = 3_000;
 // so the buttons must react to it shrinking, not just the browser window.
 const TOOLBAR_COMPACT_WIDTH = 480;
 
-// Force-directed SVG topology graph (device + collision-domain nodes, edges = interfaces), no
-// charting library. The simulation/render loop manipulates SVG DOM attributes directly every
-// animation frame rather than going through React state: dozens of position updates per second
-// per node is not a good fit for React re-renders. React only owns the low-frequency parts: the
-// side panel and (via the setContextMenu/deviceContextItems props) the context menu.
+// The Topology panel: the graph canvas with its toolbars and legend, and the Inspector portaled
+// into its own dock panel. The graph itself — physics, drag/pan/zoom, the node DOM, updated every
+// frame outside React state — is useForceLayout's; this component holds the low-frequency state
+// around it: the selection, the Display preferences, the lab's fixed layout and its local draft,
+// the polled live addresses, and (via the setContextMenu/deviceContextItems props) the context menu.
 export function TopologyGraph({
   labId,
   detail,
@@ -210,9 +210,12 @@ export function TopologyGraph({
     };
   }, [labId, toast]);
 
-  // What a *fresh* layout starts from: re-read on lab switch, Re-layout and layout arrival. A
-  // rebuild that only carries new data (a device added, a startup saved) doesn't depend on it
-  // being current — the engine carries its own live positions across those (useForceLayout).
+  // What a *fresh* layout starts from. The draft lives in localStorage, outside React, so it is
+  // re-read at each moment it may have changed: a lab switch (`labId`), a new `detail`, Re-layout
+  // (`relayoutNonce`) and the fixed layout arriving (`layoutNonce`, `savedLayout`) — which is why
+  // the list names values the body never reads. A rebuild that only carries new data (a device
+  // added, a startup saved) doesn't depend on it being current: the engine carries its own live
+  // positions across those (useForceLayout).
   const initialPositions = useMemo(
     () => ({ ...(savedLayout ?? {}), ...readDraft() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -149,9 +149,9 @@ interface EngineSnapshot {
 interface UseForceLayout {
   canvasRef: MutableRefObject<HTMLDivElement | null>;
   fit: () => void;
-  // Imperatively set the selected node (e.g. from an external list). No-op if unchanged.
+  /** Imperatively set the selected node (e.g. from an external list). No-op if unchanged. */
   select: (id: string | null) => void;
-  // Zoom about the canvas center by a factor (>1 in, <1 out).
+  /** Zoom about the canvas center by a factor (>1 in, <1 out). */
   zoom: (factor: number) => void;
   // Pan a node to the canvas center at the current scale (used by the search box).
   centerOn: (id: string) => void;

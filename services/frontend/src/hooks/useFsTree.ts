@@ -353,6 +353,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     return () => {
       controller.abort();
     };
+    // The source is read through `sourceRef`, and `toast` is stable (ToastContext): only a new
+    // scope, the caller's `refreshKey` or a retry re-lists the root.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scopeKey, enabled, refreshKey, rootAttempt]);
 

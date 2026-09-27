@@ -16,7 +16,7 @@ export interface StartupChange {
 // unlike WorkspaceCtx's `ctxValue`, which is rebuilt as a fresh object on every WorkspacePage
 // render (it bundles `deviceActions`, a genuinely-volatile object from useDeviceActions). Reading
 // this context instead of the full one means an unrelated re-render elsewhere in the workspace
-// (topology hover, a context-menu open, a rail drag) no longer forces every visible tree row to
+// (topology hover, a context-menu open, a rail drag) doesn't force every visible tree row to
 // re-render.
 interface WorkspaceCoreCtx {
   labId: string;

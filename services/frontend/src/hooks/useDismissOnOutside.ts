@@ -28,8 +28,11 @@ export function useDismissOnOutside(
       window.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-    // `onDismiss` is a stable setState call at both call sites; listing it would re-attach the
-    // listeners on every render of the parent for no gain.
+    // `onDismiss` is left out: both callers pass an inline arrow, and listing it would re-attach
+    // the listeners on every render of the parent. The listeners therefore call the `onDismiss` of
+    // the render in which `open` last changed — harmless while every caller's arrow only closes
+    // the popover through a state setter, as both do, but a caller whose `onDismiss` reads values
+    // that change while the popover is open would see them stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ref, open]);
 }

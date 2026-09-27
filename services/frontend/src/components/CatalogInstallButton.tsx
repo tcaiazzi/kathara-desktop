@@ -7,7 +7,7 @@ interface CatalogInstallButtonProps {
   /** This row is the one being installed. */
   busy: boolean;
   /** Any row is being installed — every button is disabled, not just the busy one, so a second
-   * click cannot start a install while the first is still going. */
+   * click cannot start an install while the first is still going. */
   anyBusy: boolean;
   /** "Create" for an example, "Import" from the gallery. */
   idleLabel: string;
@@ -16,6 +16,9 @@ interface CatalogInstallButtonProps {
   onClick: () => void;
 }
 
+// The per-row action of both lab catalogues — the welcome screen's examples and the gallery's labs,
+// each behind useCatalogInstall: install the lab, or open it once it is on disk. One component so
+// the two lists' buttons look and disable alike.
 export function CatalogInstallButton({
   installed,
   busy,

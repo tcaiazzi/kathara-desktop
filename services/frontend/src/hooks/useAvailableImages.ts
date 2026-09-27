@@ -9,7 +9,7 @@ import type { AvailableImages } from "../services/types";
 // saves the round trip). A failed fetch degrades to empty lists rather than surfacing an error:
 // these are suggestions for a free-text "image" field, never a requirement.
 //
-// TTL'd rather than held for the whole page lifetime, because the list now includes the machine's
+// TTL'd rather than held for the whole page lifetime, because the list includes the host's
 // *local* Docker images: an image the user pulls mid-session has to become suggestable without
 // reloading the app. Matches the backend's own KatharaService._IMAGES_CACHE_TTL.
 const CACHE_TTL_MS = 300_000;

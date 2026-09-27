@@ -72,6 +72,7 @@ export function useTerminalSession(labId: string, machine: string, options: Term
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = theme;
     if (containerRef.current) containerRef.current.style.backgroundColor = theme.background ?? "";
+    // `terminalRef` and `containerRef` are refs from useLiveTty, stable for the session's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme]);
 
