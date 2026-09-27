@@ -21,6 +21,7 @@ import type { ElevateFailureReason, ElevateResult } from "./elevateOutcome";
 import { reclaimScript, type ReclaimTargets } from "./labFolders";
 import { redactEnvArgsForLog } from "./logRedaction";
 import { isPlainAbsolutePath, isUsablePort, quoteForShellString } from "./safety";
+import { uploadLimitsEnv } from "./uploadLimits";
 
 export interface BackendHandle {
   port: number;
@@ -587,6 +588,11 @@ async function buildBackendCommand(
   const stateEnv: Record<string, string> = isPlainAbsolutePath(state) ? { KATHARA_API_STATE_DIR: state } : {};
   if (!stateEnv.KATHARA_API_STATE_DIR) log(`not passing the state directory to the backend: ${JSON.stringify(state)}`);
 
+  const limitsEnv = uploadLimitsEnv(readPrefs().uploadLimits);
+  if (Object.keys(limitsEnv).length) {
+    log(`upload limits from Settings: ${Object.entries(limitsEnv).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+  }
+
   const appEnv: Record<string, string> = {
     // src/kathara_api/config.py already defaults to loopback; this pins it regardless of a stray
     // .env, as does --host on uvicorn's CLI below. A desktop app must not put its backend — which
@@ -598,6 +604,8 @@ async function buildBackendCommand(
     KATHARA_API_AUTH_TOKEN: token,
     KATHARA_API_SHELL_TOKEN: shellToken,
     ...stateEnv,
+    // The limits the user saved in Settings, which the backend would otherwise forget on restart.
+    ...limitsEnv,
     PYTHONUNBUFFERED: "1",
     ...pythonEnv(pythonOverrides),
   };

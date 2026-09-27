@@ -53,6 +53,9 @@ export interface DesktopApi {
   isWindowMaximized(): Promise<boolean>;
   isWindowFullScreen(): Promise<boolean>;
   showBackendLog(): Promise<void>;
+  /** Keeps the upload & import limits (keyed as in GET /settings) in the shell's preferences, which
+   * passes them to every backend it starts: the backend itself only holds them until it exits. */
+  setUploadLimits(limits: { max_files_per_lab?: number; max_bytes_per_file?: number; max_bytes_per_lab?: number }): Promise<void>;
   /** Best-effort trail for a renderer crash ErrorBoundary.tsx caught, appended to the same
    * backend.log "Help -> Show backend log" opens — a packaged app's renderer console isn't
    * normally visible, so this is otherwise a diagnostic dead end. Fire-and-forget. */

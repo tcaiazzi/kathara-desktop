@@ -1,7 +1,7 @@
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, FileText, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Alert, Button, Form } from "react-bootstrap";
-import { Link } from "react-router-dom";
+import { Alert, Button, Collapse, Form, Tab, Tabs } from "react-bootstrap";
+import { Link, useSearchParams } from "react-router-dom";
 import { AutocompleteInput } from "../components/AutocompleteInput";
 import { Panel } from "../components/Panel";
 import { useToast } from "../context/ToastContext";
@@ -12,17 +12,39 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { useTheme } from "../hooks/useTheme";
 import { api, ApiError } from "../services/api";
-import { toSettingsUpdate } from "../services/settings";
+import {
+  afterKatharaSave,
+  afterLimitsSave,
+  initialSettingsTab,
+  toKatharaUpdate,
+  toLimitsUpdate,
+  type SettingsTab,
+} from "../services/settings";
 import type { SettingsView, SystemInfo } from "../services/types";
 
-// Not a setting either: a one-off action, so it sits outside the <Form> and is never tied to
-// "Save settings". It is the recovery tool for when the lab list disagrees with Docker (containers
-// alive, list says undeployed), which is why it is offered unconditionally rather than only when
-// some lab reads as deployed. Nothing to refresh afterwards: the workspace refetches the lab list
-// when it mounts again.
+// Not settings: one-off actions and facts, so they sit outside every <Form> and are never tied to a
+// save. "Wipe all labs" is the recovery tool for when the lab list disagrees with Docker
+// (containers alive, list says undeployed), which is why it is offered unconditionally rather than
+// only when some lab reads as deployed. Nothing to refresh afterwards: the workspace refetches the
+// lab list when it mounts again. The log and the version exist only in the desktop app.
 function TroubleshootSettings() {
   const { wipeAll } = useLabLifecycleActions();
   const [busy, setBusy] = useState(false);
+  const [version, setVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    desktop()
+      ?.getAppInfo()
+      .then((info) => {
+        if (!cancelled) setVersion(info.version);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <Panel title="Troubleshoot" className="mb-3">
       <div className="d-flex align-items-center gap-3">
@@ -44,6 +66,26 @@ function TroubleshootSettings() {
           Wipe all
         </Button>
       </div>
+      {isDesktop() && (
+        <div className="d-flex align-items-center gap-3 mt-3">
+          <div className="flex-grow-1">
+            <div>Backend log</div>
+            <Form.Text className="text-muted">
+              What the app&apos;s backend did, for reporting a problem.
+              {version && <> Kathara Desktop {version}.</>}
+            </Form.Text>
+          </div>
+          <Button
+            size="sm"
+            variant="outline-secondary"
+            className="flex-shrink-0"
+            onClick={() => void desktop()?.showBackendLog()}
+          >
+            <FileText size={14} className="me-1" />
+            Show backend log
+          </Button>
+        </div>
+      )}
     </Panel>
   );
 }
@@ -133,9 +175,9 @@ function DesktopLabsDirSettings() {
   const isDefault = defaultDir != null && labsDir === defaultDir;
 
   return (
-    <Panel title="Desktop" className="mb-3">
-      <Form.Group className="mb-2">
-        <Form.Label>Labs folder</Form.Label>
+    <Panel title="Labs folder" className="mb-3">
+      <Form.Group className="mb-2" controlId="settings-labs-dir">
+        <Form.Label>Where new labs are created</Form.Label>
         <Form.Control readOnly className="font-monospace" value={labsDir ?? "Loading…"} />
         <Form.Text className="text-muted">
           Existing labs stay on disk if you change this — nothing is moved automatically.
@@ -153,6 +195,26 @@ function DesktopLabsDirSettings() {
       </div>
     </Panel>
   );
+}
+
+// The tab the viewer used last. Storage can be unavailable (a private window): the page then just
+// opens on this app's tab.
+const LS_TAB = "kt-settings-tab";
+
+function readSavedTab(): string | null {
+  try {
+    return localStorage.getItem(LS_TAB);
+  } catch {
+    return null;
+  }
+}
+
+function saveTab(tab: SettingsTab) {
+  try {
+    localStorage.setItem(LS_TAB, tab);
+  } catch {
+    // A remembered tab is a convenience only.
+  }
 }
 
 const DEBUG_LEVELS = ["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "EXCEPTION"];
@@ -189,17 +251,24 @@ function BackToWorkspace({ className = "" }: { className?: string }) {
   );
 }
 
-// Kathara framework settings (GET/PUT /settings), not this app's own config. Most settings can
-// be changed at any time — the one exception is `manager_type`, which Kathara's own
-// Kathara.get_instance() picks once and can't swap out afterward for this backend process's
-// lifetime (see kathara_service.py's update_settings docstring); changing it once the manager
-// has already initialized is rejected with a 409, surfaced below via an inline alert.
+// Two tabs, each saying where its values end up: this app's own settings (Appearance, the labs
+// folder, the upload & import limits, troubleshooting), and Kathara's (GET/PUT /settings, saved to
+// kathara.conf, which the Kathara CLI reads too). The two forms save separately, each sending only
+// its own keys (services/settings.ts). Most Kathara settings can be changed at any time — the one
+// exception is `manager_type`, which Kathara's own Kathara.get_instance() picks once and can't
+// swap out afterward for this backend process's lifetime (see kathara_service.py's
+// update_settings docstring); changing it once the manager has already initialized is rejected
+// with a 409, surfaced below via an inline alert.
 export function SettingsPage() {
   const [form, setForm] = useState<SettingsView | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lockedError, setLockedError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savingLimits, setSavingLimits] = useState(false);
+  const [cliOnlyOpen, setCliOnlyOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState<SettingsTab>(() => initialSettingsTab(searchParams.get("tab"), readSavedTab()));
   const toast = useToast();
   const imageSections = useAvailableImageSections();
   const requestDeployAuth = useDeployAuthorization();
@@ -227,6 +296,13 @@ export function SettingsPage() {
     load();
   }, [load]);
 
+  function selectTab(key: string | null) {
+    const next = initialSettingsTab(key, null);
+    setTab(next);
+    saveTab(next);
+    setSearchParams({ tab: next }, { replace: true });
+  }
+
   function set<K extends keyof SettingsView>(key: K, value: SettingsView[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
   }
@@ -235,7 +311,7 @@ export function SettingsPage() {
     e.preventDefault();
     if (!form) return;
     setLockedError(null);
-    await runBusy(setBusy, "Update settings", async () => {
+    await runBusy(setBusy, "Save Kathara settings", async () => {
       // Mounting the operator's own $HOME into every future device is exactly the kind of thing a
       // lab's own host volumes already gate behind a password before a deploy — treated the same
       // way here, reusing that same check (verify-only; hosthome_mount needs no backend restart,
@@ -249,12 +325,9 @@ export function SettingsPage() {
           return;
         }
       }
-      // Only the editable fields go back: `last_checked` would write a client-side echo over
-      // whatever the backend has since recorded, and the rest are reports the backend 422s.
-      const payload = toSettingsUpdate(form);
       let updated: SettingsView;
       try {
-        updated = await api.updateSettings(payload);
+        updated = await api.updateSettings(toKatharaUpdate(form));
       } catch (err) {
         // The one error this page answers itself: a 409 means the backend has already initialized
         // the setting being changed, which has its own inline alert above the form. Everything
@@ -265,9 +338,21 @@ export function SettingsPage() {
         }
         throw err;
       }
-      setForm(updated);
+      setForm((prev) => afterKatharaSave(prev ?? updated, updated));
       loadedRef.current = updated;
-      toast.show("Settings saved.", "success");
+      toast.show("Kathara settings saved.", "success");
+    });
+  }
+
+  async function handleSaveLimits(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form) return;
+    await runBusy(setSavingLimits, "Save limits", async () => {
+      // Applied by the backend at once; the desktop app also keeps them for every later backend.
+      const updated = await api.updateSettings(toLimitsUpdate(form));
+      setForm((prev) => afterLimitsSave(prev ?? updated, updated));
+      await desktop()?.setUploadLimits(toLimitsUpdate(updated));
+      toast.show("Limits saved.", "success");
     });
   }
 
@@ -295,269 +380,307 @@ export function SettingsPage() {
     <div className="container pt-4">
       <BackToWorkspace className="mb-4" />
       <h2>Settings</h2>
-      <p className="text-muted">
-        Kathara framework settings, saved to{" "}
-        {form.settings_file ? <code>{form.settings_file}</code> : "Kathara's settings file"} — the same file the
-        Kathara CLI uses.
-      </p>
 
-      <AppearanceSettings />
+      <Tabs activeKey={tab} onSelect={selectTab} className="mb-3">
+        <Tab eventKey="app" title="Kathara Desktop">
+          <p className="text-muted">Saved by Kathara Desktop on this computer; the Kathara CLI doesn&apos;t use them.</p>
 
-      {system && (
-        <Panel title="System info" className="mb-3">
-          <div className="mb-1">
-            <strong>Active manager:</strong> {system.manager}
-          </div>
-          <div className="mb-1">
-            <strong>Kathara version:</strong> {system.version}
-          </div>
-          <div className="mb-1">
-            <strong>Available managers:</strong>{" "}
-            {Object.entries(managers)
-              .map(([key, label]) => `${label} (${key})`)
-              .join(", ")}
-          </div>
-          {form.last_checked != null && (
-            <div className="mb-0">
-              <strong>Settings last checked:</strong> {new Date(form.last_checked * 1000).toLocaleString()}
-            </div>
-          )}
-        </Panel>
-      )}
+          <AppearanceSettings />
+          <DesktopLabsDirSettings />
 
-      <DesktopLabsDirSettings />
+          <Form onSubmit={handleSaveLimits}>
+            <Panel title="Upload &amp; import limits" className="mb-3">
+              <p className="text-muted small">
+                Caps applied when installing a gallery lab, importing a lab from JSON, or uploading a
+                lab .zip.{" "}
+                {isDesktop()
+                  ? "They apply at once and are kept for the next start."
+                  : "They apply at once, until the backend restarts: set KATHARA_API_MAX_* to keep them."}
+              </p>
+              <Form.Group className="mb-2" controlId="settings-max-files">
+                <Form.Label>Max files per lab</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={1}
+                  value={form.max_files_per_lab ?? ""}
+                  onChange={(e) => set("max_files_per_lab", e.target.value === "" ? undefined : Number(e.target.value))}
+                />
+              </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-max-file-size">
+                <Form.Label>Max size per file (MB)</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={1}
+                  value={form.max_bytes_per_file != null ? form.max_bytes_per_file / BYTES_PER_MB : ""}
+                  onChange={(e) =>
+                    set(
+                      "max_bytes_per_file",
+                      e.target.value === "" ? undefined : Math.round(Number(e.target.value) * BYTES_PER_MB)
+                    )
+                  }
+                />
+              </Form.Group>
+              <Form.Group className="mb-3" controlId="settings-max-lab-size">
+                <Form.Label>Max total size per lab (MB)</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={1}
+                  value={form.max_bytes_per_lab != null ? form.max_bytes_per_lab / BYTES_PER_MB : ""}
+                  onChange={(e) =>
+                    set(
+                      "max_bytes_per_lab",
+                      e.target.value === "" ? undefined : Math.round(Number(e.target.value) * BYTES_PER_MB)
+                    )
+                  }
+                />
+              </Form.Group>
+              <Button type="submit" size="sm" disabled={savingLimits}>
+                {savingLimits ? "Saving..." : "Save limits"}
+              </Button>
+            </Panel>
+          </Form>
 
-      {form.settings_file_error && (
-        <Alert variant="warning">
-          Kathara's settings file could not be read, so the defaults are in use and saving fails
-          until the file is fixed or deleted — restart the app afterwards to load it.{" "}
-          {form.settings_file_error}
-        </Alert>
-      )}
-      {form.settings_warnings?.map((warning) => (
-        <Alert key={warning} variant="warning">
-          {warning}
-        </Alert>
-      ))}
+          <TroubleshootSettings />
+        </Tab>
 
-      {lockedError && (
-        <Alert variant="warning" dismissible onClose={() => setLockedError(null)}>
-          {lockedError}
-        </Alert>
-      )}
-
-      <Form onSubmit={handleSubmit}>
-        <Panel title="General" className="mb-3">
-          <Form.Group className="mb-2">
-            <Form.Label>Manager type</Form.Label>
-            <Form.Select value={form.manager_type} onChange={(e) => set("manager_type", e.target.value)}>
-              {Object.keys(managers).length ? (
-                Object.entries(managers).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label} ({key})
-                  </option>
-                ))
-              ) : (
-                <option value={form.manager_type}>{form.manager_type}</option>
-              )}
-            </Form.Select>
-            <Form.Text className="text-muted">
-              Locked to the active manager above once it has initialized for this backend session
-              (essentially always, since loading this page triggers that) — restart the app to
-              switch managers. Every other setting below can be changed at any time.
-            </Form.Text>
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Default image</Form.Label>
-            <AutocompleteInput value={form.image} onChange={(v) => set("image", v)} options={imageSections} />
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Device shell</Form.Label>
-            <Form.Control value={form.device_shell ?? ""} onChange={(e) => set("device_shell", e.target.value)} />
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Terminal</Form.Label>
-            <Form.Control value={form.terminal ?? ""} onChange={(e) => set("terminal", e.target.value)} />
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Network prefix</Form.Label>
-            <Form.Control value={form.net_prefix ?? ""} onChange={(e) => set("net_prefix", e.target.value)} />
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Device prefix</Form.Label>
-            <Form.Control value={form.device_prefix ?? ""} onChange={(e) => set("device_prefix", e.target.value)} />
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Debug level</Form.Label>
-            <Form.Select value={form.debug_level ?? "INFO"} onChange={(e) => set("debug_level", e.target.value)}>
-              {DEBUG_LEVELS.map((lvl) => (
-                <option key={lvl} value={lvl}>
-                  {lvl}
-                </option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Volume mount policy</Form.Label>
-            <Form.Select
-              value={form.volume_mount_policy ?? "Always"}
-              onChange={(e) => set("volume_mount_policy", e.target.value)}
-            >
-              {VOLUME_MOUNT_POLICIES.map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </Form.Select>
-          </Form.Group>
-          <Form.Check
-            className="mb-2"
-            type="checkbox"
-            label="Open terminals on device start"
-            checked={form.open_terminals ?? false}
-            onChange={(e) => set("open_terminals", e.target.checked)}
-          />
-          <Form.Check
-            className="mb-2"
-            type="checkbox"
-            label="Print startup log"
-            checked={form.print_startup_log ?? false}
-            onChange={(e) => set("print_startup_log", e.target.checked)}
-          />
-          <Form.Check
-            type="checkbox"
-            label="Enable IPv6"
-            checked={form.enable_ipv6 ?? false}
-            onChange={(e) => set("enable_ipv6", e.target.checked)}
-          />
-        </Panel>
-
-        <Panel title="Upload &amp; import limits" className="mb-3">
-          <p className="text-muted small">
-            Caps applied when installing a gallery lab, importing a lab from JSON, or uploading a
-            lab .zip. Unlike every other setting on this page, these are this app's own — not part
-            of Kathara — and changing them here only lasts for as long as this backend process
-            keeps running: they revert to their configured default the next time it starts.
+        <Tab eventKey="kathara" title="Kathara">
+          <p className="text-muted">
+            Saved to {form.settings_file ? <code>{form.settings_file}</code> : "Kathara's settings file"}, the file the
+            Kathara CLI uses too.
           </p>
-          <Form.Group className="mb-2">
-            <Form.Label>Max files per lab</Form.Label>
-            <Form.Control
-              type="number"
-              min={1}
-              value={form.max_files_per_lab ?? ""}
-              onChange={(e) => set("max_files_per_lab", e.target.value === "" ? undefined : Number(e.target.value))}
-            />
-          </Form.Group>
-          <Form.Group className="mb-2">
-            <Form.Label>Max size per file (MB)</Form.Label>
-            <Form.Control
-              type="number"
-              min={1}
-              value={form.max_bytes_per_file != null ? form.max_bytes_per_file / BYTES_PER_MB : ""}
-              onChange={(e) =>
-                set(
-                  "max_bytes_per_file",
-                  e.target.value === "" ? undefined : Math.round(Number(e.target.value) * BYTES_PER_MB)
-                )
-              }
-            />
-          </Form.Group>
-          <Form.Group>
-            <Form.Label>Max total size per lab (MB)</Form.Label>
-            <Form.Control
-              type="number"
-              min={1}
-              value={form.max_bytes_per_lab != null ? form.max_bytes_per_lab / BYTES_PER_MB : ""}
-              onChange={(e) =>
-                set(
-                  "max_bytes_per_lab",
-                  e.target.value === "" ? undefined : Math.round(Number(e.target.value) * BYTES_PER_MB)
-                )
-              }
-            />
-          </Form.Group>
-        </Panel>
 
-        {form.manager_type === "docker" && (
-          <Panel title="Docker settings" className="mb-3">
-            <Form.Check
-              className="mb-2"
-              type="checkbox"
-              label="Mount host home directory"
-              checked={form.hosthome_mount ?? false}
-              onChange={(e) => set("hosthome_mount", e.target.checked)}
-            />
-            <Form.Check
-              className="mb-2"
-              type="checkbox"
-              label="Shared mount"
-              checked={form.shared_mount ?? true}
-              onChange={(e) => set("shared_mount", e.target.checked)}
-            />
-            <Form.Group className="mb-2">
-              <Form.Label>Image update policy</Form.Label>
-              <Form.Select
-                value={form.image_update_policy ?? "Prompt"}
-                onChange={(e) => set("image_update_policy", e.target.value)}
-              >
-                {IMAGE_UPDATE_POLICIES.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-            <Form.Group className="mb-2">
-              <Form.Label>Shared collision domains</Form.Label>
-              <Form.Select
-                value={form.shared_cds ?? 1}
-                onChange={(e) => set("shared_cds", Number(e.target.value))}
-              >
-                {SHARED_CDS_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-            <Form.Group className="mb-2">
-              <Form.Label>Network plugin</Form.Label>
-              <Form.Select
-                value={form.network_plugin ?? NETWORK_PLUGINS[0]}
-                onChange={(e) => set("network_plugin", e.target.value)}
-              >
-                {NETWORK_PLUGINS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </Form.Select>
-            </Form.Group>
-            {(form.remote_url || form.cert_path) && (
-              <Form.Group>
-                <Form.Label>Remote Docker daemon</Form.Label>
-                {form.remote_url && (
-                  <Form.Control readOnly className="font-monospace mb-1" value={form.remote_url} />
-                )}
-                {form.cert_path && <Form.Control readOnly className="font-monospace" value={form.cert_path} />}
+          {system && (
+            <Panel title="System info" className="mb-3">
+              <div className="mb-1">
+                <strong>Active manager:</strong> {system.manager}
+              </div>
+              <div className="mb-1">
+                <strong>Kathara version:</strong> {system.version}
+              </div>
+              <div className="mb-0">
+                <strong>Available managers:</strong>{" "}
+                {Object.entries(managers)
+                  .map(([key, label]) => `${label} (${key})`)
+                  .join(", ")}
+              </div>
+            </Panel>
+          )}
+
+          {form.settings_file_error && (
+            <Alert variant="warning">
+              Kathara&apos;s settings file could not be read, so the defaults are in use and saving fails
+              until the file is fixed or deleted — restart the app afterwards to load it.{" "}
+              {form.settings_file_error}
+            </Alert>
+          )}
+          {form.settings_warnings?.map((warning) => (
+            <Alert key={warning} variant="warning">
+              {warning}
+            </Alert>
+          ))}
+
+          {lockedError && (
+            <Alert variant="warning" dismissible onClose={() => setLockedError(null)}>
+              {lockedError}
+            </Alert>
+          )}
+
+          <Form onSubmit={handleSubmit}>
+            <Panel title="General" className="mb-3">
+              <Form.Group className="mb-2" controlId="settings-manager">
+                <Form.Label>Manager type</Form.Label>
+                <Form.Select value={form.manager_type} onChange={(e) => set("manager_type", e.target.value)}>
+                  {Object.keys(managers).length ? (
+                    Object.entries(managers).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label} ({key})
+                      </option>
+                    ))
+                  ) : (
+                    <option value={form.manager_type}>{form.manager_type}</option>
+                  )}
+                </Form.Select>
                 <Form.Text className="text-muted">
-                  Every deploy, exec and wipe this backend performs targets this daemon instead of
-                  the local one. Set outside this app, in Kathara's settings file — not editable
-                  here; change it there and restart the app.
+                  Kathara Desktop runs on Docker. Changing the manager needs an app restart.
                 </Form.Text>
               </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-image">
+                <Form.Label>Default image</Form.Label>
+                <AutocompleteInput value={form.image} onChange={(v) => set("image", v)} options={imageSections} />
+              </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-device-shell">
+                <Form.Label>Device shell</Form.Label>
+                <Form.Control value={form.device_shell ?? ""} onChange={(e) => set("device_shell", e.target.value)} />
+              </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-net-prefix">
+                <Form.Label>Network prefix</Form.Label>
+                <Form.Control value={form.net_prefix ?? ""} onChange={(e) => set("net_prefix", e.target.value)} />
+              </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-device-prefix">
+                <Form.Label>Device prefix</Form.Label>
+                <Form.Control value={form.device_prefix ?? ""} onChange={(e) => set("device_prefix", e.target.value)} />
+              </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-debug-level">
+                <Form.Label>Debug level</Form.Label>
+                <Form.Select value={form.debug_level ?? "INFO"} onChange={(e) => set("debug_level", e.target.value)}>
+                  {DEBUG_LEVELS.map((lvl) => (
+                    <option key={lvl} value={lvl}>
+                      {lvl}
+                    </option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+              <Form.Group className="mb-2" controlId="settings-volume-policy">
+                <Form.Label>Volume mount policy</Form.Label>
+                <Form.Select
+                  value={form.volume_mount_policy ?? "Always"}
+                  onChange={(e) => set("volume_mount_policy", e.target.value)}
+                >
+                  {VOLUME_MOUNT_POLICIES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </Form.Select>
+              </Form.Group>
+              <Form.Check
+                id="settings-ipv6"
+                type="checkbox"
+                label="Enable IPv6"
+                checked={form.enable_ipv6 ?? false}
+                onChange={(e) => set("enable_ipv6", e.target.checked)}
+              />
+            </Panel>
+
+            {form.manager_type === "docker" && (
+              <Panel title="Docker settings" className="mb-3">
+                <Form.Check
+                  id="settings-hosthome"
+                  className="mb-2"
+                  type="checkbox"
+                  label="Mount host home directory"
+                  checked={form.hosthome_mount ?? false}
+                  onChange={(e) => set("hosthome_mount", e.target.checked)}
+                />
+                <Form.Check
+                  id="settings-shared-mount"
+                  className="mb-2"
+                  type="checkbox"
+                  label="Shared mount"
+                  checked={form.shared_mount ?? true}
+                  onChange={(e) => set("shared_mount", e.target.checked)}
+                />
+                <Form.Group className="mb-2" controlId="settings-image-update">
+                  <Form.Label>Image update policy</Form.Label>
+                  <Form.Select
+                    value={form.image_update_policy ?? "Prompt"}
+                    onChange={(e) => set("image_update_policy", e.target.value)}
+                  >
+                    {IMAGE_UPDATE_POLICIES.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+                <Form.Group className="mb-2" controlId="settings-shared-cds">
+                  <Form.Label>Shared collision domains</Form.Label>
+                  <Form.Select value={form.shared_cds ?? 1} onChange={(e) => set("shared_cds", Number(e.target.value))}>
+                    {SHARED_CDS_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+                <Form.Group className="mb-2" controlId="settings-network-plugin">
+                  <Form.Label>Network plugin</Form.Label>
+                  <Form.Select
+                    value={form.network_plugin ?? NETWORK_PLUGINS[0]}
+                    onChange={(e) => set("network_plugin", e.target.value)}
+                  >
+                    {NETWORK_PLUGINS.map((p) => (
+                      <option key={p} value={p}>
+                        {p}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </Form.Group>
+                {(form.remote_url || form.cert_path) && (
+                  <div>
+                    <Form.Label htmlFor="settings-remote-url">Remote Docker daemon</Form.Label>
+                    {form.remote_url && (
+                      <Form.Control
+                        id="settings-remote-url"
+                        readOnly
+                        className="font-monospace mb-1"
+                        value={form.remote_url}
+                      />
+                    )}
+                    {form.cert_path && (
+                      <Form.Control
+                        readOnly
+                        className="font-monospace"
+                        aria-label="Remote Docker daemon certificate path"
+                        value={form.cert_path}
+                      />
+                    )}
+                    <Form.Text className="text-muted">
+                      Every deploy, exec and wipe this backend performs targets this daemon instead of
+                      the local one. Set outside this app, in Kathara&apos;s settings file — not editable
+                      here; change it there and restart the app.
+                    </Form.Text>
+                  </div>
+                )}
+              </Panel>
             )}
-          </Panel>
-        )}
 
-        <Button type="submit" disabled={busy}>
-          {busy ? "Saving..." : "Save Settings"}
-        </Button>
-      </Form>
+            <Panel title="Kathara CLI only" className="mb-3">
+              <Button
+                variant="link"
+                size="sm"
+                className="p-0 d-inline-flex align-items-center gap-1"
+                aria-expanded={cliOnlyOpen}
+                aria-controls="settings-cli-only"
+                onClick={() => setCliOnlyOpen((v) => !v)}
+              >
+                {cliOnlyOpen ? <ChevronDown size={14} aria-hidden /> : <ChevronRight size={14} aria-hidden />}
+                {cliOnlyOpen ? "Hide" : "Show"} Terminal, Open terminals on device start, Print startup log
+              </Button>
+              <Collapse in={cliOnlyOpen}>
+                <div id="settings-cli-only">
+                  <p className="text-muted small mt-2">
+                    Used by the <code>kathara</code> command; Kathara Desktop ignores them.
+                  </p>
+                  <Form.Group className="mb-2" controlId="settings-terminal">
+                    <Form.Label>Terminal</Form.Label>
+                    <Form.Control value={form.terminal ?? ""} onChange={(e) => set("terminal", e.target.value)} />
+                  </Form.Group>
+                  <Form.Check
+                    id="settings-open-terminals"
+                    className="mb-2"
+                    type="checkbox"
+                    label="Open terminals on device start"
+                    checked={form.open_terminals ?? false}
+                    onChange={(e) => set("open_terminals", e.target.checked)}
+                  />
+                  <Form.Check
+                    id="settings-print-startup-log"
+                    type="checkbox"
+                    label="Print startup log"
+                    checked={form.print_startup_log ?? false}
+                    onChange={(e) => set("print_startup_log", e.target.checked)}
+                  />
+                </div>
+              </Collapse>
+            </Panel>
 
-      <div className="mt-4">
-        <TroubleshootSettings />
-      </div>
+            <Button type="submit" disabled={busy}>
+              {busy ? "Saving..." : "Save Kathara settings"}
+            </Button>
+          </Form>
+        </Tab>
+      </Tabs>
 
       <div className="border-top mt-4 pt-4">
         <BackToWorkspace />

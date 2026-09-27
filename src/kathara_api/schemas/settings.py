@@ -45,8 +45,9 @@ class SettingsView(BaseModel):
     print_startup_log: Optional[bool] = None
     enable_ipv6: Optional[bool] = None
     volume_mount_policy: Optional[str] = None
-    # Read-only internal bookkeeping (last GitHub-release-check time) — display only. Absent from
-    # `SettingsUpdate`, not just unused by the frontend: see that class's docstring.
+    # Read-only: the Kathara CLI's own bookkeeping of when it last checked GitHub for a newer
+    # Kathara release. This backend never checks. Absent from `SettingsUpdate`: see that class's
+    # docstring.
     last_checked: Optional[float] = None
     # Docker addon (the only manager_type this project exposes as selectable).
     hosthome_mount: Optional[bool] = None
@@ -57,12 +58,12 @@ class SettingsView(BaseModel):
     cert_path: Optional[str] = None
     network_plugin: Optional[str] = None
     # This project's own upload/import caps (ApiSettings in config.py) — not a Kathara
-    # `Setting`/`DockerSettingsAddon` field at all, surfaced here purely so they share one editable
-    # page with everything else. Unlike every field above, a change here is NOT saved to
-    # kathara.conf and does NOT survive a backend restart: it mutates the in-process `ApiSettings`
-    # singleton directly, and reverts to `KATHARA_API_MAX_*` (or the built-in default) the next
-    # time the process starts. That's an acceptable trade-off for a cap whose only purpose is
-    # bounding a single running process's memory/disk use, not a durable preference.
+    # `Setting`/`DockerSettingsAddon` field at all, shown on the Settings page's own tab for this
+    # app. A change here is NOT saved to kathara.conf: it mutates the in-process `ApiSettings`
+    # singleton, which reads `KATHARA_API_MAX_*` (or the built-in default) when the process starts.
+    # The desktop app keeps the values and passes them as those env vars to every backend it
+    # starts (services/desktop/src/uploadLimits.ts); anywhere else they last until the backend
+    # exits.
     max_files_per_lab: Optional[int] = None
     max_bytes_per_file: Optional[int] = None
     max_bytes_per_lab: Optional[int] = None
@@ -99,14 +100,14 @@ class SettingsUpdate(BaseModel):
       through this API at all; changing them means editing Kathara's own settings file
       (``~/.config/kathara.conf``) and restarting.
 
-    ``last_checked`` is also absent: it is this project's own bookkeeping of when it last polled
-    GitHub for a release, and the frontend already never sends it back (see the comment in
-    ``SettingsPage.tsx``'s submit handler) — modeling it here as a writable field would just be an
-    invitation no caller has a correct use for.
+    ``last_checked`` is also absent: it is the Kathara CLI's own bookkeeping of when it last checked
+    GitHub for a newer release (this backend never checks), kept as the file has it on every save
+    (``KatharaService._save_kathara_settings``) — modeling it here as a writable field would just
+    be an invitation no caller has a correct use for.
 
     ``max_files_per_lab``/``max_bytes_per_file``/``max_bytes_per_lab`` are the odd ones out: they
     are not Kathara settings at all, but this project's own upload/import caps (``ApiSettings`` in
-    config.py) — writable here purely so they live on the same page as everything else.
+    config.py) — writable here so the Settings page can change them with the rest.
     ``update_settings`` routes them to the ``ApiSettings`` singleton instead of
     ``Setting.load_from_dict``; see that method's docstring.
     """

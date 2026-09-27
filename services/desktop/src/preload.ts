@@ -143,6 +143,10 @@ const api = {
   // -- device terminal in the lab's directory --
   openTerminalHere: (labId: string) => ipcRenderer.invoke("terminal:open-here", labId),
 
+  // -- upload & import limits (Settings) --
+  /** Keeps the limits the backend just applied, so the next backend starts with them too. */
+  setUploadLimits: (limits: Record<string, number>): Promise<void> => ipcRenderer.invoke("settings:set-limits", limits),
+
   // -- lab storage directory (Settings) --
   getLabsDir: (): Promise<string> => ipcRenderer.invoke("labs:get-dir"),
   getDefaultLabsDir: (): Promise<string> => ipcRenderer.invoke("labs:default-dir"),

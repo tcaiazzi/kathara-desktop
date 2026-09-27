@@ -31,6 +31,10 @@ interface Prefs {
   /** The theme the user picked in the app, reported by the SPA (main.ts's ui:set-theme). Absent
    * means it follows the OS. Read by the setup page and for new windows' background. */
   theme?: string;
+  /** The upload & import limits saved in Settings (main.ts's settings:set-limits), passed to every
+   * backend as KATHARA_API_MAX_*. Unvalidated here, like the rest of this file: backend.ts reads
+   * it through uploadLimitsEnv. */
+  uploadLimits?: unknown;
 }
 
 function prefsFile(): string {

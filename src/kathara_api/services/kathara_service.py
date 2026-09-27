@@ -548,7 +548,8 @@ class KatharaService:
         just exposed on the same page. They're set directly on the ``get_settings()``
         singleton, which every request already reads fresh (``main.py``'s body-size middleware,
         ``LabStore.extract_zip``), and never written to ``kathara.conf``: they last until the
-        process exits (see ``SettingsView``'s docstring).
+        process exits, unless whoever starts it passes them back as ``KATHARA_API_MAX_*``, as the
+        desktop app does (see ``SettingsView``).
         """
         # Unlike every other mutator here, this doesn't touch a Lab — it touches the process-wide
         # Setting singleton and the ApiSettings singleton, both otherwise unguarded. Two concurrent

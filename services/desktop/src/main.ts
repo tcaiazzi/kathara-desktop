@@ -60,6 +60,7 @@ import { buildMenu } from "./menu";
 import { crashDumpsDir, defaultLabsDir, labsDir, resolveStaticDir, stateDir } from "./paths";
 import { isBoundedString, isPlainAbsolutePath } from "./safety";
 import { readPrefs, writePrefs } from "./prefs";
+import { parseUploadLimits } from "./uploadLimits";
 import {
   checkDockerStatus,
   runPreflight,
@@ -638,6 +639,14 @@ function registerIpc(): void {
     carriedNotifications = Array.isArray(history) ? history : [];
   });
   handleIpc("notifications:load", () => carriedNotifications);
+
+  // Settings' "Save limits": the backend has already applied them (PUT /settings); kept here so
+  // the next backend starts with them too (backend.ts passes them as KATHARA_API_MAX_*).
+  handleIpc("settings:set-limits", (_e, limits: unknown) => {
+    const parsed = parseUploadLimits(limits);
+    if (!parsed) throw new Error("Invalid upload limits.");
+    writePrefs({ uploadLimits: { ...(parseUploadLimits(readPrefs().uploadLimits) ?? {}), ...parsed } });
+  });
 
   handleIpc("status:retry", async () => {
     if (startupInFlight) {

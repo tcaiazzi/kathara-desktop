@@ -39,8 +39,8 @@ export interface SettingsView {
   print_startup_log?: boolean;
   enable_ipv6?: boolean;
   volume_mount_policy?: string;
-  // Read-only internal bookkeeping (last GitHub-release-check time) — display only, never sent
-  // back on update.
+  // Read-only: when the Kathara CLI last checked for a newer Kathara release — its own
+  // bookkeeping, never sent back on update.
   last_checked?: number;
   // Docker addon
   hosthome_mount?: boolean;
@@ -53,10 +53,9 @@ export interface SettingsView {
   remote_url?: string | null;
   cert_path?: string | null;
   network_plugin?: string;
-  // This app's own upload/import caps (ApiSettings), not a Kathara setting — surfaced here
-  // so they share this page, but a change here does NOT persist past a backend restart (unlike
-  // every field above), since it mutates the in-process ApiSettings singleton, not Kathara's own
-  // settings file.
+  // This app's own upload/import caps (ApiSettings), not a Kathara setting and never written to
+  // kathara.conf. The backend applies a change at once but only for its own lifetime; the desktop
+  // app keeps it and passes it to every backend it starts (DesktopApi.setUploadLimits).
   max_files_per_lab?: number;
   max_bytes_per_file?: number;
   max_bytes_per_lab?: number;
