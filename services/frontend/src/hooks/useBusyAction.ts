@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
-import { useToast } from "../context/ToastContext";
 import { isAbortError } from "../services/api";
+import { useReportError } from "./useReportError";
 
 // Wraps the busy/try/catch/toast-on-error/finally shell repeated across nearly every async
 // action handler in this app. Success feedback stays with each caller (the wording varies too
@@ -11,7 +11,7 @@ import { isAbortError } from "../services/api";
 // rather than let it run to completion in the background. Pass it on wherever the endpoint takes
 // one; callers that don't need it can ignore the parameter.
 export function useBusyAction() {
-  const toast = useToast();
+  const reportError = useReportError();
   const controllersRef = useRef<Set<AbortController>>(new Set());
 
   useEffect(() => {
@@ -29,13 +29,13 @@ export function useBusyAction() {
       try {
         await fn(controller.signal);
       } catch (e) {
-        if (!isAbortError(e)) toast.reportError(errorLabel, e);
+        if (!isAbortError(e)) reportError(errorLabel, e);
       } finally {
         controllersRef.current.delete(controller);
         setBusy(false);
       }
     },
-    [toast],
+    [reportError],
   );
 
   const cancel = useCallback(() => {

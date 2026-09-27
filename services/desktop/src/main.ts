@@ -841,6 +841,15 @@ function registerIpc(): void {
       ),
   );
 
+  // Which folders hold files another account owns — what running devices leave behind in a lab's
+  // shared/ folder, as root — so the renderer can offer the same reclaim as above
+  // (`elevation:reclaim-labs-dir`) when the backend reports one it can't change. Linux only: that
+  // is where a bind mount shows a container's files as root's, and where the reclaim takes a
+  // password in-app. Read-only; the reclaim itself recomputes the targets.
+  handleIpc("lab-files:reclaim-paths", async (): Promise<string[]> =>
+    process.platform === "linux" ? reclaimPaths(await reclaimTargets()) : [],
+  );
+
   handleIpc("shell:show-log", () => shell.openPath(backendLogPath()));
 
   handleIpc("shell:log-renderer-error", (_e, message: string) => {

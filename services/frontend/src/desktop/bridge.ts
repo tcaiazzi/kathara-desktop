@@ -116,6 +116,10 @@ export interface DesktopApi {
   reclaimLabsDirOwnership(
     password: string,
   ): Promise<{ ok: false; reason: DesktopElevateFailureReason; message: string } | { ok: true }>;
+  /** The folders `reclaimLabsDirOwnership` would fix: those holding files another account owns,
+   * such as the ones running devices write as root into a lab's shared/ folder. Linux only; `[]`
+   * elsewhere, or when there is nothing to reclaim. */
+  reclaimLabFilePaths(): Promise<string[]>;
   /** Verifies the user could elevate, without touching the backend — used for a deploy that only
    * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
    * be root, only proof the user could authorize it. `password` is required on Linux, ignored on

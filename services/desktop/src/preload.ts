@@ -102,6 +102,10 @@ const api = {
     password: string,
   ): Promise<{ ok: false; reason: ElevateFailureReason; message: string } | { ok: true }> =>
     ipcRenderer.invoke("elevation:reclaim-labs-dir", password),
+  /** The folders `reclaimLabsDirOwnership` would fix: those holding files another account owns,
+   * such as the ones running devices write as root into a lab's shared/ folder. Linux only; `[]`
+   * elsewhere, or when there is nothing to reclaim. */
+  reclaimLabFilePaths: (): Promise<string[]> => ipcRenderer.invoke("lab-files:reclaim-paths"),
   /** Verifies the user could elevate, without touching the backend — used for a deploy that only
    * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
    * be root. `password` is required on Linux, ignored on macOS/Windows (native OS prompt

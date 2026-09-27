@@ -16,8 +16,11 @@ import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { desktop } from "./bridge";
 
 type ReclaimOutcome = "reclaimed" | "skipped";
+/** Who left the files root-owned: the privileged session that just ended, or running devices
+ *  (they write a lab's shared/ folder as root) when the backend couldn't change one. */
+export type ReclaimReason = "elevation" | "devices";
 /** `paths` are the folders the reclaim would touch — shown, so the user knows what they authorize. */
-type ReclaimAuthApi = (paths: string[]) => Promise<ReclaimOutcome>;
+type ReclaimAuthApi = (paths: string[], reason?: ReclaimReason) => Promise<ReclaimOutcome>;
 const ReclaimAuthCtx = createContext<ReclaimAuthApi | null>(null);
 
 // Every reason `reclaimLabsDirOwnership` can return has an entry, so unlike the elevation modal
@@ -33,15 +36,17 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paths, setPaths] = useState<string[]>([]);
+  const [reason, setReason] = useState<ReclaimReason>("elevation");
 
   const { open, settle } = usePromiseModal<ReclaimOutcome>("skipped");
 
   const requestReclaimAuth = useCallback<ReclaimAuthApi>(
-    (targetPaths) =>
+    (targetPaths, targetReason = "elevation") =>
       open(() => {
         setPassword("");
         setError(null);
         setPaths(targetPaths);
+        setReason(targetReason);
         setShow(true);
       }),
     [open],
@@ -89,10 +94,11 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
           </Modal.Header>
           <Modal.Body>
             <p>
-              The privileged session that just ended left some files owned by the administrator
-              account in these folders. Enter your password to reclaim them for your own account,
-              or leave them as is and fix it yourself later — either way the app continues
-              normally.
+              {reason === "devices"
+                ? "Running devices wrote some files in these folders as the administrator account (root), so the app can't change or delete them."
+                : "The privileged session that just ended left some files owned by the administrator account in these folders."}{" "}
+              Enter your password to reclaim them for your own account, or leave them as is and fix
+              it yourself later — either way the app continues normally.
             </p>
             {paths.length > 0 && (
               <ul className="small text-break">
