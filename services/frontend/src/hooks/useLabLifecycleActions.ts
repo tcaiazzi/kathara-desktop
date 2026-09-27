@@ -8,6 +8,7 @@ import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useDeployGate } from "./useDeployGate";
 import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
+import { validateLabName } from "../services/names";
 import type { LabDetail, LabImagesStatus, LabRef, VolumeMount } from "../services/types";
 import { useBusyAction } from "./useBusyAction";
 
@@ -273,6 +274,7 @@ export function useLabLifecycleActions() {
         defaultValue: name,
         placeholder: name,
         okLabel: "Rename",
+        validate: validateLabName,
       });
       if (!newName || newName === name) return;
       await runBusy(setBusy, "Rename", async () => {

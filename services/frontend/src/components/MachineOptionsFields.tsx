@@ -6,6 +6,7 @@ import { desktop } from "../desktop/bridge";
 import { useAvailableImageSections } from "../hooks/useAvailableImages";
 import { useNetSysctls } from "../hooks/useNetSysctls";
 import type { ExecRow, KeyValueRow, OptionsFormState } from "../services/machineOptionsForm";
+import { validateMem } from "../services/names";
 import type { PortMapping, Ulimit, VolumeMount } from "../services/types";
 import { AutocompleteInput } from "./AutocompleteInput";
 import { RowListEditor } from "./RowListEditor";
@@ -42,6 +43,8 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
   function set<K extends keyof OptionsFormState>(key: K, value: OptionsFormState[K]) {
     onChange(key, value);
   }
+
+  const memError = validateMem(form.mem);
 
   return (
     <>
@@ -119,8 +122,10 @@ export function MachineOptionsFields({ form, disabled, onChange }: MachineOption
             value={form.mem}
             disabled={disabled}
             placeholder="256m"
+            isInvalid={memError !== null}
             onChange={(e) => set("mem", e.target.value)}
           />
+          <Form.Control.Feedback type="invalid">{memError}</Form.Control.Feedback>
         </div>
         <div className="col-3">
           <Form.Label className="small mb-1">

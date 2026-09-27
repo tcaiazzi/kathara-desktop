@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { machine } from "../test/fixtures";
 import {
   defaultOptionsFormState,
+  optionsFormError,
   optionsFormStateFromMachine,
   optionsFormStateToPayload,
   type OptionsFormState,
@@ -183,5 +184,18 @@ describe("blank and whitespace-only fields", () => {
     const form = optionsFormStateFromMachine(machine());
 
     expect([form.shell, form.entrypoint, form.args]).toEqual(["", "", ""]);
+  });
+});
+
+describe("optionsFormError", () => {
+  it("is null for a default form and for a valid mem", () => {
+    expect(optionsFormError(defaultOptionsFormState())).toBeNull();
+    expect(optionsFormError({ ...defaultOptionsFormState(), mem: "256m" })).toBeNull();
+  });
+
+  it("names the mem field when its value is one the backend refuses", () => {
+    expect(optionsFormError({ ...defaultOptionsFormState(), mem: "256mb" })).toBe(
+      "Mem: Use a whole number with an optional b, k, m or g unit, like 256m.",
+    );
   });
 });

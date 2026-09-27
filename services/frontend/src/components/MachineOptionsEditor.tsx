@@ -6,6 +6,7 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
 import {
   optionsFormStateFromMachine,
+  optionsFormError,
   optionsFormStateToPayload,
   type OptionsFormState,
 } from "../services/machineOptionsForm";
@@ -75,7 +76,7 @@ export function MachineOptionsEditor({ show, labId, machine, deployed, onClose, 
   }
 
   async function handleSave() {
-    if (!form || !machine) return;
+    if (!form || !machine || optionsFormError(form)) return;
     await runBusy(setBusy, "Save device options", async () => {
       await api.updateMachine(labId, machine.name, optionsFormStateToPayload(form));
       toast.show(`Saved options for ${machine.name}.`, "success");
@@ -105,7 +106,7 @@ export function MachineOptionsEditor({ show, labId, machine, deployed, onClose, 
               busy={busy}
               submitLabel="Save"
               busyLabel="Saving…"
-              submitDisabled={!dirty}
+              submitDisabled={!dirty || optionsFormError(form) !== null}
               onSubmit={handleSave}
             />
           )}

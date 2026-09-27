@@ -3,6 +3,7 @@ import { Form, Modal } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
+import { validateLabName } from "../services/names";
 import { ModalSubmitFooter } from "./ModalSubmitFooter";
 
 interface NewLabModalProps {
@@ -10,10 +11,6 @@ interface NewLabModalProps {
   onClose: () => void;
   onCreated: (labId: string) => void;
 }
-
-// Lab names double as on-disk directory names, so they must be a safe single path segment —
-// this mirrors the backend's LAB_NAME_RE (lab_store.py).
-const LAB_NAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 // Create an empty lab (name only). Building the topology, importing a lab.conf/folder, or
 // uploading a .zip are separate flows — see the Topology tab and UploadLabModal.
@@ -23,8 +20,10 @@ export function NewLabModal({ show, onClose, onCreated }: NewLabModalProps) {
   const toast = useToast();
   const { run: runBusy, cancel: cancelBusy } = useBusyAction();
 
+  // Lab names double as on-disk directory names, so they must be a safe single path segment.
   const trimmed = name.trim();
-  const valid = LAB_NAME_RE.test(trimmed);
+  const nameError = validateLabName(name);
+  const valid = trimmed.length > 0 && nameError === null;
 
   function handleClose() {
     cancelBusy();
@@ -56,15 +55,13 @@ export function NewLabModal({ show, onClose, onCreated }: NewLabModalProps) {
             autoFocus
             value={name}
             placeholder="my-lab"
-            isInvalid={trimmed.length > 0 && !valid}
+            isInvalid={nameError !== null}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && valid && !busy) handleCreate();
             }}
           />
-          <Form.Control.Feedback type="invalid">
-            Use letters, digits, dot, dash or underscore (max 64 characters).
-          </Form.Control.Feedback>
+          <Form.Control.Feedback type="invalid">{nameError}</Form.Control.Feedback>
           <Form.Text muted>Creates an empty lab and opens its topology.</Form.Text>
         </Form.Group>
       </Modal.Body>

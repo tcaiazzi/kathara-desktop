@@ -4,8 +4,10 @@ import { Button, Collapse, Form, Modal } from "react-bootstrap";
 import { useDeployGate } from "../hooks/useDeployGate";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
+import { validateDeviceName, validateDomainName } from "../services/names";
 import {
   defaultOptionsFormState,
+  optionsFormError,
   optionsFormStateToPayload,
   type OptionsFormState,
 } from "../services/machineOptionsForm";
@@ -53,9 +55,16 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
     setOptions((prev) => ({ ...prev, [key]: value }));
   }
 
+  const nameError = validateDeviceName(name);
+  const linkError = validateDomainName(link);
+  // The advanced fields sit behind a toggle, so their error must also block the submit on its own:
+  // a collapsed invalid field would otherwise be sent without the user seeing why it failed.
+  const optionsError = optionsFormError(options);
+  const canSubmit = name.trim().length > 0 && !nameError && !linkError && !optionsError;
+
   async function handleSubmit() {
     const cleanName = name.trim();
-    if (!cleanName) return;
+    if (!canSubmit) return;
     const payload: Parameters<typeof api.addMachine>[1] = { name: cleanName, ...optionsFormStateToPayload(options) };
     const cleanLink = link.trim();
     if (cleanLink) payload.interfaces = [{ link: cleanLink, number: 0 }];
@@ -96,12 +105,21 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
             placeholder="pc1"
             disabled={busy}
             value={name}
+            isInvalid={nameError !== null}
             onChange={(e) => setName(e.target.value)}
           />
+          <Form.Control.Feedback type="invalid">{nameError}</Form.Control.Feedback>
         </Form.Group>
         <Form.Group className="mb-3">
           <Form.Label>Attach to domain (optional)</Form.Label>
-          <Form.Control placeholder="A" disabled={busy} value={link} onChange={(e) => setLink(e.target.value)} />
+          <Form.Control
+            placeholder="A"
+            disabled={busy}
+            value={link}
+            isInvalid={linkError !== null}
+            onChange={(e) => setLink(e.target.value)}
+          />
+          <Form.Control.Feedback type="invalid">{linkError}</Form.Control.Feedback>
         </Form.Group>
 
         <Button
@@ -112,6 +130,7 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
         >
           {advancedOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />} Advanced Options
         </Button>
+        {!advancedOpen && optionsError && <div className="small text-danger mb-2">{optionsError}</div>}
         <Collapse in={advancedOpen}>
           <div>
             <MachineOptionsFields form={options} disabled={busy} onChange={set} />
@@ -123,7 +142,7 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
         busy={busy}
         submitLabel="Add Device"
         busyLabel="Adding…"
-        submitDisabled={!name.trim()}
+        submitDisabled={!canSubmit}
         onSubmit={handleSubmit}
       />
     </Modal>

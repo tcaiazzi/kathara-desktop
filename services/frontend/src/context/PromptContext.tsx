@@ -8,6 +8,9 @@ interface PromptOptions {
   placeholder?: string;
   defaultValue?: string;
   okLabel?: string;
+  /** The message to show under the input while its value is invalid, or null. The prompt stays
+   *  open, with OK disabled, until it passes — so the caller only ever receives a valid value. */
+  validate?: (value: string) => string | null;
 }
 
 type PromptApi = (options: PromptOptions) => Promise<string | null>;
@@ -36,6 +39,8 @@ export function PromptProvider({ children }: { children: ReactNode }) {
     settle(result);
   };
 
+  const error = options?.validate?.(value) ?? null;
+
   return (
     <PromptCtx.Provider value={prompt}>
       {children}
@@ -44,6 +49,7 @@ export function PromptProvider({ children }: { children: ReactNode }) {
           <Form
             onSubmit={(e) => {
               e.preventDefault();
+              if (error) return;
               close(value.trim() || null);
             }}
           >
@@ -56,14 +62,16 @@ export function PromptProvider({ children }: { children: ReactNode }) {
                 autoFocus
                 placeholder={options.placeholder}
                 value={value}
+                isInvalid={error !== null}
                 onChange={(e) => setValue(e.target.value)}
               />
+              <Form.Control.Feedback type="invalid">{error}</Form.Control.Feedback>
             </Modal.Body>
             <Modal.Footer>
               <Button variant="secondary" onClick={() => close(null)}>
                 Cancel
               </Button>
-              <Button variant="primary" type="submit">
+              <Button variant="primary" type="submit" disabled={error !== null}>
                 {options.okLabel || "OK"}
               </Button>
             </Modal.Footer>

@@ -3,6 +3,7 @@
 // state, and AddDeviceModal / MachineOptionsEditor send `optionsFormStateToPayload` of it. A caller
 // must not build a MachineOptionsPayload from the form by hand.
 
+import { validateMem } from "./names";
 import type { MachineDetail, MachineOptionsPayload, PortMapping, Ulimit, VolumeMount } from "./types";
 
 export interface KeyValueRow {
@@ -92,6 +93,13 @@ export function optionsFormStateFromMachine(machine: MachineDetail): OptionsForm
     volumes: machine.volumes.map((v) => ({ ...v })),
     metas: recordToRows(machine.metas),
   };
+}
+
+/** What's wrong with the form, named by field ("Mem: …"), or null when it can be submitted. Only
+ *  the fields the backend rejects outright are checked here; the rest are free text. */
+export function optionsFormError(form: OptionsFormState): string | null {
+  const mem = validateMem(form.mem);
+  return mem ? `Mem: ${mem}` : null;
 }
 
 export function optionsFormStateToPayload(form: OptionsFormState): MachineOptionsPayload {

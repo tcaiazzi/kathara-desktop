@@ -2,12 +2,13 @@
 
 import posixpath
 
-from fastapi import APIRouter, Body, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile, status
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..dependencies import get_service
 from ..downloads import attachment_headers
+from ..lab_conf_options import COLLISION_DOMAIN_PATTERN, MAC_ADDRESS_PATTERN
 from ..schemas.common import Message
 from ..schemas.filesystem import (
     FsCopyRequest,
@@ -75,9 +76,9 @@ def remove_machine(
 def connect_machine(
     lab_id: str,
     machine_name: str,
-    link: str,
+    link: str = Query(pattern=COLLISION_DOMAIN_PATTERN),
     interface_number: int | None = None,
-    mac_address: str | None = None,
+    mac_address: str | None = Query(default=None, pattern=MAC_ADDRESS_PATTERN),
     service: KatharaService = Depends(get_service),
 ) -> MachineDetail:
     """Attach a device to a collision domain. On a stopped device the interface is persisted to

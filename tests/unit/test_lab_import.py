@@ -53,6 +53,36 @@ def test_parse_lab_conf_reports_non_sequential_interfaces():
     assert any("non-sequential" in e for e in parsed.errors)
 
 
+def test_a_repeated_interface_number_is_reported_as_defined_twice_not_as_a_gap():
+    parsed = lab_import.parse_lab_conf("pc1[0]=A\npc1[1]=B\npc1[1]=C\n")
+
+    assert parsed.errors == ["pc1: eth1 is defined twice"]
+
+
+@pytest.mark.parametrize("value", ["abc", "1.5g", "256mb", "m", "-5m"])
+def test_an_invalid_mem_is_an_error_naming_its_line(value):
+    parsed = lab_import.parse_lab_conf(f"pc1[image]=kathara/base\npc1[mem]={value}\n")
+
+    assert parsed.errors == [f'line 2: invalid mem "{value}"']
+
+
+@pytest.mark.parametrize("value", ["256m", "1G", "512", "64k"])
+def test_a_valid_mem_is_kept(value):
+    parsed = lab_import.parse_lab_conf(f"pc1[mem]={value}\n")
+
+    assert parsed.errors == []
+    assert parsed.machines["pc1"].mem == value
+
+
+def test_a_mem_followed_by_a_comment_loses_the_padding_before_it():
+    # The quote in the comment is what makes CONF_LINE_RE split the comment off a bare value, and
+    # the padding before it is left on the value.
+    parsed = lab_import.parse_lab_conf("pc1[mem]=256m        # pc1's memory\n")
+
+    assert parsed.errors == []
+    assert parsed.machines["pc1"].mem == "256m"
+
+
 def test_parse_lab_conf_reports_invalid_port_and_sysctl():
     parsed = lab_import.parse_lab_conf("pc1[port]=notaport\npc1[sysctl]=bogus\n")
     assert any("invalid port" in e for e in parsed.errors)

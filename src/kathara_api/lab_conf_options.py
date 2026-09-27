@@ -28,6 +28,14 @@ DEVICE_NAME_PATTERN = rf"^{DEVICE_NAME_CHARS}$"
 # The collision-domain-name grammar, shared by the request schemas and the lab.conf parser.
 COLLISION_DOMAIN_PATTERN = r"^\w+$"
 
+# A `mem` value: a whole number with an optional b/k/m/g unit. Kathara's own `Machine.get_mem` is
+# what finally reads it, at deploy time; checking the same shape here moves the failure to the
+# moment the value is written instead of halfway through starting the lab's containers.
+MEM_PATTERN = r"^\d+[bkmgBKMG]?$"
+
+# The MAC address shape Kathara's `Interface` accepts (`Kathara/model/Interface.py`).
+MAC_ADDRESS_PATTERN = r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$"
+
 # A bare identifier. lab.conf has no escaping, so a key that is anything else cannot be written back
 # out unambiguously. Two callers need exactly this shape, for reasons that meet in the middle:
 #

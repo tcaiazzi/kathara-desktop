@@ -1,12 +1,14 @@
 """Unit tests for machine interface add/remove semantics (no Docker required)."""
 
 import pytest
+from Kathara.exceptions import MachineCollisionDomainError
 
 from kathara_api.errors import UnsupportedOperationError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase, lab_id, register_lab
+from kathara_api.services.lab_store import LabStore
+from tests.helpers import FakeFacadeBase, lab_id, make_lab, make_service, register_lab
 
 
 class _FacadeCaptureConnect(FakeFacadeBase):
@@ -52,6 +54,7 @@ def test_connect_machine_rejects_explicit_interface_on_running_machine():
 
     with pytest.raises(UnsupportedOperationError):
         service.connect_machine(lab_id(service, "lab1"), "pc1", "A", interface_number=3)
+    assert "A" not in lab.links  # a refused connect leaves no empty domain behind
 
 
 class _Container:
@@ -69,6 +72,7 @@ def test_connect_machine_rejects_running_machine_started_without_network():
 
     assert facade.called is False
     assert machine.interfaces == {}
+    assert "A" not in lab.links
 
 
 def test_connect_machine_connects_running_machine_started_with_network():
@@ -78,3 +82,15 @@ def test_connect_machine_connects_running_machine_started_with_network():
     service.connect_machine(lab_id(service, "lab1"), "pc1", "A")
 
     assert facade.called is True
+
+
+def test_a_connect_that_lab_conf_refuses_leaves_no_domain_behind(tmp_path):
+    """The lab.conf edit is checked before the domain is added to the model: a refused edit must
+    not leave an empty collision domain that the topology would then show."""
+    service = make_service(store=LabStore(tmp_path / "labs"))
+    lab, _ = make_lab(service, "lab1", {"lab.conf": 'pc1[image]="kathara/base"\npc1[0]="A"\n'})
+
+    with pytest.raises(MachineCollisionDomainError, match="already has an interface number 0"):
+        service.connect_machine(lab.hash, "pc1", "B", interface_number=0)
+
+    assert "B" not in service.get_lab_or_reconstruct(lab.hash).links

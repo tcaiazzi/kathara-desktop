@@ -6,7 +6,14 @@ from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..lab_conf_options import COLLISION_DOMAIN_PATTERN, DEVICE_NAME_PATTERN, IDENTIFIER_RE, MODELED_META_KEYS
+from ..lab_conf_options import (
+    COLLISION_DOMAIN_PATTERN,
+    DEVICE_NAME_PATTERN,
+    IDENTIFIER_RE,
+    MAC_ADDRESS_PATTERN,
+    MEM_PATTERN,
+    MODELED_META_KEYS,
+)
 from .common import reject_lab_conf_quotes
 
 MACHINE_NAME_PATTERN = DEVICE_NAME_PATTERN
@@ -99,7 +106,7 @@ class InterfaceAttach(BaseModel):
 
     link: str = Field(pattern=COLLISION_DOMAIN_PATTERN)
     number: Optional[int] = Field(default=None, ge=0)
-    mac_address: Optional[str] = None
+    mac_address: Optional[str] = Field(default=None, pattern=MAC_ADDRESS_PATTERN)
 
 
 class InterfaceModel(BaseModel):
@@ -115,7 +122,7 @@ class MachineOptionsBase(BaseModel):
     keeping the field list in exactly one place so the two request shapes can't drift apart."""
 
     image: Optional[str] = None
-    mem: Optional[str] = None
+    mem: Optional[str] = Field(default=None, pattern=MEM_PATTERN)
     cpus: Optional[float] = None
     ports: list[PortMapping] = Field(default_factory=list)
     envs: dict[str, str] = Field(default_factory=dict)

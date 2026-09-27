@@ -95,6 +95,18 @@ describe("structure", () => {
     expect(errors("pc1[1]=B\npc1[0]=A")).toEqual([]);
   });
 
+  it("flags a repeated interface number on the repeat as defined twice, not as a gap", () => {
+    const found = errors("pc1[0]=A\npc1[1]=B\npc1[1]=C");
+    expect(found.map((d) => [d.line, d.message])).toEqual([[2, "pc1: eth1 is defined twice"]]);
+  });
+
+  it("still reports a real gap next to a repeated number", () => {
+    expect(errors("pc1[0]=A\npc1[0]=B\npc1[2]=C").map((d) => d.message)).toEqual([
+      "pc1: eth0 is defined twice",
+      "pc1: non-sequential interface numbers (expected eth1, got eth2)",
+    ]);
+  });
+
   it.each(["shared", "_test"])("rejects the reserved device name %s", (name) => {
     expect(errors(`${name}[0]=A`)[0].message).toBe(`"${name}" is a reserved name`);
   });
@@ -265,7 +277,7 @@ describe("other options", () => {
     ]);
   });
 
-  it.each(["pc1[image]=kathara/frr", "pc1[mem]=256m", "pc1[exec]=ip a", "pc1[shell]=/bin/bash"])(
+  it.each(["pc1[image]=kathara/frr", "pc1[exec]=ip a", "pc1[shell]=/bin/bash"])(
     "leaves the free-form option %s alone",
     (line) => {
       expect(lint(line)).toEqual([]);
@@ -290,5 +302,16 @@ describe("top-level lines", () => {
 
   it.each(["1ABC=2", "=LAB_NAME", "LAB_NAME", "has space=1"])("cannot parse %j", (line) => {
     expect(diagnostics(line)).toEqual([["error", `cannot parse "${line}"`]]);
+  });
+});
+
+describe("mem values", () => {
+  it.each(["pc1[mem]=256m", "pc1[mem]=1G", "pc1[mem]=512", 'pc1[mem]="64k"'])("accepts %s", (line) => {
+    expect(lint(line)).toEqual([]);
+  });
+
+  // An error, not a warning: the backend parser refuses the lab.conf (lab_import._apply_conf_option).
+  it.each(["abc", "1.5g", "256mb"])("rejects %j with the backend's message", (value) => {
+    expect(diagnostics(`pc1[mem]=${value}`)).toEqual([["error", `invalid mem "${value}"`]]);
   });
 });

@@ -8,7 +8,8 @@
 // asymmetry is the rule to read before changing a severity: docs/DESIGN-NOTES.md, "The editor's
 // lint severity is one-way".
 
-import { CONF_LINE_RE, LAB_GLOBAL_SET, MAPPED_OPTION_SET, RESERVED_MACHINE_NAMES } from "../services/editorLanguage";
+import { CONF_LINE_RE, LAB_GLOBAL_SET, MAPPED_OPTION_SET } from "../services/editorLanguage";
+import { MEM_RE, RESERVED_MACHINE_NAMES } from "../services/names";
 
 export interface LabConfDiagnostic {
   /** 0-based index into the `lines` array this came from. */
@@ -41,6 +42,8 @@ function portOk(value: string): boolean {
 // options (ipv6/privileged/bridged) are never errors — the backend silently ignores unparseable ones.
 function optionError(opt: string, value: string): string | null {
   switch (opt) {
+    case "mem":
+      return MEM_RE.test(value.trim()) ? null : `invalid mem "${value}"`;
     case "cpus":
     case "cpu":
       return value.trim() !== "" && !Number.isNaN(Number(value)) ? null : `invalid cpus "${value}"`;
@@ -140,9 +143,21 @@ export function lintLabConfLines(lines: string[]): LabConfDiagnostic[] {
     }
   });
 
-  // Interface numbers must be sequential from 0 per machine.
+  // Interface numbers must be sequential from 0 per machine. A repeated number is flagged on the
+  // repeat as "defined twice" and left out of the sequence check, where it would read as a gap
+  // pointing at the wrong line.
   for (const [name, entries] of Object.entries(ifaces)) {
-    const sorted = [...entries].sort((a, b) => a.num - b.num);
+    const seen = new Set<number>();
+    const firsts: typeof entries = [];
+    for (const entry of entries) {
+      if (seen.has(entry.num)) {
+        diagnostics.push({ line: entry.line, severity: "error", message: `${name}: eth${entry.num} is defined twice` });
+      } else {
+        seen.add(entry.num);
+        firsts.push(entry);
+      }
+    }
+    const sorted = [...firsts].sort((a, b) => a.num - b.num);
     sorted.forEach((entry, expected) => {
       if (entry.num !== expected) {
         diagnostics.push({

@@ -217,6 +217,16 @@ def test_connect_machine_forwards_the_optional_interface_settings(api, query, ex
     assert service.calls == [("connect_machine", ("l", "pc1", "A"), expected_kwargs)]
 
 
+@pytest.mark.parametrize("query", ["link=a-b", "link=A&mac_address=zz", "link=A&mac_address=02:00:00:00:00"])
+def test_connect_machine_rejects_a_bad_domain_name_or_mac_before_reaching_the_service(api, query):
+    client, service = api
+
+    res = client.post(f"/api/labs/l/machines/pc1/connect?{query}")
+
+    assert res.status_code == 422
+    assert service.calls == []
+
+
 def test_runtime_list_passes_the_raw_path_and_answers_with_the_normalized_one(api):
     client, service = api
     service.returns["fs_list_directory"] = [{"name": "log", "path": "/var/log", "is_dir": True}]

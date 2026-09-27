@@ -2506,7 +2506,10 @@ class KatharaService:
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
             machine = lab.get_machine(machine_name)
-            link = lab.get_or_new_link(link_name)
+
+            # `lab.get_or_new_link` adds the domain to the model, so each branch calls it only once
+            # every check that can still refuse the request has passed: a refused request must not
+            # leave an empty domain behind.
 
             # For stopped devices, update the topology model directly so interfaces can be
             # prepared before deploy (supports explicit interface numbering). This is a "static"
@@ -2523,6 +2526,7 @@ class KatharaService:
                     if number is None:
                         number = lab_conf_edit.next_interface_number(base, machine_name)
                     new_conf = lab_conf_edit.add_interface(base, machine_name, number, link_name, mac_address)
+                link = lab.get_or_new_link(link_name)
                 machine.add_interface(link, number=number, mac_address=mac_address)
                 if new_conf is not None:
                     self.store.write_lab_conf_text(lab_dir, new_conf)
@@ -2544,6 +2548,7 @@ class KatharaService:
                     "To connect it, stop the lab, add the device to a collision domain, and restart the lab."
                 )
 
+            link = lab.get_or_new_link(link_name)
             self._facade().connect_machine_to_link(
                 machine,
                 link,

@@ -17,6 +17,9 @@ export interface TopoActionField {
   required?: boolean;
   hint?: string;
   min?: number;
+  /** The message to show under the field while its value is invalid, or null. An invalid field
+   *  also disables the submit button, so `onSubmit` only ever sees values that passed. */
+  validate?: (value: string) => string | null;
 }
 
 export interface TopoActionConfig {
@@ -49,9 +52,13 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
 
   if (!config) return null;
 
+  const errors: Record<string, string | null> = {};
+  for (const f of config.fields) errors[f.name] = f.validate?.(values[f.name] ?? "") ?? null;
+  const invalid = Object.values(errors).some((e) => e !== null);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!config) return;
+    if (!config || invalid) return;
     setSubmitting(true);
     try {
       const ok = await config.onSubmit(values);
@@ -90,6 +97,7 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
                   options={f.datalistOptions}
                   placeholder={f.placeholder}
                   required={f.required}
+                  isInvalid={errors[f.name] !== null}
                 />
               ) : (
                 <Form.Control
@@ -97,10 +105,14 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
                   min={f.min}
                   required={f.required}
                   placeholder={f.placeholder}
+                  isInvalid={errors[f.name] !== null}
                   value={values[f.name] ?? ""}
                   onChange={(e) => setValues((v) => ({ ...v, [f.name]: e.target.value }))}
                 />
               )}
+              {/* d-block: the autocomplete wraps its input, so Bootstrap's sibling rule that
+                  reveals .invalid-feedback next to an .is-invalid input can't reach this one. */}
+              {errors[f.name] && <div className="invalid-feedback d-block">{errors[f.name]}</div>}
               {f.hint && <Form.Text className="text-muted">{f.hint}</Form.Text>}
             </Form.Group>
           ))}
@@ -109,7 +121,7 @@ export function TopologyActionModal({ config, onClose }: TopologyActionModalProp
           <Button variant="secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="primary" type="submit" disabled={submitting}>
+          <Button variant="primary" type="submit" disabled={submitting || invalid}>
             {config.submitLabel || "Apply"}
           </Button>
         </Modal.Footer>

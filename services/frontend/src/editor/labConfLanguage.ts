@@ -4,6 +4,10 @@
 // then colored by the HighlightStyles in `theme.ts`.
 
 import { LanguageSupport, StreamLanguage } from "@codemirror/language";
+import { DEVICE_NAME_CHARS } from "../services/names";
+
+// A device name at the start of a directive line, i.e. just before its `[`.
+const DEVICE_NAME_BEFORE_BRACKET_RE = new RegExp(`^${DEVICE_NAME_CHARS}(?=\\[)`);
 
 interface LabConfState {
   afterEq: boolean;
@@ -33,7 +37,7 @@ const parser = StreamLanguage.define<LabConfState>({
     if (stream.match(/^[A-Z][A-Z0-9_]*(?=\s*=)/)) return "keyword";
 
     // Machine name preceding a `[` (start of a directive line).
-    if (stream.match(/^[a-z0-9_]{1,30}(?=\[)/)) return "variableName";
+    if (stream.match(DEVICE_NAME_BEFORE_BRACKET_RE)) return "variableName";
 
     if (stream.eat("[")) return "bracket";
     // Inside the brackets: an interface index (digits) or an option keyword (word).

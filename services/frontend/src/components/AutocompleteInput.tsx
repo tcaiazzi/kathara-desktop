@@ -17,6 +17,8 @@ interface AutocompleteInputProps {
   disabled?: boolean;
   size?: "sm" | "lg";
   required?: boolean;
+  /** Marks the input invalid (red border); the message itself is the caller's to render. */
+  isInvalid?: boolean;
   "aria-label"?: string;
 }
 
@@ -45,6 +47,7 @@ export function AutocompleteInput({
   disabled,
   size,
   required,
+  isInvalid,
   "aria-label": ariaLabel,
 }: AutocompleteInputProps) {
   const [open, setOpen] = useState(false);
@@ -80,6 +83,7 @@ export function AutocompleteInput({
       <Form.Control
         size={size}
         required={required}
+        isInvalid={isInvalid}
         disabled={disabled}
         placeholder={placeholder}
         aria-label={ariaLabel}

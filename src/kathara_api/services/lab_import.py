@@ -24,6 +24,7 @@ from ..lab_conf_options import (
     IDENTIFIER_RE,
     INTERPRETED_OPTIONS,
     LAB_CONF_FILENAME,
+    MEM_PATTERN,
     OPTION_ALIASES,
 )
 from ..schemas.lab import LabCreate, LabMetadata
@@ -163,7 +164,12 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
     if opt == "image":
         machine.image = value
     elif opt == "mem":
-        machine.mem = value
+        # Stripped: the whitespace before a trailing `# comment` stays in `value`, and Kathara reads
+        # the last character as the unit.
+        if re.match(MEM_PATTERN, value.strip()):
+            machine.mem = value.strip()
+        else:
+            errors.append(f'line {line_no}: invalid mem "{value}"')
     elif opt == "cpus":
         try:
             machine.cpus = float(value)
@@ -294,8 +300,12 @@ def parse_lab_conf(text: str) -> _ParsedConf:
                 errors.append(f'line {line_no}: cannot parse "{line}"')
 
     for machine in machines.values():
-        nums = sorted(i.number for i in machine.interfaces)
-        for expected, actual in enumerate(nums):
+        # A repeated number is its own error rather than a gap in the sequence: `pc1[0]` twice reads
+        # as "expected eth1, got eth0" otherwise, which points at the wrong line and the wrong fix.
+        nums = [i.number for i in machine.interfaces]
+        for number in sorted({n for n in nums if nums.count(n) > 1}):
+            errors.append(f"{machine.name}: eth{number} is defined twice")
+        for expected, actual in enumerate(sorted(set(nums))):
             if actual != expected:
                 errors.append(
                     f"{machine.name}: non-sequential interface numbers (expected eth{expected}, got eth{actual})"

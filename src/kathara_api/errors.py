@@ -39,7 +39,7 @@ from Kathara.exceptions import (
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .lab_conf_options import COLLISION_DOMAIN_PATTERN, DEVICE_NAME_PATTERN
+from .lab_conf_options import COLLISION_DOMAIN_PATTERN, DEVICE_NAME_PATTERN, MAC_ADDRESS_PATTERN, MEM_PATTERN
 from .schemas.common import ErrorResponse
 
 logger = logging.getLogger("kathara_api")
@@ -356,6 +356,8 @@ def _error_response(exc: Exception, code: int) -> JSONResponse:
 PATTERN_MESSAGES: dict[str, str] = {
     DEVICE_NAME_PATTERN: "must use only lowercase letters, digits and underscores (at most 30 characters)",
     COLLISION_DOMAIN_PATTERN: "must use only letters, digits and underscores",
+    MEM_PATTERN: "must be a whole number with an optional b, k, m or g unit, like 256m",
+    MAC_ADDRESS_PATTERN: "must be six pairs of hex digits separated by colons, like 02:00:00:00:00:01",
 }
 
 # Words for the field names a user meets in a form. Any other field is shown as its own name, with

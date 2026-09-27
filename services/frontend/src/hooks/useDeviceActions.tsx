@@ -5,6 +5,7 @@ import { useDeployGate } from "./useDeployGate";
 import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { deviceFilesOnDisk } from "../services/labfs";
+import { validateDomainName, validateInterfaceNumber, validateMacAddress } from "../services/names";
 import { openTerminalWindow } from "../services/terminalWindow";
 import { computeTopology, type DeviceNode, type DomainNode, type TopoModel } from "../services/topology";
 import type { LabDetail } from "../services/types";
@@ -134,7 +135,7 @@ export function useDeviceActions({
     setActionConfig({
       title: "Add collision domain",
       submitLabel: "Add Domain",
-      fields: [{ name: "name", label: "Domain name", required: true, placeholder: "A" }],
+      fields: [{ name: "name", label: "Domain name", required: true, placeholder: "A", validate: validateDomainName }],
       onSubmit: async ({ name }) => {
         const clean = name.trim();
         if (!clean) return false;
@@ -155,11 +156,17 @@ export function useDeviceActions({
       value: domains.includes(prefillLink) ? prefillLink : "",
       required: true,
       placeholder: "A",
+      validate: validateDomainName,
       hint: domains.length
         ? "Pick an existing collision domain, or type a new name to create one."
         : "No domains exist yet — type a name to create one.",
     };
-    const macField: TopoActionField = { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01" };
+    const macField: TopoActionField = {
+      name: "mac_address",
+      label: "MAC Address (Optional)",
+      placeholder: "02:00:00:00:00:01",
+      validate: validateMacAddress,
+    };
     setActionConfig({
       title: running ? `Add interface on ${deviceNode.name} (runtime)` : `Add interface on ${deviceNode.name} (lab.conf)`,
       hint: running
@@ -169,7 +176,19 @@ export function useDeviceActions({
       // Only a stopped device can take an explicit interface number (Kathara auto-numbers at runtime).
       fields: running
         ? [linkField, macField]
-        : [linkField, { name: "interface_number", label: "Interface Number", type: "number", value: String(nextIf), required: true, min: 0 }, macField],
+        : [
+            linkField,
+            {
+              name: "interface_number",
+              label: "Interface Number",
+              type: "number",
+              value: String(nextIf),
+              required: true,
+              min: 0,
+              validate: validateInterfaceNumber,
+            },
+            macField,
+          ],
       onSubmit: async ({ link, interface_number, mac_address }) => {
         const clean = link.trim();
         if (!clean) return false;
@@ -182,10 +201,6 @@ export function useDeviceActions({
           );
         }
         const num = Number.parseInt(interface_number, 10);
-        if (!Number.isInteger(num) || num < 0) {
-          toast.show("Interface number must be an integer >= 0.", "danger");
-          return false;
-        }
         return withRefresh(
           "Add interface",
           () => api.connectMachine(labId, deviceNode.name, clean, num, mac),
@@ -223,9 +238,10 @@ export function useDeviceActions({
           type: "number",
           value: "",
           min: 0,
+          validate: validateInterfaceNumber,
           hint: "Leave empty to use the device's next free interface number.",
         },
-        { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01" },
+        { name: "mac_address", label: "MAC Address (Optional)", placeholder: "02:00:00:00:00:01", validate: validateMacAddress },
       ],
       onSubmit: async ({ machine, interface_number, mac_address }) => {
         const clean = machine.trim();
@@ -233,13 +249,7 @@ export function useDeviceActions({
         const running = detail?.machines.find((m) => m.name === clean)?.running ?? false;
         const mac = mac_address.trim() || undefined;
         let num: number | undefined;
-        if (!running && interface_number.trim()) {
-          num = Number.parseInt(interface_number, 10);
-          if (!Number.isInteger(num) || num < 0) {
-            toast.show("Interface number must be an integer >= 0.", "danger");
-            return false;
-          }
-        }
+        if (!running && interface_number.trim()) num = Number.parseInt(interface_number, 10);
         return withRefresh(
           "Add interface",
           () => api.connectMachine(labId, clean, domainNode.name, num, mac),
