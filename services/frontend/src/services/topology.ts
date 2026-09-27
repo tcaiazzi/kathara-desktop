@@ -78,20 +78,89 @@ export function deviceStateLabel(node: { running: boolean; status: string | null
   return node.running ? node.status || "running" : "stopped";
 }
 
-// Best-effort: pull "ip address add <cidr> dev ethN" out of a device's config text — including
-// IPv6 lines, which Kathara labs commonly write with an explicit family flag
-// ("ip -6 addr add <cidr6> dev ethN"). Kathara's startup log echoes each command
-// (`echo "++ <command>"`), so a line can match twice — the dedupe below keeps each IP once per
-// interface.
-const IFACE_IP_RE = /ip\s+(?:-[46]\s+)?add(?:r|ress)?\s+add\s+(\S+)\s+dev\s+eth(\d+)/gi;
+// Best-effort: pull the addresses a device's config text assigns to its interfaces, from the two
+// commands labs write them with — `ip address add` and `ifconfig`. Read one shell command at a
+// time: a startup file chains commands with `;`/`&&` and comments with `#`, and Kathara's startup
+// log echoes each command (`++ <command>`), so the same assignment can appear twice — the dedupe
+// in collectIps keeps each IP once per interface.
+
+const ETH_RE = /^eth(\d+)(?::\S*)?$/i;
+// An IPv4/IPv6 address, with or without a prefix length. Loose on purpose: it only has to tell an
+// address apart from the keywords around it, not validate it.
+const ADDR_RE = /^(?=[0-9a-f:.]*[.:])[0-9a-f:.]+(?:\/\d{1,3})?$/i;
+// `ip address add` keywords that take a value, which must not be mistaken for the address.
+const IP_ARG_KEYWORDS = new Set([
+  "brd", "broadcast", "scope", "label", "peer", "anycast", "valid_lft", "preferred_lft", "metric", "proto",
+]);
+
+// iproute2 accepts any prefix of an object or command name: `a`, `addr`, `address`; `a`, `add`.
+function abbreviates(token: string, word: string): boolean {
+  return token.length > 0 && word.startsWith(token.toLowerCase());
+}
+
+// A dotted netmask's prefix length, or null for anything that isn't one (e.g. 255.0.255.0).
+export function netmaskPrefix(mask: string): number | null {
+  const parts = mask.split(".");
+  if (parts.length !== 4 || parts.some((p) => !/^\d{1,3}$/.test(p) || Number(p) > 255)) return null;
+  const bits = parts.map((p) => Number(p).toString(2).padStart(8, "0")).join("");
+  if (!/^1*0*$/.test(bits)) return null;
+  const firstZero = bits.indexOf("0");
+  return firstZero === -1 ? 32 : firstZero;
+}
+
+// `ip [-opts] address add <X> [keyword value…] dev ethN`, the address and `dev` in either order.
+function ipAddrAdd(args: string[]): [number, string] | null {
+  let i = 0;
+  while (args[i]?.startsWith("-")) i++;
+  if (!abbreviates(args[i] ?? "", "address") || !abbreviates(args[i + 1] ?? "", "add")) return null;
+  let iface: number | null = null;
+  let addr: string | null = null;
+  for (let j = i + 2; j < args.length; j++) {
+    const tok = args[j];
+    if (tok === "dev") {
+      const m = ETH_RE.exec(args[++j] ?? "");
+      if (m) iface = Number(m[1]);
+    } else if (tok === "local") {
+      addr = args[++j] ?? addr;
+    } else if (IP_ARG_KEYWORDS.has(tok)) {
+      j++;
+    } else if (addr === null && ADDR_RE.test(tok)) {
+      addr = tok;
+    }
+  }
+  return iface !== null && addr !== null ? [iface, addr] : null;
+}
+
+// `ifconfig ethN [inet|inet6] [add] <X> [netmask M] …` — a netmask becomes the prefix length.
+function ifconfigAddr(args: string[]): [number, string] | null {
+  const m = ETH_RE.exec(args[0] ?? "");
+  if (!m) return null;
+  let i = 1;
+  if (args[i] === "inet" || args[i] === "inet6") i++;
+  if (args[i] === "add") i++;
+  let addr = args[i] ?? "";
+  if (!ADDR_RE.test(addr)) return null;
+  const maskAt = args.indexOf("netmask", i + 1);
+  const prefix = maskAt > 0 ? netmaskPrefix(args[maskAt + 1] ?? "") : null;
+  if (prefix !== null && !addr.includes("/")) addr = `${addr}/${prefix}`;
+  return [Number(m[1]), addr];
+}
 
 function collectIps(text: string, map: Record<number, string[]>): void {
-  IFACE_IP_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = IFACE_IP_RE.exec(text)) !== null) {
-    const num = Number(m[2]);
-    const ips = map[num] || (map[num] = []);
-    if (!ips.includes(m[1])) ips.push(m[1]);
+  for (const line of text.split("\n")) {
+    const code = line.replace(/(^|\s)#.*$/, "");
+    for (const command of code.split(/;|&&|\|\|?/)) {
+      const tokens = command.trim().split(/\s+/);
+      // The program name may follow a prefix (`++ ` in the startup log, `sudo`) or carry a path.
+      const at = tokens.findIndex((t) => /^(?:.*\/)?(?:ip|ifconfig)$/.test(t));
+      if (at < 0) continue;
+      const args = tokens.slice(at + 1);
+      const found = tokens[at].endsWith("ifconfig") ? ifconfigAddr(args) : ipAddrAdd(args);
+      if (!found) continue;
+      const [num, ip] = found;
+      const ips = map[num] || (map[num] = []);
+      if (!ips.includes(ip)) ips.push(ip);
+    }
   }
 }
 
@@ -246,18 +315,36 @@ export function planSeeds(
 // Device nodes grow with their label up to this width, and the label is truncated past it.
 export const MAX_DEVICE_NODE_WIDTH = 260;
 
-/** A device node's rect width, from its name: the same formula draws the rect (useForceLayout.ts)
+// A device node's text sits between its leading icon (the first 28px) and the right edge, centred
+// there. The name keeps 15px clear on each side; the image sublabel keeps IMAGE_MARGIN, so it
+// neither touches the border nor runs under the published-port badge on the bottom-right corner.
+// The per-character widths are the monospace label/sub-label font sizes (14px / 11px), rounded up.
+// The image is the secondary line, so it never widens a node past MAX_IMAGE_CHARS (every
+// `kathara/*` image fits); a longer one, such as a full registry path, is truncated and stays one
+// hover away in the tooltip.
+export const NAME_CHAR_W = 9;
+export const IMAGE_CHAR_W = 7;
+export const IMAGE_MARGIN = 10;
+export const MAX_IMAGE_CHARS = 18;
+
+/** A device node's rect width: wide enough for both its name and its image (up to
+ *  MAX_IMAGE_CHARS), from 112px up to the cap. The same formula draws the rect (useForceLayout.ts)
  *  and sizes it for a fit, so the two can never disagree. */
-export function deviceNodeWidth(name: string): number {
-  return Math.min(MAX_DEVICE_NODE_WIDTH, Math.max(112, name.length * 9 + 58));
+export function deviceNodeWidth(node: Pick<DeviceNode, "name" | "image">): number {
+  const forName = node.name.length * NAME_CHAR_W + 58;
+  const imageChars = Math.min(node.image?.length ?? 0, MAX_IMAGE_CHARS);
+  const forImage = imageChars * IMAGE_CHAR_W + 28 + 2 * IMAGE_MARGIN;
+  return Math.min(MAX_DEVICE_NODE_WIDTH, Math.max(112, forName, forImage));
 }
 
 /** Half the width and height a node takes on the canvas, around its centre. A device is its rect
  *  plus the corner badges, which sit on the rect's edge and stick out by 6px on each side
  *  (r 9, centred 3px inside); a domain is its r-18 circle, or its label where that is wider
  *  (~7.6px per character at the domain label's monospace size). */
-export function nodeExtent(node: Pick<TopoNode, "type" | "name">): { hw: number; hh: number } {
-  if (node.type === "dev") return { hw: deviceNodeWidth(node.name) / 2 + 6, hh: 23 };
+export function nodeExtent(
+  node: Pick<DeviceNode, "type" | "name" | "image"> | Pick<DomainNode, "type" | "name">,
+): { hw: number; hh: number } {
+  if (node.type === "dev") return { hw: deviceNodeWidth(node) / 2 + 6, hh: 23 };
   return { hw: Math.max(18, node.name.length * 3.8), hh: 18 };
 }
 

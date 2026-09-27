@@ -301,6 +301,15 @@
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: var(--kt-topo-fs-xs);
 }
+/* A halo in the node's own fill, like the edge labels': it keeps the text readable where it
+   crosses the icon, a badge, or an edge label drawn underneath. */
+.n-dev .n-label,
+.n-dev .n-sub {
+  paint-order: stroke;
+  stroke: var(--kt-node-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
 .n-cd circle {
   fill: var(--kt-domain-bg);
   stroke: var(--kt-domain-border);
@@ -323,6 +332,11 @@
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   font-size: var(--kt-topo-fs-sm);
   font-weight: 600;
+  /* A domain's name is often wider than its circle, so it runs over the edges leaving it. */
+  paint-order: stroke;
+  stroke: var(--kt-domain-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 .kt-topo-node {
   cursor: pointer;
@@ -456,8 +470,7 @@
   fill: var(--bs-primary);
 }
 .n-badge.b-state circle {
-  /* Filled solid (no text glyph) — a shape/position signal redundant with the rect's
-     running/stopped border-stroke color, not a color-only distinction. */
+  /* Filled solid, no glyph: it repeats the rect's running/stopped border colour. */
   fill: var(--kt-node-running);
 }
 .n-badge.b-state.stopped circle {

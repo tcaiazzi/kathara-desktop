@@ -18,6 +18,10 @@ import {
   edgeLabelBox,
   edgeLabelPlacement,
   fitTransform,
+  IMAGE_CHAR_W,
+  IMAGE_MARGIN,
+  MAX_IMAGE_CHARS,
+  NAME_CHAR_W,
   nodeExtent,
   overlayInsets,
   planSeeds,
@@ -688,24 +692,25 @@ export function useForceLayout(
           (nd.bridged ? " bridged" : "") +
           (nd.ports.length ? " has-ports" : "");
         g = svgEl("g", { class: cls });
-        const w = deviceNodeWidth(nd.name);
+        const w = deviceNodeWidth(nd);
         g.append(svgEl("rect", { x: -w / 2, y: -21, width: w, height: 42, rx: 8 }));
         // Leading per-image type icon (SVG line-art, drawn at 16×16 then scaled up a bit to match
-        // the bigger node), then the name + image sublabel.
+        // the bigger node), then the name + image sublabel, centred in the space right of the icon
+        // with the margins deviceNodeWidth sizes the rect for.
         const icon = svgEl("g", { class: "n-icon", transform: `translate(${-w / 2 + 10},-9) scale(1.15)` });
         for (const [tag, attrs] of CATEGORY_ICON[nd.category]) icon.append(svgEl(tag, attrs));
         g.append(icon);
-        // Char-width estimates match the monospace label/sub-label font sizes (14px / 11px).
-        const name = truncate(nd.name, Math.max(1, Math.floor((w - 58) / 9)));
+        const name = truncate(nd.name, Math.max(1, Math.floor((w - 58) / NAME_CHAR_W)));
         g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", x: 14, y: nd.image ? -2 : 6 }, name));
         if (nd.image) {
-          const image = truncate(nd.image, Math.max(1, Math.floor((w - 28) / 7)));
+          const room = w - 28 - 2 * IMAGE_MARGIN;
+          const image = truncate(nd.image, Math.max(1, Math.min(MAX_IMAGE_CHARS, Math.floor(room / IMAGE_CHAR_W))));
           g.append(svgEl("text", { class: "n-sub", "text-anchor": "middle", x: 14, y: 13 }, image));
         }
         if (nd.bridged) g.append(badge(w / 2 - 3, -14, "b-bridged", "B"));
         if (nd.ports.length) g.append(badge(w / 2 - 3, 14, "b-ports", String(nd.ports.length)));
-        // Small filled state dot (top-left, the one free corner) — redundant with the rect's
-        // running/stopped border-stroke color, not a color-only distinction.
+        // Small filled state dot (top-left, the one free corner), repeating the rect's
+        // running/stopped border colour.
         g.append(badge(-w / 2 + 3, -14, `b-state${nd.running ? "" : " stopped"}`, ""));
       } else {
         g = svgEl("g", {

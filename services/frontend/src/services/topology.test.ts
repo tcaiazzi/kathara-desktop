@@ -12,6 +12,8 @@ import {
   labelClearance,
   matchesSavedLayout,
   MAX_DEVICE_NODE_WIDTH,
+  MAX_IMAGE_CHARS,
+  netmaskPrefix,
   nodeExtent,
   overlayInsets,
   parseIfaceIps,
@@ -305,13 +307,105 @@ describe("topology helpers, edge cases", () => {
 
     expect(parseIfaceIps(machine(), log)).toEqual({ 0: ["10.0.0.1/24"] });
   });
+
+  it("accepts any abbreviation of `address` and `add`", () => {
+    const startup = ["ip a add 10.0.0.1/24 dev eth0", "ip addr a 10.0.1.1/24 dev eth1"].join("\n");
+
+    expect(parseIfaceIps(machine(), startup)).toEqual({ 0: ["10.0.0.1/24"], 1: ["10.0.1.1/24"] });
+  });
+
+  it("finds the address around extra keywords, and with `dev` written before it", () => {
+    const startup = [
+      "ip addr add 10.0.0.1/24 brd + dev eth0",
+      "ip addr add 10.0.1.1/24 broadcast 10.0.1.255 scope global label eth1:0 dev eth1",
+      "ip addr add dev eth2 10.0.2.1/24",
+      "ip addr add local 10.0.3.1/24 dev eth3",
+    ].join("\n");
+
+    expect(parseIfaceIps(machine(), startup)).toEqual({
+      0: ["10.0.0.1/24"], 1: ["10.0.1.1/24"], 2: ["10.0.2.1/24"], 3: ["10.0.3.1/24"],
+    });
+  });
+
+  it("reads each command of a chained line, after a `sudo` or a path to the binary", () => {
+    const startup = "sudo ip addr add 10.0.0.1/24 dev eth0 && /sbin/ip -6 addr add 2001:db8::1/64 dev eth0; ip link set eth0 up";
+
+    expect(parseIfaceIps(machine(), startup)).toEqual({ 0: ["10.0.0.1/24", "2001:db8::1/64"] });
+  });
+
+  it("reads ifconfig, turning a dotted netmask into the prefix length", () => {
+    const startup = [
+      "ifconfig eth0 10.0.0.1 netmask 255.255.255.0 up",
+      "ifconfig eth1 10.0.1.1/30 up",
+      "ifconfig eth2 inet6 add 2001:db8::2/64",
+      "ifconfig eth3 inet 10.0.3.1",
+    ].join("\n");
+
+    expect(parseIfaceIps(machine(), startup)).toEqual({
+      0: ["10.0.0.1/24"], 1: ["10.0.1.1/30"], 2: ["2001:db8::2/64"], 3: ["10.0.3.1"],
+    });
+  });
+
+  it("keeps an ifconfig address bare when its netmask isn't a valid one", () => {
+    expect(parseIfaceIps(machine(), "ifconfig eth0 10.0.0.1 netmask 255.0.255.0")).toEqual({ 0: ["10.0.0.1"] });
+  });
+
+  it("ignores routes, links, interface state changes and commented-out lines", () => {
+    const startup = [
+      "ip route add 10.0.0.0/24 via 10.0.1.1 dev eth0",
+      "ip -6 route add default via 2001:db8::1 dev eth0",
+      "ip link set eth0 up",
+      "ifconfig eth0 up",
+      "ifconfig eth0 hw ether 00:00:00:00:00:01",
+      "# ip addr add 10.0.9.1/24 dev eth0",
+      "ip addr add 10.0.8.1/24 dev eth0 # 10.0.7.1/24 dev eth1",
+    ].join("\n");
+
+    expect(parseIfaceIps(machine(), startup)).toEqual({ 0: ["10.0.8.1/24"] });
+  });
+
+  it("ignores an assignment to anything but an ethN interface", () => {
+    expect(parseIfaceIps(machine(), "ip addr add 10.0.0.1/32 dev lo\nifconfig lo 127.0.0.2")).toEqual({});
+  });
+});
+
+describe("netmaskPrefix", () => {
+  it("counts the leading one bits of a contiguous dotted mask", () => {
+    expect(netmaskPrefix("255.255.255.0")).toBe(24);
+    expect(netmaskPrefix("255.255.255.252")).toBe(30);
+    expect(netmaskPrefix("255.255.255.255")).toBe(32);
+    expect(netmaskPrefix("0.0.0.0")).toBe(0);
+  });
+
+  it("rejects a mask with a hole, a byte out of range, or the wrong shape", () => {
+    expect(netmaskPrefix("255.0.255.0")).toBeNull();
+    expect(netmaskPrefix("255.255.256.0")).toBeNull();
+    expect(netmaskPrefix("255.255.255")).toBeNull();
+    expect(netmaskPrefix("0xffffff00")).toBeNull();
+  });
 });
 
 describe("nodeExtent", () => {
+  const dev = (name: string, image: string | null = null) => ({ type: "dev" as const, name, image });
+
   it("sizes a device by its label, badges included, up to the width cap", () => {
-    expect(nodeExtent({ type: "dev", name: "pc1" })).toEqual({ hw: 112 / 2 + 6, hh: 23 });
-    expect(nodeExtent({ type: "dev", name: "router_core_1" })).toEqual({ hw: (13 * 9 + 58) / 2 + 6, hh: 23 });
-    expect(nodeExtent({ type: "dev", name: "x".repeat(40) })).toEqual({ hw: MAX_DEVICE_NODE_WIDTH / 2 + 6, hh: 23 });
+    expect(nodeExtent(dev("pc1"))).toEqual({ hw: 112 / 2 + 6, hh: 23 });
+    expect(nodeExtent(dev("router_core_1"))).toEqual({ hw: (13 * 9 + 58) / 2 + 6, hh: 23 });
+    expect(nodeExtent(dev("x".repeat(40)))).toEqual({ hw: MAX_DEVICE_NODE_WIDTH / 2 + 6, hh: 23 });
+  });
+
+  it("widens a device for an image that would not fit with its margins", () => {
+    expect(deviceNodeWidth(dev("pc1", "kathara/base"))).toBe(12 * 7 + 28 + 2 * 10);
+    expect(deviceNodeWidth(dev("pc1", "debian"))).toBe(112);
+    expect(deviceNodeWidth(dev("router_core_1", "kathara/frr"))).toBe(13 * 9 + 58);
+    expect(deviceNodeWidth(dev("pc1", "kathara/openbgpd"))).toBe(16 * 7 + 28 + 2 * 10);
+  });
+
+  it("stops widening a device for its image at MAX_IMAGE_CHARS, leaving the rest to truncation", () => {
+    const capped = MAX_IMAGE_CHARS * 7 + 28 + 2 * 10;
+    expect(deviceNodeWidth(dev("pc1", `registry.example.com/${"x".repeat(60)}`))).toBe(capped);
+    expect(deviceNodeWidth(dev("pc1", "x".repeat(MAX_IMAGE_CHARS + 1)))).toBe(capped);
+    expect(deviceNodeWidth(dev("x".repeat(40), "x".repeat(60)))).toBe(MAX_DEVICE_NODE_WIDTH);
   });
 
   it("sizes a domain by its circle, or its label where that is wider", () => {
@@ -320,7 +414,7 @@ describe("nodeExtent", () => {
   });
 
   it("uses the same width the rect is drawn with", () => {
-    expect(nodeExtent({ type: "dev", name: "pc10" }).hw).toBe(deviceNodeWidth("pc10") / 2 + 6);
+    expect(nodeExtent(dev("pc10", "kathara/base")).hw).toBe(deviceNodeWidth(dev("pc10", "kathara/base")) / 2 + 6);
   });
 });
 

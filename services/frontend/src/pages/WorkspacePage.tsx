@@ -317,6 +317,10 @@ const COLLAPSE_THRESHOLD = 60;
 // into a single dropdown — see the `compactActions` header ref below.
 const HEADER_ACTIONS_COMPACT_WIDTH = 900;
 
+// Below this window width the rail closes by itself, and above it reopens, to leave the room to the
+// lab — unless the user has opened or closed it by hand since the page loaded, which wins.
+const RAIL_AUTO_CLOSE_WIDTH = 1100;
+
 // Below this width, the rail's import row (New/Open/Upload/Browse) collapses into a single
 // "Add Lab" dropdown instead of squeezing/deforming — same pattern as compactActions above. ~242px
 // is the row's natural unsquished width with 3 sm buttons (icon+label), ~324px with the desktop
@@ -659,7 +663,16 @@ export function WorkspacePage() {
   // (a registry round-trip per image, unless image_update_policy is Never), and labelling it as
   // "Deploying…" would make a slow network look like a stuck deploy.
   const [deployAction, setDeployAction] = useState<DeployPhase | "undeploy" | null>(null);
-  const [railOpen, setRailOpen] = useState(() => localStorage.getItem(LS_RAIL) !== "false");
+  // The user's own choice (persisted), and whether they have made one since the page loaded: until
+  // they have, a narrow window keeps the rail closed without touching the saved choice.
+  const [railChoice, setRailChoice] = useState(() => localStorage.getItem(LS_RAIL) !== "false");
+  const [railChosenHere, setRailChosenHere] = useState(false);
+  const [narrowWindow, setNarrowWindow] = useState(() => window.innerWidth < RAIL_AUTO_CLOSE_WIDTH);
+  const railOpen = railChosenHere ? railChoice : railChoice && !narrowWindow;
+  const setRailOpen = useCallback((open: boolean) => {
+    setRailChoice(open);
+    setRailChosenHere(true);
+  }, []);
   const [railWidth, setRailWidth] = useState(() => {
     const saved = Number(localStorage.getItem(LS_RAIL_W));
     return Number.isFinite(saved) && saved >= RAIL_MIN_W && saved <= RAIL_MAX_W ? saved : RAIL_DEFAULT_W;
@@ -820,8 +833,15 @@ export function WorkspacePage() {
   // Persist rail state + the last-open lab, and (once, on first entry to /workspace with no lab)
   // jump back to the last-open lab if it still exists.
   useEffect(() => {
-    localStorage.setItem(LS_RAIL, String(railOpen));
-  }, [railOpen]);
+    localStorage.setItem(LS_RAIL, String(railChoice));
+  }, [railChoice]);
+  useEffect(() => {
+    const query = window.matchMedia(`(max-width: ${RAIL_AUTO_CLOSE_WIDTH - 0.02}px)`);
+    const update = () => setNarrowWindow(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
   useEffect(() => {
     localStorage.setItem(LS_RAIL_W, String(railWidth));
   }, [railWidth]);
