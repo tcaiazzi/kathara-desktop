@@ -31,14 +31,15 @@ function groupElement(tourId: string): () => Element {
 
 // Orientation only — no step forces an action (create/deploy/etc.), matching WelcomeScreen's own
 // "no wizard, just an on-ramp" policy. Every target is a `data-tour` attribute added in
-// WorkspacePage.tsx (or, for the topology's own hint row, TopologyGraph.tsx), all of which only
+// WorkspacePage.tsx (or, for the Inspector's tab strip, DeviceInfoTabs.tsx), all of which only
 // exist once a lab is open (see `ready` below).
 const STEPS: TourStep[] = [
   {
     element: '[data-tour="rail"]',
     popover: {
       title: "Your labs",
-      description: "Every lab you create or import shows up here. Click one to open it, right-click for more actions.",
+      description:
+        "Your labs, and the open lab's devices and collision domains. Click one to select it, right-click for more actions. Type in the filter or use Select other labs to switch lab.",
     },
   },
   {
@@ -50,14 +51,15 @@ const STEPS: TourStep[] = [
     popover: {
       title: "Add a lab",
       description:
-        "Start from scratch with New, open a lab folder you already have with Open, import a .zip with Import, or Browse the Kathara Labs gallery for ready-made examples. While a lab is open, they're under Select other labs.",
+        "Start from scratch with New, open a lab folder you already have with Open, import a .zip with Import, or Browse the Kathara Labs gallery for ready-made examples. In a narrow sidebar they're under Add Lab; while a lab is open, under Select other labs.",
     },
   },
   {
     element: '[data-tour="topology-panel"]',
     popover: {
       title: "Topology",
-      description: "This is your network: devices and links, drawn live. Drag to rearrange, right-click to add or edit.",
+      description:
+        "Your network: devices and collision domains, drawn live. Drag to rearrange, scroll to zoom, double-click to edit, right-click for actions. Add elements with + Device and + Domain; Fix Layout saves the arrangement with the lab.",
     },
   },
   {
@@ -67,7 +69,8 @@ const STEPS: TourStep[] = [
     needsDevice: true,
     popover: {
       title: "Inspector",
-      description: "Click any device — in the topology or the Lab Details list — to see and change everything about it here.",
+      description:
+        "Click a device or collision domain — in the topology or the sidebar — to see and change everything about it here.",
     },
   },
   {
@@ -76,7 +79,8 @@ const STEPS: TourStep[] = [
     needsDevice: true,
     popover: {
       title: "Configure the device",
-      description: "Overview has its options and startup log, Network its interfaces, Scripts its startup and shutdown scripts, and Files the folder copied into it. Deploy, Open Terminal, Options and Remove sit right above.",
+      description:
+        "Overview has its options and startup log, Network its interfaces, Scripts its startup and shutdown scripts, and Files the folder copied into it. Above: Deploy or Undeploy just this device, Open Terminal once it runs, Edit Options, and Remove.",
     },
   },
   {
@@ -84,7 +88,8 @@ const STEPS: TourStep[] = [
     tourPanel: "devices",
     popover: {
       title: "Lab Details",
-      description: "All devices in this lab, with their running state. Select one for details, or open a terminal on it.",
+      description:
+        "Every device and collision domain in this lab at a glance: image, state and interfaces. Terminal opens a shell on a running device in its own window.",
     },
   },
   {
@@ -92,7 +97,8 @@ const STEPS: TourStep[] = [
     tourPanel: "files",
     popover: {
       title: "Lab Configuration",
-      description: "Edit lab.conf and each device's startup/shutdown scripts directly here.",
+      description:
+        "The lab's folder on disk: edit lab.conf, the startup and shutdown scripts, and every device's files. Create, upload, search, drag and rename right here.",
     },
   },
   {
@@ -100,7 +106,7 @@ const STEPS: TourStep[] = [
     tourPanel: "runtime-fs",
     popover: {
       title: "Runtime Filesystem",
-      description: "Browse and edit a running device's live filesystem — no shell required.",
+      description: "Browse and edit a running device's live filesystem — pick the device at the top, no shell required.",
     },
   },
   {
@@ -108,7 +114,7 @@ const STEPS: TourStep[] = [
     tourPanel: "stats",
     popover: {
       title: "Statistics",
-      description: "Live CPU, memory and network usage for every device, once the lab is deployed.",
+      description: "Live CPU, memory and network usage for every device: press Start once the lab is deployed.",
     },
   },
   {
@@ -117,7 +123,7 @@ const STEPS: TourStep[] = [
     popover: {
       title: "Terminals",
       description:
-        "Shells on your running devices, all in one tab — open one here, or from a device's right-click menu. Split one to work on several side by side, or drag it out of the list into a panel of its own.",
+        "Shells on your running devices, all in one tab — open one here, from the Inspector, or from a device's right-click menu. Split one to work on several side by side, or drag it out of the list into a panel of its own.",
     },
   },
   {
@@ -131,7 +137,7 @@ const STEPS: TourStep[] = [
     element: '[data-tour="deploy-btn"]',
     popover: {
       title: "Deploy",
-      description: "When you're ready, Deploy spins up every device as a container. Undeploy tears it back down.",
+      description: "When you're ready, Deploy downloads any missing images and starts every device as a container. Undeploy tears it back down.",
     },
   },
   {
