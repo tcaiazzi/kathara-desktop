@@ -50,7 +50,7 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
       toast.show("Choose a .zip archive first.", "danger", "No file");
       return;
     }
-    await runBusy(setBusy, "Upload lab", async (signal) => {
+    await runBusy(setBusy, "Import lab", async (signal) => {
       const result = await api.uploadLab(file, name, signal);
       // LabSummary.name is nullable: resolve it once so the toast can't print `Lab "null"`.
       const labName = result.name ?? name;
@@ -66,7 +66,7 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
   return (
     <Modal show={show} onHide={handleClose}>
       <Modal.Header closeButton>
-        <Modal.Title>Upload lab (.zip)</Modal.Title>
+        <Modal.Title>Import lab (.zip)</Modal.Title>
       </Modal.Header>
       <Modal.Body>
         <Form.Group className="mb-3">
@@ -87,8 +87,8 @@ export function UploadLabModal({ show, onClose, onCreated }: UploadLabModalProps
       <ModalSubmitFooter
         onCancel={handleClose}
         busy={busy}
-        submitLabel="Upload"
-        busyLabel="Uploading…"
+        submitLabel="Import"
+        busyLabel="Importing…"
         submitDisabled={!file}
         onSubmit={handleUpload}
       />

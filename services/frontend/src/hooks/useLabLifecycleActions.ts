@@ -83,9 +83,10 @@ function labLabel(lab: LabRef): string {
   return lab.name || lab.id;
 }
 
-// Every whole-lab action the workspace header offers: the deploy/undeploy toggle, rename, delete
-// and wipe-all, with their image pre-check, authorization prompts, toasts and confirm copy. One
-// caller (WorkspacePage) — kept out of it because the branching is long enough to bury the page.
+// Every whole-lab action, with its image pre-check, authorization prompts, toasts and confirm copy:
+// the deploy/undeploy toggle, rename, delete and close the workspace header offers (WorkspacePage),
+// and wipe-all on the Settings page. Kept out of both because the branching is long enough to bury
+// a page.
 export function useLabLifecycleActions() {
   const toast = useToast();
   const confirm = useConfirm();

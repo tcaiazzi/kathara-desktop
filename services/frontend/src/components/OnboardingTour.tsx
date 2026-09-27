@@ -48,7 +48,7 @@ const STEPS: TourStep[] = [
     popover: {
       title: "Add a lab",
       description:
-        "Start from scratch with New, import a .zip with Upload, or Browse the Kathara Labs gallery for ready-made examples. While a lab is open, they're under Select other labs.",
+        "Start from scratch with New, open a lab folder you already have with Open, import a .zip with Import, or Browse the Kathara Labs gallery for ready-made examples. While a lab is open, they're under Select other labs.",
     },
   },
   {

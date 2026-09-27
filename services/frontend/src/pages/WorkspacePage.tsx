@@ -650,7 +650,7 @@ export function WorkspacePage() {
   detailRef.current = detail;
   const [notFound, setNotFound] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Separate from `busy` (shared with delete/rename/wipe-all) so the Deploy/Undeploy button only
+  // Separate from `busy` (shared with delete/rename) so the Deploy/Undeploy button only
   // spins for its own action, not whichever lifecycle action currently has the buttons disabled.
   // Fixed at the action's start rather than read live off `detail.deployed`: the toggle's onDone
   // callback refreshes `detail` (so it already flips to the new state) before this clears, and
@@ -1398,8 +1398,7 @@ export function WorkspacePage() {
                   // DropdownButton's own `className` only reaches its outer wrapper, not the visible
                   // toggle button (see react-bootstrap's DropdownButton source), so a plain w-100
                   // there leaves the button itself content-sized — build it from Dropdown +
-                  // Dropdown.Toggle instead so the toggle can be widened directly, matching the
-                  // full-width "Wipe All Labs" button below it.
+                  // Dropdown.Toggle instead so the toggle can be widened directly to the rail's width.
                   <Dropdown className="w-100">
                     <Dropdown.Toggle size="sm" variant="primary" className="w-100">
                       <span className="d-inline-flex align-items-center gap-1">
@@ -1420,11 +1419,11 @@ export function WorkspacePage() {
                       )}
                       <Dropdown.Item onClick={() => setShowUpload(true)}>
                         <Upload size={14} className="me-2" />
-                        Upload lab
+                        Import lab (.zip)
                       </Dropdown.Item>
                       <Dropdown.Item onClick={() => setShowGallery(true)}>
                         <Globe size={14} className="me-2" />
-                        Browse Kathara-Labs
+                        Browse Kathara Labs
                       </Dropdown.Item>
                     </Dropdown.Menu>
                   </Dropdown>
@@ -1457,17 +1456,17 @@ export function WorkspacePage() {
                       variant="outline-secondary"
                       className="flex-fill"
                       onClick={() => setShowUpload(true)}
-                      title="Upload a lab from a .zip archive or folder on your computer"
+                      title="Import a lab from a .zip archive"
                     >
                       <Upload size={14} className="me-1" />
-                      Upload
+                      Import
                     </Button>
                     <Button
                       size="sm"
                       variant="outline-secondary"
                       className="flex-fill"
                       onClick={() => setShowGallery(true)}
-                      title="Browse and import a ready-made lab from the Kathara-Labs gallery"
+                      title="Browse and import a ready-made lab from the Kathara Labs gallery"
                     >
                       <Globe size={14} className="me-1" />
                       Browse

@@ -22,7 +22,7 @@ interface ToastItem {
 
 interface ToastApi {
   show: (message: string, variant?: ToastVariant, detail?: string, action?: ToastAction) => void;
-  /** Show a failure: titled with the action that failed (e.g. "Upload lab"), with the error's own
+  /** Show a failure: titled with the action that failed (e.g. "Import lab"), with the error's own
    *  sentence as the body — see errorMessage. */
   reportError: (label: string, error: unknown) => void;
 }

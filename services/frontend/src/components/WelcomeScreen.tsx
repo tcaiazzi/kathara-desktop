@@ -79,7 +79,7 @@ export function WelcomeScreen({
         )}
         <Button variant="outline-secondary" onClick={onImportLab}>
           <Upload size={16} className="me-1" />
-          Import a .zip…
+          Import Lab (.zip)…
         </Button>
         <Button variant="outline-secondary" onClick={onBrowseGallery}>
           <Globe size={16} className="me-1" />

@@ -80,7 +80,7 @@ export function buildMenu(handlers: MenuHandlers): void {
       submenu: [
         item("New Lab…", "lab:new", "CmdOrCtrl+N"),
         { label: "Open Lab Folder…", accelerator: "CmdOrCtrl+O", click: () => handlers.openLabFolder() },
-        item("Import Lab…", "lab:import", "CmdOrCtrl+Shift+O"),
+        item("Import Lab (.zip)…", "lab:import", "CmdOrCtrl+Shift+O"),
         item("Browse Kathara Labs…", "lab:browse"),
         { type: "separator" },
         // registerAccelerator: false — the renderer owns Ctrl/Cmd+S (useSaveShortcut saves
