@@ -1170,8 +1170,8 @@ class KatharaService:
 
     def create_lab(self, spec: LabCreate) -> Lab:
         """Create a lab under the labs root from a JSON description, not deployed, and write its ``lab.conf``
-        from the model. Claims the directory with ``_claiming``; a failed write unregisters the lab and
-        removes the directory again."""
+        from the model. Claims the directory with ``_claiming`` and refuses one already taken
+        (``_assert_dir_free``); a failed write unregisters the lab and removes the directory again."""
         # `sanitize_lab_name` may strip whitespace (e.g. " demo " -> "demo"), and the lab
         # directory below is always created under that stripped form — every *import* path
         # already passes the same clean name through to the LabCreate it builds (see
@@ -1181,6 +1181,10 @@ class KatharaService:
         # next restart re-read the directory from disk and the lab silently renamed itself.
         clean_name = lab_store.sanitize_lab_name(spec.name)
         with self._claiming(lab_id_for(self.store.lab_dir(clean_name))):
+            # Before the directory is made: one that is already there without a registry entry (a
+            # folder whose lab.conf doesn't parse) would otherwise get its lab.conf overwritten, and
+            # a failed write below would then delete the whole folder in the rollback.
+            self._assert_dir_free(self.store.lab_dir(clean_name))
             lab_dir = self.store.ensure_lab_dir(clean_name)
             spec = spec.model_copy(update={"name": clean_name})
             lab = self._build_and_register(spec, lab_dir)

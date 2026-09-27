@@ -284,6 +284,22 @@ def test_create_lab_whose_lab_conf_write_fails_leaves_nothing_behind(service, mo
     assert not service.store.lab_dir("broken").exists()
 
 
+def test_create_lab_refuses_a_folder_already_on_disk_and_leaves_it_untouched(service):
+    """A folder under the labs root that isn't registered (here: a lab.conf that doesn't parse) is
+    someone's work: creating a lab of the same name is a 409, and nothing in it changes."""
+    folder = service.store.lab_dir("taken")
+    folder.mkdir(parents=True)
+    (folder / "lab.conf").write_text("not a lab.conf line\n")
+    (folder / "notes.txt").write_text("keep me")
+
+    with pytest.raises(LabAlreadyRegisteredError):
+        service.create_lab(LabCreate(name="taken", machines=[MachineCreate(name="pc1")]))
+
+    assert (folder / "lab.conf").read_text() == "not a lab.conf line\n"
+    assert (folder / "notes.txt").read_text() == "keep me"
+    assert service.registry.get(lab_id(service, "taken")) is None
+
+
 def test_rename_to_the_same_name_is_a_no_op(service):
     lab = service.registry.get(lab_id(service, "l"))
 
