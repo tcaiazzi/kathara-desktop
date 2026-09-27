@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
-import { api } from "../services/api";
-import { fromLabPath, toLabPath } from "../services/deviceFs";
+import { api, ApiError } from "../services/api";
+import { fromLabPath, isSharedPath, SHARED_DIR, toLabPath, withSharedFolder } from "../services/deviceFs";
 import { FsTreePanel } from "./FsTreePanel";
 
 interface DeviceFilesSectionProps {
@@ -15,16 +15,33 @@ interface DeviceFilesSectionProps {
   layout: "side" | "stacked";
 }
 
-// The device's own folder in the lab (`<device>/`, the files Kathara copies into its container),
-// browsed as if it were the device's whole filesystem: the Lab Configuration tree's machinery
-// (useFsTree + FsTreePanel) over the same offline API, with every path mapped through
-// services/deviceFs. The folder need not exist yet: the first file or folder created here makes it.
+// The device's files as the device sees them: its own folder in the lab (`<device>/`, the files
+// Kathara copies into its container) browsed as if it were the device's whole filesystem, plus
+// the lab's `shared/` folder at `/shared`, where every device has it mounted. The Lab
+// Configuration tree's machinery (useFsTree + FsTreePanel) over the same offline API, with every
+// path mapped through services/deviceFs. The device's folder need not exist yet: the first file
+// or folder created in it makes it. `shared/` is made when the root is listed, if the lab has none.
 export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, layout }: DeviceFilesSectionProps) {
   const source = useMemo<FsTreeSource>(() => {
     const lab = (path: string) => toLabPath(device, path);
+    const where = (path: string) => (isSharedPath(path) ? "the lab's shared folder" : `${device}'s folder`);
+    const search = async (path: string, query: string, caseSensitive: boolean, signal?: AbortSignal) => {
+      const result = await api.fsSearchOffline(labId, lab(path), query, caseSensitive, signal);
+      return { ...result, matches: result.matches.map((m) => ({ ...m, path: fromLabPath(device, m.path) })) };
+    };
     return {
-      list: async (path, signal) =>
-        (await api.fsListOffline(labId, lab(path), signal)).entries.map((e) => ({ ...e, path: fromLabPath(device, e.path) })),
+      list: async (path, signal) => {
+        if (path === "/") {
+          // Idempotent. Refused only while the lab is being deployed or undeployed, and a deploy
+          // makes the folder itself.
+          await api.fsMkdirOffline(labId, SHARED_DIR).catch((e: unknown) => {
+            if (!(e instanceof ApiError && e.errorType === "LabTransitioningError")) throw e;
+          });
+        }
+        const { entries } = await api.fsListOffline(labId, lab(path), signal);
+        const mapped = entries.map((e) => ({ ...e, path: fromLabPath(device, e.path) }));
+        return path === "/" ? withSharedFolder(mapped) : mapped;
+      },
       readText: async (path) => (await api.fsReadTextOffline(labId, lab(path))).content,
       writeText: async (path, content) => {
         await api.fsWriteTextOffline(labId, lab(path), content);
@@ -42,14 +59,23 @@ export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, la
         onChanged();
       },
       download: (path) => api.fsDownloadOffline(labId, lab(path)),
+      // The root is two folders in the lab, so a search from it is two searches.
       search: async (path, query, caseSensitive, signal) => {
-        const result = await api.fsSearchOffline(labId, lab(path), query, caseSensitive, signal);
-        return { ...result, matches: result.matches.map((m) => ({ ...m, path: fromLabPath(device, m.path) })) };
+        if (path !== "/") return search(path, query, caseSensitive, signal);
+        const [own, shared] = await Promise.all([
+          search(path, query, caseSensitive, signal),
+          search(SHARED_DIR, query, caseSensitive, signal),
+        ]);
+        return { matches: [...own.matches, ...shared.matches], truncated: own.truncated || shared.truncated };
       },
-      // The folder itself is what the device *is* on disk here: renaming or moving it would detach
-      // it from the device, and deleting it is Remove Device's job.
-      canModify: (path) => path !== "/",
-      cannotModifyReason: `This is ${device}'s folder itself.`,
+      // The device's folder is what the device *is* on disk here: renaming or moving it would
+      // detach it from the device, and deleting it is Remove Device's job. `/shared` is the one
+      // folder every device mounts, so it stays where it is too; what is inside either is free.
+      canModify: (path) => path !== "/" && path !== SHARED_DIR,
+      cannotModifyReason: (path) =>
+        path === SHARED_DIR
+          ? "This is the lab's shared folder, mounted at /shared in every device."
+          : `This is ${device}'s folder itself.`,
       labels: {
         openFile: "Open file",
         saveFile: "Save file",
@@ -60,8 +86,8 @@ export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, la
         delete: "Delete",
         move: "Move",
         paste: "Paste",
-        saved: (path) => `Saved ${path} in ${device}'s folder.`,
-        unsaved: (path) => `${path} in ${device}'s folder`,
+        saved: (path) => `Saved ${path} in ${where(path)}.`,
+        unsaved: (path) => `${path} in ${where(path)}`,
         newFilePrompt: {
           title: `New file for ${device}`,
           message: `Path inside ${device}, as it will be in the device, e.g.: /etc/frr/frr.conf`,
@@ -78,15 +104,15 @@ export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, la
         },
         deleteConfirm: (path, isDir) => ({
           title: isDir ? "Delete folder?" : "Delete file?",
-          message: `Delete ${path} from ${device}'s folder? This cannot be undone.`,
+          message: `Delete ${path} from ${where(path)}? This cannot be undone.`,
         }),
         deleteConfirmMultiple: (count) => ({
           title: "Delete items?",
-          message: `Delete ${count} items from ${device}'s folder? This cannot be undone.`,
+          message: `Delete ${count} items from ${device}'s files? This cannot be undone.`,
         }),
         pasteConfirmOverwrite: (path, isDir) => ({
           title: isDir ? "Replace folder?" : "Replace file?",
-          message: `${path} already exists in ${device}'s folder. Replace it?`,
+          message: `${path} already exists in ${where(path)}. Replace it?`,
         }),
       },
     };
@@ -102,7 +128,7 @@ export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, la
       tree={tree}
       treeKey={device}
       layout={layout}
-      dragHint={`Files here are copied into ${device} when it starts. Drag files onto a folder to move them; double-click or F2 to rename.`}
+      dragHint={`Files here are copied into ${device} when it starts; /shared is the lab's shared folder, the same files in every device. Drag files onto a folder to move them; double-click or F2 to rename.`}
       onReload={() => void tree.reload()}
     />
   );

@@ -88,8 +88,9 @@ function saveTab(tab: DeviceInfoTab) {
 
 // The Inspector for one device: a fixed header with its state and the actions on the device
 // as a whole (deploy/undeploy, terminal, options, remove), then four tabs — Overview (options and
-// startup log), Network (interfaces), Scripts (boot scripts and startup log) and Files
-// (the device's own folder). Mounted per device (keyed by name), so switching device starts afresh.
+// startup log), Network (interfaces), Scripts (boot scripts and startup log) and Files (the
+// device's own folder and the lab's shared one). Mounted per device (keyed by name), so switching
+// device starts afresh.
 // Every tab stays mounted while another is shown, so an editor left open keeps its text; the
 // workspace asks this component first (the selection guard) whenever changing device would drop one.
 export function DeviceInfoTabs({
@@ -279,7 +280,12 @@ export function DeviceInfoTabs({
           </Tab>
           <Tab eventKey="files" title={<TabTitle icon={Folder} label="Files" dirty={!!dirty.files} />}>
             <div className="kt-devinfo-files">
-              {runningHint}
+              {node.running && (
+                <div className="hint mb-2">
+                  Changes to these files apply the next time {device} starts, except in /shared, which every
+                  running device sees right away.
+                </div>
+              )}
               {node.running && (
                 <Button size="sm" variant="link" className="p-0 mb-2 align-self-start" onClick={() => actions.openRuntimeFs(node)}>
                   <FolderOpen size={13} className="me-1" />

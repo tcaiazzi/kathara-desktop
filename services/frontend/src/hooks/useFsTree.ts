@@ -50,11 +50,12 @@ export interface FsTreeSource {
     caseSensitive: boolean,
     signal?: AbortSignal,
   ): Promise<{ matches: FsSearchMatch[]; truncated: boolean }>;
-  /** Paths that can never be renamed, moved or deleted. Default: everything can. */
+  /** Paths that can never be renamed, moved, deleted, or replaced by something else put at the
+   *  same path. Default: everything can. A folder refused here still takes new files inside it. */
   canModify?(path: string): boolean;
-  /** Tooltip on the actions `canModify` disables, saying why. Required only when `canModify`
-   * refuses something — the reason is the caller's to give, not this hook's to guess. */
-  cannotModifyReason?: string;
+  /** Tooltip on the actions `canModify` disables for `path`, saying why. Required only when
+   * `canModify` refuses something — the reason is the caller's to give, not this hook's to guess. */
+  cannotModifyReason?(path: string): string;
   /** Asked before every save; resolving false cancels it. For a surface that knows the file may
    *  have changed underneath the edit and must not overwrite that silently. */
   confirmWrite?(path: string): Promise<boolean>;
@@ -208,7 +209,7 @@ export interface FsRowActions {
   onCut: (paths: string[]) => void;
   onPaste: (destDir: string) => void;
   canModify: (path: string) => boolean;
-  cannotModifyReason?: string;
+  cannotModifyReason: (path: string) => string | undefined;
   /** Whether the clipboard currently holds anything to paste. */
   canPaste: boolean;
   isLoading: (path: string) => boolean;
@@ -283,6 +284,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const sourceRef = useRef(source);
   sourceRef.current = source;
   const canModify = useCallback((path: string) => (sourceRef.current.canModify ?? ALWAYS_MODIFIABLE)(path), []);
+  const cannotModifyReason = useCallback((path: string) => sourceRef.current.cannotModifyReason?.(path), []);
 
   // Everything derived from `scopeKey` that a callback needs to read synchronously — never only
   // through the React state above, which only lands after the render that scheduled it — lives in
@@ -674,10 +676,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       if (!answer) return null;
       const clean = toAbsolutePath(answer);
       if (!clean) return null;
+      if (!canModify(clean)) {
+        toast.show(`Can't create ${clean}: ${cannotModifyReason(clean) ?? "it can't be replaced."}`, "danger");
+        return null;
+      }
       if (checkOverwrite && !(await confirmOverwriteIfExists(clean))) return null;
       return clean;
     },
-    [confirmOverwriteIfExists, prompt],
+    [canModify, cannotModifyReason, confirmOverwriteIfExists, prompt, toast],
   );
 
   const handleNewFile = useCallback(
@@ -836,7 +842,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   // two is how `destPath` is computed (new parent, same name vs. same parent, new name).
   const movePath = useCallback(
     async (sourcePath: string, destPath: string) => {
-      if (!canModify(sourcePath)) return;
+      if (!canModify(sourcePath) || !canModify(destPath)) return;
       if (destPath === sourcePath) return;
       const destDir = parentOf(destPath);
       if (destDir === sourcePath || isSubPath(destDir, sourcePath)) return;
@@ -911,8 +917,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     async (destDirOverride?: string) => {
       const cb = scoped.current.clipboard;
       if (!cb || cb.paths.length === 0) return;
+      // No `canModify(destDir)` check: a folder that can't itself be moved or deleted still takes
+      // files. Each pasted path is checked on its own below.
       const destDir = destDirOverride ?? defaultDir();
-      if (!canModify(destDir)) return;
       for (const p of cb.paths) {
         if (destDir === p || isSubPath(destDir, p)) {
           toast.show(`Can't paste ${baseName(p) || p} into itself.`, "danger");
@@ -976,14 +983,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       onCut: (paths) => handleCut(paths),
       onPaste: (destDir) => void handlePaste(destDir),
       canModify,
-      cannotModifyReason: source.cannotModifyReason,
+      cannotModifyReason,
       canPaste: clipboard !== null,
       isLoading: (path) => path === loadingPath,
       isCutPending,
     }),
     [
       canModify,
-      source.cannotModifyReason,
+      cannotModifyReason,
       clipboard,
       handleCopy,
       handleCut,

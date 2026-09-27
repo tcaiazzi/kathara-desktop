@@ -112,7 +112,7 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
       search: (path, query, caseSensitive, signal) =>
         api.fsSearchOffline(labId, path, query, caseSensitive, signal),
       canModify,
-      cannotModifyReason: "lab.conf can't be modified here.",
+      cannotModifyReason: () => "lab.conf can't be modified here.",
       // Saving lab.conf replaces whatever is on disk, so a version written there since it was last
       // read is asked about first. Re-read here rather than trusting the conflict banner: the
       // banner only appears once the watcher's change reaches this tab, and never for an outside

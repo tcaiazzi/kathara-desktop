@@ -297,6 +297,43 @@ def test_move_file_from_root_to_device(tmp_path):
     assert (store.lab_dir("testlab") / "pc1" / "etc" / "motd").read_text() == "hi\n"
 
 
+# -- shared/: the lab's own folder, which the device Files tab shows at /shared -------------------
+
+
+def test_making_shared_is_idempotent_and_keeps_what_is_in_it(tmp_path):
+    """The device Files tab makes /shared every time it lists a device's root."""
+    service, store = _two_machine_lab(tmp_path)
+
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/shared")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/notes.txt", "hi\n")
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/shared")
+
+    assert (store.lab_dir("testlab") / "shared" / "notes.txt").read_text() == "hi\n"
+
+
+def test_writing_under_shared_creates_the_labs_shared_folder(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/notes.txt", "hi\n")
+
+    assert (store.lab_dir("testlab") / "shared" / "notes.txt").read_text() == "hi\n"
+    listing = service.fs_list_offline(lab_id(service, "testlab"), "/shared")
+    assert [e.path for e in listing] == ["/shared/notes.txt"]
+
+
+def test_a_file_moves_between_a_device_folder_and_shared_both_ways(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
+
+    service.fs_move_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "/shared/motd")
+    assert (store.lab_dir("testlab") / "shared" / "motd").read_text() == "hi\n"
+    assert not (store.lab_dir("testlab") / "pc1" / "etc" / "motd").exists()
+
+    service.fs_move_offline(lab_id(service, "testlab"), "/shared/motd", "/pc2/motd")
+    assert (store.lab_dir("testlab") / "pc2" / "motd").read_text() == "hi\n"
+    assert not (store.lab_dir("testlab") / "shared" / "motd").exists()
+
+
 # -- <machine>.startup: just a real file at the lab root, no special-casing needed ------------
 
 

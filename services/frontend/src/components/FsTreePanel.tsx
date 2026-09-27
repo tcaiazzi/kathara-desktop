@@ -426,8 +426,9 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
     // other row first collapses the selection down to just itself (VS Code semantics).
     if (!node.isSelected) node.select();
     const targets = node.isSelected ? Array.from(node.tree.selectedIds) : [path];
-    const modifiable = targets.every(rowActions.canModify);
-    const lockedTitle = modifiable ? undefined : rowActions.cannotModifyReason;
+    const locked = targets.find((t) => !rowActions.canModify(t));
+    const modifiable = locked === undefined;
+    const lockedTitle = locked === undefined ? undefined : rowActions.cannotModifyReason(locked);
 
     const items: ContextMenuItem[] = [];
     if (node.data.dir) {
