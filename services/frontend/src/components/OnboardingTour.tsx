@@ -39,7 +39,7 @@ const STEPS: TourStep[] = [
     popover: {
       title: "Your labs",
       description:
-        "Your labs, and the open lab's devices and collision domains. Click one to select it, right-click for more actions. Type in the filter or use Select other labs to switch lab.",
+        "Your labs, and the open lab's devices and collision domains. Click one to select it, right-click for more actions. Use Select other labs to switch lab.",
     },
   },
   {

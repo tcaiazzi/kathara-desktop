@@ -816,6 +816,8 @@ export function WorkspacePage() {
     setNotFound(false);
     setSelectedId(null);
     setLabPickerOpen(false);
+    // The filter box hides with the list, so a leftover query would filter it unseen next time.
+    setLabFilter("");
     load();
   }, [load]);
 
@@ -1622,21 +1624,20 @@ export function WorkspacePage() {
                 )}
               </div>
             )}
-            {/* Always there, above "Select other labs" too: typing in it opens the list. */}
-            <Form.Control
-              size="sm"
-              type="search"
-              placeholder="Filter labs…"
-              aria-label="Filter labs"
-              value={labFilter}
-              onChange={(e) => {
-                setLabFilter(e.target.value);
-                if (e.target.value.trim()) setLabPickerOpen(true);
-              }}
-              className="mb-2"
-            />
             {showLabList ? (
               <>
+                {/* Only with the list: while a lab is open it comes with "Select other labs", focused
+                    so the user can type straight away. */}
+                <Form.Control
+                  size="sm"
+                  type="search"
+                  placeholder="Filter labs…"
+                  aria-label="Filter labs"
+                  value={labFilter}
+                  onChange={(e) => setLabFilter(e.target.value)}
+                  autoFocus={labPickerOpen}
+                  className="mb-2"
+                />
                 <div className="kt-ws-list">
                   {labs == null && labsError ? (
                     <div className="kt-ws-error">
@@ -1674,6 +1675,7 @@ export function WorkspacePage() {
                               );
                             } else if (l.id === labId) {
                               setLabPickerOpen(false);
+                              setLabFilter("");
                             } else {
                               void guardedNavigate(`/workspace/${encodeURIComponent(l.id)}`);
                             }
