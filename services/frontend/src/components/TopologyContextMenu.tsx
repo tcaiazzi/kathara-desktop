@@ -48,8 +48,15 @@ export function TopologyContextMenu({ menu, onClose }: TopologyContextMenuProps)
     const handler = (ev: MouseEvent) => {
       if (ref.current && !ref.current.contains(ev.target as Node)) onClose();
     };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") onClose();
+    };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [menu, onClose]);
 
   if (!menu) return null;
