@@ -26,7 +26,8 @@ interface UseDeviceActionsOptions {
   onOpenRuntimeFs: (machine: string) => void;
   // Opens the machine-options editor modal for `machine`.
   onOpenOptions: (machine: string) => void;
-  // Opens the add-device modal, prefilling "attach to domain" when opened from a domain's context menu.
+  // Opens the add-device modal, prefilling its first collision domain when opened from a domain's
+  // context menu.
   onOpenAddDevice: (prefillLink: string | null) => void;
 }
 

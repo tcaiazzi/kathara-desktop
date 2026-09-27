@@ -30,10 +30,10 @@ interface AddDeviceModalProps {
 }
 
 // Add-device dialog: the device name and (optionally) the collision domains to attach it to, one
-// interface each, are always visible; every other Kathara "option" (image, mem, bridged, sysctls, volumes, ...) lives
-// behind the "Advanced options" toggle, sharing its fields with the post-creation
-// MachineOptionsEditor via MachineOptionsFields so a device can be fully configured at creation
-// time instead of add-then-edit.
+// interface each, are always visible; every other Kathara "option" (image, mem, bridged, sysctls,
+// volumes, ...) lives behind the "Advanced options" toggle, sharing its fields with the
+// post-creation MachineOptionsEditor via MachineOptionsFields so a device can be fully configured
+// at creation time instead of add-then-edit.
 export function AddDeviceModal({ show, labId, domains, prefillLink, onClose, onAdded }: AddDeviceModalProps) {
   const [name, setName] = useState("");
   const [links, setLinks] = useState<LinkRow[]>([]);
@@ -111,7 +111,12 @@ export function AddDeviceModal({ show, labId, domains, prefillLink, onClose, onA
           <Form.Label>Attach to collision domains (optional)</Form.Label>
           <RowListEditor<LinkRow>
             columns={[
-              { key: "link", label: "Collision domain", options: domains, placeholder: "Existing or new collision domain" },
+              {
+                key: "link",
+                label: "Collision domain",
+                options: domains,
+                placeholder: "Existing or new collision domain",
+              },
             ]}
             rows={links}
             disabled={busy}

@@ -30,8 +30,9 @@ interface RowListEditorProps<T extends object> {
 }
 
 // Generic repeatable-rows editor shared by every list/dict-shaped machine option (envs, sysctls,
-// ulimits, exec_commands, ports, volumes, metas) — one column-spec array per call site instead of
-// a bespoke component per option. Inline controls, no per-entry prompt dialogs.
+// ulimits, exec_commands, ports, volumes, metas) and the add-device modal's collision domains —
+// one column-spec array per call site instead of a bespoke component per list. Inline controls, no
+// per-entry prompt dialogs.
 export function RowListEditor<T extends object>({
   columns,
   rows,
