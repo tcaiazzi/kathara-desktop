@@ -73,6 +73,14 @@ export class ApiError extends Error {
   }
 }
 
+/** The sentence to show for a failure: the backend's own `detail` for an ApiError, which is written
+ *  for the user, and an Error's message otherwise. Its `errorType` is for code that branches on the
+ *  kind of failure, never for display. */
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message || error.name;
+  return String(error);
+}
+
 // The backend always sends `detail` as a string (see errors.py's RequestValidationError
 // handler). This is a defensive fallback only, for a response that bypasses that — e.g. a body
 // a proxy/gateway generated itself — so a shape change degrades to a readable joined message

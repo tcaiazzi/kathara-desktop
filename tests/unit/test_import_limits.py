@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 
 from kathara_api.config import ApiSettings, get_settings
 from kathara_api.dependencies import get_service
-from kathara_api.errors import ApiError
+from kathara_api.errors import ApiError, InvalidArchiveError
 from kathara_api.main import create_app
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service, zip_bytes
@@ -212,6 +212,34 @@ def test_extract_zip_still_works_within_every_cap(tmp_path):
     store = LabStore(tmp_path / "labs")
     store.extract_zip("demo", zip_bytes({"lab.conf": b'pc1[image]="kathara/base"\n'}))
     assert (tmp_path / "labs" / "demo" / "lab.conf").exists()
+
+
+def test_extract_zip_rejects_a_file_that_is_not_a_zip_and_leaves_nothing_behind(tmp_path):
+    store = LabStore(tmp_path / "labs")
+
+    with pytest.raises(InvalidArchiveError, match=r"^This file isn't a valid \.zip archive\.$"):
+        store.extract_zip("demo", io.BytesIO(b"just some text, renamed to .zip"))
+    assert not (tmp_path / "labs" / "demo").exists()
+
+
+def test_extract_zip_names_the_member_whose_bytes_fail_their_crc(tmp_path):
+    raw = bytearray(zip_bytes({"lab.conf": b'pc1[0]="A"\n', "pc1.startup": b"echo hello\n"}).getvalue())
+    offset = raw.index(b"echo hello")
+    raw[offset] ^= 0xFF  # a stored member's content sits verbatim in the archive
+    store = LabStore(tmp_path / "labs")
+
+    with pytest.raises(InvalidArchiveError, match=r"^The archive is damaged: `pc1\.startup` can't be read\.$"):
+        store.extract_zip("demo", io.BytesIO(bytes(raw)))
+    assert not (tmp_path / "labs" / "demo").exists()
+
+
+def test_uploading_a_file_that_is_not_a_zip_is_a_400_naming_the_problem(client_and_service):
+    client, _service = client_and_service
+
+    resp = client.post("/api/labs/upload", files={"file": ("demo.zip", b"not a zip", "application/zip")})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "This file isn't a valid .zip archive.", "error_type": "InvalidArchiveError"}
 
 
 # -- the request-level body-size middleware (main.py) ------------------------------------------

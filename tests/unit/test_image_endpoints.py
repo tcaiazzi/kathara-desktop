@@ -12,6 +12,7 @@ import time
 from types import SimpleNamespace
 
 import pytest
+import requests
 from docker.errors import APIError, ImageNotFound
 from fastapi.testclient import TestClient
 from Kathara.setting.Setting import Setting
@@ -397,18 +398,50 @@ def test_second_concurrent_download_is_refused_with_409(client_and_service):
     assert res.json()["error_type"] == "ImagePullBusyError"
 
 
-def test_pull_endpoint_returns_a_clean_404_for_a_nonexistent_reference(client_and_service):
-    """`image_pull`'s `docker_image.get_remote(name)` probe must surface a nonexistent reference
-    as a clean 404 up front rather than mid-stream, which takes errors.py's dedicated
-    docker.errors.APIError handler: without it this falls through the catch-all as a 500."""
+def _registry_error(status_code: int) -> APIError:
+    """A docker-py error the way `images.get_registry_data` raises it: carrying the daemon's HTTP
+    response, whose status is what tells a missing image from an unreachable registry."""
+    response = requests.Response()
+    response.status_code = status_code
+    response.url = "http+docker://localhost/v1.45/distribution/kathara/doesnotexist/json"
+    return APIError("registry lookup failed", response=response, explanation="denied")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [ImageNotFound("manifest unknown"), _registry_error(401), _registry_error(403), _registry_error(404)],
+    ids=["not-found", "401", "403", "404"],
+)
+def test_pull_endpoint_names_an_image_the_registry_does_not_have_before_pulling(client_and_service, error):
+    """The `docker_image.get_remote(name)` probe runs before any layer is pulled, and every
+    registry answer meaning "no such image, or not without a login" reads the same way: the fix
+    is the image name either way."""
     client, service = client_and_service
 
-    def _raise_not_found(name):
-        raise ImageNotFound(f"no such image: {name}")
+    def _raise(name):
+        raise error
 
-    service._instance.manager.docker_image.get_remote = _raise_not_found
+    service._instance.manager.docker_image.get_remote = _raise
 
     res = client.post("/api/images/pull", json={"images": ["kathara/doesnotexist"]})
 
     assert res.status_code == 404
-    assert res.json()["error_type"] == "ImageNotFound"
+    assert res.json() == {
+        "detail": "Image `kathara/doesnotexist` doesn't exist on its registry, or it's private.",
+        "error_type": "ImageNotAvailableError",
+    }
+    assert service._instance.manager.client.api.pulled == []
+
+
+def test_pull_endpoint_reports_an_unreachable_registry_as_an_upstream_failure(client_and_service):
+    client, service = client_and_service
+
+    def _raise(name):
+        raise _registry_error(500)
+
+    service._instance.manager.docker_image.get_remote = _raise
+
+    res = client.post("/api/images/pull", json={"images": ["kathara/base"]})
+
+    assert res.status_code == 502
+    assert res.json()["error_type"] == "APIError"

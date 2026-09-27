@@ -1,8 +1,8 @@
 """Unit tests for machine interface add/remove semantics (no Docker required)."""
 
 import pytest
-from Kathara.exceptions import NotSupportedError
 
+from kathara_api.errors import UnsupportedOperationError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
@@ -50,7 +50,7 @@ def test_connect_machine_rejects_explicit_interface_on_running_machine():
     service, _, lab = _service_with_stopped_machine()
     lab.machines["pc1"].api_object = object()
 
-    with pytest.raises(NotSupportedError):
+    with pytest.raises(UnsupportedOperationError):
         service.connect_machine(lab_id(service, "lab1"), "pc1", "A", interface_number=3)
 
 
@@ -64,7 +64,7 @@ def test_connect_machine_rejects_running_machine_started_without_network():
     machine = lab.machines["pc1"]
     machine.api_object = _Container("none")
 
-    with pytest.raises(NotSupportedError, match="`pc1` was started without any network interface"):
+    with pytest.raises(UnsupportedOperationError, match="^Device `pc1` was started without any network interface"):
         service.connect_machine(lab_id(service, "lab1"), "pc1", "A")
 
     assert facade.called is False

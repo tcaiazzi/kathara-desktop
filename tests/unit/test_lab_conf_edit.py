@@ -68,7 +68,7 @@ def test_add_device_only_appends():
 
 def test_add_device_rejects_existing_name():
     spec = MachineCreate.model_validate({"name": "pc1", "image": "kathara/base"})
-    with pytest.raises(MachineAlreadyExistsError):
+    with pytest.raises(MachineAlreadyExistsError, match=r"^Device with name `pc1` already exists\.$"):
         lce.add_device(GNARLY, spec)
 
 

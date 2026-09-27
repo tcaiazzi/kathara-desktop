@@ -6,7 +6,7 @@ from typing import Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..lab_conf_options import DEVICE_NAME_PATTERN, IDENTIFIER_RE, MODELED_META_KEYS
+from ..lab_conf_options import COLLISION_DOMAIN_PATTERN, DEVICE_NAME_PATTERN, IDENTIFIER_RE, MODELED_META_KEYS
 from .common import reject_lab_conf_quotes
 
 MACHINE_NAME_PATTERN = DEVICE_NAME_PATTERN
@@ -97,7 +97,7 @@ class Ulimit(BaseModel):
 class InterfaceAttach(BaseModel):
     """Request-side description of a device interface on a collision domain."""
 
-    link: str = Field(pattern=r"^\w+$")
+    link: str = Field(pattern=COLLISION_DOMAIN_PATTERN)
     number: Optional[int] = Field(default=None, ge=0)
     mac_address: Optional[str] = None
 

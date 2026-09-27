@@ -11,7 +11,7 @@ from Kathara.exceptions import (
     MachineOptionError,
     PrivilegeError,
 )
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from kathara_api.errors import SettingsLockedError, register_exception_handlers
 
@@ -204,8 +204,7 @@ def test_request_body_validation_error_flattens_to_a_plain_string_detail():
     assert resp.status_code == 422
     body = resp.json()
     assert isinstance(body["detail"], str)
-    assert "name" in body["detail"]
-    assert "pattern" in body["detail"]
+    assert body["detail"] == "Name must use only lowercase letters, digits and underscores (at most 30 characters)."
     assert body["error_type"] == "RequestValidationError"
 
 
@@ -217,7 +216,7 @@ def test_query_param_validation_error_also_flattens():
     assert resp.status_code == 422
     body = resp.json()
     assert isinstance(body["detail"], str)
-    assert "count" in body["detail"]
+    assert body["detail"].startswith("Count: ")
 
 
 def test_multiple_validation_errors_are_joined_into_one_string():
@@ -228,8 +227,8 @@ def test_multiple_validation_errors_are_joined_into_one_string():
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert isinstance(detail, str)
-    assert "name" in detail
-    assert "count" in detail
+    assert "Name must use only" in detail
+    assert "Count: " in detail
     assert ";" in detail  # more than one message, joined rather than truncated to the first
 
 
@@ -254,8 +253,7 @@ def test_model_validation_detail_keeps_the_field_name():
 
     detail = client.get("/boom").json()["detail"]
 
-    assert detail.startswith("name:")
-    assert "pattern" in detail
+    assert detail.startswith("Name must use only lowercase letters")
 
 
 def test_model_validation_detail_is_flattened_not_pydantics_own_rendering():
@@ -266,6 +264,52 @@ def test_model_validation_detail_is_flattened_not_pydantics_own_rendering():
 
     detail = client.get("/boom").json()["detail"]
 
-    assert "pattern" in detail  # the real message, not a generic stand-in
+    assert "lowercase letters" in detail  # the real message, not a generic stand-in
     assert "errors.pydantic.dev" not in detail
     assert "\n" not in detail
+
+
+class _Interface(BaseModel):
+    link: str = Field(pattern=r"^\w+$")
+
+
+class _Nested(BaseModel):
+    interfaces: list[_Interface]
+    code: str = Field(default="ok", pattern=r"^[A-Z]{3}$")
+    mac_address: str = "02:00:00:00:00:01"
+
+    @field_validator("mac_address")
+    @classmethod
+    def _no_spaces(cls, value: str) -> str:
+        if " " in value:
+            raise ValueError("cannot contain spaces")
+        return value
+
+
+def _nested_detail(**kwargs) -> str:
+    try:
+        _Nested(**kwargs)
+    except ValidationError as exc:
+        return _client_raising(exc).get("/boom").json()["detail"]
+    raise AssertionError("expected the model to reject these values")
+
+
+def test_validation_detail_never_shows_the_regex():
+    """A pattern the message table doesn't know still reads as a sentence: the regex answers what
+    the parser expected, which is not what the user has to type."""
+    detail = _nested_detail(interfaces=[], code="nope")
+
+    assert detail == "Code has an invalid format."
+    assert "[A-Z]" not in detail
+
+
+def test_validation_detail_names_a_list_item_by_its_position_counted_from_one():
+    detail = _nested_detail(interfaces=[{"link": "A"}, {"link": "a-b"}])
+
+    assert detail == "Interface 2 collision domain must use only letters, digits and underscores."
+
+
+def test_validation_detail_keeps_a_validators_own_message_without_pydantics_prefix():
+    detail = _nested_detail(interfaces=[], mac_address="02 00")
+
+    assert detail == "MAC address: cannot contain spaces."

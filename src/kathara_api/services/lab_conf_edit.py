@@ -430,7 +430,7 @@ def add_device(text: str, spec: MachineCreate) -> str:
     """
     doc = LabConfDoc(text)
     if doc.has_device(spec.name):
-        raise MachineAlreadyExistsError(f"Device `{spec.name}` already exists.")
+        raise MachineAlreadyExistsError(spec.name)
     if spec.name in lab_import.RESERVED_NAMES:
         raise ApiError(f"`{spec.name}` is a reserved name, it can't be used for a device.")
     doc.insert_device_block(_render_device_block(spec))

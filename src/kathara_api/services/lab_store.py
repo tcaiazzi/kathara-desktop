@@ -32,7 +32,7 @@ from Kathara.exceptions import LabNotFoundError
 from Kathara.model.Lab import Lab
 
 from ..config import format_mb, get_settings
-from ..errors import ApiError, LabAlreadyRegisteredError
+from ..errors import ApiError, InvalidArchiveError, LabAlreadyRegisteredError
 from ..lab_conf_options import (
     DEFAULT_IMAGE,
     IMAGE_KEY,
@@ -574,7 +574,11 @@ class LabStore:
             # BytesIO always satisfies the full file-like protocol, on every supported Python
             # version — `_read_bounded` is what keeps this from being an unconditional full read.
             raw = self._read_bounded(data, settings.max_bytes_per_lab)
-            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            try:
+                archive = zipfile.ZipFile(io.BytesIO(raw))
+            except zipfile.BadZipFile:
+                raise InvalidArchiveError("This file isn't a valid .zip archive.") from None
+            with archive:
                 members = archive.infolist()
                 if len(members) > settings.max_files_per_lab:
                     raise ApiError(
@@ -600,10 +604,15 @@ class LabStore:
                         )
                     target = self._safe_join(tmp, rel)  # rejects zip-slip (../ escapes)
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    with archive.open(member) as src, open(target, "wb") as dst:
-                        written += self._copy_with_cap(
-                            src, dst, rel, settings.max_bytes_per_file, written, settings.max_bytes_per_lab
-                        )
+                    # zipfile raises BadZipFile both on opening a member whose header is broken and
+                    # mid-read, when the member's bytes fail their CRC.
+                    try:
+                        with archive.open(member) as src, open(target, "wb") as dst:
+                            written += self._copy_with_cap(
+                                src, dst, rel, settings.max_bytes_per_file, written, settings.max_bytes_per_lab
+                            )
+                    except zipfile.BadZipFile:
+                        raise InvalidArchiveError(f"The archive is damaged: `{rel}` can't be read.") from None
                     # The upper 16 bits of external_attr hold the Unix mode when the archive was
                     # created on a Unix system (create_system == 3); 0 there means "no permission
                     # bits recorded" (e.g. a Windows-authored zip), so leave the OS default alone.

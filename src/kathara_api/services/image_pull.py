@@ -33,9 +33,9 @@ import time
 from contextlib import contextmanager
 from typing import Any, Iterable, Iterator, Optional
 
-from docker.errors import APIError, ImageNotFound
+from docker.errors import APIError, ImageNotFound, NotFound
 
-from ..errors import ImagePullBusyError, ImagePullError
+from ..errors import ImageNotAvailableError, ImagePullBusyError, ImagePullError
 
 logger = logging.getLogger("kathara_api")
 
@@ -70,6 +70,20 @@ def format_bytes(value: int) -> str:
 # ---------------------------------------------------------------------------
 # Image classification (the pre-check)
 # ---------------------------------------------------------------------------
+
+
+# Registry answers to a manifest lookup that mean "no such image, as far as you can see": Docker Hub
+# gives 404 for a missing tag and 403 for a missing or private repository, other registries 401.
+_NOT_FOUND_STATUSES = frozenset({401, 403, 404})
+
+
+def registry_says_not_found(exc: Exception) -> bool:
+    """Whether a failed registry lookup (``DockerImage.get_remote``) means the image doesn't exist
+    or isn't readable without a login — as opposed to the registry being unreachable, which says
+    nothing about the image. The one place that tells the two apart."""
+    if isinstance(exc, NotFound):
+        return True
+    return isinstance(exc, APIError) and exc.status_code in _NOT_FOUND_STATUSES
 
 
 def _remote_digest(docker_image: Any, name: str) -> Optional[str]:
@@ -477,7 +491,14 @@ def pull_images(manager: Any, images: list[str]) -> list[str]:
         for position, name in enumerate(images):
             start_image(name, position)
             # Surfaces a nonexistent reference as a clean error up front, rather than mid-stream.
-            docker_image.get_remote(name)
+            try:
+                docker_image.get_remote(name)
+            except APIError as exc:
+                if registry_says_not_found(exc):
+                    raise ImageNotAvailableError(
+                        f"Image `{name}` doesn't exist on its registry, or it's private."
+                    ) from None
+                raise
             for line in client.api.pull(name, stream=True, decode=True):
                 if not isinstance(line, dict):
                     continue

@@ -141,7 +141,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
       .catch((e: unknown) => {
         setError(e instanceof ApiError ? e.message : "The download failed.");
         setPhase("error");
-        toast.reportError("Image download failed", e);
+        toast.reportError("Download images", e);
       });
   }, [notifyCompletions, toast]);
 
@@ -201,7 +201,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
     if (progress.error) {
       setError(progress.error);
       setPhase("error");
-      toast.show(`Image download failed: ${progress.error}`, "danger");
+      toast.show(progress.error, "danger", "Download images");
     } else {
       setPhase("done");
       toast.show(pulledMessage(), "success");

@@ -2,11 +2,13 @@
 
 from pydantic import BaseModel, Field
 
+from ..lab_conf_options import COLLISION_DOMAIN_PATTERN
+
 
 class LinkCreate(BaseModel):
     """JSON description of a collision domain to create."""
 
-    name: str = Field(pattern=r"^\w+$")
+    name: str = Field(pattern=COLLISION_DOMAIN_PATTERN)
     external: list[str] = Field(default_factory=list)
 
 

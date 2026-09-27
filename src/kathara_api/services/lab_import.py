@@ -18,6 +18,7 @@ from typing import Optional
 from pydantic import ValidationError
 
 from ..lab_conf_options import (
+    COLLISION_DOMAIN_PATTERN,
     DEVICE_NAME_CHARS,
     DEVICE_NAME_PATTERN,
     IDENTIFIER_RE,
@@ -271,7 +272,7 @@ def parse_lab_conf(text: str) -> _ParsedConf:
                         errors.append(f'line {line_no}: invalid interface "{value}"')
                         continue
                     cd, mac = parts
-                if not re.match(r"^\w+$", cd):
+                if not re.match(COLLISION_DOMAIN_PATTERN, cd):
                     errors.append(f'line {line_no}: invalid collision domain "{cd}"')
                     continue
                 machine.interfaces.append(InterfaceAttach(link=cd, number=int(arg), mac_address=mac))

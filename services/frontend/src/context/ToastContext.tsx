@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ToastContainer, Toast, Button } from "react-bootstrap";
 import { desktop } from "../desktop/bridge";
-import { ApiError } from "../services/api";
+import { errorMessage } from "../services/api";
 import {
   allRead,
   unreadCount as countUnread,
@@ -22,8 +22,9 @@ interface ToastItem {
 
 interface ToastApi {
   show: (message: string, variant?: ToastVariant, detail?: string, action?: ToastAction) => void;
-  /** Show a message on success, or surface an ApiError's detail/error_type on failure. */
-  reportError: (prefix: string, error: unknown) => void;
+  /** Show a failure: titled with the action that failed (e.g. "Upload lab"), with the error's own
+   *  sentence as the body — see errorMessage. */
+  reportError: (label: string, error: unknown) => void;
 }
 
 interface NotificationsApi {
@@ -102,11 +103,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, [remove]);
 
   const reportError = useCallback<ToastApi["reportError"]>(
-    (prefix, error) => {
-      const message = error instanceof ApiError ? error.message : String(error);
-      const detail = error instanceof ApiError ? error.errorType : prefix;
-      show(`${prefix}: ${message}`, "danger", detail);
-    },
+    (label, error) => show(errorMessage(error), "danger", label),
     [show],
   );
 

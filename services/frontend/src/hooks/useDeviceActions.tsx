@@ -102,14 +102,16 @@ export function useDeviceActions({
     return nd && nd.type === "cd" ? nd : null;
   }
 
-  async function withRefresh(work: () => Promise<unknown>, okMsg: string): Promise<boolean> {
+  // `label` names the action for the error toast's title ("Add interface"), so a failure says what
+  // was being attempted; the body is the backend's own sentence.
+  async function withRefresh(label: string, work: () => Promise<unknown>, okMsg: string): Promise<boolean> {
     try {
       await work();
       toast.show(okMsg, "success");
       await onRefresh();
       return true;
     } catch (e) {
-      toast.reportError("Topology action", e);
+      toast.reportError(label, e);
       return false;
     }
   }
@@ -136,7 +138,7 @@ export function useDeviceActions({
       onSubmit: async ({ name }) => {
         const clean = name.trim();
         if (!clean) return false;
-        return withRefresh(() => api.addLink(labId, clean), `Collision domain "${clean}" added.`);
+        return withRefresh("Add collision domain", () => api.addLink(labId, clean), `Collision domain "${clean}" added.`);
       },
     });
   }
@@ -174,6 +176,7 @@ export function useDeviceActions({
         const mac = mac_address.trim() || undefined;
         if (running) {
           return withRefresh(
+            "Add interface",
             () => api.connectMachine(labId, deviceNode.name, clean, undefined, mac),
             `Added interface on ${deviceNode.name} → ${clean} (runtime).`,
           );
@@ -184,6 +187,7 @@ export function useDeviceActions({
           return false;
         }
         return withRefresh(
+          "Add interface",
           () => api.connectMachine(labId, deviceNode.name, clean, num, mac),
           `Added eth${num} on ${deviceNode.name} to ${clean}.`,
         );
@@ -237,6 +241,7 @@ export function useDeviceActions({
           }
         }
         return withRefresh(
+          "Add interface",
           () => api.connectMachine(labId, clean, domainNode.name, num, mac),
           running
             ? `Added interface on ${clean} → ${domainNode.name} (runtime).`
@@ -272,6 +277,7 @@ export function useDeviceActions({
         const clean = link.trim();
         if (!clean) return false;
         return withRefresh(
+          running ? "Disconnect interface" : "Remove interface",
           () => api.disconnectMachine(labId, deviceNode.name, clean),
           running ? `Disconnected ${deviceNode.name} from ${clean} (runtime).` : `Removed ${deviceNode.name}'s interface on ${clean}.`,
         );
@@ -327,7 +333,7 @@ export function useDeviceActions({
       okLabel: "Remove",
     });
     if (!ok) return;
-    await withRefresh(() => api.removeMachine(labId, name), `Device ${name} removed.`);
+    await withRefresh("Remove device", () => api.removeMachine(labId, name), `Device ${name} removed.`);
   }
 
   async function deployDevice(deviceNode: DeviceNode) {
@@ -340,7 +346,7 @@ export function useDeviceActions({
     // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
     const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });
     if (outcome !== "proceed") return;
-    await withRefresh(() => api.deployDevice(labId, deviceNode.name), `Device ${deviceNode.name} deployed.`);
+    await withRefresh("Deploy device", () => api.deployDevice(labId, deviceNode.name), `Device ${deviceNode.name} deployed.`);
   }
 
   async function undeployDevice(deviceNode: DeviceNode) {
@@ -350,7 +356,7 @@ export function useDeviceActions({
       okLabel: "Undeploy",
     });
     if (!ok) return;
-    await withRefresh(() => api.undeployDevice(labId, deviceNode.name), `Device ${deviceNode.name} undeployed.`);
+    await withRefresh("Undeploy device", () => api.undeployDevice(labId, deviceNode.name), `Device ${deviceNode.name} undeployed.`);
   }
 
   async function removeDomain(domainNode: DomainNode) {
@@ -360,7 +366,7 @@ export function useDeviceActions({
       okLabel: "Remove",
     });
     if (!ok) return;
-    await withRefresh(() => api.removeLink(labId, domainNode.name), `Collision domain ${domainNode.name} removed.`);
+    await withRefresh("Remove collision domain", () => api.removeLink(labId, domainNode.name), `Collision domain ${domainNode.name} removed.`);
   }
 
   function runningGate(nd: DeviceNode): { disabled?: boolean; title?: string } {

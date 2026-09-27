@@ -47,7 +47,6 @@ from Kathara.exceptions import (
     LabNotFoundError,
     MachineNotFoundError,
     MachineNotRunningError,
-    NotSupportedError,
 )
 from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
@@ -74,6 +73,7 @@ from ..errors import (
     SettingsFileInvalidError,
     SettingsLockedError,
     SettingsPersistError,
+    UnsupportedOperationError,
 )
 from ..lab_conf_options import LAB_CONF_FILENAME
 from ..schemas.examples import ExampleSummary
@@ -2360,7 +2360,7 @@ class KatharaService:
         self._get_running_machine(lab_id, machine_name)
         getter = getattr(self._facade(), "get_machine_api_object", None)
         if not callable(getter):
-            raise NotSupportedError("Live TTY is not supported by the current Kathara manager.")
+            raise UnsupportedOperationError("Live TTY is not supported by the current Kathara manager.")
         return getter(machine_name, lab_hash=lab_id)
 
     def available_shells(self, lab_id: str, machine_name: str) -> list[str]:
@@ -2529,7 +2529,7 @@ class KatharaService:
                 return machine
 
             if interface_number is not None:
-                raise NotSupportedError(
+                raise UnsupportedOperationError(
                     "Explicit interface_number is only supported when the device is not running."
                 )
 
@@ -2538,7 +2538,7 @@ class KatharaService:
             # connect adds the interface to the model and creates the collision domain before
             # Docker refuses, leaving a phantom interface behind an unreadable daemon error.
             if self._started_without_network(machine):
-                raise NotSupportedError(
+                raise UnsupportedOperationError(
                     f"Device `{machine_name}` was started without any network interface, so its container "
                     "has networking disabled and cannot be attached to links at runtime. "
                     "To connect it, stop the lab, add the device to a collision domain, and restart the lab."

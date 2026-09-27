@@ -39,6 +39,7 @@ from Kathara.exceptions import (
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from .lab_conf_options import COLLISION_DOMAIN_PATTERN, DEVICE_NAME_PATTERN
 from .schemas.common import ErrorResponse
 
 logger = logging.getLogger("kathara_api")
@@ -141,6 +142,11 @@ class NotALabError(ApiError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
+class InvalidArchiveError(ApiError):
+    """Raised when an uploaded lab archive is not a readable .zip: not a zip at all, or one whose
+    members fail their CRC check. Either is the uploader's file, not a server fault."""
+
+
 class LabCloseRefusedError(ApiError):
     """Raised when closing a lab that lives under the labs root.
 
@@ -205,6 +211,17 @@ class ImagePullBusyError(ApiError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class ImageNotAvailableError(ApiError):
+    """Raised when the registry says an image to download does not exist or cannot be read
+    without a login — services/image_pull.registry_says_not_found decides which answers mean that.
+
+    Docker Hub answers a missing tag with a 404 and a missing or private repository with a 403
+    (401 on some registries); all three leave the user with the same fix, the image name.
+    """
+
+    status_code = status.HTTP_404_NOT_FOUND
+
+
 class ImagePullError(ApiError):
     """Raised when a Docker pull stream reports a failure mid-download.
 
@@ -214,6 +231,12 @@ class ImagePullError(ApiError):
     """
 
     status_code = status.HTTP_502_BAD_GATEWAY
+
+
+class UnsupportedOperationError(ApiError):
+    """Raised when a request is valid but the device's current state or the Kathara manager can't
+    carry it out. Kathara's own ``NotSupportedError`` prefixes its message with "Not Supported:",
+    which reads twice over a sentence that already says what isn't supported."""
 
 
 class PathNotFoundError(ApiError):
@@ -327,8 +350,51 @@ def _error_response(exc: Exception, code: int) -> JSONResponse:
     return JSONResponse(status_code=code, content=body.model_dump())
 
 
+# What a value failing one of the schemas' `pattern=` constraints must look like, keyed by that
+# pattern. The pattern itself never reaches the message: a regex answers "what did the parser
+# expect", not "what should I type".
+PATTERN_MESSAGES: dict[str, str] = {
+    DEVICE_NAME_PATTERN: "must use only lowercase letters, digits and underscores (at most 30 characters)",
+    COLLISION_DOMAIN_PATTERN: "must use only letters, digits and underscores",
+}
+
+# Words for the field names a user meets in a form. Any other field is shown as its own name, with
+# underscores as spaces.
+FIELD_LABELS: dict[str, str] = {
+    "link": "collision domain",
+    "links": "collision domain",
+    "interfaces": "interface",
+    "machines": "device",
+    "mac_address": "MAC address",
+    "cpus": "CPUs",
+    "mem": "memory",
+}
+
+
+def _field_label(loc: Sequence[Any]) -> str:
+    """``("interfaces", 0, "link")`` -> ``"Interface 1 collision domain"``: list indices count from
+    one, the way a user numbers the rows of a form."""
+    words = [str(p + 1) if isinstance(p, int) else FIELD_LABELS.get(str(p), str(p).replace("_", " ")) for p in loc]
+    label = " ".join(words)
+    return label[:1].upper() + label[1:]
+
+
+def _validation_message(err: Mapping[str, Any], loc: Sequence[Any]) -> str:
+    label = _field_label(loc)
+    ctx = err.get("ctx") or {}
+    if err.get("type") == "string_pattern_mismatch":
+        rule = PATTERN_MESSAGES.get(str(ctx.get("pattern")), "has an invalid format")
+        return f"{label} {rule}" if label else f"The value {rule}"
+    if err.get("type") == "value_error" and ctx.get("error") is not None:
+        # A schema's own `field_validator`: pydantic prepends "Value error, " to its message.
+        msg = str(ctx["error"])
+    else:
+        msg = err.get("msg") or "Invalid value"
+    return f"{label}: {msg}" if label else msg
+
+
 def _flatten_validation_detail(errors: Sequence[Mapping[str, Any]], drop_source: bool) -> str:
-    """Join a pydantic error list into one ``field: message`` string.
+    """Join a pydantic error list into one user-facing sentence, one clause per error.
 
     ``drop_source`` skips ``loc``'s first element, which for a request-validation error names where
     the value came from (``"body"``, ``"query"``, ``"path"``, ...) — useful to a debugger, not in a
@@ -338,10 +404,8 @@ def _flatten_validation_detail(errors: Sequence[Mapping[str, Any]], drop_source:
     messages = []
     for err in errors:
         loc = err.get("loc", ())
-        field = ".".join(str(p) for p in (loc[1:] if drop_source else loc))
-        msg = err.get("msg") or "Invalid value."
-        messages.append(f"{field}: {msg}" if field else msg)
-    return "; ".join(messages) or "Invalid request."
+        messages.append(_validation_message(err, loc[1:] if drop_source else loc).rstrip("."))
+    return f"{'; '.join(messages)}." if messages else "Invalid request."
 
 
 def _validation_error_response(exc: RequestValidationError) -> JSONResponse:

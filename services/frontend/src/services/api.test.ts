@@ -234,3 +234,21 @@ describe("isAbortError", () => {
     expect(isAbortError(null)).toBe(false);
   });
 });
+
+describe("errorMessage", () => {
+  it("shows the backend's own sentence, never its error type", async () => {
+    const { ApiError, errorMessage } = await loadApi();
+
+    expect(errorMessage(new ApiError("This file isn't a valid .zip archive.", "InvalidArchiveError", 400))).toBe(
+      "This file isn't a valid .zip archive.",
+    );
+  });
+
+  it("uses an Error's message without its class name, and stringifies anything else", async () => {
+    const { errorMessage } = await loadApi();
+
+    expect(errorMessage(new TypeError("Failed to fetch"))).toBe("Failed to fetch");
+    expect(errorMessage(new Error(""))).toBe("Error");
+    expect(errorMessage("plain text")).toBe("plain text");
+  });
+});

@@ -13,7 +13,7 @@ import re
 import pytest
 from Kathara.exceptions import MachineNotRunningError
 
-from kathara_api.errors import ApiError, NotSupportedError
+from kathara_api.errors import ApiError, UnsupportedOperationError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import lab_builder
@@ -388,7 +388,7 @@ def test_machine_api_object_comes_from_the_facade(service):
 def test_machine_api_object_on_a_manager_without_it_is_not_supported(service, facade, monkeypatch):
     monkeypatch.setattr(_RuntimeFacade, "get_machine_api_object", None)
 
-    with pytest.raises(NotSupportedError, match="Live TTY is not supported"):
+    with pytest.raises(UnsupportedOperationError, match="^Live TTY is not supported"):
         service.get_machine_api_object(lab_id(service, "l"), "pc1")
 
 
@@ -536,7 +536,7 @@ def test_connecting_a_running_device_hands_its_mac_address_to_kathara(service, f
 
 
 def test_a_running_device_refuses_an_explicit_interface_number(service, facade):
-    with pytest.raises(NotSupportedError, match=r"Explicit interface_number is only supported when the device is not running\.$"):
+    with pytest.raises(UnsupportedOperationError, match=r"^Explicit interface_number is only supported when the device is not running\.$"):
         service.connect_machine(lab_id(service, "l"), "pc1", "B", interface_number=3)
     assert facade.connects == []
 
@@ -635,7 +635,7 @@ def test_live_tty_on_a_manager_without_api_objects_is_not_supported(tmp_path):
     lab.machines["pc1"].api_object = object()
     register_lab(service, lab)
 
-    with pytest.raises(NotSupportedError, match="Live TTY is not supported"):
+    with pytest.raises(UnsupportedOperationError, match="^Live TTY is not supported"):
         service.get_machine_api_object(lab_id(service, "l"), "pc1")
 
 
