@@ -379,10 +379,15 @@ class KatharaService:
     # -- locks, transitions and the facade -------------------------------------
 
     def _begin_transition(self, lab_id: str) -> None:
+        """Mark ``lab_id`` as inside ``deploy_lab``/``undeploy_lab`` until ``_end_transition``, so
+        ``_check_not_transitioning`` refuses every other mutator at once instead of letting it wait on
+        ``_mutate_lock`` for the whole transition."""
         with self._transitioning_lock:
             self._transitioning.add(lab_id)
 
     def _end_transition(self, lab_id: str) -> None:
+        """Undo ``_begin_transition``; always from a ``finally``, so a failed transition never leaves the lab
+        refusing every edit."""
         with self._transitioning_lock:
             self._transitioning.discard(lab_id)
 
@@ -507,6 +512,11 @@ class KatharaService:
             )
 
     def _facade(self) -> Kathara:
+        """The Kathara facade, built on first use under ``_init_lock``.
+
+        Raises ``DockerDaemonConnectionError`` (503) when the daemon can't be reached, and raises that same
+        failure again without reconnecting for ``_FACADE_FAILURE_TTL`` seconds.
+        """
         if self._instance is None:
             with self._init_lock:
                 if self._instance is None:
@@ -710,6 +720,9 @@ class KatharaService:
             self._conf_warnings.pop(key, None)
 
     def get_settings_view(self) -> dict[str, Any]:
+        """Everything the Settings page shows: Kathara's settings, the ``ApiSettings`` caps
+        (``_API_SETTINGS_KEYS``), where ``kathara.conf`` is, why it couldn't be read, and which of its
+        values this session ignores."""
         view = self._kathara_settings_dict()
         api_settings = get_settings()
         view.update({key: getattr(api_settings, key) for key in self._API_SETTINGS_KEYS})
@@ -719,6 +732,8 @@ class KatharaService:
         return view
 
     def system_info(self) -> dict[str, Any]:
+        """The manager, the Docker daemon's version and whether the backend runs as admin. Never fails for a
+        stopped daemon: only ``version`` needs it, and is None then."""
         facade = self._facade_or_offline()
         return {
             # A `@staticmethod` in Kathara's Docker manager returning exactly this string, so it
@@ -1131,6 +1146,9 @@ class KatharaService:
         return self._build_and_register(t.payload, lab_dir)
 
     def create_lab(self, spec: LabCreate) -> Lab:
+        """Create a lab under the labs root from a JSON description, not deployed, and write its ``lab.conf``
+        from the model. Claims the directory with ``_claiming``; a failed write unregisters the lab and
+        removes the directory again."""
         # `sanitize_lab_name` may strip whitespace (e.g. " demo " -> "demo"), and the lab
         # directory below is always created under that stripped form — every *import* path
         # already passes the same clean name through to the LabCreate it builds (see
@@ -2032,6 +2050,9 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_read_text_offline(self, lab_id: str, path: str) -> str:
+        """The UTF-8 text of a file in the lab's folder; ``lab.conf`` is read through ``read_lab_conf``.
+        ``PathNotFoundError`` (404) for a missing path, 400 for a directory, ``BinaryFileError`` for a file
+        that isn't UTF-8."""
         path = self._clean_offline_path(path)
         # Only the text read short-circuits lab.conf: it is the one whose content the API owns a
         # canonical copy of. A bytes read (a download) wants the file as it is on disk.
@@ -2045,11 +2066,19 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_read_bytes_offline(self, lab_id: str, path: str) -> bytes:
+        """A file in the lab's folder, byte for byte as it is on disk — ``lab.conf`` included.
+        ``PathNotFoundError`` (404) for a missing path, 400 for a directory."""
         target_fs, guest = self._resolve_offline_file(lab_id, self._clean_offline_path(path))
         return target_fs.readbytes(guest)
 
     @_lab_file_permissions
     def fs_write_text_offline(self, lab_id: str, path: str, content: str) -> int:
+        """Write ``content`` over a file in the lab's folder and return the bytes written.
+
+        ``lab.conf`` goes through ``update_lab_conf``. Any other file is written under ``_mutate_lock``,
+        refused while the lab is transitioning, and marks its device dirty for the next redeploy
+        (``_dirty_target_for``).
+        """
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
             # update_lab_conf does its own _check_not_transitioning.
@@ -2071,6 +2100,9 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_upload_bytes_offline(self, lab_id: str, path: str, content: bytes) -> int:
+        """Write raw ``content`` over a file in the lab's folder, creating its parent folders, and return its
+        size. ``lab.conf`` must be UTF-8 and goes through ``update_lab_conf``; any other file is handled as
+        in ``fs_write_text_offline``."""
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
             # Routed exactly like fs_write_text_offline's, and for the same reasons. Unguarded, an
@@ -2100,6 +2132,8 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_mkdir_offline(self, lab_id: str, path: str) -> None:
+        """Create a folder, and any missing parents, in the lab's folder. Under ``_mutate_lock``, refused
+        while the lab is transitioning; a folder under a device marks that device dirty."""
         path = self._clean_offline_path(path)
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
@@ -2116,6 +2150,12 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_delete_offline(self, lab_id: str, path: str, recursive: bool = False) -> None:
+        """Delete a file, or a folder — only an empty one unless ``recursive``.
+
+        Refuses ``lab.conf`` and the lab root. Deleting a device's own folder removes it entirely, and it
+        reappears as soon as something is written under it. Under ``_mutate_lock``, refused while the lab
+        is transitioning.
+        """
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
             raise ApiError("lab.conf can't be deleted.")
@@ -2198,6 +2238,12 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_move_offline(self, lab_id: str, source_path: str, destination_path: str) -> None:
+        """Move a file or folder within the lab's folder: a file replaces one at the destination, a folder
+        merges into one there, and a symlink moves as the link it is.
+
+        Refuses ``lab.conf`` at either end and the lab root. Marks the devices of both paths dirty. Under
+        ``_mutate_lock``, refused while the lab is transitioning.
+        """
         source_path = self._clean_offline_path(source_path)
         destination_path = self._clean_offline_path(destination_path)
         if self._is_lab_conf(source_path) or self._is_lab_conf(destination_path):
@@ -2229,6 +2275,8 @@ class KatharaService:
 
     @_lab_file_permissions
     def fs_copy_offline(self, lab_id: str, source_path: str, destination_path: str) -> None:
+        """Copy a file or folder within the lab's folder, like ``fs_move_offline`` but keeping the source.
+        Refuses copying over ``lab.conf`` and the lab root, and marks the destination's device dirty."""
         source_path = self._clean_offline_path(source_path)
         destination_path = self._clean_offline_path(destination_path)
         if self._is_lab_conf(destination_path):
@@ -2290,6 +2338,8 @@ class KatharaService:
         return reconstructed
 
     def list_labs(self) -> list[Lab]:
+        """Every registered lab, after adopting any new folder under the labs root (``rescan_labs_root``),
+        each refreshed from Docker — or shown with nothing running when the daemon can't be reached."""
         self.rescan_labs_root()
         labs = self.registry.all()
         facade = self._facade_or_offline()
@@ -2434,6 +2484,15 @@ class KatharaService:
         selected_machines: Optional[set[str]] = None,
         excluded_machines: Optional[set[str]] = None,
     ) -> Lab:
+        """Deploy the lab — or only ``selected_machines``, or every device but ``excluded_machines`` — and
+        return it.
+
+        A device already running is not recreated: the files changed under it since its last deploy are
+        pushed into its container instead (``_live_push``). The lab is marked as transitioning and holds
+        ``_mutate_lock`` for the whole call; a second deploy or undeploy meanwhile is a
+        ``LabTransitioningError`` (409). A failure is kept for the lab to show
+        (``registry.set_deploy_failure``).
+        """
         # Self-checked exactly like every other guarded mutator — without this, two
         # concurrent deploy_lab calls on the same lab both pass _begin_transition (a set add, not
         # a lock) and run concurrently, each computing its own fresh/already-running split from a
@@ -2618,6 +2677,12 @@ class KatharaService:
         excluded_machines: Optional[set[str]] = None,
         selected_links: Optional[set[str]] = None,
     ) -> None:
+        """Stop the lab, or only the selected devices or collision domains.
+
+        A full undeploy puts the model back to what ``lab.conf`` declares; a partial one does that for the
+        devices it stopped only. 404 for a lab with neither a registration nor a directory. Transitioning
+        and under ``_mutate_lock`` for the whole call, like ``deploy_lab``.
+        """
         # Marked as transitioning for the whole call (see deploy_lab's own comment on why), plus
         # everything here runs inside one lock section, not just the facade call — the model
         # bookkeeping below (`_clear_undeployed_state`, and for a full undeploy, replacing the
@@ -2717,6 +2782,13 @@ class KatharaService:
                 return renamed
 
     def delete_lab(self, lab_id: str) -> None:
+        """Undeploy a lab under the labs root and delete its folder.
+
+        A folder opened from elsewhere is a ``LabDeleteRefusedError`` (409). A folder holding a file this
+        user can't remove is a ``LabFilePermissionError`` (403) before anything is undeployed; a removal
+        that still fails part-way leaves what remains listed. Unregistering and removing the folder run
+        under ``_claiming``, like a create.
+        """
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab_dir = self._lab_dir(lab_id)
@@ -2803,11 +2875,13 @@ class KatharaService:
         return available or list(SHELL_PATHS)
 
     def add_machine(self, lab_id: str, spec: MachineCreate) -> Machine:
-        # Adding a device is a *configuration* edit: it is appended to lab.conf and added to the
-        # model, stopped, whether or not the lab is running. Starting it is a separate step — a
-        # single-device deploy, or the lab's next deploy — so the one path that starts devices
-        # (deploy_lab) is also the one that checks and explains why one can't start.
-        #
+        """Add a device to the lab, stopped, and append it to ``lab.conf``.
+
+        Adding a device is a *configuration* edit, whether or not the lab is running. Starting it
+        is a separate step — a single-device deploy, or the lab's next deploy — so the one path
+        that starts devices (deploy_lab) is also the one that checks and explains why one can't
+        start.
+        """
         # `lab` is (re)read *inside* the lock, not before it — matching update_machine/
         # update_lab_conf/rename_lab: a `lab` read outside it could be an orphan the registry no
         # longer tracks (undeploy_lab replaces it via _reload_lab_from_disk).
@@ -2852,6 +2926,8 @@ class KatharaService:
             return machine
 
     def remove_machine(self, lab_id: str, machine_name: str, keep_links: bool = False) -> None:
+        """Undeploy a device and drop it: from the model, its files from disk, its lines from ``lab.conf``.
+        ``keep_links`` keeps its collision domains' networks up."""
         # `lab`/`machine` are (re)read *inside* the lock — see add_machine's comment on why reading
         # them beforehand would let a concurrent deploy_lab/undeploy_lab run first and act on
         # stale state (e.g. a `machine` whose interfaces changed since, or a `lab` the registry
@@ -2905,6 +2981,12 @@ class KatharaService:
         interface_number: Optional[int] = None,
         mac_address: Optional[str] = None,
     ) -> Machine:
+        """Attach a device to a collision domain, creating the domain if needed.
+
+        A stopped device gets the interface in ``lab.conf`` too, numbered ``interface_number`` or the next
+        free one. A running device is connected live, not persisted, and cannot be given an
+        ``interface_number`` (``UnsupportedOperationError``).
+        """
         # `lab`/`machine`/`link`, and — critically — the running-vs-stopped branch below, are all
         # decided *inside* the lock (see add_machine's comment on why). Deciding the branch from a
         # `machine.api_object` read taken before the lock could see "stopped" and then have a
@@ -2980,6 +3062,11 @@ class KatharaService:
     def disconnect_machine(
         self, lab_id: str, machine_name: str, link_name: str, keep_link: bool = False
     ) -> None:
+        """Detach a device from a collision domain.
+
+        A stopped device loses the interface in ``lab.conf`` too, its higher interfaces renumbered down. A
+        running device is disconnected live only, and keeps the empty interface slot until it stops.
+        """
         # `lab`/`machine`/`link` and the running-vs-stopped branch are all decided *inside* the
         # lock — same reasoning as connect_machine above (and add_machine's comment): deciding it
         # from a read taken before the lock risks acting on a device whose running state has
@@ -3014,6 +3101,8 @@ class KatharaService:
                 self._facade().disconnect_machine_from_link(machine, link, keep_link=keep_link)
 
     def copy_files(self, lab_id: str, machine_name: str, files: dict[str, str]) -> None:
+        """Copy text files into a running device's container, ``{guest path: content}``.
+        ``MachineNotRunningError`` (409) unless it is running, checked under ``_mutate_lock``."""
         guest_to_host = {path: io.BytesIO(content.encode("utf-8")) for path, content in files.items()}
         # `_get_running_machine` (lab/machine lookup + the running check) belongs inside the lock:
         # checked outside it, a concurrent undeploy_lab/remove_machine could stop the device
@@ -3060,6 +3149,8 @@ class KatharaService:
         wait: bool = True,
         action_label: str,
     ) -> tuple[bytes, bytes]:
+        """``exec_command`` for a command that must succeed: a non-zero exit becomes an ``ApiError`` naming
+        ``action_label``, the device and the command's stderr. Returns ``(stdout, stderr)``, never None."""
         stdout, stderr, exit_code = self.exec_command(lab_id, machine_name, command, wait=wait)
         # Some backends can return None for empty streams; normalize so callers can decode safely.
         stdout = stdout if stdout is not None else b""
@@ -3100,6 +3191,8 @@ class KatharaService:
     )
 
     def fs_list_directory(self, lab_id: str, machine_name: str, path: str) -> list[FsEntry]:
+        """List a directory of a running device (``_FS_LIST_SCRIPT``), directories first, a symlink to a
+        directory counted as one. ``ApiError`` when the listing fails."""
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
         # The path travels as a positional argument (`$1`, after `$0`), never spliced into the
         # script text, so it needs no shell quoting.
@@ -3146,6 +3239,7 @@ class KatharaService:
     _FS_READ_IS_DIR_EXIT = 90
 
     def fs_read_bytes(self, lab_id: str, machine_name: str, path: str) -> bytes:
+        """A file of a running device, read in one exec. ``ApiError`` for a directory or a failed read."""
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
         quoted = shlex.quote(normalized)
         # A single exec instead of a `test -d` probe followed by a separate `cat` — halves the
@@ -3160,6 +3254,7 @@ class KatharaService:
         return stdout or b""
 
     def fs_read_text(self, lab_id: str, machine_name: str, path: str) -> str:
+        """``fs_read_bytes`` as UTF-8 text, or ``BinaryFileError`` for a file that isn't."""
         raw = self.fs_read_bytes(lab_id, machine_name, path)
         try:
             return raw.decode("utf-8")
@@ -3222,12 +3317,15 @@ class KatharaService:
     _FS_WRITE_SCRIPT = 'mkdir -p -- "$(dirname -- "$1")" && cat -- "$2" > "$1"; rc=$?; rm -f -- "$2"; exit $rc'
 
     def fs_write_text(self, lab_id: str, machine_name: str, path: str, content: str) -> int:
+        """Write ``content`` over a file of a running device, or create it, keeping an existing file's
+        metadata (``_write_in_place``). Returns the bytes written."""
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
         data = content.encode("utf-8")
         self._write_in_place(lab_id, machine_name, normalized, data)
         return len(data)
 
     def fs_upload_bytes(self, lab_id: str, machine_name: str, path: str, content: bytes) -> int:
+        """``fs_write_text`` for raw bytes. Returns their count."""
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
         self._write_in_place(lab_id, machine_name, normalized, content)
         return len(content)
@@ -3258,6 +3356,7 @@ class KatharaService:
             )
 
     def fs_mkdir(self, lab_id: str, machine_name: str, path: str) -> None:
+        """Create a directory, and any missing parents, on a running device."""
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
         self._exec_checked(
             lab_id,
@@ -3268,6 +3367,8 @@ class KatharaService:
         )
 
     def fs_move(self, lab_id: str, machine_name: str, source_path: str, destination_path: str) -> None:
+        """Move a path on a running device with ``mv``: into a destination directory that exists,
+        not over it."""
         _, source = self._running_guest_path(lab_id, machine_name, source_path)
         destination = self.normalize_guest_path(destination_path)
         self._exec_checked(
@@ -3279,6 +3380,8 @@ class KatharaService:
         )
 
     def fs_copy(self, lab_id: str, machine_name: str, source_path: str, destination_path: str) -> None:
+        """Copy a path on a running device with ``cp -a``: into a destination directory that exists, like
+        ``fs_move``."""
         # Like `mv` above, `cp -a` copies *into* an existing destination directory rather than
         # replacing it — for both, the frontend deletes a confirmed directory collision before
         # calling this.
@@ -3293,6 +3396,7 @@ class KatharaService:
         )
 
     def fs_delete(self, lab_id: str, machine_name: str, path: str, recursive: bool = False) -> None:
+        """Delete a path on a running device: a file or an empty directory, or anything when ``recursive``."""
         _, normalized = self._running_guest_path(lab_id, machine_name, path)
         if recursive:
             self._exec_checked(
@@ -3317,13 +3421,15 @@ class KatharaService:
     # -- links ----------------------------------------------------------------
 
     def add_link(self, lab_id: str, link_name: str, external: Optional[list[str]] = None) -> Link:
+        """Add a collision domain, bridged to the host's ``external`` interfaces if any.
+
+        A domain added with no device on it can't be written to lab.conf, so it is kept as a draft
+        (LabRegistry.add_draft) until a device is connected to it. Its Docker network is created
+        only while the lab is running: a stopped lab creates its networks when it is deployed.
+        """
         # `lab`/`link` read *inside* the lock (see add_machine's comment on why), along with the
         # `link.external` model mutation — building it outside the lock is the same class of
         # issue as reading stale state: a concurrent operation on this lab could run in between.
-        #
-        # A domain added with no device on it can't be written to lab.conf, so it is kept as a draft
-        # (LabRegistry.add_draft) until a device is connected to it. Its Docker network is created
-        # only while the lab is running: a stopped lab creates its networks when it is deployed.
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
@@ -3338,6 +3444,8 @@ class KatharaService:
         return link
 
     def remove_link(self, lab_id: str, link_name: str) -> None:
+        """Remove a collision domain, and every interface on it, from the model and ``lab.conf``.
+        ``LinkInUseError`` (409) while a running device is attached to it."""
         # Running-machine check decided *inside* the lock — same reasoning as add_machine/
         # connect_machine/disconnect_machine: a read taken before the lock could see "all stopped"
         # and then have a concurrent deploy_lab start a machine before this function's own critical
@@ -3396,6 +3504,8 @@ class KatharaService:
         command: Union[str, list[str]],
         wait: bool = False,
     ) -> tuple[bytes, bytes, int]:
+        """Run ``command`` on a device through the facade; returns ``(stdout, stderr, exit_code)``. REST code
+        paths pass ``wait=False``: ``wait=True`` blocks until the device's startup commands have finished."""
         return self._facade().exec(
             machine_name, command, lab_hash=lab_id, wait=wait, stream=False
         )

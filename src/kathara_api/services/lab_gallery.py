@@ -71,6 +71,9 @@ class GalleryEntry:
 
 @dataclass
 class Catalog:
+    """One fetch of the gallery: where it came from (repo, ref, section), when, and the labs found
+    there, by id."""
+
     repo: str
     ref: str
     section: str

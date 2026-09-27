@@ -100,6 +100,8 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
 
 
 def link_to_detail(link: Link) -> LinkDetail:
+    """Serialize a collision domain: its devices, external interfaces, and whether its network is
+    up or it is only a draft."""
     return LinkDetail(
         name=link.name,
         machines=list(link.machines.keys()),
@@ -141,6 +143,8 @@ def _run_fields(lab: Lab, failure: Optional[DeployFailure]) -> dict[str, Any]:
 def lab_to_summary(
     lab: Lab, place: Optional[LabPlace] = None, failure: Optional[DeployFailure] = None
 ) -> LabSummary:
+    """Serialize a lab for the lab list: counts, run state, last deploy failure and where it lives —
+    ``lab_to_detail`` without the devices and collision domains."""
     return LabSummary(
         name=lab.name,
         id=lab.hash,
@@ -185,4 +189,5 @@ def lab_to_detail(
 
 
 def machine_stats_to_schema(stats: Any) -> MachineStats:
+    """Serialize one sample of Kathara's ``DockerMachineStats`` through its own ``to_dict``."""
     return MachineStats.model_validate(stats.to_dict())

@@ -225,6 +225,11 @@ _settings: Optional[ApiSettings] = None
 
 
 def get_settings() -> ApiSettings:
+    """The process-wide ``ApiSettings``, read from the environment on first use.
+
+    Call it at the point of use rather than keeping what it returns: ``PUT /settings``
+    (``KatharaService.update_settings``) changes the caps on this very object at runtime.
+    """
     global _settings
     if _settings is None:
         _settings = ApiSettings()

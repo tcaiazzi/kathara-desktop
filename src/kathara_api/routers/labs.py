@@ -44,7 +44,9 @@ from ..services.kathara_service import KatharaService
 router = APIRouter(prefix="/labs", tags=["labs"])
 
 
-def _to_set(values):
+def _to_set(values: list[str] | None) -> set[str] | None:
+    """A request's device/link list as the set the service takes. An empty list becomes None, as
+    a missing one does: no restriction, the same as not sending the field."""
     return set(values) if values else None
 
 

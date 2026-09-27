@@ -97,6 +97,8 @@ class LabWatcher:
         self._thread: threading.Thread | None = None
 
     def poll_once(self) -> None:
+        """One pass over every lab: run ``on_poll``, then report each lab's changed names to
+        ``on_change``. A failing ``on_poll`` or ``on_change`` is logged, and never stops the pass."""
         if self._on_poll is not None:
             try:
                 self._on_poll()

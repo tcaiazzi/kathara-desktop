@@ -332,6 +332,10 @@ def parse_lab_ext(text: str) -> list[LinkCreate]:
 
 @dataclass
 class LabImportTranslation:
+    """What ``translate_lab_files`` made of a lab directory: the ``LabCreate`` to build it from, its
+    device count and collision domains, and the problems found. Any ``errors`` mean the lab must
+    not be loaded; ``warnings`` are for the user and load the lab anyway."""
+
     payload: LabCreate
     machine_count: int
     domains: list
