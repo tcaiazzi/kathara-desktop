@@ -8,7 +8,10 @@ it raises when none works. No Docker involved; the thread-pool routing of the as
 covered separately in test_docker_tty_executor.py.
 """
 
+import gc
+import http.client
 import socket
+import sys
 import threading
 import time
 
@@ -308,6 +311,39 @@ def test_session_close_unblocks_a_read_waiting_in_another_thread_and_ends_the_co
         # Left open: http.client closes its wrappers around it later, and fails on one closed
         # underneath it.
         assert not exec_socket.closed
+    finally:
+        ours.close()
+        shell_end.close()
+
+
+def test_session_close_closes_the_exec_response_so_nothing_fails_when_it_is_collected(monkeypatch):
+    """The exec socket as docker-py hands it out: the `SocketIO` inside an HTTP response to the
+    upgraded exec request, with that response kept on it as `_response`."""
+    ours, shell_end = socket.socketpair()
+    shell_end.sendall(b"HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
+    response = http.client.HTTPResponse(ours)
+    response.begin()
+    exec_socket = response.fp.raw
+    exec_socket._response = response
+    session = DockerTtySession(_FakeApiClient(sock=exec_socket), "c1", "bash")
+    session.start()
+    unraisable = []
+    monkeypatch.setattr(sys, "unraisablehook", lambda hook_args: unraisable.append(hook_args.exc_value))
+    reader = threading.Thread(target=session.read, args=(64,))
+    reader.start()
+    time.sleep(0.05)
+
+    session.close()
+    reader.join(timeout=2)
+    # Closed already, so however the collector orders the wrappers, none is left to close.
+    closed_by_the_session = response.closed
+    del session, response, exec_socket
+    gc.collect()
+
+    try:
+        assert not reader.is_alive()
+        assert closed_by_the_session
+        assert unraisable == []
     finally:
         ours.close()
         shell_end.close()

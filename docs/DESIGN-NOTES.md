@@ -33,8 +33,10 @@ returns promptly and is not a per-session thread.
 
 Closing a session shuts its socket down (`DockerTtySession.close`) instead of closing it. Closing
 does not release the read blocked in the pool, since the HTTP connection underneath still holds the
-socket, so every closed terminal would keep a worker for good; the shutdown makes that read return,
-and the socket's wrappers then close themselves once the session is let go.
+socket, so every closed terminal would keep a worker for good; the shutdown makes that read return.
+The session then closes the HTTP response the socket belongs to, which closes its wrappers outermost
+first: left to the garbage collector, which may take them in any order, http.client's close fails on
+one already closed underneath it.
 The shell in the container outlives the session either way, as Docker leaves an exec's process
 running when its client disconnects.
 

@@ -189,25 +189,38 @@ class DockerTtySession:
         self._client.exec_resize(self._exec_id, height=rows, width=cols)
 
     def close(self) -> None:
-        # Shut the connection down rather than close the exec socket. Closing it only drops this
-        # wrapper, while http.client still holds the socket underneath, so a read blocked in
-        # another thread would stay blocked for good, holding its worker; shutdown() makes that
-        # read return b"". The wrappers are then left to close themselves, outermost first, once
-        # the session is let go: closing the innermost one here would make http.client's own
-        # close fail later on flushing it ("I/O operation on closed file"). The shell outlives
-        # the connection either way, since Docker leaves an exec's process running when its
-        # client goes. A transport without shutdown() (a Windows named pipe) is closed instead.
+        # Shut the connection down first. Closing the exec socket alone only drops that wrapper,
+        # while http.client still holds the socket underneath, so a read blocked in another thread
+        # would stay blocked for good, holding its worker; shutdown() makes that read return b"".
+        # Then the HTTP response the socket belongs to is closed, which closes its wrappers
+        # outermost first. Closing the innermost one directly, or leaving them to the garbage
+        # collector (which may finalize them in any order), makes http.client's own close fail
+        # on flushing a wrapper already closed underneath it ("I/O operation on closed file").
+        # The shell outlives the connection either way: Docker leaves an exec's process running
+        # when its client goes. A transport without shutdown() (a Windows named pipe) is closed.
         for target in _iter_socket_transports(self._socket):
             shutdown = getattr(target, "shutdown", None)
             if callable(shutdown):
                 try:
                     shutdown(socket.SHUT_RDWR)
-                    return
                 except (OSError, TypeError, ValueError):  # already closed, or not a BSD socket
                     break
+                self._close_response()
+                return
         close = getattr(self._socket, "close", None)
         if callable(close):
             close()
+
+    def _close_response(self) -> None:
+        """Close the HTTP response behind the exec socket, which docker-py keeps on the socket
+        (``_response``, see ``APIClient._get_raw_response_socket``) so it outlives the call."""
+        response = getattr(self._socket, "_response", None)
+        close = getattr(response, "close", None)
+        if callable(close):
+            try:
+                close()
+            except (OSError, ValueError):  # a wrapper already gone: nothing left to release
+                pass
 
     # -- async wrappers, routed onto the dedicated TTY executor ---------------------------------
     #
