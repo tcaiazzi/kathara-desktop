@@ -114,6 +114,27 @@ export function withMergedChildrenAt(nodes: FsNode[], path: string, freshChildre
   });
 }
 
+// The directories to list, in order, so that `path`'s listing lands in the tree: a merge only
+// reaches a directory whose parent is loaded (withMergedChildrenAt), so the chain is walked from the
+// top. The first ancestor missing from the tree needs its parent listed to appear at all; the
+// first one present but never expanded (`children` undefined) needs listing itself; everything
+// below either then follows. `path` itself is always listed last — it is what changed.
+export function dirsToLoad(nodes: FsNode[], path: string): string[] {
+  if (path === "/") return ["/"];
+  const chain: string[] = [];
+  let acc = "";
+  for (const segment of path.split("/").filter(Boolean)) {
+    acc += `/${segment}`;
+    chain.push(acc);
+  }
+  for (let i = 0; i < chain.length; i++) {
+    const node = findNode(nodes, chain[i]);
+    if (!node) return [parentOf(chain[i]), ...chain.slice(i)];
+    if (i < chain.length - 1 && node.children === undefined) return chain.slice(i);
+  }
+  return [path];
+}
+
 // A path typed into a prompt, normalized to a single leading slash and no trailing one. Returns
 // null for anything that would resolve to the root itself (empty, "/", "///") — there is nothing
 // meaningful to create, upload or move there.

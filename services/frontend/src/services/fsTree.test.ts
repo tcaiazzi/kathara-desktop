@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dirsToLoad,
   entryToNode,
   findNode,
   freshScopeState,
@@ -170,5 +171,29 @@ describe("tree merging, edge cases", () => {
 
   it("strips several trailing slashes", () => {
     expect(toAbsolutePath("pc1/etc///")).toBe("/pc1/etc");
+  });
+});
+
+describe("dirsToLoad", () => {
+  it("lists just the directory when its ancestors are already loaded", () => {
+    const tree = [dir("pc1", "/pc1", [dir("etc", "/pc1/etc")])];
+    expect(dirsToLoad(tree, "/pc1/etc")).toEqual(["/pc1/etc"]);
+    expect(dirsToLoad(tree, "/")).toEqual(["/"]);
+  });
+
+  it("lists an ancestor that is in the tree but was never expanded, then everything below it", () => {
+    // `/pc1` came in with the root listing but nobody opened it: merging into `/pc1/etc` alone
+    // would reach nothing.
+    expect(dirsToLoad([dir("pc1", "/pc1")], "/pc1/etc")).toEqual(["/pc1", "/pc1/etc"]);
+    expect(dirsToLoad([dir("pc1", "/pc1")], "/pc1/etc/frr")).toEqual(["/pc1", "/pc1/etc", "/pc1/etc/frr"]);
+  });
+
+  it("lists the parent of an ancestor the tree doesn't have yet", () => {
+    expect(dirsToLoad([dir("pc1", "/pc1", [])], "/pc1/etc/frr")).toEqual(["/pc1", "/pc1/etc", "/pc1/etc/frr"]);
+    expect(dirsToLoad([], "/pc2/etc")).toEqual(["/", "/pc2", "/pc2/etc"]);
+  });
+
+  it("lists the parent first when the directory itself is new", () => {
+    expect(dirsToLoad([dir("pc1", "/pc1", [])], "/pc1/etc")).toEqual(["/pc1", "/pc1/etc"]);
   });
 });

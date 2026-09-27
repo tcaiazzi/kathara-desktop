@@ -273,10 +273,14 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
         void tree.reload();
       }}
       editorReadOnly={editingLabConf && detail.deployed}
-      readOnlyPlaceholder="Undeploy the lab to edit lab.conf."
       bannerSlot={
         editingLabConf && (
           <>
+            {detail.deployed && (
+              <div className="alert alert-info py-1 px-2 mb-2 small">
+                lab.conf is read-only while the lab is running. Undeploy the lab to edit it.
+              </div>
+            )}
             {confConflict !== null && (
               <div className="alert alert-warning py-1 px-2 mb-2 d-flex justify-content-between align-items-center small">
                 <span>lab.conf changed on disk since you started editing.</span>

@@ -13,6 +13,8 @@ interface EditorPaneProps {
   placeholder?: string;
   onSave: () => void;
   saveDisabled: boolean;
+  /** The buffer has edits not saved yet: marked next to the path. */
+  dirty?: boolean;
   // Syntax mode for the code editor. Defaults to plaintext; callers pass languageForPath(path).
   language?: EditorLanguage;
   /** Forwarded to CodeEditor — see its own doc. */
@@ -29,6 +31,7 @@ export function EditorPane({
   placeholder,
   onSave,
   saveDisabled,
+  dirty = false,
   language = "plaintext",
   scrollTarget,
 }: EditorPaneProps) {
@@ -39,7 +42,14 @@ export function EditorPane({
     // .cm-scroller{overflow:auto} — that only kicks in once every ancestor actually bounds height).
     <div className="flex-grow-1 d-flex flex-column" style={{ minHeight: 0 }}>
       <div className="d-flex justify-content-between align-items-center mb-2">
-        <span className="font-monospace small text-muted">{pathLabel}</span>
+        <span className="font-monospace small text-muted">
+          {pathLabel}
+          {dirty && (
+            <span className="text-warning" title="Unsaved changes" aria-label="Unsaved changes">
+              {" "}●
+            </span>
+          )}
+        </span>
         <div className="d-flex gap-2">
           <Button size="sm" variant="primary" disabled={saveDisabled} onClick={onSave}>
             Save

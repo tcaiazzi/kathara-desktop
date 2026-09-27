@@ -7,6 +7,7 @@ import { useRegisterUnsaved } from "../context/UnsavedChangesContext";
 import { ApiError, isAbortError } from "../services/api";
 import { saveBlob } from "../services/download";
 import {
+  dirsToLoad,
   entryToNode,
   findNode,
   freshScopeState,
@@ -168,6 +169,8 @@ export interface UseFsTree {
   onTreeSelect: (nodes: NodeApi<FsNode>[]) => void;
   onTreeRename: (args: { id: string; name: string }) => void;
   onTreeMove: (args: { dragIds: string[]; parentId: string | null }) => void;
+  /** Starts renaming the focused (else the selected) row inline, when it may be renamed. */
+  handleRenameFocused: () => void;
   handleSave: () => Promise<void>;
   handleNewFile: (defaultDir?: string) => Promise<void>;
   handleNewDirectory: (defaultDir?: string) => Promise<void>;
@@ -413,11 +416,23 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   // re-triggering this effect, and `t.select` would immediately collapse the tree back down to
   // that one node. Skipping the call when the tree already agrees avoids that without weakening
   // the programmatic-jump case, where the target is never already selected.
+  //
+  // `t.select` only acts on a *visible* row, and a folder `openParents` just opened shows its rows
+  // on the tree's next render — so a target inside it (a file created under a collapsed folder) is
+  // selected once `scrollTo` reports it on screen, provided it is still what should be selected.
   const revealAndSelect = useCallback((path: string | null) => {
     const t = treeRef.current;
     if (!t || !path) return;
     t.openParents(path);
-    if (!t.isSelected(path)) t.select(path);
+    if (t.isSelected(path)) return;
+    if (t.get(path)) {
+      t.select(path);
+      return;
+    }
+    void t.scrollTo(path)?.then(() => {
+      const current = treeRef.current;
+      if (current && scoped.current.selected === path && !current.isSelected(path)) current.select(path);
+    });
   }, []);
   useEffect(() => {
     revealAndSelect(selected);
@@ -448,20 +463,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   );
 
   // Refresh one directory's listing after a write/delete/move affects something inside it —
-  // loading any not-yet-seen ancestor along the way first, so a brand-new deeply nested path
-  // (created under a folder nobody has expanded yet) still shows up correctly.
+  // listing first whatever ancestors the tree hasn't loaded (dirsToLoad), so a brand-new deeply
+  // nested path (created under a folder nobody has expanded yet) still shows up. The chain is
+  // worked out once, up front: each loadAndMerge is a functional state update applied in order, so
+  // later steps see earlier ones even though `scoped.current.tree` only catches up after render.
   const refreshDir = useCallback(
     async (path: string) => {
       try {
-        if (path !== "/") {
-          const segments = path.split("/").filter(Boolean);
-          let acc = "";
-          for (let i = 0; i < segments.length - 1; i++) {
-            acc += `/${segments[i]}`;
-            if (!findNode(scoped.current.tree, acc)) await loadAndMerge(acc);
-          }
-        }
-        await loadAndMerge(path);
+        for (const dir of dirsToLoad(scoped.current.tree, path)) await loadAndMerge(dir);
       } catch (e) {
         toast.reportError(sourceRef.current.labels.openFile, e);
       }
@@ -629,7 +638,15 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     async (path: string): Promise<boolean> => {
       const name = baseName(path);
       if (!name) return true;
-      const existing = (await sourceRef.current.list(parentOf(path))).find((e) => e.name === name);
+      let entries: FsEntry[];
+      try {
+        entries = await sourceRef.current.list(parentOf(path));
+      } catch (e) {
+        // A folder that doesn't exist yet holds nothing to overwrite; the write creates it.
+        if (e instanceof ApiError && e.errorType === "PathNotFoundError") return true;
+        throw e;
+      }
+      const existing = entries.find((e) => e.name === name);
       if (!existing || existing.is_dir) return true;
       const { title, message } = sourceRef.current.labels.pasteConfirmOverwrite(path, false);
       return confirm({ title, message, okLabel: "Replace" });
@@ -1034,6 +1051,14 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   );
 
   const onTreeRename = useCallback((args: { id: string; name: string }) => void handleRename(args), [handleRename]);
+
+  // F2: rename the row with keyboard focus, or the selected one when focus is on the tree itself.
+  const handleRenameFocused = useCallback(() => {
+    const t = treeRef.current;
+    const path = scoped.current.selected;
+    const node = t?.focusedNode ?? (path ? t?.get(path) ?? null : null);
+    if (node?.isEditable) void node.edit();
+  }, []);
   const onTreeMove = useCallback(
     (args: { dragIds: string[]; parentId: string | null }) => void handleTreeMove(args),
     [handleTreeMove],
@@ -1081,6 +1106,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     onTreeSelect,
     onTreeRename,
     onTreeMove,
+    handleRenameFocused,
     handleSave,
     handleNewFile,
     handleNewDirectory,

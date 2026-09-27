@@ -45,8 +45,6 @@ interface FsTreePanelProps {
   dragHint: string;
   /** Extra condition making the editor read-only, on top of the tree's own (binary, folder, …). */
   editorReadOnly?: boolean;
-  /** Shown instead of the default when `editorReadOnly` is what disabled the editor. */
-  readOnlyPlaceholder?: string;
   /** Remounts the tree wholesale (Runtime Filesystem keys it by device). */
   treeKey?: string;
   onReload: () => void;
@@ -64,7 +62,6 @@ export function FsTreePanel({
   bannerSlot,
   dragHint,
   editorReadOnly = false,
-  readOnlyPlaceholder,
   treeKey,
   onReload,
 }: FsTreePanelProps) {
@@ -86,7 +83,7 @@ export function FsTreePanel({
     !selected || selected !== bufferPath || selectedIsDir || isBinary || editorReadOnly || selectedPaths.length > 1;
 
   useSaveShortcut(rootRef, () => {
-    if (!busy && !disabled) void tree.handleSave();
+    if (!busy && !disabled && tree.dirty) void tree.handleSave();
   });
 
   // Scoped to the tree's own container (not `rootRef`, which also wraps the CodeMirror editor and
@@ -97,6 +94,7 @@ export function FsTreePanel({
     onCut: () => tree.handleCut(),
     onPaste: () => void tree.handlePaste(),
     onDelete: () => void tree.handleDelete(),
+    onRename: () => tree.handleRenameFocused(),
   });
 
   return (
@@ -304,14 +302,13 @@ export function FsTreePanel({
               ? "This is a folder — select a file to edit it."
               : isBinary
                 ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
-                : editorReadOnly
-                  ? readOnlyPlaceholder
-                  : selected
-                    ? undefined
-                    : "Select a file from the tree on the left…"
+                : selected
+                  ? undefined
+                  : "Select a file from the tree on the left…"
           }
           onSave={() => void tree.handleSave()}
-          saveDisabled={disabled || busy}
+          dirty={tree.dirty}
+          saveDisabled={disabled || busy || !tree.dirty}
           scrollTarget={tree.scrollTarget}
         />
       </div>
@@ -463,9 +460,6 @@ const Node = memo(function Node({ node, style, dragHandle }: NodeRendererProps<F
       // on <Tree> above for what a plain click's activation does). Adding a second onClick here
       // would fire alongside it via bubbling and fight over the selection.
       onDoubleClick={() => node.isEditable && node.edit()}
-      onKeyDown={(e) => {
-        if (e.key === "F2" && node.isEditable) node.edit();
-      }}
       onContextMenu={openContextMenu}
     >
       {node.isInternal ? <span className="kt-explorer-chevron">{node.isOpen ? "▾" : "▸"}</span> : <span className="kt-explorer-chevron" />}

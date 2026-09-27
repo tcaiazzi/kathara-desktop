@@ -6,10 +6,11 @@ interface Handlers {
   onCut: () => void;
   onPaste: () => void;
   onDelete: () => void;
+  onRename: () => void;
 }
 
-// Cmd/Ctrl+C/X/V and Delete/Backspace act on the fs tree, but only when focus is inside `rootRef`
-// (the tree's own container — see the call site's comment for why not the whole panel) and not
+// Cmd/Ctrl+C/X/V, Delete/Backspace and F2 (rename) act on the fs tree, but only when focus is inside
+// `rootRef` (the tree's own container — see the call site's comment for why not the whole panel) and not
 // inside a nested editable element (the inline rename <input>), mirroring useSaveShortcut's
 // focus-scoping and react-arborist's own default-container.tsx guard for the identical reason.
 //
@@ -47,6 +48,11 @@ export function useFsClipboardShortcuts(rootRef: RefObject<HTMLElement | null>, 
       } else if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         handlersRef.current.onDelete();
+      } else if (e.key === "F2" && !mod) {
+        // Here and not on the row: react-arborist gives keyboard focus to its own row wrapper, so a
+        // key handler on the row content we render inside it never receives the event.
+        e.preventDefault();
+        handlersRef.current.onRename();
       }
     };
     window.addEventListener("keydown", handler);
