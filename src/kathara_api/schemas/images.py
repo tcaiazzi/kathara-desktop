@@ -8,14 +8,15 @@ from pydantic import BaseModel, Field
 # a meaningful product limit.
 MAX_IMAGES_PER_PULL = 32
 
-ImageState = Literal["ok", "missing", "outdated", "unknown"]
+ImageState = Literal["ok", "missing", "not-found", "outdated", "unknown"]
 
 
 class LabImageStatus(BaseModel):
     """One device image and whether anything needs to happen to it before a deploy.
 
-    Only ``missing`` (mandatory) and ``outdated`` (optional) are actionable. ``unknown`` means the
-    registry couldn't be consulted — offline, or slower than the check's time budget — and is
+    Only ``missing`` (mandatory) and ``outdated`` (optional) are actionable. ``not-found`` is a
+    missing image the registry says it doesn't have (or won't serve without a login): no download
+    can fix that, only the image name. ``unknown`` means the registry couldn't be consulted — offline, or slower than the check's time budget — and is
     reported separately from ``ok`` purely so the response doesn't assert what it doesn't know.
     """
 
@@ -35,6 +36,8 @@ class LabImagesStatus(BaseModel):
     update_policy: str = "Prompt"
     images: list[LabImageStatus] = Field(default_factory=list)
     missing: list[str] = Field(default_factory=list)
+    # Not in `missing`: a download could not fetch them (see LabImageStatus).
+    not_found: list[str] = Field(default_factory=list)
     outdated: list[str] = Field(default_factory=list)
 
 

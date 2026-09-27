@@ -91,7 +91,7 @@ import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
-import { deployButtonLabel } from "../services/imagePull";
+import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import { compareLabsByName, labFolder } from "../services/labPlace";
 import { hasDeployFailure, labDotState, labRunLabel, labRunState, labRunSummary } from "../services/labRunState";
@@ -651,7 +651,7 @@ export function WorkspacePage() {
   // "checking" is the image pre-check that runs before a deploy: it can take a couple of seconds
   // (a registry round-trip per image, unless image_update_policy is Never), and labelling it as
   // "Deploying…" would make a slow network look like a stuck deploy.
-  const [deployAction, setDeployAction] = useState<"checking" | "deploy" | "undeploy" | null>(null);
+  const [deployAction, setDeployAction] = useState<DeployPhase | "undeploy" | null>(null);
   const [railOpen, setRailOpen] = useState(() => localStorage.getItem(LS_RAIL) !== "false");
   const [railWidth, setRailWidth] = useState(() => {
     const saved = Number(localStorage.getItem(LS_RAIL_W));

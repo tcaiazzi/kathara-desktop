@@ -731,6 +731,7 @@ class KatharaService:
             update_policy=policy,
             images=[LabImageStatus(name=name, state=state) for name, state in states.items()],
             missing=[name for name, state in states.items() if state == "missing"],
+            not_found=[name for name, state in states.items() if state == "not-found"],
             outdated=[name for name, state in states.items() if state == "outdated"],
         )
 

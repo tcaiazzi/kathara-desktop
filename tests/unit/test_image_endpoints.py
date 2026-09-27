@@ -135,6 +135,62 @@ def test_device_without_an_image_resolves_the_global_default(tmp_path):
     assert status.missing == [default]
 
 
+@pytest.mark.parametrize(
+    "make_error",
+    [lambda: ImageNotFound("manifest unknown"), lambda: _registry_error(401), lambda: _registry_error(403)],
+    ids=["not-found", "401", "403"],
+)
+def test_a_missing_image_the_registry_does_not_have_is_not_found_not_missing(tmp_path, make_error):
+    """Offering to download it would only fail afterwards: the fix is the image name."""
+    docker_image = _FakeDockerImage()
+
+    def refuse(name):
+        raise make_error()
+
+    docker_image.get_remote = refuse
+    service = _service(tmp_path, docker_image)
+    _add_lab(service, [{"name": "pc1", "image": "kathara/typo", "interfaces": [{"link": "A", "number": 0}]}])
+
+    status = service.check_lab_images(lab_id(service, "testlab"))
+
+    assert status.not_found == ["kathara/typo"]
+    assert status.missing == []
+    assert {img.name: img.state for img in status.images} == {"kathara/typo": "not-found"}
+
+
+def test_a_missing_image_whose_registry_cannot_be_reached_stays_missing(tmp_path):
+    """Offline, the download itself is the only way to find out."""
+    docker_image = _FakeDockerImage()  # get_remote raises a bare APIError: no HTTP status
+    service = _service(tmp_path, docker_image)
+    _add_lab(service, [{"name": "pc1", "image": "kathara/frr", "interfaces": [{"link": "A", "number": 0}]}])
+
+    status = service.check_lab_images(lab_id(service, "testlab"))
+
+    assert (status.missing, status.not_found) == (["kathara/frr"], [])
+    assert docker_image.remote_calls == ["kathara/frr"]
+
+
+def test_missing_images_are_checked_on_the_registry_even_when_updates_are_never_checked(tmp_path):
+    Setting.get_instance().image_update_policy = "Never"
+    docker_image = _FakeDockerImage(
+        local={"kathara/base": _FakeLocalImage(["kathara/base@sha256:old"])},
+        remote={"kathara/base": "sha256:new"},
+    )
+    service = _service(tmp_path, docker_image)
+    _add_lab(
+        service,
+        [
+            {"name": "pc1", "image": "kathara/base", "interfaces": [{"link": "A", "number": 0}]},
+            {"name": "pc2", "image": "kathara/frr", "interfaces": [{"link": "A", "number": 0}]},
+        ],
+    )
+
+    status = service.check_lab_images(lab_id(service, "testlab"))
+
+    assert docker_image.remote_calls == ["kathara/frr"]  # the present image is not asked about
+    assert (status.missing, status.outdated) == (["kathara/frr"], [])
+
+
 # ---------------------------------------------------------------------------
 # Pre-check: update classification
 # ---------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import {
   deployButtonLabel,
   downloadKind,
   formatBytes,
+  notFoundMessage,
   progressPercent,
   pulledMessage,
 } from "./imagePull";
@@ -60,6 +61,7 @@ describe("downloadKind", () => {
     update_policy: "Prompt",
     images: [],
     missing: [],
+    not_found: [],
     outdated: [],
   };
 
@@ -77,8 +79,9 @@ describe("downloadKind", () => {
 });
 
 describe("deployButtonLabel", () => {
-  it("names the pre-check phase so it doesn't look like a frozen deploy", () => {
+  it("names the pre-check and download phases so they don't look like a frozen deploy", () => {
     expect(deployButtonLabel("checking", false)).toBe("Checking images…");
+    expect(deployButtonLabel("images", false)).toBe("Downloading images…");
   });
 
   it("covers the in-flight phases", () => {
@@ -89,6 +92,16 @@ describe("deployButtonLabel", () => {
   it("falls back to the lab's own state when idle", () => {
     expect(deployButtonLabel(null, false)).toBe("Deploy");
     expect(deployButtonLabel(null, true)).toBe("Undeploy");
+  });
+});
+
+describe("notFoundMessage", () => {
+  it("words one image as the backend words a refused download of it", () => {
+    expect(notFoundMessage(["kathara/typo"])).toBe("Image `kathara/typo` doesn't exist on its registry, or it's private.");
+  });
+
+  it("names every image when there are several", () => {
+    expect(notFoundMessage(["a/x", "b/y"])).toBe("Images `a/x`, `b/y` don't exist on their registries, or they're private.");
   });
 });
 

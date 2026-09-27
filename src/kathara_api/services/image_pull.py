@@ -98,11 +98,19 @@ def classify_images(
     check_updates: bool,
     budget: Optional[float] = None,
 ) -> dict[str, str]:
-    """Map each image name to ``"ok"``, ``"missing"``, ``"outdated"`` or ``"unknown"``.
+    """Map each image name to ``"ok"``, ``"missing"``, ``"not-found"``, ``"outdated"`` or
+    ``"unknown"``.
 
-    ``missing`` and ``outdated`` are the only actionable states; ``unknown`` means the registry
-    couldn't be consulted (offline, or slower than ``budget``) and is reported separately from
-    ``ok`` only so the response doesn't assert something it doesn't know.
+    ``missing`` and ``outdated`` are the actionable states. ``not-found`` is a missing image the
+    registry says it doesn't have, or won't serve without a login (``registry_says_not_found``):
+    offering to download it would only fail afterwards, so it is told apart up front. A missing
+    image whose registry can't be reached stays ``missing`` — offline, the download itself is the
+    only way to find out. ``unknown`` means the registry couldn't be consulted about a present
+    image (offline, or slower than ``budget``) and is reported separately from ``ok`` only so the
+    response doesn't assert something it doesn't know.
+
+    Missing images are asked about whatever ``check_updates`` says: that switch is about updates to
+    images already present, and a missing one has to be downloaded either way.
 
     Never raises for a per-image failure: this runs in front of Deploy, and a broken check must
     not be able to block a deploy that would otherwise work.
@@ -130,26 +138,21 @@ def classify_images(
             logger.debug("image presence check failed for %s", name, exc_info=True)
             states[name] = "unknown"
 
-    if not check_updates:
-        for name in local:
-            states[name] = "ok"
-        return {name: states[name] for name in names}
-
-    # Remote phase: one registry round-trip per present image, in parallel and under one shared
-    # deadline. Anything still unfinished when the deadline passes stays `unknown`.
+    # Remote phase: one registry round-trip per image worth asking about, in parallel and under
+    # one shared deadline — every missing image, and each present one when updates are checked.
     checkable: dict[str, Any] = {}
     for name, image in local.items():
         # Mirrors check_for_updates' own early exits: a digest-pinned reference can't drift, and a
         # locally built image has no RepoDigests to compare against.
-        if "@" in name or not (image.attrs.get("RepoDigests") or []):
+        if not check_updates or "@" in name or not (image.attrs.get("RepoDigests") or []):
             states[name] = "ok"
         else:
             checkable[name] = image
+            states[name] = "unknown"
+    missing = [name for name in names if states[name] == "missing"]
 
-    for name in checkable:
-        states[name] = "unknown"
-
-    if checkable:
+    to_probe = [*checkable, *missing]
+    if to_probe:
         # Plain daemon threads, deliberately not a ThreadPoolExecutor: its workers are non-daemon
         # and `concurrent.futures` joins them from an interpreter-exit hook, while
         # `shutdown(wait=False)` cannot cancel a future that is already running. So one
@@ -160,21 +163,25 @@ def classify_images(
         # Uncapped because the set is a lab's *distinct* images (deduped above): a handful in
         # practice, and each thread is short-lived and purely latency-bound.
         digests: dict[str, str] = {}
+        not_found: set[str] = set()
 
         def probe(image_name: str) -> None:
             try:
                 digest = _remote_digest(docker_image, image_name)
-            except Exception:  # an unanswered probe simply stays `unknown`
+            except Exception as exc:  # an unanswered probe decides nothing
                 # Same call Kathara makes, and the same conclusion it draws on failure
-                # ("Cannot check updates, skipping...").
-                logger.debug("update check failed for %s", image_name, exc_info=True)
+                # ("Cannot check updates, skipping...") — unless the registry answered "no such
+                # image", which is an answer.
+                if registry_says_not_found(exc):
+                    not_found.add(image_name)
+                logger.debug("registry check failed for %s", image_name, exc_info=True)
                 return
             if digest:
                 digests[image_name] = digest
 
         threads = [
             threading.Thread(target=probe, args=(name,), daemon=True, name=f"kathara-imgcheck-{name}")
-            for name in checkable
+            for name in to_probe
         ]
         for thread in threads:
             thread.start()
@@ -184,6 +191,9 @@ def classify_images(
         for thread in threads:
             thread.join(max(0.0, deadline - time.monotonic()))
 
+        for name in missing:
+            if name in not_found:
+                states[name] = "not-found"
         for name, image in checkable.items():
             remote = digests.get(name)
             if remote is None:

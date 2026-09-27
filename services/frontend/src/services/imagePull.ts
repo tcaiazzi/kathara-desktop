@@ -42,6 +42,15 @@ export function downloadKind(status: LabImagesStatus): ImageDownloadKind {
   return status.missing.length ? "missing" : "outdated";
 }
 
+/** Why a deploy stops before it starts: images no download can fetch (LabImagesStatus.not_found),
+ *  worded as the backend words a refused download of one (ImageNotAvailableError). */
+export function notFoundMessage(names: string[]): string {
+  const list = names.map((n) => `\`${n}\``).join(", ");
+  return names.length === 1
+    ? `Image ${list} doesn't exist on its registry, or it's private.`
+    : `Images ${list} don't exist on their registries, or they're private.`;
+}
+
 /**
  * Toast body for one finished image download — a separate toast fires per image (see
  * ImageDownloadContext's notifyCompletions), never one combined toast for a whole batch, so this
@@ -52,16 +61,17 @@ export function pulledMessage(name?: string): string {
   return name ? `Downloaded Docker image ${name}.` : "The Docker image download finished.";
 }
 
+/** Where a deploy is: checking the lab's images, downloading them, then deploying. */
+export type DeployPhase = "checking" | "images" | "deploy";
+
 /**
- * The Deploy button's label. Phase-aware so a multi-second image pre-check doesn't look like a
- * frozen "Deploying…" — shared by the toolbar button and its narrow-width dropdown twin, so the
- * two cannot disagree about what the button says.
+ * The Deploy button's label. Phase-aware so a multi-second image pre-check or download doesn't
+ * look like a frozen "Deploying…" — shared by the toolbar button and its narrow-width dropdown
+ * twin, so the two cannot disagree about what the button says.
  */
-export function deployButtonLabel(
-  action: "checking" | "deploy" | "undeploy" | null,
-  deployed: boolean,
-): string {
+export function deployButtonLabel(action: DeployPhase | "undeploy" | null, deployed: boolean): string {
   if (action === "checking") return "Checking images…";
+  if (action === "images") return "Downloading images…";
   if (action === "deploy") return "Deploying…";
   if (action === "undeploy") return "Undeploying…";
   return deployed ? "Undeploy" : "Deploy";

@@ -323,7 +323,7 @@ export interface StartupStatus {
 // Docker image state for a lab, ahead of a deploy. Only `missing` (mandatory) and `outdated`
 // (optional) are actionable; `unknown` means the registry couldn't be consulted (offline, or
 // slower than the backend's time budget) and is deliberately not reported as `ok`.
-type ImageState = "ok" | "missing" | "outdated" | "unknown";
+type ImageState = "ok" | "missing" | "not-found" | "outdated" | "unknown";
 
 interface LabImageStatus {
   name: string;
@@ -336,6 +336,9 @@ export interface LabImagesStatus {
   update_policy: string;
   images: LabImageStatus[];
   missing: string[];
+  // Missing images the registry says it doesn't have, or won't serve without a login — not in
+  // `missing`, since no download can fetch them; only the image name can be fixed.
+  not_found: string[];
   outdated: string[];
 }
 

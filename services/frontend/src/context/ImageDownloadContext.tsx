@@ -15,11 +15,13 @@ import type { ImagePullProgress, LabImagesStatus } from "../services/types";
 import "./ImageDownloadContext.css";
 
 /**
- * "downloaded" — something was pulled; the caller must NOT deploy on its own (the modal has told
- * the user the lab is ready, and pressing Deploy again is the deliberate next step).
- * "skipped"    — an *optional* update was declined and nothing was missing, so the caller should
- *                carry straight on and deploy with the images already on disk.
- * "cancelled"  — do not deploy.
+ * "downloaded" — everything asked for is now on disk; the caller carries on and deploys. The modal
+ *                closes by itself the moment the download succeeds, so the deploy follows the
+ *                download without a second click.
+ * "skipped"    — an *optional* update was declined (or failed) and nothing was missing, so the
+ *                caller also carries straight on, with the images already on disk.
+ * "cancelled"  — do not deploy: a required image was declined or failed, or the user closed the
+ *                modal while the download was still running (it goes on in the background).
  */
 type ImageDownloadOutcome = "downloaded" | "skipped" | "cancelled";
 
@@ -130,6 +132,9 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
       .pullImages(images)
       .then(() => {
         setPhase("done");
+        // A deploy waiting on this download goes ahead now (see ImageDownloadOutcome). With nobody
+        // waiting — the modal was closed mid-download — the toasts below are the whole report.
+        if (resolveRef.current) settle("downloaded");
         // Catch-up pass: the request itself just told us every requested image is done, which
         // can race ahead of the next poll tick (a small/cached image can finish between two
         // 800ms polls) — this guarantees a toast still fires for whichever ones the poll-driven
@@ -143,7 +148,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
         setPhase("error");
         toast.reportError("Download images", e);
       });
-  }, [notifyCompletions, toast]);
+  }, [notifyCompletions, settle, toast]);
 
   const requestImageDownload = useCallback<ImageDownloadApi>(
     async (next) => {
@@ -205,8 +210,9 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
     } else {
       setPhase("done");
       toast.show(pulledMessage(), "success");
+      if (resolveRef.current) settle("downloaded");
     }
-  }, [phase, progress, toast]);
+  }, [phase, progress, settle, toast]);
 
   const kind = status ? downloadKind(status) : "missing";
   const updateCount = status?.outdated.length ?? 0;
@@ -332,7 +338,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
           )}
 
           {phase === "done" && (
-            <p className="mb-0">All the needed Docker images are downloaded. You are ready to deploy the lab.</p>
+            <p className="mb-0">All the needed Docker images are downloaded.</p>
           )}
 
           {phase === "error" && (
