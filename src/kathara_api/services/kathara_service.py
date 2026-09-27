@@ -1813,7 +1813,11 @@ class KatharaService:
                 if len(matches) >= _SEARCH_MAX_TOTAL_MATCHES:
                     truncated = True
                     break
-                display_path = file_path if owner == ROOT_MACHINE else fs.path.join(f"/{owner}", file_path)
+                # `file_path` is absolute within the device's own fs, and `join` drops everything
+                # before an absolute part, so it goes in relative.
+                display_path = (
+                    file_path if owner == ROOT_MACHINE else fs.path.join(f"/{owner}", file_path.lstrip("/"))
+                )
                 # The walk follows a symlinked directory, so a file under one may lie outside.
                 if self._escapes_lab(lab, display_path):
                     continue

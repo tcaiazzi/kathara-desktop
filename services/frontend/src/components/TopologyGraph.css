@@ -644,3 +644,48 @@
 .kt-topo-terminal-screen .xterm {
   height: 100%;
 }
+
+/* The Inspector for a device (DeviceInfoTabs): a fixed header, then tabs whose content scrolls
+   on its own. The Files tab gives its tree and editor all the height left instead of scrolling. */
+.kt-devinfo {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.kt-devinfo-head {
+  flex: 0 0 auto;
+}
+.kt-devinfo-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.kt-devinfo-tabs > .nav-tabs {
+  flex: 0 0 auto;
+}
+.kt-devinfo-tabs > .tab-content {
+  flex: 1;
+  min-height: 0;
+}
+.kt-devinfo-tabs > .tab-content > .tab-pane.active {
+  height: 100%;
+  overflow: auto;
+}
+.kt-devinfo-files {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.kt-devinfo-files-tree {
+  flex: 1;
+  /* Floor for a very short panel: the tab scrolls instead of squeezing the tree to nothing. */
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+.kt-devinfo-files-tree > * {
+  flex: 1;
+  min-height: 0;
+}

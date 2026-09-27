@@ -386,23 +386,31 @@
   min-height: 220px;
 }
 
-/* Device Information dock panel: mount point the topology portals its inspector into. Neutralize the
+/* Inspector dock panel: mount point the topology portals its inspector into. Neutralize the
    inspector's own fixed-width/bordered box so it fills the panel (the inner .kv/.iface/.kt-state
    styles, scoped under .kt-topo-side, still apply). */
 .kt-nodeinfo-panel {
   height: 100%;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 12px;
   background: var(--kt-panel-bg);
   color: var(--bs-body-color);
 }
+/* The inspector fills the panel and scrolls itself, except for a device, whose tabs scroll each on
+   their own under a header that stays put (.kt-devinfo in TopologyGraph.css). */
 .kt-nodeinfo-panel .kt-topo-side {
-  flex: none;
+  flex: 1;
+  min-height: 0;
   width: auto;
   height: auto;
   padding: 0;
   border: none;
   border-radius: 0;
-  overflow: visible;
+  overflow: auto;
   background: transparent;
+}
+.kt-nodeinfo-panel .kt-topo-side:has(> .kt-devinfo) {
+  overflow: hidden;
 }

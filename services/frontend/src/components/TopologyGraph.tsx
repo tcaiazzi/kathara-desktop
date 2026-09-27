@@ -1,34 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Dropdown, DropdownButton } from "react-bootstrap";
-import {
-  AppWindow,
-  FileEdit,
-  FolderOpen,
-  MoreHorizontal,
-  Plug,
-  SlidersHorizontal,
-  SquareTerminal,
-  Unplug,
-} from "lucide-react";
+import { MoreHorizontal } from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { useForceLayout } from "../hooks/useForceLayout";
-import { api, isAbortError } from "../services/api";
+import { api } from "../services/api";
 import { machineStartupText } from "../services/labfs";
-import { hasDeployFailure } from "../services/labRunState";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
-import {
-  deviceStateLabel,
-  formatIface,
-  formatPort,
-  matchesSavedLayout,
-  type NodePositions,
-} from "../services/topology";
-import type { LabDetail, StartupStatus } from "../services/types";
+import { matchesSavedLayout, type NodePositions } from "../services/topology";
+import type { LabDetail } from "../services/types";
 import "./TopologyGraph.css";
+import { DeviceInfoTabs, type SelectionGuard } from "./DeviceInfoTabs";
+import { Kv } from "./Kv";
 import type { ContextMenuState } from "./TopologyContextMenu";
 
 // Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
@@ -39,6 +25,7 @@ type DeviceActionsProps = Pick<
   UseDeviceActions,
   | "model"
   | "startups"
+  | "refreshStartups"
   | "deviceContextItems"
   | "domainContextItems"
   | "openAddDevice"
@@ -46,6 +33,9 @@ type DeviceActionsProps = Pick<
   | "openAddInterface"
   | "openConnectExisting"
   | "openDisconnect"
+  | "deployDevice"
+  | "undeployDevice"
+  | "removeDevice"
   | "openRuntimeFs"
   | "openOptions"
   | "openTerminalPopup"
@@ -56,28 +46,24 @@ type DeviceActionsProps = Pick<
 interface TopologyGraphProps extends DeviceActionsProps {
   labId: string;
   detail: LabDetail;
-  onEditFiles: () => void;
+  /** Selects the device and brings its configuration forward in the Inspector. */
+  onConfigureDevice: (device: string) => void;
+  /** The latest "Configure Device" request, for the Inspector to act on. */
+  configureRequest: { device: string; seq: number } | null;
+  /** Installs the guard the workspace asks before selecting another node — see DeviceInfoTabs. */
+  registerSelectionGuard: (guard: SelectionGuard | null) => void;
   // Shows/dismisses the shared context menu (rendered once by the workspace page).
   setContextMenu: (menu: ContextMenuState | null) => void;
   // Optional controlled selection (node id `dev:<name>` / `cd:<name>`). When provided, an external
   // list (e.g. the Workspace rail) can drive/read the selected node. Omit for internal selection,
   // where the component tracks the selected node itself.
   selectedId?: string | null;
-  onSelectId?: (id: string | null) => void;
-  // DOM node of the "Device Information" dock panel. When set, the inspector is portaled into it
+  /** May refuse (resolving false): the canvas then puts its highlight back on the current node. */
+  onSelectId?: (id: string | null) => void | Promise<boolean>;
+  // DOM node of the Inspector dock panel. When set, the inspector is portaled into it
   // (so it can be dragged/closed like any dock panel); when null (panel closed) the inspector is
   // hidden and the canvas takes the full width.
   nodeInfoHost?: HTMLElement | null;
-}
-
-// Two-column key/value row used throughout the Node-Info panel below.
-function Kv({ k, v }: { k: string; v: ReactNode }) {
-  return (
-    <div className="kv">
-      <span className="k">{k}</span>
-      <span className="v">{v}</span>
-    </div>
-  );
 }
 
 // Below this canvas width, each toolbar collapses from its row of buttons into a single "more
@@ -93,9 +79,12 @@ const TOOLBAR_COMPACT_WIDTH = 480;
 export function TopologyGraph({
   labId,
   detail,
-  onEditFiles,
+  onConfigureDevice,
+  configureRequest,
+  registerSelectionGuard,
   model,
   startups,
+  refreshStartups,
   deviceContextItems,
   domainContextItems,
   openAddDevice,
@@ -103,6 +92,9 @@ export function TopologyGraph({
   openAddInterface,
   openConnectExisting,
   openDisconnect,
+  deployDevice,
+  undeployDevice,
+  removeDevice,
   openRuntimeFs,
   openOptions,
   openTerminalPopup,
@@ -248,13 +240,30 @@ export function TopologyGraph({
     });
   }
 
+  // A selection the workspace refuses (an edit in the Inspector the user keeps) must not leave
+  // the canvas highlighting the node that was clicked: put the highlight back on the current one.
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const selectRef = useRef<(id: string | null) => void>(() => {});
+  const handleGraphSelect = useCallback(
+    (id: string | null) => {
+      const result = setSelectedId(id);
+      if (result instanceof Promise) {
+        void result.then((ok) => {
+          if (!ok) selectRef.current(selectedIdRef.current ?? null);
+        });
+      }
+    },
+    [setSelectedId],
+  );
+
   const { canvasRef, fit: handleFit, select, zoom } = useForceLayout(
     model,
     // Rebuild token: Re-layout bumps one counter, the arrival of the lab's fixed layout the other
     // (it can resolve after the engine's first build). Both only ever increase.
     relayoutNonce + layoutNonce,
     {
-      onSelect: setSelectedId,
+      onSelect: handleGraphSelect,
       onDismissContextMenu: () => setContextMenu(null),
       onNodeContextMenu: (nd, x, y) => {
         const items = nd.type === "dev" ? deviceContextItems(nd) : domainContextItems(nd);
@@ -271,7 +280,7 @@ export function TopologyGraph({
         });
       },
       onNodeDoubleClick: (nd) => {
-        if (nd.type === "dev") onEditFiles();
+        if (nd.type === "dev") onConfigureDevice(nd.name);
         else openAddDevice(nd.name);
       },
     },
@@ -305,6 +314,8 @@ export function TopologyGraph({
     return () => ro.disconnect();
   }, []);
 
+  selectRef.current = select;
+
   // Sync the SVG highlight when selection is driven externally (controlled mode). Guarded inside
   // the hook so a graph-originated selection doesn't loop back through here.
   useEffect(() => {
@@ -325,46 +336,6 @@ export function TopologyGraph({
   const startupText = selectedMachine ? machineStartupText(selectedMachine, startups[selectedMachine.name]) : "";
   const isEmpty = !model.nodes.length;
   const hasFixedLayout = !!savedLayout && Object.keys(savedLayout).length > 0;
-
-  const selectedDeviceName = selectedNode?.type === "dev" ? selectedNode.name : null;
-  const selectedDeviceRunning = selectedNode?.type === "dev" ? selectedNode.running : false;
-  const [startupStatus, setStartupStatus] = useState<StartupStatus | null>(null);
-
-  // Poll the running device's boot-time startup log (/var/log/startup.log) until its startup
-  // commands finish — signaled by the /tmp/EOS marker Kathara's own startup sequence touches last
-  // (see KatharaService.is_startup_finished). Stops as soon as `finished` comes back true, or
-  // immediately when the selection changes or the device stops running, so nothing keeps polling
-  // in the background for a node the user isn't even looking at anymore. Depends on primitives
-  // (name/running), not the node/machine objects themselves, which get new identities on every
-  // unrelated lab refresh — an object dependency here would restart polling (and briefly show
-  // "Loading…") on every such refresh instead of only on an actual selection change.
-  //
-  // Deliberately no backoff/cap on the retry interval: a startup script can legitimately run for a
-  // long time, and the user watching this panel wants to see it evolve the whole way, not have the
-  // polling slow down or give up on a startup that's merely slow rather than broken.
-  useEffect(() => {
-    setStartupStatus(null);
-    if (!selectedDeviceName || !selectedDeviceRunning) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = () => {
-      api
-        .getStartupStatus(labId, selectedDeviceName, controller.signal)
-        .then((status) => {
-          setStartupStatus(status);
-          if (!status.finished) timer = setTimeout(poll, 1500);
-        })
-        .catch((e) => {
-          if (isAbortError(e)) return;
-          timer = setTimeout(poll, 1500);
-        });
-    };
-    poll();
-    return () => {
-      controller.abort();
-      if (timer) clearTimeout(timer);
-    };
-  }, [labId, selectedDeviceName, selectedDeviceRunning]);
 
   return (
     <div className="mt-3">
@@ -634,174 +605,28 @@ export function TopologyGraph({
               </div>
             </>
           ) : selectedNode.type === "dev" ? (
-            <>
-              <h4 className="mb-2">{selectedNode.name}</h4>
-              <div className="d-flex gap-2 mb-2">
-                {selectedNode.running && (
-                  <Button size="sm" variant="dark" onClick={() => openWorkspaceTerminal(selectedNode)}>
-                    <SquareTerminal size={14} className="me-1" />
-                    Open Terminal
-                  </Button>
-                )}
-                <DropdownButton
-                  size="sm"
-                  variant="outline-secondary"
-                  title={<span title="Terminal, filesystem, interface and configuration actions for this device">Actions</span>}
-                  data-tour="node-actions-btn"
-                >
-                  {selectedNode.running && (
-                    <>
-                      <Dropdown.Header>Access the running device</Dropdown.Header>
-                      <Dropdown.Item onClick={() => openTerminalPopup(selectedNode)}>
-                        <AppWindow size={14} className="me-2" />
-                        Open Terminal Popup
-                      </Dropdown.Item>
-                      <Dropdown.Item onClick={() => openRuntimeFs(selectedNode)}>
-                        <FolderOpen size={14} className="me-2" />
-                        Show Runtime Filesystem
-                      </Dropdown.Item>
-                      <Dropdown.Divider />
-                    </>
-                  )}
-                  <Dropdown.Header>Network interfaces</Dropdown.Header>
-                  <Dropdown.Item onClick={() => openAddInterface(selectedNode)}>
-                    <Plug size={14} className="me-2" />
-                    {selectedNode.running ? "Add Interface (Runtime)" : "Add Interface (lab.conf)"}
-                  </Dropdown.Item>
-                  <Dropdown.Item className="text-danger" onClick={() => openDisconnect(selectedNode)}>
-                    <Unplug size={14} className="me-2" />
-                    {selectedNode.running ? "Disconnect Interface (Runtime)" : "Remove Interface (lab.conf)"}
-                  </Dropdown.Item>
-                  <Dropdown.Divider />
-                  <Dropdown.Header>Configuration</Dropdown.Header>
-                  <Dropdown.Item onClick={() => openOptions(selectedNode)}>
-                    <SlidersHorizontal size={14} className="me-2" />
-                    {detail.deployed ? "View Options" : "Edit Options"}
-                  </Dropdown.Item>
-                  <Dropdown.Item onClick={onEditFiles}>
-                    <FileEdit size={14} className="me-2" />
-                    Edit Configuration
-                  </Dropdown.Item>
-                </DropdownButton>
-              </div>
-              <Kv k="Type" v={selectedNode.typeLabel} />
-              <Kv k="Image" v={selectedNode.image || "—"} />
-              <div className="kv">
-                <span className="k">State</span>
-                <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
-                  {deviceStateLabel(selectedNode)}
-                </span>
-              </div>
-              {!selectedNode.running && hasDeployFailure(detail) && detail.deploy_failed_machines.includes(selectedNode.name) && (
-                <div className="kt-topo-deploy-error">Not started — {detail.deploy_error}</div>
-              )}
-              <Kv k="Ifaces" v={selectedNode.ifaces.length} />
-              {selectedMachine?.bridged && <Kv k="Bridged" v="yes (host bridge)" />}
-              {selectedMachine?.privileged && <Kv k="Privileged" v="yes" />}
-              {selectedMachine?.ipv6 != null && <Kv k="IPv6" v={selectedMachine.ipv6 ? "enabled" : "disabled"} />}
-              {selectedMachine?.mem && <Kv k="Mem" v={selectedMachine.mem} />}
-              {selectedMachine?.cpus != null && <Kv k="CPUs" v={selectedMachine.cpus} />}
-              {selectedMachine?.shell && <Kv k="Shell" v={selectedMachine.shell} />}
-              {selectedMachine?.num_terms != null && <Kv k="Num Terms" v={selectedMachine.num_terms} />}
-              {selectedMachine?.entrypoint && <Kv k="Entrypoint" v={selectedMachine.entrypoint} />}
-              {selectedMachine?.args && <Kv k="Args" v={selectedMachine.args} />}
-              {selectedNode.ifaces.map((it) => (
-                <div className="iface" key={it.num}>
-                  <div style={{ fontWeight: 600, fontFamily: "monospace" }}>{formatIface(it.num, it.link)}</div>
-                  {it.ips.length > 0 && <Kv k="IP" v={it.ips.join(", ")} />}
-                  {it.mac && <Kv k="MAC" v={it.mac} />}
-                </div>
-              ))}
-              {selectedMachine?.ports && selectedMachine.ports.length > 0 && (
-                <div className="iface">
-                  <div style={{ fontWeight: 600 }}>Ports</div>
-                  {selectedMachine.ports.map((p) => (
-                    <Kv
-                      key={`${p.host_port}/${p.protocol}`}
-                      k={formatPort(p)}
-                      v={
-                        selectedNode.running && p.protocol === "tcp" ? (
-                          <a
-                            href={`http://${window.location.hostname}:${p.host_port}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            open ↗
-                          </a>
-                        ) : (
-                          <span className="hint">{selectedNode.running ? "—" : "deploy to open"}</span>
-                        )
-                      }
-                    />
-                  ))}
-                </div>
-              )}
-              {selectedMachine && Object.keys(selectedMachine.envs).length > 0 && (
-                <div className="iface">
-                  <div style={{ fontWeight: 600 }}>Env</div>
-                  {Object.entries(selectedMachine.envs).map(([k, v]) => (
-                    <Kv key={k} k={k} v={v} />
-                  ))}
-                </div>
-              )}
-              {selectedMachine && Object.keys(selectedMachine.sysctls).length > 0 && (
-                <div className="iface">
-                  <div style={{ fontWeight: 600 }}>Sysctls</div>
-                  {Object.entries(selectedMachine.sysctls).map(([k, v]) => (
-                    <Kv key={k} k={k} v={String(v)} />
-                  ))}
-                </div>
-              )}
-              {selectedMachine && selectedMachine.ulimits.length > 0 && (
-                <div className="iface">
-                  <div style={{ fontWeight: 600 }}>Ulimits</div>
-                  {selectedMachine.ulimits.map((u) => (
-                    <Kv key={u.name} k={u.name} v={u.hard != null ? `${u.soft} / ${u.hard}` : `${u.soft}`} />
-                  ))}
-                </div>
-              )}
-              {selectedMachine && selectedMachine.volumes.length > 0 && (
-                <div className="iface">
-                  <div style={{ fontWeight: 600 }}>Volumes</div>
-                  {selectedMachine.volumes.map((v) => (
-                    <Kv key={`${v.host_path}:${v.guest_path}`} k={v.guest_path} v={`${v.host_path} (${v.mode})`} />
-                  ))}
-                </div>
-              )}
-              {selectedMachine && Object.keys(selectedMachine.metas).length > 0 && (
-                <div className="iface">
-                  <div style={{ fontWeight: 600 }}>Other Options</div>
-                  {Object.entries(selectedMachine.metas).map(([k, v]) => (
-                    <Kv key={k} k={k} v={v} />
-                  ))}
-                </div>
-              )}
-              <div className="iface">
-                <div style={{ fontWeight: 600 }}>Startup</div>
-                {startupText ? (
-                  <pre className="startup">{startupText}</pre>
-                ) : (
-                  <div className="hint">No startup commands.</div>
-                )}
-              </div>
-              {selectedNode.running && (
-                <div className="iface">
-                  <div className="d-flex align-items-center justify-content-between">
-                    <span style={{ fontWeight: 600 }}>Startup Log</span>
-                    {startupStatus && (
-                      <span className={`kt-state ${startupStatus.finished ? "done" : "pending"}`}>
-                        {startupStatus.finished ? "finished" : "running…"}
-                      </span>
-                    )}
-                  </div>
-                  {startupStatus?.log ? (
-                    <pre className="startup">{startupStatus.log}</pre>
-                  ) : (
-                    <div className="hint">{startupStatus ? "No output yet." : "Loading…"}</div>
-                  )}
-                </div>
-              )}
-            </>
+            <DeviceInfoTabs
+              key={selectedNode.name}
+              labId={labId}
+              detail={detail}
+              node={selectedNode}
+              machine={selectedMachine}
+              startupPreview={startupText}
+              actions={{
+                openWorkspaceTerminal,
+                openTerminalPopup,
+                openRuntimeFs,
+                openAddInterface,
+                openDisconnect,
+                openOptions,
+                deployDevice,
+                undeployDevice,
+                removeDevice,
+                refreshStartups,
+              }}
+              registerSelectionGuard={registerSelectionGuard}
+              configureRequest={configureRequest}
+            />
           ) : (
             <>
               <h4>{selectedNode.name}</h4>

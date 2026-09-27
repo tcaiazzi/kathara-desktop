@@ -1,6 +1,7 @@
 import { createContext, useContext } from "react";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import type { ContextMenuState } from "../components/TopologyContextMenu";
+import type { SelectionGuard } from "../components/DeviceInfoTabs";
 import type { LabDetail } from "../services/types";
 
 // Shared live state for the Workspace's dockview panels. dockview-react renders panels within the
@@ -10,13 +11,20 @@ export interface WorkspaceCtx {
   labId: string;
   detail: LabDetail;
   selectedId: string | null;
-  setSelectedId: (id: string | null) => void;
-  openFilesPanel: () => void;
+  /** Selects a node and brings the Inspector forward. Resolves false when the user keeps an
+   *  unsaved edit there instead (see registerSelectionGuard). */
+  setSelectedId: (id: string | null) => Promise<boolean>;
+  /** Selects a device and opens its configuration in the Inspector. */
+  configureDevice: (machine: string) => void;
+  /** The latest configureDevice request; `seq` makes a repeat for the same device a new value. */
+  configureRequest: { device: string; seq: number } | null;
+  /** Installs the check every selection change passes first — the Inspector's, for its edits. */
+  registerSelectionGuard: (guard: SelectionGuard | null) => void;
   /** Open a live terminal for a device as a new dockview panel. */
   openTerminal: (machine: string) => void;
   /** Switch to the Runtime Filesystem dock panel, preselecting `machine`. */
   openRuntimeFsPanel: (machine: string) => void;
-  /** DOM node of the "Device Information" dock panel, or null when that panel is closed. The
+  /** DOM node of the Inspector dock panel, or null when that panel is closed. The
    *  topology portals its inspector into it, so the inspector lives in a draggable/closable dock
    *  panel. */
   nodeInfoHost: HTMLElement | null;
@@ -27,6 +35,7 @@ export interface WorkspaceCtx {
     UseDeviceActions,
     | "model"
     | "startups"
+    | "refreshStartups"
     | "deviceContextItems"
     | "domainContextItems"
     | "openAddDevice"
@@ -34,6 +43,9 @@ export interface WorkspaceCtx {
     | "openAddInterface"
     | "openConnectExisting"
     | "openDisconnect"
+    | "deployDevice"
+    | "undeployDevice"
+    | "removeDevice"
     | "openRuntimeFs"
     | "openOptions"
     | "openTerminalPopup"

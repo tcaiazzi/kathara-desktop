@@ -12,11 +12,11 @@ interface TourStep {
   /** Dockview panel id to bring to the front of its tab group before this step is highlighted
    *  (see `groupElement` — those panels' *content* only exists behind whichever tab is active). */
   tourPanel?: string;
-  /** "Device Information" is blank until a device is selected — this step picks the first one first. */
+  /** The Inspector is blank until a device is selected — this step picks the first one first. */
   tourSelectFirstDevice?: boolean;
 }
 
-// Device Information/Lab Details/Lab Configuration/Runtime Filesystem/Statistics share one
+// Inspector/Lab Details/Lab Configuration/Runtime Filesystem/Statistics share one
 // dockview group: one tab strip
 // (dockview-core's `.dv-tab` per tab, see DockTab in WorkspacePage.tsx) sitting on one shared
 // content area below it (`.dv-groupview` wraps both — see dockviewGroupPanelModel.js's
@@ -63,16 +63,16 @@ const STEPS: TourStep[] = [
     tourPanel: "node-info",
     tourSelectFirstDevice: true,
     popover: {
-      title: "Device Information",
-      description: "Click any device — in the topology or the Lab Details list — to see its details here: interfaces, image, running state.",
+      title: "Inspector",
+      description: "Click any device — in the topology or the Lab Details list — to see and change everything about it here.",
     },
   },
   {
-    element: '[data-tour="node-actions-btn"]',
+    element: '[data-tour="node-info-tabs"] .nav-tabs',
     tourPanel: "node-info",
     popover: {
-      title: "Actions",
-      description: "Everything you can do with this device — it only ever shows the options that actually apply to it right now (running vs. stopped, and so on).",
+      title: "Configure the device",
+      description: "Overview has its options, Network its interfaces, Scripts its startup and shutdown scripts, and Files the folder copied into it. Deploy, Open Terminal, Options and Remove sit right above.",
     },
   },
   {
@@ -191,7 +191,7 @@ export function OnboardingTour() {
         onHighlightStarted: (element, driveStep) => {
           const step = driveStep as TourStep;
 
-          // "Device Information" is blank until a device is selected — pick the first one so this step
+          // The Inspector is blank until a device is selected — pick the first one so this step
           // has real content to point at, same as any user clicking a device would trigger.
           if (step.tourSelectFirstDevice) selectFirstDevice();
 

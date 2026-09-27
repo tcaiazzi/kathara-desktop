@@ -48,6 +48,9 @@ interface FsTreePanelProps {
   /** Remounts the tree wholesale (Runtime Filesystem keys it by device). */
   treeKey?: string;
   onReload: () => void;
+  /** "side" (default) puts the editor right of the tree; "stacked" puts it below, for a narrow
+   *  panel such as the Inspector. Either way the panel fills the height its parent bounds. */
+  layout?: "side" | "stacked";
 }
 
 // The left tree + right editor shared by both filesystem panels (the lab's own directory, a
@@ -64,7 +67,9 @@ export function FsTreePanel({
   editorReadOnly = false,
   treeKey,
   onReload,
+  layout = "side",
 }: FsTreePanelProps) {
+  const stacked = layout === "stacked";
   const rootRef = useRef<HTMLDivElement | null>(null);
   const treeContainerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -98,9 +103,13 @@ export function FsTreePanel({
   });
 
   return (
-    <div ref={rootRef} style={{ display: "flex", flexDirection: "row", gap: 12, minHeight: 0 }}>
+    <div ref={rootRef} style={{ display: "flex", flexDirection: stacked ? "column" : "row", gap: 12, minHeight: 0 }}>
       <div
-        style={{ width: 260, flex: "0 0 260px", display: "flex", flexDirection: "column", minHeight: 0 }}
+        style={
+          stacked
+            ? { flex: "0 0 40%", display: "flex", flexDirection: "column", minHeight: 0 }
+            : { width: 260, flex: "0 0 260px", display: "flex", flexDirection: "column", minHeight: 0 }
+        }
       >
         {headerSlot}
         {emptySlot ?? (
@@ -304,7 +313,9 @@ export function FsTreePanel({
                 ? "This file is binary and can't be displayed here. Use Download to save it, or Delete to remove it."
                 : selected
                   ? undefined
-                  : "Select a file from the tree on the left…"
+                  : stacked
+                    ? "Select a file from the tree above…"
+                    : "Select a file from the tree on the left…"
           }
           onSave={() => void tree.handleSave()}
           dirty={tree.dirty}

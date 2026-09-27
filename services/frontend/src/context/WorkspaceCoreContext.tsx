@@ -22,15 +22,16 @@ interface WorkspaceCoreCtx {
   detail: LabDetail;
   onRefresh: () => Promise<void>;
   /** Re-fetches each device's `<name>.startup` content — call after LabExplorer saves one, so the
-   *  Device Information panel's startup preview (fed by useDeviceActions' `startups`) picks up the edit. */
+   *  Inspector panel's startup preview (fed by useDeviceActions' `startups`) picks up the edit. */
   refreshStartups: () => Promise<void>;
   /** The machine the Runtime Filesystem panel should preselect (set by openRuntimeFsPanel). */
   runtimeFsPreferredMachine: string | null;
   /** The latest outside change to the open lab's startup scripts, or null — see StartupChange. */
   startupChange: StartupChange | null;
-  /** Raw selection setter (no side effects) — lets a panel drive the shared selection without
-   *  forcing "Device Information" into focus the way WorkspaceCtx's wrapped setter does. */
-  setSelectedId: (id: string | null) => void;
+  /** Selection setter that leaves focus alone — lets a panel drive the shared selection without
+   *  forcing the Inspector into focus the way WorkspaceCtx's setter does. Like that one, it
+   *  asks the selection guard first and resolves false when the selection stays. */
+  setSelectedId: (id: string | null) => Promise<boolean>;
   /** Shows/dismisses the shared context menu (rendered once, at the workspace-page level). */
   setContextMenu: (menu: ContextMenuState | null) => void;
 }

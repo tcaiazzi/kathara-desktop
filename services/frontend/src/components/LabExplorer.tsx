@@ -12,7 +12,7 @@ interface LabExplorerProps {
   labId: string;
   detail: LabDetail;
   onStructuralChange?: () => Promise<void>;
-  /** Called after a device's own `<name>.startup` is saved, so the Device Information panel's startup
+  /** Called after a device's own `<name>.startup` is saved, so the Inspector panel's startup
    *  preview (fed by useDeviceActions' `startups`, fetched independently of this tab) picks it up. */
   onStartupFileSaved?: () => Promise<void>;
   /** Startup scripts that changed on disk outside the app — the tree re-lists, and the file open

@@ -629,6 +629,17 @@ def test_fs_search_offline_finds_matches_at_lab_root_and_under_a_device(tmp_path
     assert "/pc2/etc/motd" not in by_path
 
 
+def test_fs_search_offline_under_a_device_reports_lab_relative_paths(tmp_path):
+    """Searching inside a device's folder answers with the same lab-relative paths as a search
+    from the lab root: the device's folder stays in front."""
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "needle in motd\n")
+
+    matches, _ = service.fs_search_offline(lab_id(service, "testlab"), "/pc1", "needle")
+
+    assert [m.path for m in matches] == ["/pc1/etc/motd"]
+
+
 def test_fs_search_offline_case_sensitivity_toggle(tmp_path):
     service, _ = _two_machine_lab(tmp_path)
     service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "NEEDLE\n")

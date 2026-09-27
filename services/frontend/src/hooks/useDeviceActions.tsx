@@ -17,7 +17,8 @@ interface UseDeviceActionsOptions {
   // null while the lab detail hasn't loaded yet — every derived value degrades to empty/no-op.
   detail: LabDetail | null;
   onRefresh: () => Promise<void>;
-  onEditFiles: () => void;
+  // Selects the device and brings its configuration (scripts, files) forward in the Inspector.
+  onConfigureDevice: (machine: string) => void;
   // Opens a terminal for `machine` as a panel in the workspace dock (as opposed to
   // openTerminalWindow's separate browser popup — see "Open terminal" vs "Open terminal popup").
   onOpenTerminal: (machine: string) => void;
@@ -39,7 +40,7 @@ export function useDeviceActions({
   labId,
   detail,
   onRefresh,
-  onEditFiles,
+  onConfigureDevice,
   onOpenTerminal,
   onOpenRuntimeFs,
   onOpenOptions,
@@ -265,7 +266,7 @@ export function useDeviceActions({
     });
   }
 
-  function openDisconnect(deviceNode: DeviceNode) {
+  function openDisconnect(deviceNode: DeviceNode, prefillLink = "") {
     const links = [...new Set(deviceNode.ifaces.map((i) => i.link))];
     if (!links.length) {
       toast.show(`${deviceNode.name} has no interfaces to disconnect.`, "danger");
@@ -283,7 +284,7 @@ export function useDeviceActions({
           name: "link",
           label: "Domain",
           options: links.map((v) => ({ value: v, label: v })),
-          value: links[0],
+          value: links.includes(prefillLink) ? prefillLink : links[0],
           hint: `The collision domain to ${running ? "disconnect" : "remove"} ${deviceNode.name}'s interface from.`,
         },
       ],
@@ -417,7 +418,7 @@ export function useDeviceActions({
 
   function deviceContextItems(nd: DeviceNode): ContextMenuItem[] {
     const items: ContextMenuItem[] = [
-      { label: "Edit Configuration", action: onEditFiles },
+      { label: "Configure Device", action: () => onConfigureDevice(nd.name) },
       { label: detail?.deployed ? "View Options" : "Edit Options", action: () => openOptions(nd) },
     ];
     if (!nd.running) {
@@ -450,9 +451,9 @@ export function useDeviceActions({
     ];
   }
 
-  // Only what a caller actually reads. The device/domain mutators live on in the context
-  // menus built above (`deviceContextItems`/`domainContextItems`), which is how the UI
-  // reaches them — exposing them here as well would be a second surface with no reader.
+  // Only what a caller actually reads: the context menus built above, plus the device lifecycle
+  // actions the Inspector offers as buttons. Domain mutators stay reachable only through
+  // `domainContextItems`.
   return {
     model,
     startups,
@@ -468,6 +469,9 @@ export function useDeviceActions({
     openAddInterface,
     openConnectExisting,
     openDisconnect,
+    deployDevice,
+    undeployDevice,
+    removeDevice,
     openRuntimeFs,
     openOptions,
     openTerminalPopup,

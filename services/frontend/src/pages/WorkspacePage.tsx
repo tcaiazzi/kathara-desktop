@@ -51,6 +51,7 @@ import {
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dropdown, DropdownButton, Form, OverlayTrigger, Tooltip } from "react-bootstrap";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import type { SelectionGuard } from "../components/DeviceInfoTabs";
 import { DevicesTable } from "../components/DevicesTable";
 import { LabExplorer } from "../components/LabExplorer";
 import { LinksTable } from "../components/LinksTable";
@@ -106,7 +107,9 @@ function TopologyPanel() {
       <TopologyGraph
         labId={ws.labId}
         detail={ws.detail}
-        onEditFiles={ws.openFilesPanel}
+        onConfigureDevice={ws.configureDevice}
+        configureRequest={ws.configureRequest}
+        registerSelectionGuard={ws.registerSelectionGuard}
         {...ws.deviceActions}
         setContextMenu={ws.setContextMenu}
         selectedId={ws.selectedId}
@@ -160,7 +163,7 @@ function RuntimeFsPanel() {
         labId={ws.labId}
         detail={ws.detail}
         preferredMachine={ws.runtimeFsPreferredMachine}
-        onSelectMachine={(m) => ws.setSelectedId(`dev:${m}`)}
+        onSelectMachine={(m) => void ws.setSelectedId(`dev:${m}`)}
       />
     </div>
   );
@@ -329,15 +332,19 @@ const TOPOLOGY_HEIGHT_FRACTION = 0.62;
 // terminals can be told apart from every other panel.
 const TERMINAL_ID_RE = /^terminal:(.*):(\d+)$/;
 
+// The node-info panel's tab title, in one place: a saved layout records the title it was saved with,
+// so onDockReady sets it again after restoring one (see there).
+const NODE_INFO_TITLE = "Inspector";
+
 function buildDefaultLayout(api: DockviewApi) {
   // Topology first: its own full-width row on top, with nothing else yet so it fills the canvas.
   api.addPanel({ id: "topology", component: "topology", title: "Topology" });
-  // One shared tab group below it: the inspector plus every tool panel. Device Information goes in first
+  // One shared tab group below it: the inspector plus every tool panel. The Inspector goes in first
   // so it lands as the left-most tab.
   api.addPanel({
     id: "node-info",
     component: "node-info",
-    title: "Device Information",
+    title: NODE_INFO_TITLE,
     position: { referencePanel: "topology", direction: "below" },
   });
   api.addPanel({ id: "devices", component: "devices", title: "Lab Details", position: { referencePanel: "node-info", direction: "within" } });
@@ -350,7 +357,7 @@ function buildDefaultLayout(api: DockviewApi) {
   api.getPanel("devices")?.api.setActive();
 }
 
-// Re-open the Device Information panel if it was closed (as a tab alongside Lab Details/Lab
+// Re-open the Inspector panel if it was closed (as a tab alongside Lab Details/Lab
 // Configuration/…).
 // No-op if it already exists. Doesn't foreground it when it's sharing a tab group with Topology —
 // e.g. dragged there manually — since that would hide the topology view a selection likely just
@@ -368,7 +375,7 @@ function showNodeInfo(api: DockviewApi) {
   api.addPanel({
     id: "node-info",
     component: "node-info",
-    title: "Device Information",
+    title: NODE_INFO_TITLE,
     position: devices ? { referencePanel: "devices", direction: "within" } : undefined,
   });
 }
@@ -692,13 +699,28 @@ export function WorkspacePage() {
 
   const dockApiRef = useRef<DockviewApi | null>(null);
 
-  // Selecting a node (topology graph or sidebar rail) should bring its details forward — the
-  // Device Information tab might be sitting behind Lab Details/Lab Configuration/… or be closed
-  // entirely.
-  const selectNode = useCallback((id: string | null) => {
-    setSelectedId(id);
-    if (id !== null && dockApiRef.current) showNodeInfo(dockApiRef.current);
+  // Every selection change asks this first: the Inspector edits the selected device's files
+  // in place, and moving the selection away would drop an edit in progress there.
+  const selectionGuardRef = useRef<SelectionGuard | null>(null);
+  const registerSelectionGuard = useCallback((guard: SelectionGuard | null) => {
+    selectionGuardRef.current = guard;
   }, []);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const changeSelection = useCallback(async (id: string | null, showInfo: boolean) => {
+    const guard = selectionGuardRef.current;
+    if (id !== selectedIdRef.current && guard && !(await guard())) return false;
+    setSelectedId(id);
+    if (showInfo && id !== null && dockApiRef.current) showNodeInfo(dockApiRef.current);
+    return true;
+  }, []);
+
+  // Selecting a node (topology graph or sidebar rail) should bring its details forward — the
+  // Inspector tab might be sitting behind Lab Details/Lab Configuration/… or be closed
+  // entirely.
+  const selectNode = useCallback((id: string | null) => changeSelection(id, true), [changeSelection]);
+  // For a panel that follows the selection without taking focus (Runtime Filesystem's picker).
+  const selectNodeQuietly = useCallback((id: string | null) => changeSelection(id, false), [changeSelection]);
 
   // Same out-of-order guard as `load` below: lab events (useLabEvents) start a reload at any time,
   // and a slow one started before a close must not land after the close's own and list the lab
@@ -828,7 +850,7 @@ export function WorkspacePage() {
   useEffect(() => {
     registerTourFocusPanel((panelId) => dockApiRef.current?.getPanel(panelId)?.api.setActive());
   }, [registerTourFocusPanel]);
-  // "Device Information" shows nothing until a device is selected — the tour picks the first one so that
+  // The Inspector shows nothing until a device is selected — the tour picks the first one so that
   // step has real content to point at.
   useEffect(() => {
     registerTourSelectFirstDevice(() => {
@@ -882,9 +904,17 @@ export function WorkspacePage() {
     [reloadLabs, guardedNavigate],
   );
 
-  const openFilesPanel = useCallback(() => {
-    dockApiRef.current?.getPanel("files")?.api.setActive();
-  }, []);
+  // "Configure Device" (context menu, double click): select the device, then ask Device
+  // Information to open its startup script. A refused selection asks nothing.
+  const [configureRequest, setConfigureRequest] = useState<{ device: string; seq: number } | null>(null);
+  const configureDevice = useCallback(
+    (machine: string) => {
+      void selectNode(`dev:${machine}`).then((ok) => {
+        if (ok) setConfigureRequest((prev) => ({ device: machine, seq: (prev?.seq ?? 0) + 1 }));
+      });
+    },
+    [selectNode],
+  );
 
   const [runtimeFsPreferredMachine, setRuntimeFsPreferredMachine] = useState<string | null>(null);
   const openRuntimeFsPanel = useCallback((machine: string) => {
@@ -994,7 +1024,7 @@ export function WorkspacePage() {
     labId,
     detail,
     onRefresh: refreshLab,
-    onEditFiles: openFilesPanel,
+    onConfigureDevice: configureDevice,
     onOpenTerminal: openTerminal,
     onOpenRuntimeFs: openRuntimeFsPanel,
     onOpenOptions: openOptionsEditor,
@@ -1046,6 +1076,8 @@ export function WorkspacePage() {
       }
     }
     if (!restored) buildDefaultLayout(event.api);
+    // A restored layout carries whatever title the panel had when it was saved.
+    event.api.getPanel("node-info")?.api.setTitle(NODE_INFO_TITLE);
     // The saved layout records a maximized group too; the app always opens with the full grid.
     exitMaximized(event.api);
 
@@ -1280,7 +1312,9 @@ export function WorkspacePage() {
         detail: currentDetail,
         selectedId,
         setSelectedId: selectNode,
-        openFilesPanel,
+        configureDevice,
+        configureRequest,
+        registerSelectionGuard,
         openTerminal,
         openRuntimeFsPanel,
         nodeInfoHost,
@@ -1305,11 +1339,19 @@ export function WorkspacePage() {
             refreshStartups: deviceActions.refreshStartups,
             startupChange,
             runtimeFsPreferredMachine,
-            setSelectedId,
+            setSelectedId: selectNodeQuietly,
             setContextMenu: setCtxMenu,
           }
         : null,
-    [labId, currentDetail, refreshLab, deviceActions.refreshStartups, startupChange, runtimeFsPreferredMachine],
+    [
+      labId,
+      currentDetail,
+      refreshLab,
+      deviceActions.refreshStartups,
+      startupChange,
+      runtimeFsPreferredMachine,
+      selectNodeQuietly,
+    ],
   );
 
   const runningMachines = deviceMachines.filter((m) => m.running);
