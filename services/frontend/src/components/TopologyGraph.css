@@ -241,6 +241,12 @@
   border-radius: 50%;
   background: currentColor;
 }
+/* Under a stopped device's State row, while the lab's last deploy failure explains it. */
+.kt-topo-deploy-error {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--bs-warning-text-emphasis);
+}
 .kt-topo-side .kt-state.running {
   color: var(--kt-node-running);
   background: color-mix(in srgb, var(--kt-node-running) 16%, transparent);

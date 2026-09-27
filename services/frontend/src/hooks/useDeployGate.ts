@@ -4,9 +4,8 @@ import { useDeployAuthorization, type DeployAuthOutcome } from "../desktop/Eleva
 import type { VolumeMount } from "../services/types";
 
 // The one place that decides whether a deploy needs the user's permission first, shared by every
-// path that can put a container on the host: a full-lab deploy, a single-device redeploy, and
-// adding a device to a lab that is already running (`add_machine` deploys it outright in that
-// case — see KatharaService.add_machine).
+// path that can put a container on the host: a full-lab deploy and a single-device deploy. Adding a
+// device never starts it (KatharaService.add_machine), so it has nothing to ask.
 //
 // Two things have to be checked together, and only here: the per-device `volumes` and the global
 // `hosthome_mount` setting, which is host exposure of the same kind but belongs to no device and

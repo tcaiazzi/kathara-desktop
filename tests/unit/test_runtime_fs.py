@@ -32,7 +32,6 @@ class _RuntimeFacade(FakeFacadeBase):
         self.copies: list[tuple[str, dict[str, bytes]]] = []
         self.deployed_links = []
         self.deployed_machines = []
-        self.deploy_machine_error: Exception | None = None
         self.streams: list[bool] = []
         self.connects: list[tuple[str, str, object]] = []
         self.disconnects: list[tuple[str, str, object]] = []
@@ -59,8 +58,6 @@ class _RuntimeFacade(FakeFacadeBase):
         self.deployed_links.append(link)
 
     def deploy_machine(self, machine):
-        if self.deploy_machine_error is not None:
-            raise self.deploy_machine_error
         self.deployed_machines.append(machine.name)
         machine.api_object = object()
 
@@ -431,28 +428,17 @@ def running_disk_lab(tmp_path, facade):
     return service
 
 
-def test_add_machine_to_a_running_lab_deploys_it_and_persists_it(running_disk_lab, facade):
+def test_add_machine_to_a_running_lab_persists_it_and_leaves_it_stopped(running_disk_lab, facade):
+    """Adding is a configuration edit even on a running lab: starting the device is the user's own
+    single-device deploy, the one path that checks and explains why a device can't start."""
     service = running_disk_lab
 
     machine = service.add_machine(lab_id(service, "disk"), MachineCreate(name="pc2", interfaces=[{"link": "A"}]))
 
-    assert facade.deployed_machines == ["pc2"]
-    assert machine.api_object is not None
+    assert facade.deployed_machines == []
+    assert machine.api_object is None
+    assert "pc2" in service.registry.get(lab_id(service, "disk")).machines
     assert "pc2[0]=" in service.store.read_lab_conf_text(service.store.lab_dir("disk"))
-
-
-def test_add_machine_whose_deploy_fails_leaves_no_trace(running_disk_lab, facade):
-    service = running_disk_lab
-    facade.deploy_machine_error = RuntimeError("image not found")
-
-    with pytest.raises(RuntimeError, match="image not found"):
-        service.add_machine(lab_id(service, "disk"), MachineCreate(name="pc2", interfaces=[{"link": "A"}]))
-
-    lab = service.registry.get(lab_id(service, "disk"))
-    assert "pc2" not in lab.machines
-    assert list(lab.links["A"].machines) == ["pc1"]
-    assert service.store.read_lab_conf_text(service.store.lab_dir("disk")) == "pc1[0]=A\n"
-
 
 
 # ---------------------------------------------------------------------------
@@ -637,16 +623,3 @@ def test_live_tty_on_a_manager_without_api_objects_is_not_supported(tmp_path):
 
     with pytest.raises(UnsupportedOperationError, match="^Live TTY is not supported"):
         service.get_machine_api_object(lab_id(service, "l"), "pc1")
-
-
-def test_a_failed_add_to_a_running_lab_keeps_a_device_folder_that_already_existed(tmp_path, facade):
-    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
-    make_lab(service, "disk", {"lab.conf": "pc1[0]=A\n", "pc2/etc/motd": "keep me"})
-    service.registry.get(lab_id(service, "disk")).machines["pc1"].api_object = object()
-    facade.deploy_machine_error = RuntimeError("image not found")
-
-    with pytest.raises(RuntimeError):
-        service.add_machine(lab_id(service, "disk"), MachineCreate(name="pc2"))
-
-    assert (service.store.lab_dir("disk") / "pc2" / "etc" / "motd").read_text() == "keep me"
-

@@ -107,7 +107,13 @@ export interface LabSummary {
   problem?: string | null;
   n_machines: number;
   n_links: number;
+  // Whether any device is running; `n_running` says how many — a lab can be partly running, since
+  // devices are deployed one at a time as well as all together (services/labRunState.ts).
   deployed: boolean;
+  n_running: number;
+  // Why the last deploy failed, while devices it was meant to start are still stopped; null once
+  // a deploy succeeds or nothing runs.
+  deploy_error?: string | null;
 }
 
 // Mirrors the backend's lab events (GET /api/events; KatharaService.handle_disk_change): a lab's
@@ -197,6 +203,9 @@ export interface LabDetail extends LabSummary {
   metadata: LabMetadata;
   machines: MachineDetail[];
   links: LinkDetail[];
+  // The devices the failed deploy (`deploy_error`) was meant to start: the error explains the ones
+  // among them still stopped, and says nothing about any other device.
+  deploy_failed_machines: string[];
 }
 
 // Response for POST /api/labs/upload — mirrors backend

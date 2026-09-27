@@ -31,7 +31,8 @@ class _RecordingService:
 
     `normalize_guest_path` is the real one: several routes echo its result back, and a copy of
     it here would let the tests agree with themselves instead of with the service. `lab_place`
-    is not recorded either: every route answering with a lab asks it, for presentation only.
+    and `deploy_failure` are not recorded either: every route answering with a lab asks them, for
+    presentation only.
     """
 
     def __init__(self):
@@ -43,6 +44,9 @@ class _RecordingService:
 
     def lab_place(self, lab) -> LabPlace:
         return LabPlace(Path("/labs") / lab.name, True)
+
+    def deploy_failure(self, lab) -> None:
+        return None
 
     def __getattr__(self, name):
         if name.startswith("_"):

@@ -13,14 +13,25 @@ have to be kept in sync with every write, and drifts silently the moment one is 
 deliberately is none. Reads resolve through ``KatharaService._offline_fs_owner`` and ``_fs_for``
 instead.
 
+It also keeps each lab's last deploy failure, so a lab left partly running by one can say why —
+see ``set_deploy_failure``.
+
 The registry is process-local; the server therefore must run with a single worker.
 """
 
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from Kathara.model.Lab import Lab
+
+
+class DeployFailure(NamedTuple):
+    """Why a lab's last deploy failed, and which devices it was meant to start: the ones among
+    them still stopped are the ones the message explains."""
+
+    message: str
+    machines: frozenset[str]
 
 
 class LabRegistry:
@@ -36,6 +47,7 @@ class LabRegistry:
         self._labs: dict[str, Lab] = {}
         self._dirs: dict[str, Path] = {}
         self._dirty: dict[str, set[str]] = {}
+        self._deploy_failures: dict[str, DeployFailure] = {}
         self._lock = threading.RLock()
 
     def add(self, lab: Lab, directory: Path) -> None:
@@ -62,6 +74,7 @@ class LabRegistry:
     def remove(self, lab_id: str) -> Optional[Lab]:
         with self._lock:
             self._dirty.pop(lab_id, None)
+            self._deploy_failures.pop(lab_id, None)
             self._dirs.pop(lab_id, None)
             return self._labs.pop(lab_id, None)
 
@@ -77,6 +90,23 @@ class LabRegistry:
     def all(self) -> list[Lab]:
         with self._lock:
             return list(self._labs.values())
+
+    # -- last deploy failure ----------------------------------------------------
+
+    def set_deploy_failure(self, lab_id: str, failure: DeployFailure) -> None:
+        """Record why the last deploy of ``lab_id`` failed. Kathara starts a lab's devices side by
+        side, so a failure on one does not stop the others: the lab can be left partly running,
+        and this is what explains the devices that are not."""
+        with self._lock:
+            self._deploy_failures[lab_id] = failure
+
+    def clear_deploy_failure(self, lab_id: str) -> None:
+        with self._lock:
+            self._deploy_failures.pop(lab_id, None)
+
+    def deploy_failure(self, lab_id: str) -> Optional[DeployFailure]:
+        with self._lock:
+            return self._deploy_failures.get(lab_id)
 
     # -- dirty-machine tracking -------------------------------------------------
 

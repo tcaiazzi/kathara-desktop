@@ -18,6 +18,7 @@ import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { useForceLayout } from "../hooks/useForceLayout";
 import { api, isAbortError } from "../services/api";
 import { machineStartupText } from "../services/labfs";
+import { hasDeployFailure } from "../services/labRunState";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
 import {
   deviceStateLabel,
@@ -679,6 +680,9 @@ export function TopologyGraph({
                   {deviceStateLabel(selectedNode)}
                 </span>
               </div>
+              {!selectedNode.running && hasDeployFailure(detail) && detail.deploy_failed_machines.includes(selectedNode.name) && (
+                <div className="kt-topo-deploy-error">Not started — {detail.deploy_error}</div>
+              )}
               <Kv k="Ifaces" v={selectedNode.ifaces.length} />
               {selectedMachine?.bridged && <Kv k="Bridged" v="yes (host bridge)" />}
               {selectedMachine?.privileged && <Kv k="Privileged" v="yes" />}

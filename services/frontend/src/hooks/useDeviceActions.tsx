@@ -105,6 +105,9 @@ export function useDeviceActions({
 
   // `label` names the action for the error toast's title ("Add interface"), so a failure says what
   // was being attempted; the body is the backend's own sentence.
+  //
+  // Refreshes after a failure too: a failed action can still have changed the lab — a device
+  // deploy that fails leaves the lab's recorded deploy error (LabSummary.deploy_error) behind.
   async function withRefresh(label: string, work: () => Promise<unknown>, okMsg: string): Promise<boolean> {
     try {
       await work();
@@ -113,6 +116,7 @@ export function useDeviceActions({
       return true;
     } catch (e) {
       toast.reportError(label, e);
+      await onRefresh();
       return false;
     }
   }
@@ -349,9 +353,9 @@ export function useDeviceActions({
   async function deployDevice(deviceNode: DeviceNode) {
     // Only ever requests the "volumes" case — never "both", even if this device happens to also
     // be privileged: that would need the same resume-after-reload machinery the full-lab deploy
-    // has (see useLabLifecycleActions.ts), which a single device redeploy has no way to resume
-    // into. A privileged device deployed from here fails with an unhandled PrivilegeError either
-    // way, so asking only for "volumes" narrows nothing that isn't already narrow.
+    // has (see useLabLifecycleActions.ts), which a single device deploy has no way to resume into.
+    // A privileged device deployed from here without administrator privileges is refused by the
+    // backend with a message saying to deploy the whole lab (KatharaService.deploy_lab).
     const machine = detail?.machines.find((m) => m.name === deviceNode.name);
     // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
     const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });

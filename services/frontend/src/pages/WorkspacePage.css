@@ -144,8 +144,13 @@
 .kt-ws-dot.stopped {
   background: var(--kt-node-stopped);
 }
-.kt-ws-dot.problem {
+.kt-ws-dot.problem,
+.kt-ws-dot.failed {
   background: var(--bs-warning);
+}
+/* Some devices up, some not: half running, half stopped. */
+.kt-ws-dot.partial {
+  background: linear-gradient(90deg, var(--kt-node-running) 50%, var(--kt-node-stopped) 50%);
 }
 /* A lab row's hover card (LabRowTip): a panel-styled card rather than Bootstrap's dark bubble, so
    it reads as part of the rail. No arrow — Bootstrap's is a borderless triangle, which looks
@@ -186,6 +191,11 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
+}
+.kt-lab-tip-error {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--bs-warning-text-emphasis);
 }
 .kt-lab-tip-hint {
   margin-top: 2px;

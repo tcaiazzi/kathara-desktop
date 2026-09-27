@@ -26,6 +26,7 @@ import io
 import logging
 import os
 import posixpath
+import re
 import shlex
 import shutil
 import threading
@@ -47,6 +48,8 @@ from Kathara.exceptions import (
     LabNotFoundError,
     MachineNotFoundError,
     MachineNotRunningError,
+    MachineOptionError,
+    PrivilegeError,
 )
 from Kathara.manager.Kathara import Kathara
 from Kathara.model.Lab import Lab
@@ -74,6 +77,7 @@ from ..errors import (
     SettingsLockedError,
     SettingsPersistError,
     UnsupportedOperationError,
+    known_error_detail,
 )
 from ..lab_conf_options import LAB_CONF_FILENAME
 from ..schemas.examples import ExampleSummary
@@ -98,7 +102,7 @@ from .known_labs import KNOWN_LABS_FILENAME, KnownLabs
 from .lab_events import LabEvents
 from .lab_store import LabPlace, LabStore, is_within, lab_id_for
 from .lab_watch import STARTUP_SUFFIX
-from .registry import LabRegistry
+from .registry import DeployFailure, LabRegistry
 
 logger = logging.getLogger("kathara_api")
 
@@ -111,6 +115,27 @@ ROOT_MACHINE = "ROOT"
 # whether or not a daemon is reachable. Named here because `system_info` reports it from two places
 # (the active manager and the available-managers map) and they must not drift apart.
 _DOCKER_MANAGER_LABEL = "Docker (Kathara)"
+
+# A privileged device needs the backend itself running as root (Kathara's DockerMachine.create).
+# Getting root restarts the backend, and only a whole-lab deploy picks up again after that restart
+# (the desktop shell's `resumeDeploy`), so a single-device deploy that meets this refusal says so:
+# the hint for the error the request answers with, the short form for what the lab keeps showing
+# (LabSummary.deploy_error).
+_PRIVILEGED_REFUSAL_RE = re.compile(r"^You must be root in order to start device `[^`]+` in privileged mode\.$")
+PRIVILEGED_SINGLE_DEPLOY_HINT = (
+    "Deploying a single privileged device isn't supported yet: "
+    "deploy the whole lab to grant administrator privileges."
+)
+PRIVILEGED_ONLY_WITH_LAB = (
+    "privileged devices start only with the whole lab (Deploy asks for administrator privileges)."
+)
+
+
+def _privileged_device_refused(exc: Exception) -> bool:
+    """Whether ``exc`` is Kathara refusing a privileged device to a backend that isn't root — and
+    not one of its other PrivilegeErrors (external collision domains), which a whole-lab deploy
+    would not fix either."""
+    return isinstance(exc, PrivilegeError) and bool(_PRIVILEGED_REFUSAL_RE.match(str(exc)))
 
 
 # Caps for fs_search_offline — module-level (not class-level) so _search_lines_in_text, a bare
@@ -410,7 +435,7 @@ class KatharaService:
         """Present ``lab`` as "nothing is running", for when the daemon can't be asked.
 
         Necessary rather than a no-op: Kathara never clears ``api_object`` itself, and both
-        ``deployed`` and ``running`` are derived from it (``serializers._is_deployed`` /
+        ``deployed`` and ``running`` are derived from it (``serializers._n_running`` /
         ``machine_to_detail``) — so a lab that was up before the daemon went away would keep
         claiming to be up. ``_clear_undeployed_state`` is the routine undeploy already uses for
         exactly this reason. On a freshly started process it changes nothing, because
@@ -1228,6 +1253,11 @@ class KatharaService:
         """Where ``lab`` lives, for the response schemas (``LabSummary.path``/``managed``)."""
         directory = self._lab_dir(lab.hash)
         return LabPlace(directory, directory is not None and self.store.is_under_root(directory))
+
+    def deploy_failure(self, lab: Lab) -> Optional[DeployFailure]:
+        """Why ``lab``'s last deploy failed, for the response schemas (``LabSummary.deploy_error``),
+        or None — cleared by the next successful deploy and once nothing in the lab is running."""
+        return self.registry.deploy_failure(lab.hash)
 
     def export_lab_zip(self, lab_id: str) -> tuple[str, io.BytesIO]:
         """The lab's directory name and an in-memory .zip of that directory (raises 404 if unknown).
@@ -2124,7 +2154,25 @@ class KatharaService:
                 already_running = target_names & pre_running
 
                 if fresh_names:
-                    self._facade().deploy_lab(lab, selected_machines=fresh_names)
+                    self._check_deployable(lab, fresh_names)
+                    try:
+                        self._facade().deploy_lab(lab, selected_machines=fresh_names)
+                    except Exception as exc:
+                        # The devices that did start stay up (Kathara starts them side by side), so
+                        # the reason is kept for the ones that didn't — see set_deploy_failure.
+                        whole_lab = selected_machines is None and excluded_machines is None
+                        if whole_lab or not _privileged_device_refused(exc):
+                            message = (
+                                known_error_detail(exc)
+                                or "An unexpected error stopped the deploy; the backend log has the details."
+                            )
+                            self.registry.set_deploy_failure(lab_id, DeployFailure(message, frozenset(fresh_names)))
+                            raise
+                        self.registry.set_deploy_failure(
+                            lab_id, DeployFailure(PRIVILEGED_ONLY_WITH_LAB, frozenset(fresh_names))
+                        )
+                        raise PrivilegeError(f"{exc} {PRIVILEGED_SINGLE_DEPLOY_HINT}") from exc
+                    self.registry.clear_deploy_failure(lab_id)
                     # Native pack_data just packed each fresh machine's *current* on-disk state,
                     # so any dirty flag an offline edit set before this deploy is already
                     # reflected — discard it rather than leaving it to trigger a spurious
@@ -2137,6 +2185,28 @@ class KatharaService:
                 return lab
         finally:
             self._end_transition(lab_id)
+
+    @staticmethod
+    def _check_deployable(lab: Lab, names: set[str]) -> None:
+        """Refuse the deploy, before any network or container exists, when a device's ``mem`` or
+        ``cpus`` is one Kathara cannot read.
+
+        Kathara reads both only while creating each container, and creates a lab's containers side
+        by side: one bad value fails its own device while every other one starts, leaving a lab
+        half up because of a typo. ``get_mem``/``get_cpu`` are the very readers it uses, so the
+        check can neither miss a value Kathara rejects nor refuse one it accepts — the lab-wide
+        ``mem`` included, which ``get_mem`` also reads.
+        """
+        problems = []
+        for name in sorted(names):
+            machine = lab.machines[name]
+            for read in (machine.get_mem, machine.get_cpu):
+                try:
+                    read()
+                except MachineOptionError as exc:
+                    problems.append(str(exc))
+        if problems:
+            raise MachineOptionError(f"Can't deploy: {' '.join(problems)}")
 
     @staticmethod
     def _boot_script(lab: Lab, machine: Machine) -> str:
@@ -2256,6 +2326,10 @@ class KatharaService:
                 full_undeploy = selected_machines is None and excluded_machines is None and selected_links is None
                 if full_undeploy:
                     self._reload_lab_from_disk(lab_dir)
+                # A deploy failure explains devices that should be running and aren't; once none
+                # is meant to run, there is nothing left for it to explain.
+                if full_undeploy or lab is None or not any(m.api_object is not None for m in lab.machines.values()):
+                    self.registry.clear_deploy_failure(lab_id)
         finally:
             self._end_transition(lab_id)
 
@@ -2380,39 +2454,24 @@ class KatharaService:
         return available or list(SHELL_PATHS)
 
     def add_machine(self, lab_id: str, spec: MachineCreate) -> Machine:
-        # Adding a device is a *configuration* edit, so it's appended to lab.conf (unlike runtime
-        # interface changes, which stay live-only). It is deployed live only when the lab is already
-        # running — mirroring interface edits (config on a stopped lab, runtime on a live one).
+        # Adding a device is a *configuration* edit: it is appended to lab.conf and added to the
+        # model, stopped, whether or not the lab is running. Starting it is a separate step — a
+        # single-device deploy, or the lab's next deploy — so the one path that starts devices
+        # (deploy_lab) is also the one that checks and explains why one can't start.
         #
-        # `lab`/`lab_deployed` are (re)read *inside* the lock, not before it — matching
-        # update_machine/update_lab_conf/rename_lab. Reading them outside the lock would let a
-        # concurrent deploy_lab/undeploy_lab run first: a stale `lab_deployed=False` would skip
-        # deploying a device on a lab that's actually now running, and a stale `lab` object could be
-        # an orphan the registry no longer tracks (undeploy_lab replaces it via _reload_lab_from_disk).
+        # `lab` is (re)read *inside* the lock, not before it — matching update_machine/
+        # update_lab_conf/rename_lab: a `lab` read outside it could be an orphan the registry no
+        # longer tracks (undeploy_lab replaces it via _reload_lab_from_disk).
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
-            lab_deployed = any(m.api_object is not None for m in lab.machines.values())
-            # Render + validate the lab.conf block *before* creating or deploying anything, so a
-            # spec that can't be represented (name clash, interface-number gap) fails with no side
-            # effects instead of leaving a device behind or an unloadable file on disk.
+            # Render + validate the lab.conf block *before* touching the model, so a spec that
+            # can't be represented (name clash, interface-number gap) fails with no side effects
+            # instead of leaving a device behind or an unloadable file on disk.
             lab_dir = self._lab_dir(lab_id)
             base = self._lab_conf_base_text(lab_dir)
             new_conf = lab_conf_edit.add_device(base, spec) if base is not None else None
             machine = lab_builder.build_machine(lab, spec)
-            if lab_deployed:
-                try:
-                    self._facade().deploy_machine(machine)
-                except Exception:
-                    # Take the device back out of the model. Without this, a failed deploy leaves a
-                    # device that exists in the topology but in neither lab.conf (not written yet,
-                    # see below) nor the backend — and it would keep reappearing until the lab is
-                    # reloaded from disk. Nothing on disk to clean up: build_machine only builds
-                    # the model, and `machine.fs` is non-None only for a folder that already
-                    # existed (Machine.__init__), which is not ours to delete.
-                    self._compact_interfaces(machine)
-                    lab.remove_machine(name=spec.name, delete_fs=False)
-                    raise
             if new_conf is not None:
                 self.store.write_lab_conf_text(lab_dir, new_conf)
         return machine

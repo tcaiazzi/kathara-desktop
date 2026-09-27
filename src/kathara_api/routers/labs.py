@@ -50,7 +50,7 @@ def _to_set(values):
 
 def _detail(lab, service: KatharaService) -> LabDetail:
     """The lab's detail, including where it lives — every route answering with a lab goes through here."""
-    return serializers.lab_to_detail(lab, service.lab_place(lab))
+    return serializers.lab_to_detail(lab, service.lab_place(lab), service.deploy_failure(lab))
 
 
 def _import_result(lab, warnings: list[str], service: KatharaService) -> LabImportResult:
@@ -149,7 +149,10 @@ def create_gallery_lab(payload: GalleryInstall, service: KatharaService = Depend
 @router.get("", response_model=list[LabSummary])
 def list_labs(service: KatharaService = Depends(get_service)) -> list[LabSummary]:
     """List the network scenarios known to the API."""
-    loaded = [serializers.lab_to_summary(lab, service.lab_place(lab)) for lab in service.list_labs()]
+    loaded = [
+        serializers.lab_to_summary(lab, service.lab_place(lab), service.deploy_failure(lab))
+        for lab in service.list_labs()
+    ]
     unloaded = [serializers.unloaded_lab_summary(*entry) for entry in service.unloaded_opened_labs()]
     return loaded + unloaded
 

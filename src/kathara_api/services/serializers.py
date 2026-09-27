@@ -17,6 +17,7 @@ from ..schemas.link import LinkDetail
 from ..schemas.machine import InterfaceModel, MachineDetail, PortMapping, Ulimit, VolumeMount
 from ..schemas.stats import MachineStats
 from .lab_store import LabPlace
+from .registry import DeployFailure
 
 
 def _ports_to_schema(ports: dict) -> list[PortMapping]:
@@ -117,8 +118,8 @@ def _lab_metadata(lab: Lab) -> LabMetadata:
     )
 
 
-def _is_deployed(lab: Lab) -> bool:
-    return any(m.api_object is not None for m in lab.machines.values())
+def _n_running(lab: Lab) -> int:
+    return sum(1 for m in lab.machines.values() if m.api_object is not None)
 
 
 def _place_fields(place: Optional[LabPlace]) -> dict[str, Any]:
@@ -129,13 +130,20 @@ def _place_fields(place: Optional[LabPlace]) -> dict[str, Any]:
     return {"path": str(place.directory), "managed": place.managed}
 
 
-def lab_to_summary(lab: Lab, place: Optional[LabPlace] = None) -> LabSummary:
+def _run_fields(lab: Lab, failure: Optional[DeployFailure]) -> dict[str, Any]:
+    n_running = _n_running(lab)
+    return {"deployed": n_running > 0, "n_running": n_running, "deploy_error": failure and failure.message}
+
+
+def lab_to_summary(
+    lab: Lab, place: Optional[LabPlace] = None, failure: Optional[DeployFailure] = None
+) -> LabSummary:
     return LabSummary(
         name=lab.name,
         id=lab.hash,
         n_machines=len(lab.machines),
         n_links=len(lab.links),
-        deployed=_is_deployed(lab),
+        **_run_fields(lab, failure),
         **_place_fields(place),
     )
 
@@ -155,14 +163,17 @@ def unloaded_lab_summary(lab_id: str, directory: Path, problem: str) -> LabSumma
     )
 
 
-def lab_to_detail(lab: Lab, place: Optional[LabPlace] = None) -> LabDetail:
+def lab_to_detail(
+    lab: Lab, place: Optional[LabPlace] = None, failure: Optional[DeployFailure] = None
+) -> LabDetail:
     """Serialize a lab, including its devices and collision domains."""
     return LabDetail(
         name=lab.name,
         id=lab.hash,
         n_machines=len(lab.machines),
         n_links=len(lab.links),
-        deployed=_is_deployed(lab),
+        **_run_fields(lab, failure),
+        deploy_failed_machines=sorted(failure.machines) if failure else [],
         **_place_fields(place),
         metadata=_lab_metadata(lab),
         machines=[machine_to_detail(m) for m in lab.machines.values()],

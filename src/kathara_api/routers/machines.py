@@ -39,8 +39,8 @@ def list_shells(
 def add_machine(
     lab_id: str, payload: MachineCreate, service: KatharaService = Depends(get_service)
 ) -> MachineDetail:
-    """Add a device to a lab. Deployed immediately if the lab is running; otherwise persisted to
-    lab.conf and deployed the next time the lab starts."""
+    """Add a device to a lab: persisted to lab.conf and added stopped, even to a running lab —
+    starting it is a separate deploy of that device, or of the lab."""
     machine = service.add_machine(lab_id, payload)
     return serializers.machine_to_detail(machine)
 

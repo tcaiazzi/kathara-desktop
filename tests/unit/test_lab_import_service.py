@@ -372,7 +372,7 @@ def test_add_machine_persists_to_lab_conf_and_defers_deploy_when_stopped(tmp_pat
     assert "pc2" in service.registry.get(lab_id(service, "lab1")).machines
 
 
-def test_add_machine_deploys_live_when_lab_running(tmp_path):
+def test_add_machine_to_a_running_lab_persists_it_without_starting_it(tmp_path):
     service = _service(tmp_path)
     make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
     service.deploy_lab(lab_id(service, "lab1"))  # pc1 running
@@ -380,8 +380,8 @@ def test_add_machine_deploys_live_when_lab_running(tmp_path):
     spec = MachineCreate.model_validate({"name": "pc2", "image": "kathara/base"})
     machine = service.add_machine(lab_id(service, "lab1"), spec)
 
-    # Lab is running → the new device is deployed live *and* persisted to lab.conf.
-    assert machine.api_object is not None
+    assert machine.api_object is None
+    assert service.registry.get(lab_id(service, "lab1")).machines["pc1"].api_object is not None
     assert "pc2[image]" in (service.store.lab_dir("lab1") / "lab.conf").read_text()
 
 

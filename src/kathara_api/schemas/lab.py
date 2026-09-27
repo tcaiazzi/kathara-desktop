@@ -133,7 +133,14 @@ class LabSummary(BaseModel):
     problem: Optional[str] = None
     n_machines: int
     n_links: int
+    # Whether any device is running. A lab can be partly running — devices are deployed one at a
+    # time as well as all together — so `n_running` says how many of the `n_machines` are.
     deployed: bool
+    n_running: int = 0
+    # Why the last deploy failed, while the lab still has devices it was meant to start: Kathara
+    # starts a lab's devices side by side, so the others may be running. Cleared by the next
+    # successful deploy and once nothing in the lab runs.
+    deploy_error: Optional[str] = None
 
 
 class LabDetail(LabSummary):
@@ -142,6 +149,9 @@ class LabDetail(LabSummary):
     metadata: LabMetadata = Field(default_factory=LabMetadata)
     machines: list[MachineDetail] = Field(default_factory=list)
     links: list[LinkDetail] = Field(default_factory=list)
+    # The devices the failed deploy (`deploy_error`) was meant to start: `deploy_error` explains the
+    # ones among them still stopped, and says nothing about any other device.
+    deploy_failed_machines: list[str] = Field(default_factory=list)
 
 
 class DeployOptions(BaseModel):

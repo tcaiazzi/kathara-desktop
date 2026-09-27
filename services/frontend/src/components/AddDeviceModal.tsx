@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Button, Collapse, Form, Modal } from "react-bootstrap";
-import { useDeployGate } from "../hooks/useDeployGate";
 import { useBusyAction } from "../hooks/useBusyAction";
 import { api } from "../services/api";
 import { validateDeviceName, validateDomainName } from "../services/names";
@@ -35,7 +34,6 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const { run: runBusy, cancel: cancelBusy } = useBusyAction();
-  const ensureDeployAuthorized = useDeployGate();
 
   function handleCancel() {
     cancelBusy();
@@ -69,18 +67,6 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
     const cleanLink = link.trim();
     if (cleanLink) payload.interfaces = [{ link: cleanLink, number: 0 }];
 
-    // Adding a device to a lab that is already running deploys it right away (see
-    // KatharaService.add_machine), so this needs the same gate the two deploy paths use — volumes
-    // *and* the global hosthome_mount, which `useDeployGate` reads for every caller.
-    //
-    // Never asks for "both" even if the Advanced options' privileged checkbox is also set, for the
-    // same reason as a single-device redeploy: no resume-after-reload path exists for this modal's
-    // form state across a full page reload.
-    const outcome = await ensureDeployAuthorized({
-      volumeMachines: payload.volumes ? [{ name: cleanName, volumes: payload.volumes }] : [],
-    });
-    if (outcome !== "proceed") return;
-
     await runBusy(setBusy, "Add device", async (signal) => {
       await api.addMachine(labId, payload, signal);
       await onAdded();
@@ -95,7 +81,8 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
       </Modal.Header>
       <Modal.Body>
         <p className="text-muted small">
-          Adds the device to the lab (saved to lab.conf). If the lab is running, it's also deployed live.
+          Adds the device to the lab (saved to lab.conf). If the lab is running, the device stays stopped: deploy it
+          from its menu to start it.
         </p>
         <Form.Group className="mb-3">
           <Form.Label>Device name</Form.Label>

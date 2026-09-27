@@ -135,9 +135,11 @@ function lab(machines: MachineDetail[], links: LinkDetail[] = []): LabDetail {
     n_machines: machines.length,
     n_links: links.length,
     deployed: false,
+    n_running: 0,
     metadata: { description: null, version: null, author: null, email: null, web: null },
     machines,
     links,
+    deploy_failed_machines: [],
   };
 }
 

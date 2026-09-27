@@ -8,13 +8,20 @@ the host sysctl discovery behind the device editor's autocomplete. No Docker.
 import asyncio
 
 import pytest
-from Kathara.exceptions import InvocationError, LabNotFoundError, MachineNotFoundError
+from Kathara.exceptions import (
+    InvocationError,
+    LabNotFoundError,
+    MachineNotFoundError,
+    MachineOptionError,
+    PrivilegeError,
+)
 from Kathara.model.Lab import Lab
 
 from kathara_api.errors import ApiError, LabAlreadyRegisteredError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import kathara_service as kathara_service_module
+from kathara_api.services import serializers
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import FakeFacadeBase, lab_id, make_service, zip_bytes
 
@@ -84,6 +91,179 @@ def test_a_refused_deploy_does_not_leave_the_lab_transitioning(service):
         service.deploy_lab(lab_id(service, "l"), selected_machines={"pc1"}, excluded_machines={"pc2"})
 
     service.fs_write_text_offline(lab_id(service, "l"), "/notes.txt", "still editable\n")
+
+
+# ---------------------------------------------------------------------------
+# Partial deploys: values refused up front, a failure's reason kept
+# ---------------------------------------------------------------------------
+
+
+def _set_meta(service, name, key, value):
+    service.get_lab_or_reconstruct(lab_id(service, "l")).machines[name].meta[key] = value
+
+
+def test_a_mem_kathara_cannot_read_refuses_the_deploy_before_any_device_starts(service, facade):
+    _set_meta(service, "pc2", "mem", "abc")
+
+    with pytest.raises(MachineOptionError, match=r"^Can't deploy: Memory value not valid on `pc2`\.$"):
+        service.deploy_lab(lab_id(service, "l"))
+    assert facade.deploy_calls == []
+
+
+def test_every_unreadable_mem_and_cpus_is_named_at_once(service, facade):
+    _set_meta(service, "pc1", "cpus", "lots")
+    _set_meta(service, "pc2", "mem", "12x")
+
+    with pytest.raises(MachineOptionError) as refused:
+        service.deploy_lab(lab_id(service, "l"))
+    assert str(refused.value) == "Can't deploy: CPU value not valid on `pc1`. Memory value not valid on `pc2`."
+
+
+def test_only_the_devices_being_started_are_checked(service, facade):
+    _set_meta(service, "pc2", "mem", "abc")
+
+    service.deploy_lab(lab_id(service, "l"), selected_machines={"pc1"})
+
+    assert facade.deploy_calls == [{"pc1"}]
+
+
+class _PartialDeployFacade(_RecordingFacade):
+    """Starts `pc1`, then fails the way Kathara does when one of a lab's devices can't start: the
+    others are already up by the time the error surfaces."""
+
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
+        super().deploy_lab(lab, selected_machines, excluded_machines)
+        if self.error is not None:
+            lab.machines["pc1"].api_object = object()
+            raise self.error
+        for name in selected_machines:
+            lab.machines[name].api_object = object()
+
+
+@pytest.fixture
+def partial(tmp_path):
+    facade = _PartialDeployFacade(
+        PrivilegeError("You must be root in order to start this Kathara device in privileged mode.")
+    )
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
+    service.create_lab(LabCreate(name="l", machines=[MachineCreate(name="pc1"), MachineCreate(name="pc2")]))
+    return service, facade
+
+
+def _summary(service):
+    lab = service.get_lab_or_reconstruct(lab_id(service, "l"))
+    return serializers.lab_to_detail(lab, service.lab_place(lab), service.deploy_failure(lab))
+
+
+def test_a_deploy_that_fails_halfway_reports_how_many_devices_run_and_why_the_rest_do_not(partial):
+    service, _ = partial
+
+    with pytest.raises(PrivilegeError):
+        service.deploy_lab(lab_id(service, "l"))
+
+    summary = _summary(service)
+    assert (summary.deployed, summary.n_running, summary.n_machines) == (True, 1, 2)
+    assert summary.deploy_error == "You must be root in order to start this Kathara device in privileged mode."
+
+
+def test_an_unexpected_failure_is_kept_without_its_internal_text(partial):
+    service, facade = partial
+    facade.error = RuntimeError("/home/someone/.secret went wrong")
+
+    with pytest.raises(RuntimeError):
+        service.deploy_lab(lab_id(service, "l"))
+
+    assert _summary(service).deploy_error == (
+        "An unexpected error stopped the deploy; the backend log has the details."
+    )
+
+
+def test_the_next_successful_deploy_clears_the_failure(partial):
+    service, facade = partial
+    with pytest.raises(PrivilegeError):
+        service.deploy_lab(lab_id(service, "l"))
+
+    facade.error = None
+    service.deploy_lab(lab_id(service, "l"), selected_machines={"pc2"})
+
+    summary = _summary(service)
+    assert (summary.n_running, summary.deploy_error) == (2, None)
+
+
+def test_the_failure_is_cleared_once_nothing_in_the_lab_runs(partial):
+    service, _ = partial
+    with pytest.raises(PrivilegeError):
+        service.deploy_lab(lab_id(service, "l"))
+
+    service.undeploy_lab(lab_id(service, "l"), selected_machines={"pc1"})
+
+    summary = _summary(service)
+    assert (summary.deployed, summary.n_running, summary.deploy_error) == (False, 0, None)
+
+
+def test_the_failure_names_the_devices_it_was_meant_to_start(partial):
+    service, _ = partial
+
+    with pytest.raises(PrivilegeError):
+        service.deploy_lab(lab_id(service, "l"))
+
+    assert _summary(service).deploy_failed_machines == ["pc1", "pc2"]
+
+
+_ROOT_REFUSAL = "You must be root in order to start device `pc2` in privileged mode."
+
+
+def test_a_single_privileged_device_deploy_says_to_deploy_the_whole_lab(partial):
+    """Getting root restarts the backend, and only a whole-lab deploy resumes after that restart:
+    the refusal says so, and what the lab keeps showing is the short form of it."""
+    service, facade = partial
+    facade.error = PrivilegeError(_ROOT_REFUSAL)
+
+    with pytest.raises(PrivilegeError) as refused:
+        service.deploy_lab(lab_id(service, "l"), selected_machines={"pc2"})
+
+    assert str(refused.value) == (
+        f"{_ROOT_REFUSAL} Deploying a single privileged device isn't supported yet: "
+        "deploy the whole lab to grant administrator privileges."
+    )
+    detail = _summary(service)
+    assert detail.deploy_error == (
+        "privileged devices start only with the whole lab (Deploy asks for administrator privileges)."
+    )
+    assert detail.deploy_failed_machines == ["pc2"]
+
+
+def test_a_whole_lab_deploy_keeps_katharas_own_root_refusal(partial):
+    service, facade = partial
+    facade.error = PrivilegeError(_ROOT_REFUSAL)
+
+    with pytest.raises(PrivilegeError, match=r"^You must be root in order to start device `pc2` in privileged mode\.$"):
+        service.deploy_lab(lab_id(service, "l"))
+
+    assert _summary(service).deploy_error == _ROOT_REFUSAL
+
+
+def test_a_root_refusal_that_is_not_about_privileged_mode_is_left_alone(partial):
+    service, facade = partial
+    facade.error = PrivilegeError("You must be root in order to use external collision domains.")
+
+    with pytest.raises(PrivilegeError, match=r"^You must be root in order to use external collision domains\.$"):
+        service.deploy_lab(lab_id(service, "l"), selected_machines={"pc2"})
+
+
+def test_a_refused_deploy_is_not_recorded_as_a_failure(service):
+    """Nothing started, so there is no partly running lab to explain: the refusal itself is the
+    answer the caller gets."""
+    _set_meta(service, "pc2", "mem", "abc")
+
+    with pytest.raises(MachineOptionError):
+        service.deploy_lab(lab_id(service, "l"))
+
+    assert _summary(service).deploy_error is None
 
 
 # ---------------------------------------------------------------------------

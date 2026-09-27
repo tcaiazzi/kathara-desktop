@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Optional
 
 import docker.errors
 import fs.errors
@@ -343,6 +343,18 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # unavailability, not a generic 500.
     ConnectionError: status.HTTP_503_SERVICE_UNAVAILABLE,
 }
+
+
+def known_error_detail(exc: Exception) -> Optional[str]:
+    """The ``detail`` a request failing with ``exc`` answers with, for an error this module maps to
+    a message written for the user — or None for one that reaches the catch-all, whose text may
+    carry host paths or other internals and so only goes to the log. For code that keeps an error
+    to show later, outside the request that raised it (``KatharaService.deploy_lab``)."""
+    if isinstance(exc, ApiError) or isinstance(exc, tuple(KATHARA_STATUS_MAP)):
+        return str(exc) or exc.__class__.__name__
+    if isinstance(exc, (docker.errors.APIError, SyntaxError)):
+        return str(exc) or exc.__class__.__name__
+    return None
 
 
 def _error_response(exc: Exception, code: int) -> JSONResponse:

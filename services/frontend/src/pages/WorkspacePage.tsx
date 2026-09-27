@@ -93,6 +93,7 @@ import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import { labFolder } from "../services/labPlace";
+import { hasDeployFailure, labDotState, labRunLabel, labRunState, labRunSummary } from "../services/labRunState";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
 
@@ -563,9 +564,7 @@ interface LabRowTipProps {
 // room to abbreviate (LabRowLabel).
 function LabRowTip({ lab, action, suppressed, children }: LabRowTipProps) {
   const [show, setShow] = useState(false);
-  const state = lab.problem
-    ? `Not loaded: ${PROBLEM_LABEL[lab.problem] ?? lab.problem}`
-    : `${lab.deployed ? "Running" : "Stopped"} · ${lab.n_machines} ${lab.n_machines === 1 ? "device" : "devices"}`;
+  const state = lab.problem ? `Not loaded: ${PROBLEM_LABEL[lab.problem] ?? lab.problem}` : labRunSummary(lab);
   return (
     <OverlayTrigger
       placement="right"
@@ -577,9 +576,12 @@ function LabRowTip({ lab, action, suppressed, children }: LabRowTipProps) {
           <div className="kt-lab-tip-name">{lab.name || "(unnamed)"}</div>
           {lab.path && <div className="kt-lab-tip-path">{lab.path}</div>}
           <div className="kt-lab-tip-state">
-            <span className={`kt-ws-dot ${lab.problem ? "problem" : lab.deployed ? "running" : "stopped"}`} />
+            <span className={`kt-ws-dot ${labDotState(lab)}`} />
             {state}
           </div>
+          {!lab.problem && hasDeployFailure(lab) && (
+            <div className="kt-lab-tip-error">Last deploy failed: {lab.deploy_error}</div>
+          )}
           <div className="kt-lab-tip-hint">{action ? `${action} · ` : ""}Right-click for actions</div>
         </Tooltip>
       }
@@ -1462,7 +1464,7 @@ export function WorkspacePage() {
                           }}
                           onContextMenu={(e) => openLabMenu(e, l)}
                         >
-                          <span className={`kt-ws-dot ${l.deployed ? "running" : "stopped"}`} />
+                          <span className={`kt-ws-dot ${labDotState(l)}`} />
                           <LabRowLabel lab={l} home={homeDir} />
                           <span className="kt-ws-row-meta">{l.n_machines}</span>
                         </button>
@@ -1490,7 +1492,7 @@ export function WorkspacePage() {
                         className="kt-ws-row kt-ws-row--static"
                         onContextMenu={(e) => openLabMenu(e, currentLab)}
                       >
-                        <span className={`kt-ws-dot ${currentLab.deployed ? "running" : "stopped"}`} />
+                        <span className={`kt-ws-dot ${labDotState(currentLab)}`} />
                         <LabRowLabel lab={currentLab} home={homeDir} />
                         <span className="kt-ws-row-meta">{currentLab.n_machines}</span>
                       </div>
@@ -1598,8 +1600,18 @@ export function WorkspacePage() {
               >
                 {detail.name || "(unnamed)"}
               </h5>
-              <Badge bg={detail.deployed ? "success" : "secondary"} className="flex-shrink-0">
-                {detail.deployed ? "deployed" : "undeployed"}
+              <Badge
+                bg={
+                  hasDeployFailure(detail)
+                    ? "warning"
+                    : { running: "success", partial: "info", stopped: "secondary" }[labRunState(detail)]
+                }
+                text={hasDeployFailure(detail) ? "dark" : undefined}
+                className="d-flex align-items-center gap-1 flex-shrink-0"
+                title={hasDeployFailure(detail) ? `Last deploy failed: ${detail.deploy_error}` : undefined}
+              >
+                {hasDeployFailure(detail) && <AlertTriangle size={12} />}
+                {labRunLabel(detail)}
               </Badge>
               {detail.machines.some((m) => m.privileged) && (
                 <Badge
