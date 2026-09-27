@@ -275,7 +275,13 @@ export function TopologyGraph({
         else openAddDevice(nd.name);
       },
     },
-    { initialPositions, onPositionsChange: savePositions, selectedId, scopeKey: labId },
+    {
+      initialPositions,
+      onPositionsChange: savePositions,
+      selectedId,
+      scopeKey: labId,
+      labelLines: { ips: showIps, macs: showMacs },
+    },
   );
 
   useEffect(() => {
@@ -396,7 +402,7 @@ export function TopologyGraph({
               </div>
             </div>
           )}
-          <div className="kt-topo-toolbar">
+          <div className="kt-topo-toolbar" data-topo-overlay>
             {compactToolbar ? (
               <DropdownButton
                 size="sm"
@@ -459,7 +465,7 @@ export function TopologyGraph({
               </>
             )}
           </div>
-          <div className="kt-topo-layout-toolbar">
+          <div className="kt-topo-layout-toolbar" data-topo-overlay>
             {compactToolbar ? (
               <DropdownButton
                 size="sm"
@@ -570,7 +576,7 @@ export function TopologyGraph({
               </>
             )}
           </div>
-          <div className="kt-topo-legend">
+          <div className="kt-topo-legend" data-topo-overlay>
             {legend.categories.map((cat) => (
               <div className="lg" key={cat}>
                 <svg className={`kt-legend-icon n-${cat}`} viewBox="0 0 16 16">

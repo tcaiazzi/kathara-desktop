@@ -13,8 +13,18 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { CATEGORY_ICON } from "../services/deviceIcon";
 import {
+  deviceNodeWidth,
+  EDGE_LABEL_LINE_Y,
+  edgeLabelBox,
+  edgeLabelPlacement,
   fitTransform,
+  nodeExtent,
+  overlayInsets,
   planSeeds,
+  sameIdSet,
+  ZERO_INSETS,
+  type FitInsets,
+  type LabelBox,
   type NodePositions,
   type SeedPosition,
   type TopoEdge,
@@ -63,9 +73,19 @@ interface Engine {
   edgeIpEls: SVGTextElement[];
   edgeMacEls: SVGTextElement[];
   nodeEls: Record<string, SVGGElement>;
+  // Each node's half-size (nodeExtent) and each edge's label box (edgeLabelBox, by edge index):
+  // where a label can sit without covering either end, and how long its edge has to be for that.
+  extents: Record<string, { hw: number; hh: number }>;
+  labelBoxes: LabelBox[];
+  // Re-measures the label boxes (the IP/MAC lines were shown or hidden) and redraws.
+  refreshLabels: () => void;
   ro: ResizeObserver | null;
   autoFit: boolean;
   settledOnce: boolean;
+  // Set once the user places the view themselves (wheel, pan, the zoom buttons, the search box's
+  // centring) and cleared by Fit: until then the view follows the graph and the canvas — a resize
+  // or a device added refits it — and afterwards it stays where the user put it.
+  userCamera: boolean;
 }
 
 interface UseForceLayoutCallbacks {
@@ -89,6 +109,9 @@ interface UseForceLayoutOptions {
   // Identity of the graph being shown (the lab id). A rebuild only inherits the previous engine's
   // positions and camera within the same scope: node ids such as `dev:pc1` repeat across labs.
   scopeKey?: string;
+  // Which of an interface label's lines are on show: they decide how much room the label needs,
+  // and so where it goes. Its CSS still does the hiding.
+  labelLines?: { ips: boolean; macs: boolean };
 }
 
 // What a rebuild can inherit from the engine it replaces — see `lastStateRef`.
@@ -98,6 +121,7 @@ interface EngineSnapshot {
   positions: Record<string, SeedPosition>;
   settled: boolean;
   autoFit: boolean;
+  userCamera: boolean;
 }
 
 interface UseForceLayout {
@@ -115,9 +139,27 @@ function applyTransform(engine: Engine): void {
   engine.viewport.setAttribute("transform", `translate(${engine.tx},${engine.ty}) scale(${engine.scale})`);
 }
 
-// Fit all nodes into view (scale + center). Shared by the returned fit() and the auto-fit-on-settle.
+// The canvas space the overlays floating over the graph cover (toolbars, legend, zoom buttons —
+// TopologyGraph marks each with `data-topo-overlay`), in SVG user units. Measured at fit time, not
+// fixed: the toolbars collapse on a narrow canvas, and the legend's size depends on its content.
+function overlayFitInsets(engine: Engine): FitInsets {
+  const root = engine.canvas.parentElement;
+  if (!root) return ZERO_INSETS;
+  const r = engine.canvas.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return ZERO_INSETS;
+  const overlays = Array.from(root.querySelectorAll("[data-topo-overlay]"), (el) => el.getBoundingClientRect());
+  const px = overlayInsets(r, overlays);
+  // The viewBox is W×H drawn over the canvas's client box: client px -> user units.
+  const sx = engine.W / r.width;
+  const sy = engine.H / r.height;
+  return { top: px.top * sy, right: px.right * sx, bottom: px.bottom * sy, left: px.left * sx };
+}
+
+// Fit all nodes into view (scale + center), each counted with its size and clear of the overlays.
+// Shared by the returned fit(), the auto-fit-on-settle and the refit on resize.
 function fitEngine(engine: Engine): void {
-  const { scale, tx, ty } = fitTransform(engine.nodes, engine.W, engine.H);
+  const nodes = engine.nodes.map((nd) => ({ x: nd.x, y: nd.y, ...nodeExtent(nd) }));
+  const { scale, tx, ty } = fitTransform(nodes, engine.W, engine.H, overlayFitInsets(engine));
   engine.scale = scale;
   engine.tx = tx;
   engine.ty = ty;
@@ -281,15 +323,22 @@ export function useForceLayout(
       edgeIpEls: [],
       edgeMacEls: [],
       nodeEls: {},
+      extents: Object.fromEntries(model.nodes.map((nd) => [nd.id, nodeExtent(nd)])),
+      labelBoxes: [],
+      refreshLabels: () => {},
       ro: null,
       // Fit once on settle for a genuinely fresh/relaid-out graph: a layout restored from
       // `lab.layout` may have been arranged on a differently-sized canvas, and fitEngine only
       // pans/zooms (stored coordinates are untouched). A rebuild that carries the previous engine
-      // forward keeps the user's own pan/zoom and must not override it with a fit nobody asked
-      // for — unless that engine had not come to rest yet, in which case its own pending first
-      // fit is inherited rather than lost.
-      autoFit: carried === null || (!carried.settled && carried.autoFit),
+      // forward keeps its view, with two exceptions: that engine had not come to rest yet (its own
+      // pending first fit is inherited rather than lost), or the set of nodes changed while the
+      // user had not placed the view themselves — a device added may land outside it.
+      autoFit:
+        carried === null ||
+        (!carried.settled && carried.autoFit) ||
+        (!carried.userCamera && !sameIdSet(Object.keys(carried.positions), model.nodes.map((nd) => nd.id))),
       settledOnce: false,
+      userCamera: carried?.userCamera ?? false,
     };
     engineRef.current = engine;
 
@@ -304,6 +353,16 @@ export function useForceLayout(
     // still-attached listeners unconditionally, on top of this flag short-circuiting them.
     let disposed = false;
     let activeDragCleanup: (() => void) | null = null;
+
+    function measureLabels() {
+      const lines = optionsRef.current.labelLines ?? { ips: true, macs: false };
+      engine.labelBoxes = engine.edges.map((e) => edgeLabelBox(e, lines));
+    }
+    measureLabels();
+    engine.refreshLabels = () => {
+      measureLabels();
+      render();
+    };
 
     for (const e of model.edges) {
       const line = svgEl("line", { class: "kt-topo-edge" });
@@ -448,20 +507,32 @@ export function useForceLayout(
           b.dy -= uy * f;
         }
       }
-      for (const e of edges) {
+      edges.forEach((e, i) => {
         const a = ids[e.source];
         const b = ids[e.target];
         const dx = a.x - b.x;
         const dy = a.y - b.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-        const f = (d * d) / kk;
+        // The spring acts on the length beyond what the interface label needs to clear both ends
+        // (edgeLabelPlacement's `need`, which grows with a wide device), so an edge rests at its
+        // natural length or at that, whichever is longer — never with its label on a node.
+        const { need } = edgeLabelPlacement(
+          a,
+          engine.extents[a.id],
+          b,
+          engine.extents[b.id],
+          engine.labelBoxes[i],
+        );
+        const slack = Math.max(0, need + 8 - kk);
+        const stretch = Math.max(0.01, d - slack);
+        const f = (stretch * stretch) / kk;
         const ux = dx / d;
         const uy = dy / d;
         a.dx -= ux * f;
         a.dy -= uy * f;
         b.dx += ux * f;
         b.dy += uy * f;
-      }
+      });
       for (const nd of nodes) {
         // Strong enough to matter on its own: a lightly-connected node (e.g. a single edge into a
         // domain everything else avoids) needs more than the spring force to stay near the rest of
@@ -495,17 +566,22 @@ export function useForceLayout(
         line.setAttribute("y1", String(a.y));
         line.setAttribute("x2", String(b.x));
         line.setAttribute("y2", String(b.y));
-        const mx = a.x + (b.x - a.x) * 0.38;
-        const my = a.y + (b.y - a.y) * 0.38;
+        const { x: mx, y: my } = edgeLabelPlacement(
+          a,
+          engine.extents[a.id],
+          b,
+          engine.extents[b.id],
+          engine.labelBoxes[i],
+        );
         const lbl = engine.edgeLabelEls[i];
         lbl.setAttribute("x", String(mx));
-        lbl.setAttribute("y", String(my - 3));
+        lbl.setAttribute("y", String(my + EDGE_LABEL_LINE_Y.name));
         const ip = engine.edgeIpEls[i];
         ip.setAttribute("x", String(mx));
-        ip.setAttribute("y", String(my + 12));
+        ip.setAttribute("y", String(my + EDGE_LABEL_LINE_Y.ip));
         const mac = engine.edgeMacEls[i];
         mac.setAttribute("x", String(mx));
-        mac.setAttribute("y", String(my + 27));
+        mac.setAttribute("y", String(my + EDGE_LABEL_LINE_Y.mac));
       });
       for (const nd of engine.nodes) engine.nodeEls[nd.id].setAttribute("transform", `translate(${nd.x},${nd.y})`);
     }
@@ -568,6 +644,7 @@ export function useForceLayout(
       const r = engine.svg.getBoundingClientRect();
       const move = (e: PointerEvent) => {
         if (disposed) return;
+        if (e.clientX !== startX || e.clientY !== startY) engine.userCamera = true;
         engine.tx = tx0 + ((e.clientX - startX) / r.width) * engine.W;
         engine.ty = ty0 + ((e.clientY - startY) / r.height) * engine.H;
         render();
@@ -592,10 +669,10 @@ export function useForceLayout(
       return g;
     }
 
-    // Cap how wide a node can grow from its label, and truncate whatever no longer fits (full name/
-    // image are still one hover away via the tooltip) — otherwise a long device name or a long
-    // registry image path grows the rect unboundedly and crowds/overlaps its neighbors.
-    const MAX_NODE_W = 260;
+    // A node grows with its label up to a cap (deviceNodeWidth, services/topology.ts), and whatever no
+    // longer fits is truncated (full name/image are still one hover away via the tooltip) —
+    // otherwise a long device name or a long registry image path grows the rect unboundedly and
+    // crowds/overlaps its neighbors.
     function truncate(s: string, maxChars: number): string {
       if (maxChars < 1) return "";
       if (s.length <= maxChars) return s;
@@ -611,7 +688,7 @@ export function useForceLayout(
           (nd.bridged ? " bridged" : "") +
           (nd.ports.length ? " has-ports" : "");
         g = svgEl("g", { class: cls });
-        const w = Math.min(MAX_NODE_W, Math.max(112, nd.name.length * 9 + 58));
+        const w = deviceNodeWidth(nd.name);
         g.append(svgEl("rect", { x: -w / 2, y: -21, width: w, height: 42, rx: 8 }));
         // Leading per-image type icon (SVG line-art, drawn at 16×16 then scaled up a bit to match
         // the bigger node), then the name + image sublabel.
@@ -685,6 +762,7 @@ export function useForceLayout(
         const vy = ((ev.clientY - r.top) / r.height) * engine.H;
         const factor = ev.deltaY < 0 ? 1.12 : 1 / 1.12;
         const ns = Math.max(0.3, Math.min(3, engine.scale * factor));
+        engine.userCamera = true;
         engine.tx = vx - (vx - engine.tx) * (ns / engine.scale);
         engine.ty = vy - (vy - engine.ty) * (ns / engine.scale);
         engine.scale = ns;
@@ -694,15 +772,21 @@ export function useForceLayout(
     );
 
     if (window.ResizeObserver) {
+      // Both dimensions: the SVG is drawn W×H over the canvas's client box, so a stale H would
+      // stretch the drawing on every height change. The layout itself is left alone — only the
+      // view follows the new size, and only while the user has not placed it themselves (a graph
+      // built in a hidden panel starts from a fallback size, and fits once the panel is shown).
       engine.ro = new ResizeObserver(() => {
-        const nw = Math.max(canvas.clientWidth || W, 320);
-        if (Math.abs(nw - engine.W) > 4) {
-          engine.W = nw;
-          svgNode.setAttribute("viewBox", `0 0 ${engine.W} ${engine.H}`);
-          svgNode.setAttribute("width", String(engine.W));
-          engine.temp = Math.max(engine.temp, 8);
-          ensureLoop();
-        }
+        const nw = Math.max(canvas.clientWidth || engine.W, 320);
+        const nh = Math.max(canvas.clientHeight || engine.H, 300);
+        if (Math.abs(nw - engine.W) <= 4 && Math.abs(nh - engine.H) <= 4) return;
+        engine.W = nw;
+        engine.H = nh;
+        svgNode.setAttribute("viewBox", `0 0 ${engine.W} ${engine.H}`);
+        svgNode.setAttribute("width", String(engine.W));
+        svgNode.setAttribute("height", String(engine.H));
+        if (!engine.userCamera) fitEngine(engine);
+        else applyTransform(engine);
       });
       engine.ro.observe(canvas);
     }
@@ -730,15 +814,26 @@ export function useForceLayout(
         positions,
         settled: engine.settledOnce,
         autoFit: engine.autoFit,
+        userCamera: engine.userCamera,
       };
       engineRef.current = null;
       canvas.replaceChildren();
     };
   }, [model, relayoutNonce]);
 
+  // Showing or hiding the IP/MAC lines changes how much room each label needs: re-place them
+  // without rebuilding the engine (the layout stays put).
+  const showIps = options.labelLines?.ips;
+  const showMacs = options.labelLines?.macs;
+  useEffect(() => {
+    engineRef.current?.refreshLabels();
+  }, [showIps, showMacs]);
+
   const fit = useCallback(() => {
     const engine = engineRef.current;
-    if (engine) fitEngine(engine);
+    if (!engine) return;
+    engine.userCamera = false;
+    fitEngine(engine);
   }, []);
 
   // Stable so callers can use it as an effect dependency without re-running every render. Visuals
@@ -757,6 +852,7 @@ export function useForceLayout(
     const cx = engine.W / 2;
     const cy = engine.H / 2;
     const ns = Math.max(0.3, Math.min(3, engine.scale * factor));
+    engine.userCamera = true;
     engine.tx = cx - (cx - engine.tx) * (ns / engine.scale);
     engine.ty = cy - (cy - engine.ty) * (ns / engine.scale);
     engine.scale = ns;
@@ -767,6 +863,7 @@ export function useForceLayout(
     const engine = engineRef.current;
     const nd = engine?.byId[id];
     if (!engine || !nd) return;
+    engine.userCamera = true;
     engine.tx = engine.W / 2 - nd.x * engine.scale;
     engine.ty = engine.H / 2 - nd.y * engine.scale;
     applyTransform(engine);
