@@ -275,7 +275,7 @@ def test_session_resize_maps_cols_and_rows_to_width_and_height():
     assert client.calls[-1] == ("exec_resize", "exec-1", {"height": 35, "width": 120})
 
 
-def test_session_close_closes_the_socket():
+def test_session_close_closes_a_socket_that_cannot_be_shut_down():
     closed = []
     session = DockerTtySession(_FakeApiClient(sock=_Node(close=lambda: closed.append(True))), "c1", "bash")
     session.start()
@@ -287,10 +287,11 @@ def test_session_close_closes_the_socket():
 
 def test_session_close_unblocks_a_read_waiting_in_another_thread_and_ends_the_connection():
     """The exec socket is a `SocketIO` over the connection's socket, as `exec_start(socket=True)`
-    returns it; closing the session must release a read already blocked on it, and end the
-    connection for the Docker daemon at the other end."""
+    returns it; closing the session must release a read already blocked on it and end the
+    connection for the Docker daemon at the other end, without closing that `SocketIO` itself."""
     ours, shell_end = socket.socketpair()
-    session = DockerTtySession(_FakeApiClient(sock=socket.SocketIO(ours, "rwb")), "c1", "bash")
+    exec_socket = socket.SocketIO(ours, "rwb")
+    session = DockerTtySession(_FakeApiClient(sock=exec_socket), "c1", "bash")
     session.start()
     read = []
     reader = threading.Thread(target=lambda: read.append(session.read(64)))
@@ -304,6 +305,9 @@ def test_session_close_unblocks_a_read_waiting_in_another_thread_and_ends_the_co
         assert not reader.is_alive()
         assert read == [b""]
         assert shell_end.recv(1) == b""
+        # Left open: http.client closes its wrappers around it later, and fails on one closed
+        # underneath it.
+        assert not exec_socket.closed
     finally:
         ours.close()
         shell_end.close()

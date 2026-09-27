@@ -8,8 +8,9 @@ stopped one, so without this, a lab wiped via `kathara wipe` would keep reportin
 from docker.models.containers import Container
 
 from kathara_api.schemas.lab import LabCreate
-from kathara_api.services import lab_builder
-from tests.helpers import FakeFacadeBase, make_service, register_lab
+from kathara_api.services import lab_builder, serializers
+from kathara_api.services.lab_store import LabStore
+from tests.helpers import FakeFacadeBase, make_lab, make_service, register_lab
 
 
 class _WipeFacade(FakeFacadeBase):
@@ -106,7 +107,7 @@ def test_wipe_continues_past_a_failing_lab_and_reports_it():
 
 
 def _container(name: str) -> Container:
-    return Container(attrs={"Id": f"id-{name}", "Name": name})
+    return Container(attrs={"Id": f"id-{name}", "Name": name, "State": {"Status": "running"}})
 
 
 class _RunningFacade(FakeFacadeBase):
@@ -193,8 +194,8 @@ def _two_domain_lab(service):
     return lab
 
 
-def test_a_collision_domain_detached_at_runtime_leaves_no_empty_interface_slot():
-    """Every refresh after the one that finds the detach still reads the model without failing."""
+def test_a_collision_domain_detached_at_runtime_keeps_its_slot_and_later_reads_still_work():
+    """The empty slot keeps the number taken: the container never gets that ethN again."""
     facade = _AttachmentsFacade({"pc1": {"A": 0}, "pc2": {"A": 0}})
     service = make_service(facade=facade)
     lab = _two_domain_lab(service)
@@ -202,7 +203,9 @@ def test_a_collision_domain_detached_at_runtime_leaves_no_empty_interface_slot()
     service.get_lab_or_reconstruct(lab.hash)
     service.get_lab_or_reconstruct(lab.hash)
 
-    assert [(num, iface.link.name) for num, iface in lab.machines["pc1"].interfaces.items()] == [(0, "A")]
+    interfaces = lab.machines["pc1"].interfaces
+    assert list(interfaces) == [0, 1]
+    assert interfaces[0].link.name == "A" and interfaces[1] is None
 
 
 def test_a_collision_domain_attached_again_comes_back_under_its_own_number():
@@ -250,3 +253,89 @@ def test_a_deploy_still_refreshes_the_lab_it_is_deploying():
     service.deploy_lab(lab.hash)
 
     assert facade.refreshes == 1
+
+
+# -- interfaces changed at runtime ---------------------------------------------------------------
+
+
+class _RuntimeFacade(FakeFacadeBase):
+    """Kathara's runtime interface bookkeeping: a connect numbers the new interface by counting
+    the device's slots (``Machine.add_interface`` with no number), a disconnect empties the slot
+    (``Machine.remove_interface``), and a refresh reads ``.link`` off every slot and hands each
+    running device a fresh container object."""
+
+    def __init__(self, running: set[str]):
+        self.running = running
+
+    def update_lab_from_api(self, lab):
+        for device in lab.machines.values():
+            {iface.link for iface in device.interfaces.values()}
+            if device.name in self.running:
+                device.api_object = _container(device.name)
+        return lab
+
+    def connect_machine_to_link(self, machine, link, mac_address=None):
+        machine.add_interface(link, mac_address=mac_address)
+
+    def disconnect_machine_from_link(self, machine, link, keep_link=False):
+        machine.remove_interface(link)
+
+    def deploy_lab(self, lab, selected_machines=None, excluded_machines=None):
+        lab.check_integrity()
+        lab.get_links_from_machines(selected_machines)
+        for name in selected_machines:
+            lab.machines[name].api_object = _container(name)
+            self.running.add(name)
+
+
+def _shown_interfaces(machine):
+    return [(iface.num, iface.link) for iface in serializers.machine_to_detail(machine).interfaces]
+
+
+def test_an_interface_attached_again_at_runtime_takes_the_next_number_as_its_container_does():
+    service = make_service(facade=_RuntimeFacade(running={"pc1", "pc2"}))
+    lab = _two_domain_lab(service)
+    for machine in lab.machines.values():
+        machine.api_object = _container(machine.name)
+
+    service.connect_machine(lab.hash, "pc2", "X")
+    service.disconnect_machine(lab.hash, "pc2", "X")
+    service.connect_machine(lab.hash, "pc2", "X")
+
+    assert _shown_interfaces(service.get_lab_or_reconstruct(lab.hash).machines["pc2"]) == [(0, "A"), (2, "X")]
+
+
+def test_a_device_deploys_while_another_one_has_an_interface_removed_at_runtime():
+    service = make_service(facade=_RuntimeFacade(running={"pc1"}))
+    lab = _two_domain_lab(service)
+    lab.machines["pc1"].api_object = _container("pc1")
+    service.disconnect_machine(lab.hash, "pc1", "B")
+
+    service.deploy_lab(lab.hash, selected_machines={"pc2"})
+
+    assert lab.machines["pc2"].api_object is not None
+
+
+_NET_CONF = """pc1[0]="A"
+pc1[1]="B"
+pc2[0]="A"
+"""
+
+
+def test_a_device_undeployed_alone_takes_back_the_interfaces_its_lab_conf_declares(tmp_path):
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=_RuntimeFacade(running={"pc1", "pc2"}))
+    lab, _warnings = make_lab(service, "net", {"lab.conf": _NET_CONF})
+    for machine in lab.machines.values():
+        machine.api_object = _container(machine.name)
+    service.disconnect_machine(lab.hash, "pc1", "B")
+    service.connect_machine(lab.hash, "pc1", "X")
+    service.connect_machine(lab.hash, "pc2", "Y")
+
+    service._instance.running.discard("pc1")
+    service.undeploy_lab(lab.hash, selected_machines={"pc1"})
+
+    lab = service.get_lab_or_reconstruct(lab.hash)
+    assert _shown_interfaces(lab.machines["pc1"]) == [(0, "A"), (1, "B")]
+    assert "X" not in lab.links
+    # The device left running keeps what changed at runtime.
+    assert _shown_interfaces(lab.machines["pc2"]) == [(0, "A"), (1, "Y")]

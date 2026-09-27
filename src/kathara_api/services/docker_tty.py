@@ -189,20 +189,22 @@ class DockerTtySession:
         self._client.exec_resize(self._exec_id, height=rows, width=cols)
 
     def close(self) -> None:
-        # Shut the connection down before closing it. close() alone only drops this wrapper, while
-        # http.client still holds the socket underneath, so a read blocked in another thread would
-        # stay blocked for good, holding its worker. shutdown() makes that read return b"". The
-        # shell itself outlives the connection either way: Docker leaves an exec's process running
-        # when its client goes. A transport without shutdown() (a Windows named pipe) is just
-        # closed.
+        # Shut the connection down rather than close the exec socket. Closing it only drops this
+        # wrapper, while http.client still holds the socket underneath, so a read blocked in
+        # another thread would stay blocked for good, holding its worker; shutdown() makes that
+        # read return b"". The wrappers are then left to close themselves, outermost first, once
+        # the session is let go: closing the innermost one here would make http.client's own
+        # close fail later on flushing it ("I/O operation on closed file"). The shell outlives
+        # the connection either way, since Docker leaves an exec's process running when its
+        # client goes. A transport without shutdown() (a Windows named pipe) is closed instead.
         for target in _iter_socket_transports(self._socket):
             shutdown = getattr(target, "shutdown", None)
             if callable(shutdown):
                 try:
                     shutdown(socket.SHUT_RDWR)
+                    return
                 except (OSError, TypeError, ValueError):  # already closed, or not a BSD socket
-                    pass
-                break
+                    break
         close = getattr(self._socket, "close", None)
         if callable(close):
             close()

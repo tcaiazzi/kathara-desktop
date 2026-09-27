@@ -263,6 +263,12 @@ class KatharaService:
         # write that claims it — see _claiming.
         self._claim_locks: dict[str, threading.Lock] = {}
         self._claim_locks_guard = threading.Lock()
+        # One lock per lab id, held while its devices' interface slots are read or changed outside
+        # `_mutate_lock`: across a refresh from Docker, which hides the empty ones for its length
+        # (_empty_slots_hidden), and across a runtime connect or disconnect, whose interface
+        # number Kathara derives from those very slots — see _slot_lock.
+        self._slot_locks: dict[str, threading.RLock] = {}
+        self._slot_locks_guard = threading.Lock()
         # Folders under the labs root that rescan_labs_root could not load, with what they looked
         # like then (_folder_signature): retried only once that changes, not on every poll.
         self._unadoptable: dict[Path, tuple[int, Optional[int]]] = {}
@@ -392,6 +398,19 @@ class KatharaService:
             yield True
         finally:
             lock.release()
+
+    def _slot_lock(self, lab_id: str) -> threading.RLock:
+        """The lock that keeps a refresh of ``lab_id`` from Docker and a runtime connect or
+        disconnect on it from interleaving.
+
+        A refresh runs on every read, outside ``_mutate_lock``, and hides each device's empty
+        interface slots for its length (``_empty_slots_hidden``); a runtime connect counting
+        those slots meanwhile would give the new interface the wrong number. Per lab, so a
+        refresh of one lab never waits on another, and never held across anything slow but the
+        Docker calls that need it. Never removed, like ``_claim_locks``.
+        """
+        with self._slot_locks_guard:
+            return self._slot_locks.setdefault(lab_id, threading.RLock())
 
     def _is_transitioning(self, lab_id: str) -> bool:
         """Whether ``lab_id`` is inside ``deploy_lab``/``undeploy_lab`` right now."""
@@ -1349,14 +1368,39 @@ class KatharaService:
 
     @staticmethod
     def _compact_interfaces(machine: Machine) -> None:
-        """Drop ``None`` interface slots left by Kathara's ``Machine.remove_interface`` (it nulls a
-        slot to preserve numbering). Those ``None`` slots crash a later ``update_lab_from_api``
-        (``x.link`` on ``None``), and keep Kathara from adding the collision domain back under the
-        same number if it is attached again. So they are compacted after every disconnect or
-        removal, this app's own and the ones ``update_lab_from_api`` makes itself on finding a
-        collision domain detached at runtime (``_refresh_from_api``) — a workaround in this layer
-        for that upstream behavior, with Kathara itself left untouched."""
+        """Drop the ``None`` slots Kathara's ``Machine.remove_interface`` leaves behind, keeping
+        every other number as it is.
+
+        A running device keeps those slots on purpose (see ``disconnect_machine``), so this is
+        only for a device on its way out of the model (``remove_machine``) and for the length of
+        a refresh (``_empty_slots_hidden``): Kathara's ``undeploy_machine``,
+        ``Lab.remove_machine`` and ``update_lab_from_api`` all read ``.link`` off every slot."""
         machine.interfaces = {num: iface for num, iface in machine.interfaces.items() if iface is not None}
+
+    @staticmethod
+    @contextmanager
+    def _empty_slots_hidden(lab: Lab) -> Generator[None, None, None]:
+        """Hide every device's empty interface slots from Kathara for the length of the block.
+
+        A running device keeps the slot of an interface removed at runtime (``disconnect_machine``),
+        and Kathara's ``update_lab_from_api`` reads ``.link`` off every slot. Each slot is put back
+        afterwards unless the block filled its number, and any slot the block emptied itself (a
+        collision domain detached outside this app) stays too. Hold ``_slot_lock`` across it.
+        """
+        hidden: list[tuple[Machine, list[int]]] = []
+        for machine in lab.machines.values():
+            empty = [num for num, iface in machine.interfaces.items() if iface is None]
+            if empty:
+                hidden.append((machine, empty))
+                KatharaService._compact_interfaces(machine)
+        try:
+            yield
+        finally:
+            for machine, empty in hidden:
+                slots = dict(machine.interfaces)
+                for num in empty:
+                    slots.setdefault(num, None)
+                machine.interfaces = dict(sorted(slots.items()))
 
     @staticmethod
     def _renumber_interfaces(machine: Machine) -> None:
@@ -2133,6 +2177,10 @@ class KatharaService:
     def _refresh_from_api(self, facade: Kathara, lab: Lab, *, in_own_transition: bool = False) -> None:
         """Overlay what is actually running under ``lab.hash`` onto the registered model.
 
+        Empty interface slots are hidden from Kathara for the refresh (``_empty_slots_hidden``),
+        under the lab's ``_slot_lock``; a device whose container is gone takes the interfaces its
+        lab.conf declares back (``_restore_declared_interfaces``).
+
         Skipped while the lab is mid deploy/undeploy, unless the caller is that transition itself
         (``in_own_transition``). A deploy creates each container attached to its first collision
         domain only and attaches the others once it has started (Kathara's ``DockerMachine.start``),
@@ -2157,30 +2205,22 @@ class KatharaService:
         """
         if not in_own_transition and self._is_transitioning(lab.hash):
             return
-        before = {name: m.api_object for name, m in lab.machines.items() if isinstance(m.api_object, Container)}
-        try:
-            facade.update_lab_from_api(lab)
-        except LabNotFoundError:
-            # Some managers raise when nothing is running under this hash; the Docker manager
-            # instead enriches with whatever containers exist (none) and never raises. Either way
-            # nothing is running, which the stale check below then reflects.
-            pass
-        # A collision domain detached from a running device outside this app (``docker network
-        # disconnect``, a deploy that failed half-way) leaves an empty slot behind: see
-        # _compact_interfaces. Dropped here, before the next refresh trips over it.
-        for machine in lab.machines.values():
-            lost = [num for num, iface in machine.interfaces.items() if iface is None]
-            if lost:
-                logger.info(
-                    "Device `%s` of lab `%s` has lost interface(s) %s at runtime",
-                    machine.name, self._lab_label(lab.hash), ", ".join(f"eth{num}" for num in lost),
-                )
-                self._compact_interfaces(machine)
-        stale = {
-            name for name, obj in before.items() if name in lab.machines and lab.machines[name].api_object is obj
-        }
-        if stale:
-            self._clear_undeployed_state(lab, stale)
+        with self._slot_lock(lab.hash):
+            before = {name: m.api_object for name, m in lab.machines.items() if isinstance(m.api_object, Container)}
+            with self._empty_slots_hidden(lab):
+                try:
+                    facade.update_lab_from_api(lab)
+                except LabNotFoundError:
+                    # Some managers raise when nothing is running under this hash; the Docker
+                    # manager instead enriches with whatever containers exist (none) and never
+                    # raises. Either way nothing is running, which the stale check below reflects.
+                    pass
+            stale = {
+                name for name, obj in before.items() if name in lab.machines and lab.machines[name].api_object is obj
+            }
+            if stale:
+                self._clear_undeployed_state(lab, stale)
+                self._restore_declared_interfaces(lab, stale)
 
     def _clear_undeployed_state(
         self,
@@ -2210,6 +2250,44 @@ class KatharaService:
         for link in candidate_links:
             if not any(m.api_object is not None for m in link.machines.values()):
                 link.api_object = None
+
+    def _restore_declared_interfaces(self, lab: Lab, machine_names: set[str]) -> None:
+        """Give each of ``machine_names``, devices whose containers are gone, back the interfaces
+        its lab.conf declares, dropping whatever changed at runtime.
+
+        The per-device counterpart of the full undeploy's ``_reload_lab_from_disk``, for a device
+        stopped while others keep running. Needed as well as consistent: a new container attaches
+        its interfaces from eth0 in order, so an empty slot kept for its predecessor
+        (``disconnect_machine``) would make the next deploy misnumber the interfaces after it, or
+        fail outright on reading ``.link`` off it. A collision domain this leaves with no device
+        goes too, unless lab.conf declares it, it is a draft, or its network is still up. When
+        lab.conf can't be read, each device keeps its interfaces, renumbered from eth0
+        (``_renumber_interfaces``).
+        """
+        machines = [lab.machines[name] for name in machine_names if name in lab.machines]
+        if not machines:
+            return
+        translation = self._translate_lab_dir(self._lab_dir(lab.hash))
+        if translation is None:
+            for machine in machines:
+                self._renumber_interfaces(machine)
+            return
+        declared = {spec.name: spec.interfaces for spec in translation.payload.machines}
+        declared_links = {iface.link for interfaces in declared.values() for iface in interfaces}
+        for machine in machines:
+            for iface in machine.interfaces.values():
+                if iface is not None:
+                    iface.link.machines.pop(machine.name, None)
+            machine.interfaces = {}
+            for iface in declared.get(machine.name, []):
+                lab.connect_machine_to_link(
+                    machine.name, iface.link, machine_iface_number=iface.number, mac_address=iface.mac_address
+                )
+            machine.interfaces = dict(sorted(machine.interfaces.items()))
+        drafts = self.registry.drafts(lab.hash)
+        for name, link in list(lab.links.items()):
+            if not link.machines and link.api_object is None and name not in declared_links and name not in drafts:
+                del lab.links[name]
 
     @staticmethod
     def _resolve_targets(
@@ -2447,11 +2525,14 @@ class KatharaService:
 
                 # A full undeploy brings the whole lab down, so restore the topology to the saved
                 # configuration (lab.conf) — discarding any runtime-only model changes such as
-                # interfaces added/removed live. Skipped for a partial undeploy, which must not
-                # disturb the machines left running (and their live state).
+                # interfaces added/removed live. A partial undeploy does the same for the devices
+                # it stopped only, and must not disturb the ones left running (and their live
+                # state).
                 full_undeploy = selected_machines is None and excluded_machines is None and selected_links is None
                 if full_undeploy:
                     self._reload_lab_from_disk(lab_dir)
+                elif lab is not None:
+                    self._restore_declared_interfaces(lab, machine_names)
                 # A deploy failure explains devices that should be running and aren't; once none
                 # is meant to run, there is nothing left for it to explain.
                 if full_undeploy or lab is None or not any(m.api_object is not None for m in lab.machines.values()):
@@ -2638,6 +2719,10 @@ class KatharaService:
             lab = self.get_lab_or_reconstruct(lab_id)
             machine = lab.get_machine(machine_name)
             link_names = {iface.link.name for iface in machine.interfaces.values() if iface is not None}
+            # Kathara's undeploy_machine and Lab.remove_machine read `.link` off every slot, and
+            # the device leaves the model, so its empty slots (see disconnect_machine) go first.
+            with self._slot_lock(lab_id):
+                self._compact_interfaces(machine)
             self._facade().undeploy_machine(machine, keep_links=keep_links)
             # link_names=None means "check every link in the lab" to _clear_undeployed_state, so a
             # kept link set must be the empty set (not None) to mean "check none of them".
@@ -2645,9 +2730,6 @@ class KatharaService:
             # The facade only undeploys — it leaves the device in the model, where it would keep
             # reappearing in the topology/devices forever. Drop it from the Lab too (and its
             # on-disk files).
-            # Guard against None interface slots (a known upstream disconnect bug can leave them, and
-            # Lab.remove_machine dereferences interface.link without a None check).
-            self._compact_interfaces(machine)
             # delete_fs=False: Kathara's own delete_fs uses removedir(), which fails on a non-empty
             # device folder — clean the fs ourselves recursively (see _remove_machine_fs).
             lab.remove_machine(name=machine_name, delete_fs=False)
@@ -2734,11 +2816,14 @@ class KatharaService:
                 )
 
             link = lab.get_or_new_link(link_name)
-            self._facade().connect_machine_to_link(
-                machine,
-                link,
-                mac_address=mac_address,
-            )
+            # Kathara numbers the new interface by counting the device's slots, empty ones
+            # included (see disconnect_machine), so no refresh may hide them meanwhile.
+            with self._slot_lock(lab_id):
+                self._facade().connect_machine_to_link(
+                    machine,
+                    link,
+                    mac_address=mac_address,
+                )
         return machine
 
     @staticmethod
@@ -2776,10 +2861,15 @@ class KatharaService:
                 self._renumber_interfaces(machine)
                 return
 
-            # Running device: live disconnect. Compact the None slot Kathara leaves behind so
-            # subsequent reads don't crash (runtime change — not persisted to lab.conf).
-            self._facade().disconnect_machine_from_link(machine, link, keep_link=keep_link)
-            self._compact_interfaces(machine)
+            # Running device: live disconnect, not persisted to lab.conf. The empty slot Kathara
+            # leaves behind stays, on purpose: Docker never gives a container an ethN it has used
+            # before, and Kathara numbers the next interface attached at runtime by counting the
+            # slots (their number, or the highest plus one on a bridged device). Without it that
+            # interface would be shown under a number its container doesn't have. Reads cope with
+            # the slot (_empty_slots_hidden); it goes once the device stops
+            # (_restore_declared_interfaces).
+            with self._slot_lock(lab_id):
+                self._facade().disconnect_machine_from_link(machine, link, keep_link=keep_link)
 
     def copy_files(self, lab_id: str, machine_name: str, files: dict[str, str]) -> None:
         guest_to_host = {path: io.BytesIO(content.encode("utf-8")) for path, content in files.items()}

@@ -31,9 +31,10 @@ TTY work.
 The one-shot container lookup in `routers/exec.py` deliberately stays on the default executor: it
 returns promptly and is not a per-session thread.
 
-Closing a session shuts its socket down (`DockerTtySession.close`) before closing it. Closing alone
+Closing a session shuts its socket down (`DockerTtySession.close`) instead of closing it. Closing
 does not release the read blocked in the pool, since the HTTP connection underneath still holds the
-socket, so every closed terminal would keep a worker for good; the shutdown makes that read return.
+socket, so every closed terminal would keep a worker for good; the shutdown makes that read return,
+and the socket's wrappers then close themselves once the session is let go.
 The shell in the container outlives the session either way, as Docker leaves an exec's process
 running when its client disconnects.
 
