@@ -95,6 +95,7 @@ from . import (
     lab_gallery,
     lab_import,
     lab_store,
+    live_addresses,
     settings_store,
 )
 from .docker_tty import SHELL_PATHS
@@ -2922,6 +2923,31 @@ class KatharaService:
         self._get_running_machine(lab_id, machine_name)
         _, _, exit_code = self.exec_command(lab_id, machine_name, ["test", "-f", "/tmp/EOS"], wait=False)
         return exit_code == 0
+
+    # One exec per device: its addresses, but only once its startup commands have finished (the
+    # same `/tmp/EOS` marker as is_startup_finished) — a device still booting has not assigned
+    # them yet, and comparing those with its startup would flag every one of them.
+    _LIVE_ADDRESSES_PROBE = "test -f /tmp/EOS && ip -o addr show"
+
+    def get_live_addresses(self, lab_id: str) -> dict[str, dict[int, list[str]]]:
+        """The addresses on each running device's `ethN` interfaces, for the devices whose startup
+        has finished (see live_addresses.parse_ip_o_addr). A device that is stopped, still booting,
+        has no `ip` or cannot be reached is simply left out: this feeds a best-effort comparison
+        with the startup files, and one device must not fail it for the others."""
+        lab = self.get_lab_or_reconstruct(lab_id)
+        result: dict[str, dict[int, list[str]]] = {}
+        for name in sorted(lab.machines):
+            if lab.machines[name].api_object is None:
+                continue
+            try:
+                stdout, _, exit_code = self.exec_command(
+                    lab_id, name, ["sh", "-c", self._LIVE_ADDRESSES_PROBE], wait=False
+                )
+            except Exception:
+                continue
+            if exit_code == 0:
+                result[name] = live_addresses.parse_ip_o_addr((stdout or b"").decode("utf-8", "replace"))
+        return result
 
     # Overwrites `$1` with the content of the staged file `$2`, then removes `$2` whatever happened.
     # `cat >` truncates the existing file and writes into the same inode, so its mode, owner, hard

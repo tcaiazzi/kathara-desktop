@@ -56,6 +56,9 @@ export type TopoNode = DeviceNode | DomainNode;
 export interface TopoEdge {
   source: string;
   target: string;
+  // The device and interface number the edge is (`source` is `dev:<device>`, `label` `eth<num>`).
+  device: string;
+  num: number;
   label: string;
   mac: string | null;
   ips: string[];
@@ -173,6 +176,115 @@ export function parseIfaceIps(machine: MachineDetail, startup = ""): Record<numb
   return map;
 }
 
+// -- The addresses on a running device against the ones its startup declares --------------------
+
+/** An IPv6 address in its canonical text form (RFC 5952: lowercase, no leading zeros, the longest
+ *  run of two or more zero groups written `::`), so that two spellings of one address compare
+ *  equal. Anything this can't read (including an embedded IPv4 tail) comes back lowercased. */
+export function canonicalIpv6(addr: string): string {
+  const lower = addr.toLowerCase();
+  const halves = lower.split("::");
+  if (lower.includes(".") || halves.length > 2) return lower;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  const groups = [...head, ...Array<string>(Math.max(0, fill)).fill("0"), ...tail];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return lower;
+  const parts = groups.map((g) => g.replace(/^0+(?=.)/, ""));
+  let best = -1;
+  let bestLen = 1;
+  for (let i = 0; i < 8; ) {
+    let j = i;
+    while (j < 8 && parts[j] === "0") j++;
+    if (j - i > bestLen) {
+      best = i;
+      bestLen = j - i;
+    }
+    i = Math.max(j, i + 1);
+  }
+  if (best < 0) return parts.join(":");
+  return `${parts.slice(0, best).join(":")}::${parts.slice(best + bestLen).join(":")}`;
+}
+
+function splitCidr(ip: string): { addr: string; prefix: string | null } {
+  const slash = ip.indexOf("/");
+  const addr = slash < 0 ? ip : ip.slice(0, slash);
+  return { addr: addr.includes(":") ? canonicalIpv6(addr) : addr, prefix: slash < 0 ? null : ip.slice(slash + 1) };
+}
+
+// A declared address with no prefix length (`ifconfig ethN X` with no netmask) matches whatever
+// prefix the kernel gave it.
+function sameIp(declared: string, live: string): boolean {
+  const d = splitCidr(declared);
+  const l = splitCidr(live);
+  return d.addr === l.addr && (d.prefix === null || d.prefix === l.prefix);
+}
+
+export interface IfaceIpMismatch {
+  declared: string[];
+  live: string[];
+  // In the startup but not on the interface, and on the interface but not in the startup.
+  missing: string[];
+  extra: string[];
+}
+
+/** Interface number -> how its running addresses differ from the ones the startup declares, for
+ *  each interface where they do. Only interfaces the startup declares an address for are compared:
+ *  an address set some way parseIfaceIps can't read (a script file, a routing daemon) would
+ *  otherwise flag every interface it touches. */
+export function compareIfaceIps(
+  declared: Record<number, string[]>,
+  live: Record<number, string[]>,
+): Record<number, IfaceIpMismatch> {
+  const out: Record<number, IfaceIpMismatch> = {};
+  for (const [key, want] of Object.entries(declared)) {
+    if (!want.length) continue;
+    const num = Number(key);
+    const have = live[num] ?? [];
+    const missing = want.filter((d) => !have.some((l) => sameIp(d, l)));
+    const extra = have.filter((l) => !want.some((d) => sameIp(d, l)));
+    if (missing.length || extra.length) out[num] = { declared: want, live: have, missing, extra };
+  }
+  return out;
+}
+
+/** Every device's mismatches, keyed by `ifaceKey`, from the running addresses the backend reports
+ *  (GET /labs/{lab}/live-addresses: only running devices whose startup has finished) and the
+ *  addresses each interface's edge carries. A device the backend left out is not compared. */
+export function ipMismatches(
+  edges: readonly Pick<TopoEdge, "device" | "num" | "ips">[],
+  live: Record<string, Record<string, string[]>>,
+): Record<string, IfaceIpMismatch> {
+  const declared: Record<string, Record<number, string[]>> = {};
+  for (const e of edges) (declared[e.device] ??= {})[e.num] = e.ips;
+  const out: Record<string, IfaceIpMismatch> = {};
+  for (const [device, byIface] of Object.entries(live)) {
+    const have: Record<number, string[]> = {};
+    for (const [num, ips] of Object.entries(byIface)) have[Number(num)] = ips;
+    const diff = compareIfaceIps(declared[device] ?? {}, have);
+    for (const [num, d] of Object.entries(diff)) out[ifaceKey(device, Number(num))] = d;
+  }
+  return out;
+}
+
+export function ifaceKey(device: string, num: number): string {
+  return `${device}/eth${num}`;
+}
+
+/** One device's entries of `ipMismatches`, by interface number — what the Inspector shows. */
+export function deviceIpMismatches(
+  edges: readonly Pick<TopoEdge, "device" | "num">[],
+  mismatches: Record<string, IfaceIpMismatch>,
+  device: string,
+): Record<number, IfaceIpMismatch> {
+  const out: Record<number, IfaceIpMismatch> = {};
+  for (const e of edges) {
+    const m = e.device === device ? mismatches[ifaceKey(e.device, e.num)] : undefined;
+    if (m) out[e.num] = m;
+  }
+  return out;
+}
+
 export function computeTopology(
   detail: LabDetail,
   startups?: Record<string, string>,
@@ -227,7 +339,15 @@ export function computeTopology(
       const cd = cds.get(it.link)!;
       cd.machines.add(m.name);
       if (!explicitDomains.has(it.link) && node.running) cd.running = true;
-      edges.push({ source: node.id, target: `cd:${it.link}`, label: `eth${it.num}`, mac: it.mac_address, ips: ifIps });
+      edges.push({
+        source: node.id,
+        target: `cd:${it.link}`,
+        device: m.name,
+        num: it.num,
+        label: `eth${it.num}`,
+        mac: it.mac_address,
+        ips: ifIps,
+      });
     }
     nodes.push(node);
   }
@@ -340,12 +460,14 @@ export function deviceNodeWidth(node: Pick<DeviceNode, "name" | "image">): numbe
 /** Half the width and height a node takes on the canvas, around its centre. A device is its rect
  *  plus the corner badges, which sit on the rect's edge and stick out by 6px on each side
  *  (r 9, centred 3px inside); a domain is its r-18 circle, or its label where that is wider
- *  (~7.6px per character at the domain label's monospace size). */
+ *  (~7.6px per character at the domain label's monospace size). A node is drawn at 1× and scaled
+ *  as a whole by the Display panel's size (`scale`), so its extent scales the same way. */
 export function nodeExtent(
   node: Pick<DeviceNode, "type" | "name" | "image"> | Pick<DomainNode, "type" | "name">,
+  scale = 1,
 ): { hw: number; hh: number } {
-  if (node.type === "dev") return { hw: deviceNodeWidth(node) / 2 + 6, hh: 23 };
-  return { hw: Math.max(18, node.name.length * 3.8), hh: 18 };
+  if (node.type === "dev") return { hw: (deviceNodeWidth(node) / 2 + 6) * scale, hh: 23 * scale };
+  return { hw: Math.max(18, node.name.length * 3.8) * scale, hh: 18 * scale };
 }
 
 /** An interface label's box around its anchor point: the `ethN` line, then the IP and MAC lines
@@ -357,17 +479,39 @@ export interface LabelBox {
   bottom: number;
 }
 
-/** Each label line's baseline below the anchor, as the lines are drawn. */
+/** Each label line's baseline below the anchor, as the lines are drawn at 1×. */
 export const EDGE_LABEL_LINE_Y = { name: -3, ip: 12, mac: 27 } as const;
 
-/** The box an interface's label takes, counting only the lines on show. Widths are estimated from
- *  the text (monospace: 0.6em per character, at 12px for `ethN` and 11px for IP/MAC), plus the
- *  2px halo each line is drawn with. */
+/** The label lines' baselines at the Display panel's size: the font grows with it (the labels'
+ *  CSS multiplies their font size by `--kt-topo-scale`), and so does the spacing between lines. */
+export function edgeLabelLineY(scale: number): { name: number; ip: number; mac: number } {
+  const y = EDGE_LABEL_LINE_Y;
+  return { name: y.name * scale, ip: y.ip * scale, mac: y.mac * scale };
+}
+
+/** The warning drawn after an interface's `ethN` when its running addresses differ from the
+ *  startup's (ipMismatches): its centre sits EDGE_WARN_GAP past the end of the name, and it is
+ *  EDGE_WARN_R across each way from there. At 1×, like EDGE_LABEL_LINE_Y. */
+export const EDGE_WARN_GAP = 10;
+export const EDGE_WARN_R = 6;
+
+/** Half the width of an interface's `ethN` text at 1× (monospace, 0.6em at 12px). */
+export function edgeNameHalfWidth(label: string): number {
+  return (label.length * 7.2) / 2;
+}
+
+/** The box an interface's label takes, counting only the lines on show and the warning (`warn`).
+ *  Widths are estimated from the text (monospace: 0.6em per character, at 12px for `ethN` and
+ *  11px for IP/MAC), plus the 2px halo each line is drawn with; the whole box scales with the text
+ *  (`scale`). The box stays centred on the anchor, so the warning widens it on both sides. */
 export function edgeLabelBox(
   edge: Pick<TopoEdge, "label" | "ips" | "mac">,
   show: { ips: boolean; macs: boolean },
+  scale = 1,
+  warn = false,
 ): LabelBox {
-  const widths = [edge.label.length * 7.2];
+  const nameHalf = edgeNameHalfWidth(edge.label);
+  const widths = [2 * (warn ? nameHalf + EDGE_WARN_GAP + EDGE_WARN_R : nameHalf)];
   let bottom = EDGE_LABEL_LINE_Y.name + 5;
   if (show.ips && edge.ips.length) {
     widths.push(edge.ips.join(", ").length * 6.6);
@@ -377,8 +521,8 @@ export function edgeLabelBox(
     widths.push(edge.mac.length * 6.6);
     bottom = EDGE_LABEL_LINE_Y.mac + 5;
   }
-  const half = Math.max(...widths) / 2 + 2;
-  return { left: -half, right: half, top: EDGE_LABEL_LINE_Y.name - 11, bottom };
+  const half = (Math.max(...widths) / 2 + 2) * scale;
+  return { left: -half, right: half, top: (EDGE_LABEL_LINE_Y.name - 11) * scale, bottom: bottom * scale };
 }
 
 /** How far from a node's centre, along the unit direction (ux, uy), a label's anchor must be for

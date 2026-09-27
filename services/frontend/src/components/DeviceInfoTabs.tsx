@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Button, Dropdown, SplitButton, Tab, Tabs } from "react-bootstrap";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Button, Dropdown, OverlayTrigger, SplitButton, Tab, Tabs, Tooltip } from "react-bootstrap";
 import {
+  AlertTriangle,
   FileTerminal,
   Folder,
   FolderOpen,
@@ -22,7 +23,8 @@ import { api } from "../services/api";
 import { savedDeviceTab, type DeviceInfoTab } from "../services/deviceInfoTabs";
 import { deviceFilesOnDisk } from "../services/labfs";
 import { hasDeployFailure } from "../services/labRunState";
-import { deviceStateLabel, formatIface, formatPort, type DeviceNode } from "../services/topology";
+import { deviceStateLabel, formatIface, formatPort, type DeviceNode, type IfaceIpMismatch } from "../services/topology";
+import { IP_MISMATCH_HINT } from "../services/topologyTooltip";
 import type { LabDetail, MachineDetail } from "../services/types";
 import { describeUnsaved } from "../services/unsaved";
 import { DeviceFilesSection } from "./DeviceFilesSection";
@@ -59,6 +61,8 @@ interface DeviceInfoTabsProps {
   registerSelectionGuard: (guard: SelectionGuard | null) => void;
   /** The latest "Configure Device" request; a new one for this device opens Scripts and its editor. */
   configureRequest: { device: string; seq: number } | null;
+  /** Interfaces whose running addresses differ from the startup's, by number (deviceIpMismatches). */
+  ipMismatches: Record<number, IfaceIpMismatch>;
 }
 
 const LS_TAB = "kt-device-info-tab";
@@ -96,6 +100,7 @@ export function DeviceInfoTabs({
   actions,
   registerSelectionGuard,
   configureRequest,
+  ipMismatches,
 }: DeviceInfoTabsProps) {
   const confirm = useConfirm();
   const device = node.name;
@@ -233,7 +238,7 @@ export function DeviceInfoTabs({
             <OverviewTab node={node} machine={machine} />
           </Tab>
           <Tab eventKey="network" title={<TabTitle icon={Network} label="Network" />}>
-            <NetworkTab node={node} actions={actions} />
+            <NetworkTab node={node} actions={actions} ipMismatches={ipMismatches} />
           </Tab>
           <Tab eventKey="scripts" title={<TabTitle icon={FileTerminal} label="Scripts" dirty={!!(dirty.startup || dirty.shutdown)} />}>
             {runningHint}
@@ -384,7 +389,25 @@ function OverviewTab({ node, machine }: { node: DeviceNode; machine: MachineDeta
   );
 }
 
-function NetworkTab({ node, actions }: { node: DeviceNode; actions: DeviceInfoActions }) {
+// The warning beside an interface's startup IP when the running device has other addresses on it.
+function IpMismatchNote({ mismatch }: { mismatch: IfaceIpMismatch }) {
+  const id = useId();
+  const running = mismatch.live.join(", ") || "no address";
+  const text = `Running ${running}, startup ${mismatch.declared.join(", ")}. ${IP_MISMATCH_HINT}`;
+  return (
+    <OverlayTrigger placement="top" overlay={<Tooltip id={`ip-mismatch-${id}`}>{text}</Tooltip>}>
+      <AlertTriangle size={13} className="text-warning ms-1 align-text-top" tabIndex={0} aria-label={text} />
+    </OverlayTrigger>
+  );
+}
+
+interface NetworkTabProps {
+  node: DeviceNode;
+  actions: DeviceInfoActions;
+  ipMismatches: Record<number, IfaceIpMismatch>;
+}
+
+function NetworkTab({ node, actions, ipMismatches }: NetworkTabProps) {
   const running = node.running;
   return (
     <>
@@ -412,7 +435,18 @@ function NetworkTab({ node, actions }: { node: DeviceNode; actions: DeviceInfoAc
               {running ? "Disconnect" : "Remove"}
             </Button>
           </div>
-          {it.ips.length > 0 && <Kv k="IP" v={it.ips.join(", ")} />}
+          {it.ips.length > 0 && (
+            <Kv
+              k="IP"
+              v={
+                <>
+                  {it.ips.join(", ")}
+                  {ipMismatches[it.num] && <IpMismatchNote mismatch={ipMismatches[it.num]} />}
+                </>
+              }
+            />
+          )}
+          {ipMismatches[it.num] && <Kv k="Running" v={ipMismatches[it.num].live.join(", ") || "no address"} />}
           {it.mac && <Kv k="MAC" v={it.mac} />}
         </div>
       ))}

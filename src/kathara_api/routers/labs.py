@@ -348,6 +348,15 @@ def get_startup_scripts(lab_id: str, service: KatharaService = Depends(get_servi
     return service.get_startup_scripts(lab_id)
 
 
+@router.get("/{lab_id}/live-addresses", response_model=dict[str, dict[int, list[str]]])
+def get_live_addresses(
+    lab_id: str, service: KatharaService = Depends(get_service)
+) -> dict[str, dict[int, list[str]]]:
+    """Device -> interface number -> the addresses actually on it, for every running device whose
+    startup has finished — what the topology compares with the addresses its startup declares."""
+    return service.get_live_addresses(lab_id)
+
+
 @router.get("/{lab_id}/images", response_model=LabImagesStatus)
 def check_lab_images(lab_id: str, service: KatharaService = Depends(get_service)) -> LabImagesStatus:
     """Which of this lab's device images are missing locally, and which have a newer version.

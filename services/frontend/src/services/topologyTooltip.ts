@@ -3,7 +3,7 @@
 // interface IPs and MACs, all of which a third-party lab.conf controls. So every such value passes
 // through `esc` here, and a caller must not interpolate lab data into this markup any other way.
 
-import { deviceStateLabel, formatIface, formatPort, type TopoNode } from "./topology";
+import { deviceStateLabel, formatIface, formatPort, type IfaceIpMismatch, type TopoNode } from "./topology";
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
@@ -45,4 +45,19 @@ export function tooltipHtml(nd: TopoNode): string {
   if (nd.draft) rows.push('<div class="tt-sub">Not saved in lab.conf until a device is connected.</div>');
   if (nd.external.length) rows.push(ttRow("host", nd.external.join(", ")));
   return rows.join("");
+}
+
+/** Why a running address can differ from the startup's, shown wherever the difference is. */
+export const IP_MISMATCH_HINT =
+  "Changed after boot (for example from a terminal), or a startup command failed: see the startup log.";
+
+// Shown on hover of the warning beside an interface label whose running addresses differ from the
+// ones its startup declares (topology.ts's ipMismatches).
+export function ipMismatchTooltipHtml(device: string, label: string, m: IfaceIpMismatch): string {
+  return [
+    `<div class="tt-title">${esc(device)} ${esc(label)}<span class="tt-tag">address differs</span></div>`,
+    ttRow("startup", m.declared.join(", ")),
+    ttRow("running", m.live.join(", ") || "none"),
+    `<div class="tt-sub">${esc(IP_MISMATCH_HINT)}</div>`,
+  ].join("");
 }

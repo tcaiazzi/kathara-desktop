@@ -1,21 +1,29 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, Dropdown, DropdownButton } from "react-bootstrap";
-import { MoreHorizontal } from "lucide-react";
+import { ChevronDown, ChevronRight, MoreHorizontal } from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useBusyAction } from "../hooks/useBusyAction";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { useForceLayout } from "../hooks/useForceLayout";
-import { api } from "../services/api";
+import { api, isAbortError } from "../services/api";
 import { machineStartupText } from "../services/labfs";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
-import { matchesSavedLayout, type NodePositions } from "../services/topology";
-import type { LabDetail } from "../services/types";
+import { deviceIpMismatches, ipMismatches, matchesSavedLayout, type NodePositions } from "../services/topology";
+import {
+  LEGACY_IPS_KEY,
+  LEGACY_MACS_KEY,
+  parseTopoDisplay,
+  TOPO_DISPLAY_KEY,
+  type TopoDisplay,
+} from "../services/topologyDisplay";
+import type { LabDetail, LiveAddresses } from "../services/types";
 import "./TopologyGraph.css";
 import { DeviceInfoTabs, type SelectionGuard } from "./DeviceInfoTabs";
 import { Kv } from "./Kv";
 import type { ContextMenuState } from "./TopologyContextMenu";
+import { TopologyDisplayMenu } from "./TopologyDisplayMenu";
 
 // Device/domain actions (deploy, remove, add/remove interface, open a terminal, …) and the
 // context-menu item lists live in useDeviceActions — a single instance owned by the workspace page
@@ -66,6 +74,24 @@ interface TopologyGraphProps extends DeviceActionsProps {
   nodeInfoHost?: HTMLElement | null;
 }
 
+// The viewer's saved Display preferences. Storage can be unavailable (a private window, blocked
+// site data): the graph then just starts from the defaults.
+function readDisplay(): TopoDisplay {
+  try {
+    return parseTopoDisplay(localStorage.getItem(TOPO_DISPLAY_KEY), {
+      ips: localStorage.getItem(LEGACY_IPS_KEY),
+      macs: localStorage.getItem(LEGACY_MACS_KEY),
+    });
+  } catch {
+    return parseTopoDisplay(null);
+  }
+}
+
+// How often the running devices' addresses are re-read to compare with their startups, and how
+// soon again while a running device is still booting (the backend leaves it out until it is done).
+const LIVE_ADDRESSES_POLL_MS = 15_000;
+const LIVE_ADDRESSES_BOOT_POLL_MS = 3_000;
+
 // Below this canvas width, each toolbar collapses from its row of buttons into a single "more
 // actions" dropdown (see the ResizeObserver effect below) — the panel is user-resizable (dockview),
 // so the buttons must react to it shrinking, not just the browser window.
@@ -108,8 +134,10 @@ export function TopologyGraph({
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelectedId;
   const setSelectedId = onSelectId ?? setInternalSelectedId;
-  const [showIps, setShowIps] = useState(() => localStorage.getItem("kt-topo-ips") !== "false");
-  const [showMacs, setShowMacs] = useState(() => localStorage.getItem("kt-topo-macs") === "true");
+  const [display, setDisplay] = useState(readDisplay);
+  const [liveAddresses, setLiveAddresses] = useState<LiveAddresses>({});
+  const legendId = useId();
+  const { ips: showIps, macs: showMacs } = display;
   const [relayoutNonce, setRelayoutNonce] = useState(0);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const [compactToolbar, setCompactToolbar] = useState(false);
@@ -257,6 +285,40 @@ export function TopologyGraph({
     [setSelectedId],
   );
 
+  // The running devices' own addresses, re-read while any device runs (see the constants above),
+  // and where they differ from what each interface's startup declares.
+  const runningDevices = detail.machines
+    .filter((m) => m.running)
+    .map((m) => m.name)
+    .sort()
+    .join("\n");
+  useEffect(() => {
+    setLiveAddresses({});
+    if (!runningDevices) return;
+    const expected = runningDevices.split("\n").length;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = () => {
+      api
+        .getLiveAddresses(labId, controller.signal)
+        .then((live) => {
+          setLiveAddresses(live);
+          const booting = Object.keys(live).length < expected;
+          timer = setTimeout(poll, booting ? LIVE_ADDRESSES_BOOT_POLL_MS : LIVE_ADDRESSES_POLL_MS);
+        })
+        .catch((e) => {
+          // Best effort: a failed read just waits for the next one, with no toast.
+          if (!isAbortError(e)) timer = setTimeout(poll, LIVE_ADDRESSES_POLL_MS);
+        });
+    };
+    poll();
+    return () => {
+      controller.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [labId, runningDevices]);
+  const ipWarnings = useMemo(() => ipMismatches(model.edges, liveAddresses), [model, liveAddresses]);
+
   const { canvasRef, fit: handleFit, select, zoom } = useForceLayout(
     model,
     // Rebuild token: Re-layout bumps one counter, the arrival of the lab's fixed layout the other
@@ -290,16 +352,18 @@ export function TopologyGraph({
       selectedId,
       scopeKey: labId,
       labelLines: { ips: showIps, macs: showMacs },
+      nodeScale: display.scale,
+      ipWarnings,
     },
   );
 
   useEffect(() => {
-    localStorage.setItem("kt-topo-ips", String(showIps));
-  }, [showIps]);
-
-  useEffect(() => {
-    localStorage.setItem("kt-topo-macs", String(showMacs));
-  }, [showMacs]);
+    try {
+      localStorage.setItem(TOPO_DISPLAY_KEY, JSON.stringify(display));
+    } catch {
+      /* ignore: storage unavailable or full — the choice lasts for this page only */
+    }
+  }, [display]);
 
   // Collapse each toolbar into a single dropdown once the (user-resizable) canvas gets too narrow
   // to show its buttons in a row.
@@ -361,7 +425,13 @@ export function TopologyGraph({
       <div className="kt-topo-wrap">
         <div className="kt-topo-canvas" ref={canvasWrapRef}>
           <div
-            className={`kt-topo-svg-mount${showIps ? "" : " kt-topo-hide-ips"}${showMacs ? "" : " kt-topo-hide-macs"}`}
+            className={
+              "kt-topo-svg-mount" +
+              (showIps ? "" : " kt-topo-hide-ips") +
+              (showMacs ? "" : " kt-topo-hide-macs") +
+              (display.highContrast ? " kt-topo-high-contrast" : "")
+            }
+            style={{ "--kt-topo-scale": display.scale, "--kt-topo-line": display.lineWidth } as CSSProperties}
             ref={canvasRef}
           />
           {isEmpty && (
@@ -383,10 +453,7 @@ export function TopologyGraph({
                 size="sm"
                 variant="outline-secondary"
                 title={
-                  <span
-                    title="Add a device or collision domain, or toggle interface IP/MAC labels"
-                    className="d-inline-flex align-items-center gap-1"
-                  >
+                  <span title="Add a device or collision domain" className="d-inline-flex align-items-center gap-1">
                     <MoreHorizontal size={16} aria-label="Topology actions" />
                     Edit
                   </span>
@@ -396,22 +463,6 @@ export function TopologyGraph({
                 <Dropdown.Header>Add elements to the topology</Dropdown.Header>
                 <Dropdown.Item onClick={() => openAddDevice()}>+ Device</Dropdown.Item>
                 <Dropdown.Item onClick={openAddDomain}>+ Domain</Dropdown.Item>
-                <Dropdown.Divider />
-                <Dropdown.Header>Display</Dropdown.Header>
-                <Dropdown.Item
-                  active={showIps}
-                  onClick={() => setShowIps((v) => !v)}
-                  title="Show interface IPs on the graph"
-                >
-                  Show Interface IPs
-                </Dropdown.Item>
-                <Dropdown.Item
-                  active={showMacs}
-                  onClick={() => setShowMacs((v) => !v)}
-                  title="Show interface MAC addresses on the graph"
-                >
-                  Show Interface MACs
-                </Dropdown.Item>
               </DropdownButton>
             ) : (
               <>
@@ -421,24 +472,9 @@ export function TopologyGraph({
                 <Button size="sm" variant="outline-secondary" onClick={openAddDomain}>
                   + Domain
                 </Button>
-                <Button
-                  size="sm"
-                  variant={showIps ? "secondary" : "outline-secondary"}
-                  onClick={() => setShowIps((v) => !v)}
-                  title="Show interface IPs on the graph"
-                >
-                  Show Interface IPs
-                </Button>
-                <Button
-                  size="sm"
-                  variant={showMacs ? "secondary" : "outline-secondary"}
-                  onClick={() => setShowMacs((v) => !v)}
-                  title="Show interface MAC addresses on the graph"
-                >
-                  Show Interface MACs
-                </Button>
               </>
             )}
+            <TopologyDisplayMenu value={display} onChange={setDisplay} compact={compactToolbar} />
           </div>
           <div className="kt-topo-layout-toolbar" data-topo-overlay>
             {compactToolbar ? (
@@ -552,44 +588,58 @@ export function TopologyGraph({
             )}
           </div>
           <div className="kt-topo-legend" data-topo-overlay>
-            {legend.categories.map((cat) => (
-              <div className="lg" key={cat}>
-                <svg className={`kt-legend-icon n-${cat}`} viewBox="0 0 16 16">
-                  {CATEGORY_ICON[cat].map(([tag, attrs], i) => {
-                    if (tag === "rect") return <rect key={i} {...attrs} />;
-                    if (tag === "circle") return <circle key={i} {...attrs} />;
-                    return <path key={i} {...attrs} />;
-                  })}
-                </svg>
-                {CATEGORY_LABEL[cat]}
-              </div>
-            ))}
-            {legend.bridged && (
-              <div className="lg">
-                <span className="swatch badge">B</span>
-                bridged
-              </div>
-            )}
-            <div className="lg">
-              <span className="swatch running" />
-              running
-            </div>
-            <div className="lg">
-              <span className="swatch stopped" />
-              stopped
-            </div>
-            <div className="lg">
-              <span className="swatch cd domain" />
-              collision domain
-            </div>
-            <div className="lg">
-              <span className="swatch cd domain-external" />
-              external domain
-            </div>
-            {model.nodes.some((nd) => nd.type === "cd" && nd.draft) && (
-              <div className="lg">
-                <span className="swatch cd domain-draft" />
-                draft domain (not saved)
+            <button
+              type="button"
+              className="kt-topo-legend-head"
+              aria-expanded={!display.legendCollapsed}
+              aria-controls={legendId}
+              onClick={() => setDisplay((d) => ({ ...d, legendCollapsed: !d.legendCollapsed }))}
+            >
+              {display.legendCollapsed ? <ChevronRight size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
+              Legend
+            </button>
+            {!display.legendCollapsed && (
+              <div className="kt-topo-legend-items" id={legendId}>
+                {legend.categories.map((cat) => (
+                  <div className="lg" key={cat}>
+                    <svg className={`kt-legend-icon n-${cat}`} viewBox="0 0 16 16">
+                      {CATEGORY_ICON[cat].map(([tag, attrs], i) => {
+                        if (tag === "rect") return <rect key={i} {...attrs} />;
+                        if (tag === "circle") return <circle key={i} {...attrs} />;
+                        return <path key={i} {...attrs} />;
+                      })}
+                    </svg>
+                    {CATEGORY_LABEL[cat]}
+                  </div>
+                ))}
+                {legend.bridged && (
+                  <div className="lg">
+                    <span className="swatch badge">B</span>
+                    bridged
+                  </div>
+                )}
+                <div className="lg">
+                  <span className="swatch running" />
+                  running
+                </div>
+                <div className="lg">
+                  <span className="swatch stopped" />
+                  stopped
+                </div>
+                <div className="lg">
+                  <span className="swatch cd domain" />
+                  collision domain
+                </div>
+                <div className="lg">
+                  <span className="swatch cd domain-external" />
+                  external domain
+                </div>
+                {model.nodes.some((nd) => nd.type === "cd" && nd.draft) && (
+                  <div className="lg">
+                    <span className="swatch cd domain-draft" />
+                    draft domain (not saved)
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -630,6 +680,7 @@ export function TopologyGraph({
               }}
               registerSelectionGuard={registerSelectionGuard}
               configureRequest={configureRequest}
+              ipMismatches={deviceIpMismatches(model.edges, ipWarnings, selectedNode.name)}
             />
           ) : (
             <>

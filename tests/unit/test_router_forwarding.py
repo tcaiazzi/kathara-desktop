@@ -274,6 +274,16 @@ def test_startup_status_combines_log_and_finished_flag(api):
     assert [c[0] for c in service.calls] == ["get_startup_log", "is_startup_finished"]
 
 
+def test_live_addresses_are_forwarded_with_interface_numbers_as_json_keys(api):
+    client, service = api
+    service.returns["get_live_addresses"] = {"pc1": {0: ["10.0.0.1/24"], 10: []}}
+
+    res = client.get("/api/labs/l/live-addresses")
+
+    assert res.json() == {"pc1": {"0": ["10.0.0.1/24"], "10": []}}
+    assert service.calls == [("get_live_addresses", ("l",), {})]
+
+
 @pytest.mark.parametrize(
     "url, service_method, expected_args",
     [

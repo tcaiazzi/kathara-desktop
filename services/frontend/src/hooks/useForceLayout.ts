@@ -15,9 +15,14 @@ import { CATEGORY_ICON } from "../services/deviceIcon";
 import {
   deviceNodeWidth,
   EDGE_LABEL_LINE_Y,
+  EDGE_WARN_GAP,
+  EDGE_WARN_R,
   edgeLabelBox,
+  edgeLabelLineY,
+  edgeNameHalfWidth,
   edgeLabelPlacement,
   fitTransform,
+  ifaceKey,
   IMAGE_CHAR_W,
   IMAGE_MARGIN,
   MAX_IMAGE_CHARS,
@@ -28,6 +33,7 @@ import {
   sameIdSet,
   ZERO_INSETS,
   type FitInsets,
+  type IfaceIpMismatch,
   type LabelBox,
   type NodePositions,
   type SeedPosition,
@@ -35,7 +41,7 @@ import {
   type TopoModel,
   type TopoNode,
 } from "../services/topology";
-import { tooltipHtml } from "../services/topologyTooltip";
+import { ipMismatchTooltipHtml, tooltipHtml } from "../services/topologyTooltip";
 
 const SVGNS = "http://www.w3.org/2000/svg";
 
@@ -74,6 +80,8 @@ interface Engine {
   moved: boolean;
   edgeEls: SVGLineElement[];
   edgeLabelEls: SVGTextElement[];
+  // The "running address differs" warning after each edge's ethN, shown only where it applies.
+  edgeWarnEls: SVGGElement[];
   edgeIpEls: SVGTextElement[];
   edgeMacEls: SVGTextElement[];
   nodeEls: Record<string, SVGGElement>;
@@ -81,8 +89,12 @@ interface Engine {
   // where a label can sit without covering either end, and how long its edge has to be for that.
   extents: Record<string, { hw: number; hh: number }>;
   labelBoxes: LabelBox[];
-  // Re-measures the label boxes (the IP/MAC lines were shown or hidden) and redraws.
-  refreshLabels: () => void;
+  // The Display panel's size every node and label is drawn at, and the label lines' offsets at it.
+  nodeScale: number;
+  lineY: { name: number; ip: number; mac: number };
+  // Re-measures the node extents and label boxes (the IP/MAC lines were shown or hidden, or the
+  // size changed) and redraws. A size change also lets the free nodes move, to make room.
+  refreshGeometry: () => void;
   ro: ResizeObserver | null;
   autoFit: boolean;
   settledOnce: boolean;
@@ -116,6 +128,12 @@ interface UseForceLayoutOptions {
   // Which of an interface label's lines are on show: they decide how much room the label needs,
   // and so where it goes. Its CSS still does the hiding.
   labelLines?: { ips: boolean; macs: boolean };
+  // The size nodes and labels are drawn at (1 = as designed): nodes are scaled by their transform,
+  // the edge labels by their CSS (`--kt-topo-scale`, set by the caller), and the geometry here.
+  nodeScale?: number;
+  // Interfaces whose running addresses differ from their startup's, keyed by `ifaceKey`: each
+  // gets a warning after its ethN, with the details on hover.
+  ipWarnings?: Record<string, IfaceIpMismatch>;
 }
 
 // What a rebuild can inherit from the engine it replaces — see `lastStateRef`.
@@ -162,7 +180,7 @@ function overlayFitInsets(engine: Engine): FitInsets {
 // Fit all nodes into view (scale + center), each counted with its size and clear of the overlays.
 // Shared by the returned fit(), the auto-fit-on-settle and the refit on resize.
 function fitEngine(engine: Engine): void {
-  const nodes = engine.nodes.map((nd) => ({ x: nd.x, y: nd.y, ...nodeExtent(nd) }));
+  const nodes = engine.nodes.map((nd) => ({ x: nd.x, y: nd.y, ...engine.extents[nd.id] }));
   const { scale, tx, ty } = fitTransform(nodes, engine.W, engine.H, overlayFitInsets(engine));
   engine.scale = scale;
   engine.tx = tx;
@@ -324,12 +342,15 @@ export function useForceLayout(
       moved: false,
       edgeEls: [],
       edgeLabelEls: [],
+      edgeWarnEls: [],
       edgeIpEls: [],
       edgeMacEls: [],
       nodeEls: {},
-      extents: Object.fromEntries(model.nodes.map((nd) => [nd.id, nodeExtent(nd)])),
+      extents: {},
       labelBoxes: [],
-      refreshLabels: () => {},
+      nodeScale: 1,
+      lineY: edgeLabelLineY(1),
+      refreshGeometry: () => {},
       ro: null,
       // Fit once on settle for a genuinely fresh/relaid-out graph: a layout restored from
       // `lab.layout` may have been arranged on a differently-sized canvas, and fitEngine only
@@ -358,14 +379,38 @@ export function useForceLayout(
     let disposed = false;
     let activeDragCleanup: (() => void) | null = null;
 
-    function measureLabels() {
+    function measureGeometry() {
       const lines = optionsRef.current.labelLines ?? { ips: true, macs: false };
-      engine.labelBoxes = engine.edges.map((e) => edgeLabelBox(e, lines));
+      const s = optionsRef.current.nodeScale ?? 1;
+      // The spring's natural length (`k`) stays as it is on purpose: a layout that grew in proportion
+      // with its nodes would just be refitted back to the same size on screen. Only the room each
+      // node and label needs grows, and the springs lengthen an edge as far as its label needs.
+      engine.nodeScale = s;
+      engine.lineY = edgeLabelLineY(s);
+      engine.extents = Object.fromEntries(engine.nodes.map((nd) => [nd.id, nodeExtent(nd, s)]));
+      const warnings = optionsRef.current.ipWarnings ?? {};
+      engine.labelBoxes = engine.edges.map((e, i) => {
+        const warn = ifaceKey(e.device, e.num) in warnings;
+        engine.edgeWarnEls[i]?.setAttribute("display", warn ? "inline" : "none");
+        return edgeLabelBox(e, lines, s, warn);
+      });
     }
-    measureLabels();
-    engine.refreshLabels = () => {
-      measureLabels();
+    engine.refreshGeometry = () => {
+      const resized = (optionsRef.current.nodeScale ?? 1) !== engine.nodeScale;
+      measureGeometry();
       render();
+      if (!resized) return;
+      // Unless the user has placed the view themselves, keep the whole graph in it: fit now, and
+      // again once the free nodes come to rest.
+      if (!engine.userCamera) {
+        fitEngine(engine);
+        engine.autoFit = true;
+        engine.settledOnce = false;
+      }
+      // Bigger nodes need longer edges: a gentle reheat, like a drag's, lets the free nodes make
+      // room (pinned ones stay where their saved position puts them).
+      engine.temp = Math.max(engine.temp, 14);
+      ensureLoop();
     };
 
     for (const e of model.edges) {
@@ -379,7 +424,20 @@ export function useForceLayout(
       engine.edgeLabelEls.push(lbl);
       engine.edgeIpEls.push(ipLbl);
       engine.edgeMacEls.push(macLbl);
+      // A triangle with a "!": a shape of its own, not only a colour.
+      const warn = svgEl("g", { class: "kt-topo-edge-warn", display: "none" });
+      const r = EDGE_WARN_R;
+      warn.append(svgEl("path", { d: `M0,${-r} L${r},${r * 0.8} L${-r},${r * 0.8} Z` }));
+      warn.append(svgEl("text", { "text-anchor": "middle", y: r * 0.6 }, "!"));
+      warn.addEventListener("pointerenter", (ev) => {
+        const m = optionsRef.current.ipWarnings?.[ifaceKey(e.device, e.num)];
+        if (m) showTooltipHtml(ipMismatchTooltipHtml(e.device, e.label, m), ev.clientX, ev.clientY);
+      });
+      warn.addEventListener("pointerleave", () => hideTooltip());
+      labelsG.append(warn);
+      engine.edgeWarnEls.push(warn);
     }
+    measureGeometry();
 
     function savePositions() {
       const cb = optionsRef.current.onPositionsChange;
@@ -390,8 +448,12 @@ export function useForceLayout(
     }
 
     function showTooltip(nd: TopoNode, clientX: number, clientY: number) {
+      showTooltipHtml(tooltipHtml(nd), clientX, clientY);
+    }
+    // `html` must come from services/topologyTooltip.ts, which escapes every lab-controlled value.
+    function showTooltipHtml(html: string, clientX: number, clientY: number) {
       const r = engine.canvas.getBoundingClientRect();
-      engine.tooltip.innerHTML = tooltipHtml(nd);
+      engine.tooltip.innerHTML = html;
       engine.tooltip.style.display = "block";
       const tw = engine.tooltip.offsetWidth;
       const th = engine.tooltip.offsetHeight;
@@ -439,6 +501,7 @@ export function useForceLayout(
         engine.edgeEls[i].classList.toggle("dim", dim);
         engine.edgeLabelEls[i].classList.toggle("hi", on);
         engine.edgeLabelEls[i].classList.toggle("dim", dim);
+        engine.edgeWarnEls[i].classList.toggle("dim", dim);
         engine.edgeIpEls[i].classList.toggle("hi", on);
         engine.edgeIpEls[i].classList.toggle("dim", dim);
         engine.edgeMacEls[i].classList.toggle("hi", on);
@@ -554,8 +617,10 @@ export function useForceLayout(
         const lim = Math.min(d, engine.temp);
         nd.x += (nd.dx / d) * lim;
         nd.y += (nd.dy / d) * lim;
-        nd.x = Math.max(40, Math.min(w - 40, nd.x));
-        nd.y = Math.max(36, Math.min(h - 36, nd.y));
+        const mx = 40 * engine.nodeScale;
+        const my = 36 * engine.nodeScale;
+        nd.x = Math.max(mx, Math.min(w - mx, nd.x));
+        nd.y = Math.max(my, Math.min(h - my, nd.y));
       }
       engine.temp *= 0.96;
     }
@@ -577,17 +642,24 @@ export function useForceLayout(
           engine.extents[b.id],
           engine.labelBoxes[i],
         );
+        const s = engine.nodeScale;
+        const wx = mx + (edgeNameHalfWidth(e.label) + EDGE_WARN_GAP) * s;
+        const wy = my + (EDGE_LABEL_LINE_Y.name - 4) * s;
+        engine.edgeWarnEls[i].setAttribute("transform", `translate(${wx},${wy}) scale(${s})`);
         const lbl = engine.edgeLabelEls[i];
         lbl.setAttribute("x", String(mx));
-        lbl.setAttribute("y", String(my + EDGE_LABEL_LINE_Y.name));
+        lbl.setAttribute("y", String(my + engine.lineY.name));
         const ip = engine.edgeIpEls[i];
         ip.setAttribute("x", String(mx));
-        ip.setAttribute("y", String(my + EDGE_LABEL_LINE_Y.ip));
+        ip.setAttribute("y", String(my + engine.lineY.ip));
         const mac = engine.edgeMacEls[i];
         mac.setAttribute("x", String(mx));
-        mac.setAttribute("y", String(my + EDGE_LABEL_LINE_Y.mac));
+        mac.setAttribute("y", String(my + engine.lineY.mac));
       });
-      for (const nd of engine.nodes) engine.nodeEls[nd.id].setAttribute("transform", `translate(${nd.x},${nd.y})`);
+      const s = engine.nodeScale;
+      for (const nd of engine.nodes) {
+        engine.nodeEls[nd.id].setAttribute("transform", `translate(${nd.x},${nd.y}) scale(${s})`);
+      }
     }
 
     function onNodePointerDown(ev: PointerEvent, nd: TopoNode) {
@@ -828,13 +900,16 @@ export function useForceLayout(
     };
   }, [model, relayoutNonce]);
 
-  // Showing or hiding the IP/MAC lines changes how much room each label needs: re-place them
-  // without rebuilding the engine (the layout stays put).
+  // Showing or hiding the IP/MAC lines, or changing the size, changes how much room each node and
+  // label needs: re-measure without rebuilding the engine (the layout is carried on, not redone).
   const showIps = options.labelLines?.ips;
   const showMacs = options.labelLines?.macs;
+  const nodeScale = options.nodeScale;
+  // Which interfaces carry a warning; its details are read at hover time, so only the set matters.
+  const warnedIfaces = Object.keys(options.ipWarnings ?? {}).sort().join("\n");
   useEffect(() => {
-    engineRef.current?.refreshLabels();
-  }, [showIps, showMacs]);
+    engineRef.current?.refreshGeometry();
+  }, [showIps, showMacs, nodeScale, warnedIfaces]);
 
   const fit = useCallback(() => {
     const engine = engineRef.current;

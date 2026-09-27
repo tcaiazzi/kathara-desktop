@@ -18,6 +18,8 @@
   --kt-node-sub-text: #6c757d;
   --kt-node-running: var(--bs-success);
   --kt-node-stopped: #adb5bd;
+  /* The stopped border under the topology's high contrast option: 4.5:1 on --kt-node-bg. */
+  --kt-node-stopped-strong: #6c757d;
 
   --kt-domain-bg: #eef4ff;
   --kt-domain-border: var(--bs-primary);
@@ -72,6 +74,7 @@
   --kt-node-sub-text: #95a3b8;
   --kt-node-running: #63d297;
   --kt-node-stopped: #738497;
+  --kt-node-stopped-strong: #a3b1c2;
 
   --kt-domain-bg: #142238;
   --kt-domain-border: #7ab7ff;

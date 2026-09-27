@@ -323,6 +323,10 @@ export interface StartupStatus {
   finished: boolean;
 }
 
+// GET /labs/{lab}/live-addresses: device -> interface number -> the addresses actually on it, for
+// each running device whose startup has finished. JSON object keys, so the numbers are strings.
+export type LiveAddresses = Record<string, Record<string, string[]>>;
+
 // Docker image state for a lab, ahead of a deploy. Only `missing` (mandatory) and `outdated`
 // (optional) are actionable; `unknown` means the registry couldn't be consulted (offline, or
 // slower than the backend's time budget) and is deliberately not reported as `ok`.

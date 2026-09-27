@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DeviceNode, DomainNode } from "./topology";
-import { tooltipHtml } from "./topologyTooltip";
+import { ipMismatchTooltipHtml, tooltipHtml } from "./topologyTooltip";
 
 function device(overrides: Partial<DeviceNode> = {}): DeviceNode {
   return {
@@ -133,5 +133,26 @@ describe("escaping", () => {
 
     expect(html).not.toContain("<img");
     expect(html.split(ESCAPED).length - 1).toBe(3);
+  });
+});
+
+describe("ipMismatchTooltipHtml", () => {
+  const mismatch = { declared: ["10.0.0.1/24"], live: ["10.9.9.9/24"], missing: ["10.0.0.1/24"], extra: ["10.9.9.9/24"] };
+
+  it("names the interface and lists both the startup's and the running addresses", () => {
+    const html = ipMismatchTooltipHtml("pc1", "eth0", mismatch);
+
+    expect(html).toContain("pc1 eth0");
+    expect(html).toContain("10.0.0.1/24");
+    expect(html).toContain("10.9.9.9/24");
+    expect(html).toContain("startup log");
+  });
+
+  it("says none when the interface has no address left", () => {
+    expect(ipMismatchTooltipHtml("pc1", "eth0", { ...mismatch, live: [], extra: [] })).toContain(">none<");
+  });
+
+  it("escapes a device name the lab controls", () => {
+    expect(ipMismatchTooltipHtml("<b>x</b>", "eth0", mismatch)).toContain("&lt;b&gt;x&lt;/b&gt;");
   });
 });

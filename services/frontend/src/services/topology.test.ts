@@ -2,13 +2,23 @@ import { describe, expect, it } from "vitest";
 import { machine } from "../test/fixtures";
 import { HOST_BRIDGE } from "./constants";
 import {
+  canonicalIpv6,
+  compareIfaceIps,
   computeTopology,
+  deviceIpMismatches,
   deviceNodeWidth,
+  EDGE_LABEL_LINE_Y,
+  EDGE_WARN_GAP,
+  EDGE_WARN_R,
   edgeLabelBox,
+  edgeLabelLineY,
+  edgeNameHalfWidth,
   edgeLabelPlacement,
   type DeviceNode,
   type DomainNode,
   fitTransform,
+  ifaceKey,
+  ipMismatches,
   labelClearance,
   matchesSavedLayout,
   MAX_DEVICE_NODE_WIDTH,
@@ -205,8 +215,8 @@ describe("computeTopology", () => {
       { num: 1, link: "B", mac: null, ips: ["10.0.1.1/24"] },
     ]);
     expect(model.edges).toEqual([
-      { source: "dev:r1", target: "cd:A", label: "eth0", mac: "02:42:ac:11:00:02", ips: ["10.0.0.1/24"] },
-      { source: "dev:r1", target: "cd:B", label: "eth1", mac: null, ips: ["10.0.1.1/24"] },
+      { source: "dev:r1", target: "cd:A", device: "r1", num: 0, label: "eth0", mac: "02:42:ac:11:00:02", ips: ["10.0.0.1/24"] },
+      { source: "dev:r1", target: "cd:B", device: "r1", num: 1, label: "eth1", mac: null, ips: ["10.0.1.1/24"] },
     ]);
     expect(model.nodes.map((n) => n.id)).toEqual(["dev:r1", "cd:A", "cd:B"]);
   });
@@ -369,6 +379,85 @@ describe("topology helpers, edge cases", () => {
   });
 });
 
+describe("canonicalIpv6", () => {
+  it("lowercases, drops leading zeros and writes the longest zero run as ::", () => {
+    expect(canonicalIpv6("2001:0DB8:0000:0000:0000:0000:0000:0001")).toBe("2001:db8::1");
+    expect(canonicalIpv6("2001:db8:0:0:1:0:0:1")).toBe("2001:db8::1:0:0:1");
+    expect(canonicalIpv6("2001:db8:0:1:0:0:0:1")).toBe("2001:db8:0:1::1");
+    expect(canonicalIpv6("::1")).toBe("::1");
+    expect(canonicalIpv6("fe80::")).toBe("fe80::");
+    expect(canonicalIpv6("::")).toBe("::");
+  });
+
+  it("does not shorten a single zero group", () => {
+    expect(canonicalIpv6("2001:db8:0:1:1:1:1:1")).toBe("2001:db8:0:1:1:1:1:1");
+  });
+
+  it("leaves what it can't read lowercased as it was", () => {
+    expect(canonicalIpv6("::FFFF:10.0.0.1")).toBe("::ffff:10.0.0.1");
+    expect(canonicalIpv6("1::2::3")).toBe("1::2::3");
+    expect(canonicalIpv6("zz::1")).toBe("zz::1");
+  });
+});
+
+describe("compareIfaceIps", () => {
+  it("finds nothing when the running addresses are the declared ones, however IPv6 is spelled", () => {
+    expect(compareIfaceIps({ 0: ["10.0.0.1/24", "2001:DB8:0::1/64"] }, { 0: ["2001:db8::1/64", "10.0.0.1/24"] })).toEqual({});
+  });
+
+  it("reports what is missing and what is extra on an interface that changed", () => {
+    expect(compareIfaceIps({ 0: ["10.0.0.1/24"], 1: ["10.0.1.1/24"] }, { 0: ["10.9.9.9/24"], 1: ["10.0.1.1/24"] })).toEqual({
+      0: { declared: ["10.0.0.1/24"], live: ["10.9.9.9/24"], missing: ["10.0.0.1/24"], extra: ["10.9.9.9/24"] },
+    });
+  });
+
+  it("counts a different prefix length as a different address", () => {
+    expect(compareIfaceIps({ 0: ["10.0.0.1/24"] }, { 0: ["10.0.0.1/16"] })[0]).toMatchObject({
+      missing: ["10.0.0.1/24"], extra: ["10.0.0.1/16"],
+    });
+  });
+
+  it("matches a declared address with no prefix against any prefix", () => {
+    expect(compareIfaceIps({ 0: ["10.0.0.1"] }, { 0: ["10.0.0.1/8"] })).toEqual({});
+  });
+
+  it("reports an interface with no address left as all missing", () => {
+    expect(compareIfaceIps({ 0: ["10.0.0.1/24"] }, {})[0]).toMatchObject({ missing: ["10.0.0.1/24"], extra: [] });
+  });
+
+  it("compares only interfaces the startup declares an address for", () => {
+    expect(compareIfaceIps({ 0: [] }, { 0: ["10.0.0.1/24"], 1: ["10.0.1.1/24"] })).toEqual({});
+  });
+});
+
+describe("ipMismatches", () => {
+  const edges = [
+    { device: "pc1", num: 0, ips: ["10.0.0.1/24"] },
+    { device: "pc2", num: 0, ips: ["10.0.0.2/24"] },
+  ];
+
+  it("keys each differing interface by device and interface, with JSON's string keys read as numbers", () => {
+    expect(ipMismatches(edges, { pc1: { "0": ["10.0.0.5/24"] }, pc2: { "0": ["10.0.0.2/24"] } })).toEqual({
+      [ifaceKey("pc1", 0)]: { declared: ["10.0.0.1/24"], live: ["10.0.0.5/24"], missing: ["10.0.0.1/24"], extra: ["10.0.0.5/24"] },
+    });
+  });
+
+  it("does not compare a device the backend left out (stopped, or still booting)", () => {
+    expect(ipMismatches(edges, { pc2: { "0": ["10.0.0.2/24"] } })).toEqual({});
+  });
+});
+
+describe("deviceIpMismatches", () => {
+  it("picks one device's mismatches out, by interface number", () => {
+    const m = { declared: ["10.0.0.1/24"], live: [], missing: ["10.0.0.1/24"], extra: [] };
+    const edges = [{ device: "pc1", num: 0 }, { device: "pc1", num: 1 }, { device: "pc10", num: 0 }];
+    const all = { [ifaceKey("pc1", 1)]: m, [ifaceKey("pc10", 0)]: m };
+
+    expect(deviceIpMismatches(edges, all, "pc1")).toEqual({ 1: m });
+    expect(deviceIpMismatches(edges, all, "pc2")).toEqual({});
+  });
+});
+
 describe("netmaskPrefix", () => {
   it("counts the leading one bits of a contiguous dotted mask", () => {
     expect(netmaskPrefix("255.255.255.0")).toBe(24);
@@ -411,6 +500,11 @@ describe("nodeExtent", () => {
   it("sizes a domain by its circle, or its label where that is wider", () => {
     expect(nodeExtent({ type: "cd", name: "A" })).toEqual({ hw: 18, hh: 18 });
     expect(nodeExtent({ type: "cd", name: "backbone_lan" }).hw).toBeCloseTo(12 * 3.8, 9);
+  });
+
+  it("scales both half-sizes with the Display size, for devices and domains alike", () => {
+    expect(nodeExtent(dev("pc1"), 1.5)).toEqual({ hw: (112 / 2 + 6) * 1.5, hh: 23 * 1.5 });
+    expect(nodeExtent({ type: "cd", name: "A" }, 0.8)).toEqual({ hw: 18 * 0.8, hh: 18 * 0.8 });
   });
 
   it("uses the same width the rect is drawn with", () => {
@@ -484,6 +578,33 @@ describe("edgeLabelBox", () => {
 
   it("does not count a line the interface has nothing for", () => {
     expect(edgeLabelBox({ label: "eth1", ips: [], mac: null }, { ips: true, macs: true }).bottom).toBe(2);
+  });
+
+  it("makes room for the warning after the interface name, on both sides of the anchor", () => {
+    const show = { ips: false, macs: false };
+    const withWarn = edgeLabelBox(edge, show, 1, true);
+
+    expect(withWarn.right).toBeCloseTo(edgeNameHalfWidth("eth0") + EDGE_WARN_GAP + EDGE_WARN_R + 2, 9);
+    expect(withWarn.left).toBe(-withWarn.right);
+    expect(edgeLabelBox(edge, show, 2, true).right).toBeCloseTo(withWarn.right * 2, 9);
+  });
+
+  it("scales every side with the text size", () => {
+    const show = { ips: true, macs: true };
+    const base = edgeLabelBox(edge, show);
+    const big = edgeLabelBox(edge, show, 1.5);
+
+    expect(big.left).toBeCloseTo(base.left * 1.5, 9);
+    expect(big.right).toBeCloseTo(base.right * 1.5, 9);
+    expect(big.top).toBeCloseTo(base.top * 1.5, 9);
+    expect(big.bottom).toBeCloseTo(base.bottom * 1.5, 9);
+  });
+});
+
+describe("edgeLabelLineY", () => {
+  it("spaces the label lines out with the text size, and is EDGE_LABEL_LINE_Y at 1x", () => {
+    expect(edgeLabelLineY(1)).toEqual(EDGE_LABEL_LINE_Y);
+    expect(edgeLabelLineY(2)).toEqual({ name: -6, ip: 24, mac: 54 });
   });
 });
 

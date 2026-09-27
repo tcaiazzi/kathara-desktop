@@ -56,6 +56,28 @@
   width: 100%;
   height: 100%;
 }
+
+/* The Display panel's settings reach the graph as custom properties set inline on the mount:
+   --kt-topo-scale (text and nodes; nodes are scaled by their own transform, so only the edge labels
+   read it here) and --kt-topo-line (every edge and border stroke). --kt-topo-halo thickens the
+   labels' background halo, and is raised only by high contrast. */
+.kt-topo-high-contrast {
+  --kt-edge: var(--kt-node-text);
+  --kt-edge-label: var(--kt-node-text);
+  --kt-node-sub-text: var(--kt-node-text);
+  --kt-node-stopped: var(--kt-node-stopped-strong);
+  --kt-topo-grid-dot: transparent;
+  --kt-topo-halo: 1.6;
+}
+.kt-topo-high-contrast .kt-topo-node.dim {
+  opacity: 0.45;
+}
+.kt-topo-high-contrast .kt-topo-edge.dim,
+.kt-topo-high-contrast .kt-topo-edge-label.dim,
+.kt-topo-high-contrast .kt-topo-edge-ip.dim,
+.kt-topo-high-contrast .kt-topo-edge-mac.dim {
+  opacity: 0.35;
+}
 /* Scope to the graph mount only — NOT `.kt-topo-canvas svg`, which would also match (and blow up to
    100%) the small inline legend icon SVGs that live inside the canvas. */
 .kt-topo-svg-mount > svg {
@@ -96,8 +118,48 @@
   right: 8px;
   display: flex;
   gap: 6px;
-  z-index: 2;
+  /* Above the legend and the layout toolbar: on a short canvas the Display menu opens down over
+     both. */
+  z-index: 4;
   max-width: calc(100% - 16px);
+}
+
+/* The Display panel (TopologyDisplayMenu): switches and − value + steppers, not menu items. */
+.kt-topo-display-menu {
+  min-width: 270px;
+}
+.kt-topo-display-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 16px 4px;
+}
+.kt-topo-display-body .form-check {
+  margin-bottom: 0;
+}
+.kt-topo-display-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  white-space: nowrap;
+}
+/* A stepper button at the end of its range: looks disabled, stays focusable (TopologyDisplayMenu). */
+.kt-topo-display-row .btn.kt-step-end {
+  opacity: var(--bs-btn-disabled-opacity, 0.65);
+  cursor: default;
+}
+.kt-topo-display-body > .btn-link {
+  align-self: flex-start;
+}
+.kt-topo-display-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.5em;
+  font-size: var(--kt-topo-fs-sm);
+  font-variant-numeric: tabular-nums;
+  border-block: 1px solid var(--bs-border-color);
 }
 
 /* Graph-layout controls (Fit, Re-layout, Save/Fix layout, Unfix): kept separate from the toolbar
@@ -122,18 +184,46 @@
   background: var(--kt-panel-bg);
   border: 1px solid var(--kt-surface-recessed-border);
   border-radius: 7px;
-  padding: 6px 9px;
+  padding: 4px 9px 6px;
   font-size: 11px;
-  /* Wrap into a compact grid (device categories are dynamic, so the list can get long) and never
-     grow past the canvas — scroll instead of clipping in a short panel. */
   display: flex;
-  flex-flow: column wrap;
-  column-gap: 14px;
-  row-gap: 4px;
+  flex-direction: column;
+  gap: 4px;
   max-width: calc(100% - 16px);
   max-height: calc(100% - 16px);
-  overflow: auto;
   color: var(--bs-secondary-color);
+}
+/* Folds the legend down to this one line (the fold state is one of the Display preferences). */
+.kt-topo-legend-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+.kt-topo-legend-head:hover {
+  color: var(--bs-body-color);
+}
+.kt-topo-legend-head:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 1px;
+}
+/* One column that never grows past the canvas: on a short panel it scrolls under the header, which
+   stays in place (or the legend is folded away). Not `column wrap`: a wrapping column doesn't widen
+   its box for the extra columns, so they would be clipped. */
+.kt-topo-legend-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow-y: auto;
 }
 .kt-topo-legend .lg {
   display: flex;
@@ -282,12 +372,12 @@
 }
 
 /* SVG node styling driven by classes */
-.n-dev rect {
+.n-dev > rect {
   fill: var(--kt-node-bg);
   stroke: var(--kt-node-stopped);
-  stroke-width: 1.5;
+  stroke-width: calc(1.5px * var(--kt-topo-line, 1));
 }
-.n-dev.running rect {
+.n-dev.running > rect {
   stroke: var(--kt-node-running);
 }
 .n-dev .n-label {
@@ -307,20 +397,20 @@
 .n-dev .n-sub {
   paint-order: stroke;
   stroke: var(--kt-node-bg);
-  stroke-width: 3px;
+  stroke-width: calc(3px * var(--kt-topo-halo, 1));
   stroke-linejoin: round;
 }
-.n-cd circle {
+.n-cd > circle {
   fill: var(--kt-domain-bg);
   stroke: var(--kt-domain-border);
-  stroke-width: 1.5;
+  stroke-width: calc(1.5px * var(--kt-topo-line, 1));
 }
-.n-cd.external circle {
+.n-cd.external > circle {
   stroke: var(--kt-domain-external-border);
   stroke-dasharray: 4 3;
 }
 /* A domain with no device on it yet, not in lab.conf: dotted and faded until one is connected. */
-.n-cd.draft circle {
+.n-cd.draft > circle {
   stroke-dasharray: 2 3;
   fill-opacity: 0.4;
 }
@@ -335,34 +425,34 @@
   /* A domain's name is often wider than its circle, so it runs over the edges leaving it. */
   paint-order: stroke;
   stroke: var(--kt-domain-bg);
-  stroke-width: 3px;
+  stroke-width: calc(3px * var(--kt-topo-halo, 1));
   stroke-linejoin: round;
 }
 .kt-topo-node {
   cursor: pointer;
 }
-.kt-topo-node.selected rect,
-.kt-topo-node.selected circle {
-  stroke-width: 3;
+.kt-topo-node.selected > rect,
+.kt-topo-node.selected > circle {
+  stroke-width: calc(3px * var(--kt-topo-line, 1));
   filter: drop-shadow(0 0 4px var(--kt-selected-glow));
 }
 .kt-topo-edge {
   stroke: var(--kt-edge);
-  stroke-width: 1.5;
+  stroke-width: calc(1.5px * var(--kt-topo-line, 1));
 }
 .kt-topo-edge.hi {
   stroke: var(--kt-edge-hi);
-  stroke-width: 2.5;
+  stroke-width: calc(2.5px * var(--kt-topo-line, 1));
 }
 .kt-topo-edge-label {
   fill: var(--kt-edge-label);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: var(--kt-topo-fs-sm);
+  font-size: calc(var(--kt-topo-fs-sm) * var(--kt-topo-scale, 1));
   font-weight: 600;
   /* Background halo so the label stays readable over edges/nodes (labels are drawn above nodes). */
   paint-order: stroke;
   stroke: var(--kt-surface-recessed);
-  stroke-width: 3.5px;
+  stroke-width: calc(3.5px * var(--kt-topo-scale, 1) * var(--kt-topo-halo, 1));
   stroke-linejoin: round;
 }
 .kt-topo-edge-label.hi {
@@ -378,14 +468,39 @@
   opacity: 0.12;
 }
 
+/* After an interface's ethN when its running addresses differ from its startup's; the details are
+   in the canvas tooltip on hover. Black on the warning yellow reads in both themes. */
+.kt-topo-edge-warn {
+  cursor: help;
+}
+.kt-topo-edge-warn path {
+  fill: var(--bs-warning);
+  stroke: var(--kt-surface-recessed);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+}
+.kt-topo-edge-warn text {
+  fill: var(--bs-black);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 800;
+  pointer-events: none;
+}
+.kt-topo-edge-warn.dim {
+  opacity: 0.12;
+}
+.kt-topo-high-contrast .kt-topo-edge-warn.dim {
+  opacity: 0.35;
+}
+
 /* Per-interface IP shown under the ethN edge label; hidden when the "IPs" toggle is off. */
 .kt-topo-edge-ip {
   fill: var(--kt-node-sub-text);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: var(--kt-topo-fs-xs);
+  font-size: calc(var(--kt-topo-fs-xs) * var(--kt-topo-scale, 1));
   paint-order: stroke;
   stroke: var(--kt-surface-recessed);
-  stroke-width: 3.5px;
+  stroke-width: calc(3.5px * var(--kt-topo-scale, 1) * var(--kt-topo-halo, 1));
   stroke-linejoin: round;
 }
 .kt-topo-edge-ip.hi {
@@ -402,10 +517,10 @@
 .kt-topo-edge-mac {
   fill: var(--kt-node-sub-text);
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  font-size: var(--kt-topo-fs-xs);
+  font-size: calc(var(--kt-topo-fs-xs) * var(--kt-topo-scale, 1));
   paint-order: stroke;
   stroke: var(--kt-surface-recessed);
-  stroke-width: 3.5px;
+  stroke-width: calc(3.5px * var(--kt-topo-scale, 1) * var(--kt-topo-halo, 1));
   stroke-linejoin: round;
 }
 .kt-topo-edge-mac.hi {
@@ -455,7 +570,7 @@
 /* Corner badges (bridged / published-port count). */
 .n-badge circle {
   stroke: var(--kt-node-bg);
-  stroke-width: 1.5;
+  stroke-width: calc(1.5px * var(--kt-topo-line, 1));
 }
 .n-badge text {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;

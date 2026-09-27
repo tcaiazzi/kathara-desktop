@@ -17,6 +17,7 @@ import type {
   LabLayout,
   LabSummary,
   LinkDetail,
+  LiveAddresses,
   MachineDetail,
   MachineOptionsPayload,
   MachineUpdatePayload,
@@ -252,6 +253,8 @@ export const api = {
   // reads/writes on every call — no separate cache, so nothing here can ever drift from disk). --
   getStartupScripts: (labId: string) =>
     request<Record<string, string>>("GET", `/labs/${encodeURIComponent(labId)}/fs/startups`),
+  getLiveAddresses: (labId: string, signal?: AbortSignal) =>
+    request<LiveAddresses>("GET", `/labs/${encodeURIComponent(labId)}/live-addresses`, undefined, signal),
   fsListOffline: (labId: string, path: string, signal?: AbortSignal) =>
     request<FsListResponse>(
       "GET",
