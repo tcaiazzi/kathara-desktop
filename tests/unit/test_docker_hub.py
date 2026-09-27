@@ -1,10 +1,10 @@
 """Unit tests for services/docker_hub.py — the official-image lookup (no network).
 
 ``httpx.Client`` is monkeypatched to serve a synthetic Docker Hub, the same way test_lab_gallery.py
-serves a synthetic GitHub. The headline test is the paginated one: the bug this module exists to
-fix was that Kathara's own DockerHubApi asks for ``?page_size=-1``, gets silently capped at Docker
-Hub's default of 10 results, and never follows ``next`` — so 25 repositories became 8 images in
-the app's image picker.
+serves a synthetic GitHub. The headline test is the paginated one: the listing must follow ``next``
+to the last page. Docker Hub caps a page at 10 results whatever ``page_size`` asks for — ``-1``, the
+value Kathara's own DockerHubApi sends, included — so stopping at the first page loses every
+repository after the tenth.
 """
 
 import httpx
@@ -81,8 +81,8 @@ LATEST = [_tag("latest")]
 
 
 def test_repositories_past_the_first_page_are_listed(monkeypatch):
-    """The regression test for the actual bug: without following `next`, `dnsmasq` and `scion`
-    would be missing from the picker exactly as they were."""
+    """Every page is followed through `next`: `dnsmasq` and `scion`, on the second page, are listed
+    too."""
     requested = _install_fake_hub(
         monkeypatch,
         repo_pages=[[_repo("base"), _repo("frr")], [_repo("dnsmasq"), _repo("scion")]],

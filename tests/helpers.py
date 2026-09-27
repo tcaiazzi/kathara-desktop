@@ -1,6 +1,7 @@
 """Shared test utilities: a zip-archive builder (``zip_bytes``), lab addressing and creation
 (``lab_id``, ``register_lab``, ``make_lab``), a service with no Docker behind it
-(``make_service``) and the minimal no-op Kathara facade it uses (``FakeFacadeBase``).
+(``make_service``), the minimal no-op Kathara facade it uses (``FakeFacadeBase``), and an HTTP
+client whose routes all reach a given service (``make_client``).
 
 Not a conftest module — these are plain helpers imported directly by the tests that need them,
 not fixtures/hooks.
@@ -9,10 +10,14 @@ not fixtures/hooks.
 import io
 import stat
 import zipfile
+from contextlib import contextmanager
 from typing import Optional
 
+from fastapi.testclient import TestClient
 from Kathara.exceptions import LabNotFoundError
 
+from kathara_api.dependencies import get_service
+from kathara_api.main import create_app
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import lab_id_for
 
@@ -84,7 +89,7 @@ def make_lab(service, name: str, files: dict[str, str], dirs=None, deploy: bool 
     return service.upload_lab(name, zip_bytes(entries), deploy=deploy)
 
 
-def make_service(store=None, facade=None):
+def make_service(store=None, facade=None, known=None):
     """A ``KatharaService`` with its Kathara facade replaced, so no Docker is needed.
 
     ``_instance`` is assigned directly rather than through any public path: ``Kathara.get_instance()``
@@ -93,11 +98,27 @@ def make_service(store=None, facade=None):
 
     ``store=None`` keeps ``KatharaService``'s own default, which is the *configured* labs directory —
     tests that must not write there pass a ``tmp_path``-backed ``LabStore`` explicitly, and the
-    difference is deliberate at each call site rather than hidden here.
+    difference is deliberate at each call site rather than hidden here. ``known=None`` likewise
+    keeps the default list of opened folders, which lives in memory unless a state directory is
+    configured.
     """
-    service = KatharaService(store=store)
+    service = KatharaService(store=store, known=known)
     service._instance = FakeFacadeBase() if facade is None else facade
     return service
+
+
+@contextmanager
+def make_client(service):
+    """A ``TestClient`` on a freshly built app whose every route gets ``service``.
+
+    Entered as a context manager, so the app's lifespan runs as it does in production; the
+    override goes with the app once the block ends.
+    """
+    app = create_app()
+    app.dependency_overrides[get_service] = lambda: service
+    with TestClient(app) as client:
+        yield client
+    app.dependency_overrides.clear()
 
 
 class FakeFacadeBase:

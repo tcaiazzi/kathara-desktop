@@ -7,16 +7,13 @@ reaches the service.
 """
 
 import pytest
-from fastapi.testclient import TestClient
 from Kathara.setting.Setting import Setting
 from pydantic import ValidationError
 
 from kathara_api.config import get_settings
-from kathara_api.dependencies import get_service
-from kathara_api.main import create_app
 from kathara_api.schemas.settings import SettingsUpdate, SettingsView
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import make_service
+from tests.helpers import make_client, make_service
 
 
 @pytest.fixture(autouse=True)
@@ -94,11 +91,8 @@ def test_settings_view_still_reads_remote_url_and_cert_path():
 @pytest.fixture
 def client_and_service(tmp_path):
     service = make_service(store=LabStore(tmp_path / "labs"))
-    app = create_app()
-    app.dependency_overrides[get_service] = lambda: service
-    with TestClient(app) as client:
+    with make_client(service) as client:
         yield client, service
-    app.dependency_overrides.clear()
 
 
 def test_put_settings_with_remote_url_is_rejected_with_422(client_and_service):

@@ -136,7 +136,7 @@ def test_add_interface_with_mac_renders_cd_slash_mac():
     assert "pc1[1]=B/00:11:22:33:44:55" in out
 
 
-def test_add_interface_conflicts():
+def test_adding_an_interface_refuses_a_taken_number_a_joined_domain_or_an_unknown_device():
     text = "pc1[image]=kathara/base\npc1[0]=A\n"
     with pytest.raises(MachineCollisionDomainError):
         lce.add_interface(text, "pc1", 0, "X")  # number taken

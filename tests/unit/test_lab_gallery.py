@@ -14,20 +14,17 @@ import time
 import anyio.to_thread
 import httpx
 import pytest
-from fastapi.testclient import TestClient
 
 from kathara_api.config import ApiSettings
-from kathara_api.dependencies import get_service
 from kathara_api.errors import (
     ApiError,
     GalleryLabNotFoundError,
     GalleryUnavailableError,
     LabAlreadyRegisteredError,
 )
-from kathara_api.main import create_app
 from kathara_api.services import lab_gallery
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import make_service
+from tests.helpers import make_client, make_service
 
 # ---------------------------------------------------------------------------
 # Fake GitHub
@@ -764,11 +761,8 @@ def test_install_gallery_lab_bad_or_unknown_id_never_creates_anything(tmp_path, 
 @pytest.fixture
 def client_and_service(tmp_path):
     service = _service(tmp_path)
-    app = create_app()
-    app.dependency_overrides[get_service] = lambda: service
-    with TestClient(app) as client:
+    with make_client(service) as client:
         yield client, service
-    app.dependency_overrides.clear()
 
 
 def test_get_gallery_lists_the_catalog(client_and_service, monkeypatch):

@@ -225,9 +225,8 @@ def test_listing_sorts_directories_first_then_by_name_case_insensitively(service
 
 
 def test_listing_keeps_names_with_tabs_newlines_and_spaces_whole(service, facade):
-    """Regression: with tab-separated fields and one entry per line, a tab in a name shifted every
-    field after it (a folder `conf<TAB>bak` came out as a *file* named `conf`, which then failed
-    to open), and a newline split one entry into two broken ones."""
+    """A name holding a tab, a newline or spaces comes back whole, with the fields before it
+    intact: the folder `conf<TAB>bak` is one directory, and `two<NL>lines` one file."""
     facade.result = (
         b"d\td\t4096\t755\t1700000001\tconf\tbak\0"
         b"f\tf\t0\t644\t1700000002\treport\t2026.txt\0"

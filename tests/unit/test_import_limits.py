@@ -16,14 +16,13 @@ import zipfile
 
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
 
 from kathara_api.config import ApiSettings, get_settings
 from kathara_api.dependencies import get_service
 from kathara_api.errors import ApiError, InvalidArchiveError
 from kathara_api.main import create_app
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import make_service, zip_bytes
+from tests.helpers import make_client, make_service, zip_bytes
 
 
 def test_import_limits_are_configurable():
@@ -248,19 +247,14 @@ def test_uploading_a_file_that_is_not_a_zip_is_a_400_naming_the_problem(client_a
 @pytest.fixture
 def client_and_service(tmp_path):
     service = make_service(store=LabStore(tmp_path / "labs"))
-    app = create_app()
-    app.dependency_overrides[get_service] = lambda: service
-    with TestClient(app) as client:
+    with make_client(service) as client:
         yield client, service
-    app.dependency_overrides.clear()
 
 
 def test_body_size_middleware_rejects_a_declared_content_length_over_the_cap(tmp_path, monkeypatch):
     monkeypatch.setattr(get_settings(), "max_bytes_per_lab", 10)
     service = make_service(store=LabStore(tmp_path / "labs"))
-    app = create_app()
-    app.dependency_overrides[get_service] = lambda: service
-    with TestClient(app) as client:
+    with make_client(service) as client:
         # The middleware decides from the header alone, before the body is ever read — a small
         # real body with an inflated declared Content-Length is enough to prove that, and is also
         # exactly what a client lying about its own upload size would look like on the wire.

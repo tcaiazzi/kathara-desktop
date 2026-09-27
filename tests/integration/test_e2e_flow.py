@@ -37,14 +37,14 @@ def deployed_lab(client):
     client.request("DELETE", f"/api/labs/{lab_id}")
 
 
-def test_system_endpoints(client):
+def test_health_and_system_info_answer(client):
     assert client.get("/api/health").json() == {"status": "ok"}
     info = client.get("/api/system").json()
     assert info["manager"]
     assert "docker" in info["available_managers"]
 
 
-def test_deploy_lists_machines(client, deployed_lab):
+def test_a_deployed_lab_lists_every_device_as_running(client, deployed_lab):
     machines = client.get(f"/api/labs/{deployed_lab}").json()["machines"]
     names = {m["name"] for m in machines}
     assert names == {"pc1", "pc2"}
@@ -86,9 +86,9 @@ def test_live_tty_websocket_smoke(client, deployed_lab):
         assert ws.receive_json() == {"event": "closed"}
 
 
-def test_unknown_lab_404(client):
+def test_an_unknown_lab_is_a_404(client):
     assert client.get("/api/labs/does_not_exist_xyz").status_code == 404
 
 
-def test_duplicate_lab_409(client, deployed_lab):
+def test_creating_a_lab_that_exists_is_a_409(client, deployed_lab):
     assert client.post("/api/labs", json=LAB).status_code == 409

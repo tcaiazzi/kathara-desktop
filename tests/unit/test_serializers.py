@@ -22,7 +22,7 @@ def _lab():
     )
 
 
-def test_machine_to_detail():
+def test_a_device_serializes_its_image_ports_interfaces_and_run_state():
     lab = _lab()
     detail = serializers.machine_to_detail(lab.machines["r1"])
 
@@ -34,7 +34,7 @@ def test_machine_to_detail():
     assert detail.interfaces[0].num == 0
 
 
-def test_lab_to_detail_and_summary():
+def test_a_lab_serializes_its_counts_devices_and_domains_in_detail_and_summary():
     lab = _lab()
     detail = serializers.lab_to_detail(lab)
     summary = serializers.lab_to_summary(lab)
@@ -48,7 +48,7 @@ def test_lab_to_detail_and_summary():
     assert len(detail.links) == 1
 
 
-def test_link_to_detail():
+def test_a_collision_domain_serializes_its_devices_and_run_state():
     lab = _lab()
     link_detail = serializers.link_to_detail(lab.links["a"])
     assert link_detail.name == "a"

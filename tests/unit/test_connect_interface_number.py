@@ -6,7 +6,6 @@ from Kathara.exceptions import MachineCollisionDomainError
 from kathara_api.errors import UnsupportedOperationError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
-from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
 from tests.helpers import FakeFacadeBase, lab_id, make_lab, make_service, register_lab
 
@@ -19,10 +18,9 @@ class _FacadeCaptureConnect(FakeFacadeBase):
         self.called = True
 
 
-def _service_with_stopped_machine():
-    service = KatharaService()
+def _service_with_stopped_machine(tmp_path):
     facade = _FacadeCaptureConnect()
-    service._instance = facade
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
 
     lab = lab_builder.build_lab(
         LabCreate.model_validate(
@@ -36,8 +34,8 @@ def _service_with_stopped_machine():
     return service, facade, lab
 
 
-def test_connect_machine_adds_explicit_interface_on_stopped_machine():
-    service, facade, lab = _service_with_stopped_machine()
+def test_connect_machine_adds_explicit_interface_on_stopped_machine(tmp_path):
+    service, facade, lab = _service_with_stopped_machine(tmp_path)
 
     service.connect_machine(lab_id(service, "lab1"), "pc1", "A", interface_number=3, mac_address="02:00:00:00:00:03")
 
@@ -48,8 +46,8 @@ def test_connect_machine_adds_explicit_interface_on_stopped_machine():
     assert machine.interfaces[3].mac_address == "02:00:00:00:00:03"
 
 
-def test_connect_machine_rejects_explicit_interface_on_running_machine():
-    service, _, lab = _service_with_stopped_machine()
+def test_connect_machine_rejects_explicit_interface_on_running_machine(tmp_path):
+    service, _, lab = _service_with_stopped_machine(tmp_path)
     lab.machines["pc1"].api_object = object()
 
     with pytest.raises(UnsupportedOperationError):
@@ -62,8 +60,8 @@ class _Container:
         self.attrs = {"HostConfig": {"NetworkMode": network_mode}}
 
 
-def test_connect_machine_rejects_running_machine_started_without_network():
-    service, facade, lab = _service_with_stopped_machine()
+def test_connect_machine_rejects_running_machine_started_without_network(tmp_path):
+    service, facade, lab = _service_with_stopped_machine(tmp_path)
     machine = lab.machines["pc1"]
     machine.api_object = _Container("none")
 
@@ -75,8 +73,8 @@ def test_connect_machine_rejects_running_machine_started_without_network():
     assert "A" not in lab.links
 
 
-def test_connect_machine_connects_running_machine_started_with_network():
-    service, facade, lab = _service_with_stopped_machine()
+def test_connect_machine_connects_running_machine_started_with_network(tmp_path):
+    service, facade, lab = _service_with_stopped_machine(tmp_path)
     lab.machines["pc1"].api_object = _Container("bridge")
 
     service.connect_machine(lab_id(service, "lab1"), "pc1", "A")

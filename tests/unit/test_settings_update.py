@@ -18,6 +18,7 @@ from kathara_api.errors import (
 )
 from kathara_api.services import settings_store
 from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.lab_store import LabStore
 from tests.helpers import make_service
 
 
@@ -88,8 +89,8 @@ def test_manager_type_resubmitted_unchanged_is_not_rejected():
     assert Setting.get_instance().device_shell == "/bin/sh"
 
 
-def test_manager_type_change_allowed_before_facade_init():
-    service = KatharaService()
+def test_manager_type_change_allowed_before_facade_init(tmp_path):
+    service = KatharaService(store=LabStore(tmp_path / "labs"))
     assert service._instance is None
     other = next(k for k in ("docker", "kubernetes") if k != Setting.get_instance().manager_type)
 
@@ -237,7 +238,7 @@ def test_an_invalid_value_in_the_file_is_ignored_with_a_warning_until_a_save_rep
 
 def test_a_kubernetes_manager_in_the_file_runs_docker_warns_and_is_never_overwritten(tmp_path):
     _write(tmp_path, {"manager_type": "kubernetes", "debug_level": "INFO"})
-    service = KatharaService()
+    service = make_service(store=LabStore(tmp_path / "labs"))
 
     service.load_persisted_settings()
 

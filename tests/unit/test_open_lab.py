@@ -24,7 +24,7 @@ from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.known_labs import KnownLabs
 from kathara_api.services.lab_store import LabStore, lab_id_for
 from kathara_api.services.lab_watch import LabWatcher
-from tests.helpers import FakeFacadeBase
+from tests.helpers import FakeFacadeBase, make_service
 
 LAB_CONF = 'pc1[image]="kathara/base"\npc1[0]="A"\n'
 
@@ -39,11 +39,11 @@ class _RecordingFacade(FakeFacadeBase):
 
 def _service(tmp_path, facade=None) -> KatharaService:
     """A service with its labs root and its state file both under ``tmp_path``."""
-    service = KatharaService(
-        store=LabStore(tmp_path / "root"), known=KnownLabs(tmp_path / "state" / "known_labs.json")
+    return make_service(
+        store=LabStore(tmp_path / "root"),
+        facade=facade,
+        known=KnownLabs(tmp_path / "state" / "known_labs.json"),
     )
-    service._instance = facade or FakeFacadeBase()
-    return service
 
 
 def _folder(tmp_path, name="mylab", files=None):

@@ -163,7 +163,7 @@ def test_service_rename_unknown_lab(tmp_path):
 # -- route ---------------------------------------------------------------------
 
 
-def test_rename_route(client, tmp_path, monkeypatch):
+def test_the_rename_route_answers_with_the_new_id_and_retires_the_old_one(client, tmp_path, monkeypatch):
     from kathara_api import dependencies
 
     store = LabStore(tmp_path / "labs")

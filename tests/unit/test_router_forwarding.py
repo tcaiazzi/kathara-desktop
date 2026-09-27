@@ -165,7 +165,7 @@ def test_text_write_reports_the_size_the_service_wrote(api, url, expected_call):
 # ---------------------------------------------------------------------------
 
 
-def test_list_shells(api):
+def test_the_shells_route_answers_with_the_shells_the_service_detects(api):
     client, service = api
     service.returns["available_shells"] = ["bash", "sh"]
 

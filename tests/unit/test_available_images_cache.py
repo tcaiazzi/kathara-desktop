@@ -14,7 +14,14 @@ from Kathara.exceptions import DockerDaemonConnectionError, HTTPConnectionError
 from kathara_api.services import docker_hub
 from kathara_api.services import kathara_service as kathara_service_module
 from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.lab_store import LabStore
 from kathara_api.services.official_images_cache import OFFICIAL_IMAGES_FILENAME, OfficialImagesFile
+from tests.helpers import make_service
+
+
+def _service(tmp_path) -> KatharaService:
+    """A service on a labs root of its own under ``tmp_path``, which is never created."""
+    return make_service(store=LabStore(tmp_path / "labs"))
 
 
 def _patch_official(monkeypatch, images):
@@ -35,10 +42,10 @@ def _patch_local(monkeypatch, images):
 # --- the cache's copy-on-return invariant ----------------------------------
 
 
-def test_mutating_the_returned_list_does_not_corrupt_the_cache(monkeypatch):
+def test_mutating_the_returned_list_does_not_corrupt_the_cache(tmp_path, monkeypatch):
     _patch_official(monkeypatch, ["kathara/base", "kathara/frr"])
     _patch_local(monkeypatch, [])
-    service = KatharaService()
+    service = _service(tmp_path)
 
     first = service.list_available_images()
     first.official.append("not/a-real-image")
@@ -46,10 +53,10 @@ def test_mutating_the_returned_list_does_not_corrupt_the_cache(monkeypatch):
     assert service.list_available_images().official == ["kathara/base", "kathara/frr"]
 
 
-def test_a_cache_hit_also_returns_a_copy_not_the_cached_object(monkeypatch):
+def test_a_cache_hit_also_returns_a_copy_not_the_cached_object(tmp_path, monkeypatch):
     _patch_official(monkeypatch, ["kathara/base"])
     _patch_local(monkeypatch, [])
-    service = KatharaService()
+    service = _service(tmp_path)
 
     first = service.list_available_images()  # populates the cache
     second = service.list_available_images()  # cache hit (still within the TTL)
@@ -58,14 +65,14 @@ def test_a_cache_hit_also_returns_a_copy_not_the_cached_object(monkeypatch):
     assert second.official is not service._images_cache
 
 
-def test_only_the_docker_hub_half_is_cached(monkeypatch):
+def test_only_the_docker_hub_half_is_cached(tmp_path, monkeypatch):
     """A newly pulled image must be suggestable without waiting out the 5-minute TTL, so the
     local half is re-read on every call while the network half stays cached."""
     calls = []
     monkeypatch.setattr(docker_hub, "list_tagged_images", lambda: calls.append("hub") or [])
     local = ["alpine"]
     monkeypatch.setattr(KatharaService, "list_local_images", lambda self: list(local))
-    service = KatharaService()
+    service = _service(tmp_path)
 
     assert service.list_available_images().local == ["alpine"]
     local.append("nginx")
@@ -76,23 +83,23 @@ def test_only_the_docker_hub_half_is_cached(monkeypatch):
 # --- the merge -------------------------------------------------------------
 
 
-def test_the_two_sources_are_reported_separately(monkeypatch):
+def test_the_two_sources_are_reported_separately(tmp_path, monkeypatch):
     """They are two labelled sections in the picker, so merging them here would throw away the
     only thing that can tell an official image from one the user happens to have pulled."""
     _patch_official(monkeypatch, ["kathara/base", "kathara/frr"])
     _patch_local(monkeypatch, ["alpine", "nginx"])
 
-    images = KatharaService().list_available_images()
+    images = _service(tmp_path).list_available_images()
 
     assert images.official == ["kathara/base", "kathara/frr"]
     assert images.local == ["alpine", "nginx"]
 
 
-def test_a_local_image_already_on_docker_hub_is_not_listed_twice(monkeypatch):
+def test_a_local_image_already_on_docker_hub_is_not_listed_twice(tmp_path, monkeypatch):
     _patch_official(monkeypatch, ["kathara/base", "kathara/frr:9"])
     _patch_local(monkeypatch, ["kathara/base", "kathara/frr:9", "alpine"])
 
-    images = KatharaService().list_available_images()
+    images = _service(tmp_path).list_available_images()
 
     assert images.official == ["kathara/base", "kathara/frr:9"]
     assert images.local == ["alpine"]  # not repeated under a second heading
@@ -101,16 +108,16 @@ def test_a_local_image_already_on_docker_hub_is_not_listed_twice(monkeypatch):
 # --- degradation -----------------------------------------------------------
 
 
-def test_an_unreachable_docker_hub_still_returns_the_local_images(monkeypatch):
+def test_an_unreachable_docker_hub_still_returns_the_local_images(tmp_path, monkeypatch):
     _patch_official(monkeypatch, HTTPConnectionError("no route to host"))
     _patch_local(monkeypatch, ["alpine"])
 
-    images = KatharaService().list_available_images()
+    images = _service(tmp_path).list_available_images()
 
     assert (images.official, images.local) == ([], ["alpine"])
 
 
-def test_a_docker_hub_failure_is_not_cached(monkeypatch):
+def test_a_docker_hub_failure_is_not_cached(tmp_path, monkeypatch):
     """Caching the empty result would latch the picker into a Hub-less state for five minutes
     after a blip that may have lasted a second."""
     responses = [HTTPConnectionError("blip"), ["kathara/base"]]
@@ -120,14 +127,14 @@ def test_a_docker_hub_failure_is_not_cached(monkeypatch):
         lambda: (_ for _ in ()).throw(r) if isinstance(r := responses.pop(0), Exception) else r,
     )
     _patch_local(monkeypatch, [])
-    service = KatharaService()
+    service = _service(tmp_path)
 
     assert service.list_available_images().official == []
     assert service.list_available_images().official == ["kathara/base"]
 
 
 @pytest.mark.parametrize("failure", [DockerDaemonConnectionError("daemon down"), APIError("boom")])
-def test_a_stopped_docker_daemon_still_returns_the_official_images(monkeypatch, failure):
+def test_a_stopped_docker_daemon_still_returns_the_official_images(tmp_path, monkeypatch, failure):
     _patch_official(monkeypatch, ["kathara/base"])
 
     def boom(self):
@@ -135,12 +142,12 @@ def test_a_stopped_docker_daemon_still_returns_the_official_images(monkeypatch, 
 
     monkeypatch.setattr(KatharaService, "_docker_manager", boom)
 
-    images = KatharaService().list_available_images()
+    images = _service(tmp_path).list_available_images()
 
     assert (images.official, images.local) == (["kathara/base"], [])
 
 
-def test_both_sources_down_returns_empty_lists_rather_than_raising(monkeypatch):
+def test_both_sources_down_returns_empty_lists_rather_than_raising(tmp_path, monkeypatch):
     """The endpoint has no error branch on the frontend: an empty picker and manual entry is the
     intended worst case, not a toast."""
     _patch_official(monkeypatch, HTTPConnectionError("no route to host"))
@@ -150,7 +157,7 @@ def test_both_sources_down_returns_empty_lists_rather_than_raising(monkeypatch):
 
     monkeypatch.setattr(KatharaService, "_docker_manager", boom)
 
-    images = KatharaService().list_available_images()
+    images = _service(tmp_path).list_available_images()
 
     assert (images.official, images.local) == ([], [])
 
@@ -168,21 +175,21 @@ class _FakeManager:
         self.client = type("C", (), {"images": type("I", (), {"list": lambda s: images})()})()
 
 
-def _service_with_local(monkeypatch, images):
-    service = KatharaService()
+def _service_with_local(monkeypatch, tmp_path, images):
+    service = _service(tmp_path)
     manager = _FakeManager([_FakeImage(tags) for tags in images])
     monkeypatch.setattr(KatharaService, "_docker_manager", lambda self: manager)
     return service
 
 
-def test_local_images_drop_the_latest_tag_so_they_dedupe_against_docker_hub(monkeypatch):
-    service = _service_with_local(monkeypatch, [["kathara/base:latest"], ["alpine:3.19"]])
+def test_local_images_drop_the_latest_tag_so_they_dedupe_against_docker_hub(tmp_path, monkeypatch):
+    service = _service_with_local(monkeypatch, tmp_path, [["kathara/base:latest"], ["alpine:3.19"]])
 
     assert service.list_local_images() == ["alpine:3.19", "kathara/base"]
 
 
-def test_local_images_skip_dangling_and_untagged_entries(monkeypatch):
-    service = _service_with_local(monkeypatch, [[], ["<none>:<none>"], ["alpine:latest"]])
+def test_local_images_skip_dangling_and_untagged_entries(tmp_path, monkeypatch):
+    service = _service_with_local(monkeypatch, tmp_path, [[], ["<none>:<none>"], ["alpine:latest"]])
 
     assert service.list_local_images() == ["alpine"]
 
@@ -219,7 +226,7 @@ def clock(monkeypatch):
 
 def _service_with_file(monkeypatch, tmp_path, hub):
     monkeypatch.setattr(docker_hub, "list_tagged_images", hub)
-    service = KatharaService()
+    service = _service(tmp_path)
     service._images_file = OfficialImagesFile(tmp_path / OFFICIAL_IMAGES_FILENAME)
     return service
 
@@ -281,7 +288,7 @@ def test_a_state_directory_that_cannot_be_written_only_costs_the_copy(monkeypatc
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("", encoding="utf-8")
     monkeypatch.setattr(docker_hub, "list_tagged_images", _Hub(["kathara/base"]))
-    service = KatharaService()
+    service = _service(tmp_path)
     service._images_file = OfficialImagesFile(blocker / OFFICIAL_IMAGES_FILENAME)
 
     assert service._official_images() == ["kathara/base"]

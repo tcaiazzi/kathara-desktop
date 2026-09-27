@@ -1,15 +1,15 @@
-"""Regression tests for two layered protections against a lab.conf/offline-fs edit or a
+"""Tests for two layered protections against a lab.conf/offline-fs edit or a
 structural change (device/link add/remove/connect/disconnect, rename, delete) racing a
 `deploy_lab`/`undeploy_lab` on the same lab — no Docker required.
 
 **Primary protection** (`_check_not_transitioning`): every one of those operations fails
 immediately with `LabTransitioningError` if the target lab is mid deploy/undeploy, rather than
 silently queuing behind `_mutate_lock` for however long that takes and only then succeeding or
-failing on whatever state exists by the time it wakes up. Confirmed reachable through the shipped
-UI, not just a raw concurrent API client: nothing in `useDeviceActions` or the topology context
-menu is gated by the same `busy` flag that disables Deploy/Undeploy, so a user can click Deploy
-and, before it returns, right-click the same device and connect/disconnect/remove it, or switch to
-the Lab Configuration tab and save an edit.
+failing on whatever state exists by the time it wakes up. The UI reaches this too, not only a
+concurrent API client: nothing in `useDeviceActions` or the topology context menu is gated by the
+`busy` flag that disables Deploy/Undeploy, so a user can click Deploy and, before it returns,
+right-click the same device and connect/disconnect/remove it, or switch to the Lab Configuration
+tab and save an edit.
 
 **Lab creation** is a third, separate race (`test_*_create*`): the four creation paths
 (`create_lab`/`upload_lab`/`install_example`/`install_gallery_lab`) check "is this name free?"
@@ -90,9 +90,8 @@ class _RaisingDeployFacade(FakeFacadeBase):
 
 def _service_with_blocking_facade(tmp_path) -> tuple[KatharaService, _BlockingFacade, LabStore]:
     store = LabStore(tmp_path / "labs")
-    service = KatharaService(store=store)
     facade = _BlockingFacade()
-    service._instance = facade
+    service = make_service(store=store, facade=facade)
     service.create_lab(LabCreate(name="testlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
     return service, facade, store
 
@@ -389,9 +388,8 @@ def test_fs_upload_bytes_resolves_the_device_inside_the_lock(tmp_path, monkeypat
     `normalize_guest_path` is the pause point because it runs before the lock either way: the
     question the test asks is whether the *device* has also been resolved by then.
     """
-    service = KatharaService(store=LabStore(tmp_path / "labs"))
     facade = _CopyRecordingFacade()
-    service._instance = facade
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
     service.create_lab(LabCreate(name="testlab", machines=[MachineCreate(name="pc1", image="kathara/base")]))
     service.deploy_lab(lab_id(service, "testlab"))
 

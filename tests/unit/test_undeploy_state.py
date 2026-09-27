@@ -1,7 +1,8 @@
-"""Regression tests: undeploy-family calls must clear stale ``api_object`` state (no Docker
-required). Kathara's Docker manager never resets ``api_object`` on the in-memory model when a
-container/network actually goes down, so without ``KatharaService._clear_undeployed_state`` the
-API would keep reporting `deployed`/`running` as True forever after an undeploy.
+"""Undeploy-family calls clear stale ``api_object`` state (no Docker required).
+
+Kathara's Docker manager never resets ``api_object`` on the in-memory model when a
+container/network actually goes down, so ``KatharaService._clear_undeployed_state`` must, or the
+API keeps reporting `deployed`/`running` as True after an undeploy.
 """
 
 import pytest
@@ -13,8 +14,8 @@ from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
 
 
 class _NoopFacade(FakeFacadeBase):
-    """Never clears ``api_object`` on undeploy, matching the real Kathara manager's behavior —
-    the bug ``_clear_undeployed_state`` guards against."""
+    """Never clears ``api_object`` on undeploy, like the real Kathara manager — the behaviour
+    ``_clear_undeployed_state`` exists to make up for."""
 
 
 def _service_with_lab():

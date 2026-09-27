@@ -121,7 +121,7 @@ def test_service_ignores_invalid_layout_content(tmp_path):
     assert service.get_lab_layout(lab_id(service, "mylab")).nodes == {}
 
 
-def test_clear_lab_layout(tmp_path):
+def test_clearing_a_layout_reports_whether_one_existed_and_leaves_none(tmp_path):
     store = LabStore(tmp_path / "labs")
     service = make_service(store)
     _lab_with_pc1(service)
@@ -170,7 +170,7 @@ def test_layout_survives_reload_and_zip_round_trip(tmp_path):
 # -- routes --------------------------------------------------------------------
 
 
-def test_layout_routes(client, tmp_path, monkeypatch):
+def test_the_layout_routes_read_save_validate_and_delete_the_file(client, tmp_path, monkeypatch):
     from kathara_api import dependencies
 
     store = LabStore(tmp_path / "labs")

@@ -1,8 +1,9 @@
-"""Regression test: ``KatharaService.wipe()`` must clear every registered lab's stale
-``api_object`` state, exactly like ``undeploy_lab``/``delete_lab`` already do for their target lab.
-``update_lab_from_api`` only ever *sets* ``api_object`` for what's still running; it never clears a
-stopped one, so without this, a lab wiped via `kathara wipe` would keep reporting
-`deployed`/`running` as True forever on subsequent ``list_labs``/``get_lab_or_reconstruct`` reads.
+"""``KatharaService.wipe()`` clears every registered lab's stale ``api_object`` state, as
+``undeploy_lab``/``delete_lab`` do for their target lab.
+
+``update_lab_from_api`` only ever *sets* ``api_object`` for what's still running and never clears a
+stopped one, so a wiped lab must be cleared by the service itself, or it keeps reporting
+`deployed`/`running` as True on every later ``list_labs``/``get_lab_or_reconstruct`` read.
 """
 
 from docker.models.containers import Container

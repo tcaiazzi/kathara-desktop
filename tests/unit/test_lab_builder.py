@@ -58,7 +58,7 @@ def test_build_lab_formats_machine_meta():
     assert pc1.meta["ulimits"]["nofile"] == {"soft": 1024, "hard": 2048}
 
 
-def test_interfaces_connected():
+def test_a_built_lab_connects_each_interface_to_its_collision_domain():
     lab = lab_builder.build_lab(_lab_spec())
     pc1 = lab.machines["pc1"]
     assert 0 in pc1.interfaces

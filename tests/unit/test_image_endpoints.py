@@ -14,15 +14,12 @@ from types import SimpleNamespace
 import pytest
 import requests
 from docker.errors import APIError, ImageNotFound
-from fastapi.testclient import TestClient
 from Kathara.setting.Setting import Setting
 
-from kathara_api.dependencies import get_service
-from kathara_api.main import create_app
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import image_pull, lab_builder
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
+from tests.helpers import FakeFacadeBase, lab_id, make_client, make_service, register_lab
 
 
 @pytest.fixture(autouse=True)
@@ -223,7 +220,9 @@ def test_missing_images_are_checked_on_the_registry_even_when_updates_are_never_
         ("kathara/base", ["kathara/base@sha256:old"], {}, "unknown", True),
     ],
 )
-def test_update_classification_table(tmp_path, name, repo_digests, remote, expected, expect_remote_call):
+def test_a_present_image_is_classified_by_comparing_its_digest_with_the_registry(
+    tmp_path, name, repo_digests, remote, expected, expect_remote_call
+):
     docker_image = _FakeDockerImage(local={name: _FakeLocalImage(repo_digests)}, remote=remote)
     service = _service(tmp_path, docker_image)
     _add_lab(service, [{"name": "pc1", "image": name, "interfaces": [{"link": "A", "number": 0}]}])
@@ -421,11 +420,8 @@ def client_and_service(tmp_path):
     api = _FakeApi(streams={"kathara/frr": [{"status": "Already exists", "id": "a"}]})
     docker_image.remote["kathara/frr"] = "sha256:whatever"
     service = _service(tmp_path, docker_image, api)
-    app = create_app()
-    app.dependency_overrides[get_service] = lambda: service
-    with TestClient(app) as client:
+    with make_client(service) as client:
         yield client, service
-    app.dependency_overrides.clear()
 
 
 def test_precheck_endpoint_returns_missing_images(client_and_service):

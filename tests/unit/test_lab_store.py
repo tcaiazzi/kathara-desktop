@@ -161,9 +161,8 @@ def test_extract_zip_strips_setuid_setgid_and_sticky_bits(tmp_path):
     """An uploaded archive must not be able to deposit a setuid file in the lab directory.
 
     `external_attr >> 16` is the archive's full st_mode, and S_ISUID/S_ISGID/S_ISVTX all fall
-    inside the range chmod(2) honours — so before the mask, a member recorded as 0o104755 landed
-    as a genuinely setuid file, which Kathara then carries into the container at deploy along
-    with the rest of `machine.fs`.
+    inside the range chmod(2) honours — so without the mask, a member recorded as 0o104755 would
+    land on the host as a genuinely setuid file.
     """
     store = LabStore(tmp_path / "labs")
     store.extract_zip(

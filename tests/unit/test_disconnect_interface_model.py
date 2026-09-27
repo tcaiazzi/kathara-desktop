@@ -2,8 +2,8 @@
 
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
-from kathara_api.services.kathara_service import KatharaService
-from tests.helpers import FakeFacadeBase, lab_id, register_lab
+from kathara_api.services.lab_store import LabStore
+from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
 
 
 class _FacadeCaptureDisconnect(FakeFacadeBase):
@@ -14,10 +14,9 @@ class _FacadeCaptureDisconnect(FakeFacadeBase):
         self.called = True
 
 
-def test_disconnect_machine_uses_model_remove_interface_when_stopped():
-    service = KatharaService()
+def test_disconnect_machine_uses_model_remove_interface_when_stopped(tmp_path):
     facade = _FacadeCaptureDisconnect()
-    service._instance = facade
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
 
     lab = lab_builder.build_lab(
         LabCreate.model_validate(

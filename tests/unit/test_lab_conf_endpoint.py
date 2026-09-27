@@ -124,7 +124,7 @@ def test_remove_link_persists_interface_removal_to_lab_conf(tmp_path):
 # -- routes --------------------------------------------------------------------
 
 
-def test_lab_conf_routes(client, tmp_path, monkeypatch):
+def test_the_lab_conf_routes_read_and_write_the_file_verbatim(client, tmp_path, monkeypatch):
     from kathara_api import dependencies
     from kathara_api.services import lab_builder
 

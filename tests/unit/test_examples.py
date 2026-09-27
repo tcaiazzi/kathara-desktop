@@ -10,23 +10,17 @@ real bundled examples happen to contain.
 """
 
 import pytest
-from fastapi.testclient import TestClient
 
-from kathara_api.dependencies import get_service
-from kathara_api.main import create_app
 from kathara_api.services import examples
 from kathara_api.services.lab_store import LabStore
-from tests.helpers import make_service
+from tests.helpers import make_client, make_service
 
 
 @pytest.fixture
 def client_and_service(tmp_path):
     service = make_service(store=LabStore(tmp_path / "labs"))
-    app = create_app()
-    app.dependency_overrides[get_service] = lambda: service
-    with TestClient(app) as client:
+    with make_client(service) as client:
         yield client, service
-    app.dependency_overrides.clear()
 
 
 def test_list_examples_reports_the_bundled_catalog(client_and_service):

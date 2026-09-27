@@ -477,9 +477,9 @@ def test_runtime_interface_change_never_leaks_into_lab_conf(tmp_path):
 
 
 def test_disconnect_stopped_device_renumbers_and_lab_still_reloads(tmp_path):
-    """Regression: disconnecting a device's *middle* interface must renumber the survivors, or
-    the resulting gap (e.g. eth0, eth2) is rejected by lab_import.parse_lab_conf and the lab
-    silently disappears from the registry on the next restart (_translate_lab_dir -> None)."""
+    """Disconnecting a device's *middle* interface renumbers the survivors, so the lab.conf left
+    behind has no gap (e.g. eth0, eth2) — which lab_import.parse_lab_conf would reject, dropping the
+    lab from the registry on the next restart (_translate_lab_dir -> None)."""
     from kathara_api.services import lab_import
 
     service = _service(tmp_path)

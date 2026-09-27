@@ -46,7 +46,7 @@ def _two_machine_lab(tmp_path, lab_name="testlab"):
 # -- device-owned files/dirs ----------------------------------------------------------------
 
 
-def test_write_and_read_device_file(tmp_path):
+def test_a_device_file_written_offline_lands_in_its_folder_and_reads_back(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
     service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd", "hi\n")
@@ -55,7 +55,7 @@ def test_write_and_read_device_file(tmp_path):
     assert service.fs_read_text_offline(lab_id(service, "testlab"), "/pc1/etc/motd") == "hi\n"
 
 
-def test_mkdir_device_dir(tmp_path):
+def test_a_folder_made_offline_under_a_device_lands_in_its_folder(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
     service.fs_mkdir_offline(lab_id(service, "testlab"), "/pc1/etc/frr")
@@ -151,7 +151,7 @@ def test_move_dir_cross_device_recursive(tmp_path):
 
 
 def test_moving_a_file_out_of_a_folder_leaves_the_folder_in_place(tmp_path):
-    """Regression: dragging a file out of a folder must not also remove the folder."""
+    """Moving a file out of a folder moves the file only: the folder stays."""
     service, store = _two_machine_lab(tmp_path)
     service.fs_write_text_offline(lab_id(service, "testlab"), "/pc1/ciao/ciao.txt", "hi\n")
 
@@ -258,7 +258,7 @@ def test_copy_file_from_root_to_device(tmp_path):
 # -- root-level (device-less) files/dirs -----------------------------------------------------
 
 
-def test_write_and_read_root_file(tmp_path):
+def test_a_root_file_written_offline_lands_at_the_lab_root_and_reads_back(tmp_path):
     service, store = _two_machine_lab(tmp_path)
 
     service.fs_write_text_offline(lab_id(service, "testlab"), "/notes.txt", "hi\n")

@@ -8,6 +8,7 @@ from kathara_api.errors import ApiError, BinaryFileError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder
 from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.lab_store import LabStore
 from tests.helpers import FakeFacadeBase, lab_id, make_service, register_lab
 
 
@@ -68,8 +69,8 @@ def test_copy_files_on_stopped_machine_raises_machine_not_running():
         service.copy_files(lab_id(service, "lab1"), "pc1", {"/tmp/x.txt": "hello"})
 
 
-def _service_with_running_machine() -> KatharaService:
-    service = KatharaService()
+def _service_with_running_machine(tmp_path) -> KatharaService:
+    service = make_service(store=LabStore(tmp_path / "labs"))
     spec = LabCreate.model_validate({"name": "lab1", "machines": [{"name": "pc1"}]})
     lab = lab_builder.build_lab(spec)
     machine = lab.get_machine("pc1")
@@ -78,15 +79,15 @@ def _service_with_running_machine() -> KatharaService:
     return service
 
 
-def test_available_shells_returns_detected_subset_in_canonical_order():
-    service = _service_with_running_machine()
+def test_available_shells_returns_detected_subset_in_canonical_order(tmp_path):
+    service = _service_with_running_machine(tmp_path)
     # Probe reports zsh + bash present (out of order); result must be canonical order, detected only.
     service.exec_command = lambda *a, **k: (b"zsh\nbash\n", b"", 0)  # type: ignore[method-assign]
     assert service.available_shells(lab_id(service, "lab1"), "pc1") == ["bash", "zsh"]
 
 
-def test_available_shells_falls_back_when_detection_yields_nothing():
-    service = _service_with_running_machine()
+def test_available_shells_falls_back_when_detection_yields_nothing(tmp_path):
+    service = _service_with_running_machine(tmp_path)
     service.exec_command = lambda *a, **k: (b"", b"", 0)  # type: ignore[method-assign]
     assert service.available_shells(lab_id(service, "lab1"), "pc1") == ["bash", "sh", "ash", "zsh"]
 
@@ -100,8 +101,8 @@ def test_available_shells_requires_running_machine():
         service.available_shells(lab_id(service, "lab1"), "pc1")
 
 
-def test_fs_read_bytes_rejects_directory_paths_before_cat():
-    service = _service_with_running_machine()
+def test_fs_read_bytes_rejects_directory_paths_before_cat(tmp_path):
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         assert command[:2] == ["sh", "-lc"]
@@ -113,10 +114,10 @@ def test_fs_read_bytes_rejects_directory_paths_before_cat():
         service.fs_read_bytes(lab_id(service, "lab1"), "pc1", "/bin")
 
 
-def test_fs_read_text_raises_binary_file_error_on_non_utf8_content():
+def test_fs_read_text_raises_binary_file_error_on_non_utf8_content(tmp_path):
     # A distinct exception (not a generic ApiError) so the frontend can detect this specific case
     # by error_type and offer a binary-aware fallback (download/delete) instead of a plain toast.
-    service = _service_with_running_machine()
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         assert command[:2] == ["sh", "-lc"]
@@ -128,8 +129,8 @@ def test_fs_read_text_raises_binary_file_error_on_non_utf8_content():
         service.fs_read_text(lab_id(service, "lab1"), "pc1", "/blob.bin")
 
 
-def test_fs_list_directory_marks_symlink_to_directory_as_directory():
-    service = _service_with_running_machine()
+def test_fs_list_directory_marks_symlink_to_directory_as_directory(tmp_path):
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         if command[0:2] == ["sh", "-lc"]:
@@ -151,12 +152,12 @@ def test_fs_list_directory_marks_symlink_to_directory_as_directory():
     assert by_name["hosts"].is_dir is False
 
 
-def test_fs_list_directory_dereferences_a_symlinked_query_path():
+def test_fs_list_directory_dereferences_a_symlinked_query_path(tmp_path):
     # Debian/Ubuntu-based images (kathara/base included) use a merged-usr layout where /bin, /lib,
     # /sbin are themselves symlinks to /usr/{bin,lib,sbin}. Plain `find` (`-P`) never descends into
     # a symlinked *starting* path — with `-mindepth 1` excluding that depth-0 node, listing one of
     # these would silently return zero entries unless the command dereferences it via `-H`.
-    service = _service_with_running_machine()
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         if command[0:2] == ["sh", "-lc"]:
@@ -171,17 +172,17 @@ def test_fs_list_directory_dereferences_a_symlinked_query_path():
     assert [entry.name for entry in entries] == ["ls"]
 
 
-def test_get_startup_log_returns_empty_string_when_file_does_not_exist_yet():
+def test_get_startup_log_returns_empty_string_when_file_does_not_exist_yet(tmp_path):
     # A device with no `.startup` script (or one that hasn't run yet) never gets a
     # /var/log/startup.log at all — `cat` fails, and that must read as "no log yet", not an error,
     # since the whole point is to poll this while a device is still booting.
-    service = _service_with_running_machine()
+    service = _service_with_running_machine(tmp_path)
     service.exec_command = lambda *a, **k: (b"", b"cat: No such file or directory\n", 1)  # type: ignore[method-assign]
     assert service.get_startup_log(lab_id(service, "lab1"), "pc1") == ""
 
 
-def test_get_startup_log_returns_file_content_when_present():
-    service = _service_with_running_machine()
+def test_get_startup_log_returns_file_content_when_present(tmp_path):
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         assert command == ["cat", "/var/log/startup.log"]
@@ -192,11 +193,11 @@ def test_get_startup_log_returns_file_content_when_present():
     assert service.get_startup_log(lab_id(service, "lab1"), "pc1") == "+ ip addr add 10.0.0.1/24 dev eth0\n"
 
 
-def test_is_startup_finished_checks_the_eos_marker_without_blocking():
+def test_is_startup_finished_checks_the_eos_marker_without_blocking(tmp_path):
     # Kathara's own startup-wait logic (`wait=True`) blocks on this exact same condition — passing
     # it here would hang instead of reporting current status, so this must always poll with
     # `wait=False` and just test for the /tmp/EOS marker Kathara's startup sequence touches last.
-    service = _service_with_running_machine()
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         assert command == ["test", "-f", "/tmp/EOS"]
@@ -207,8 +208,8 @@ def test_is_startup_finished_checks_the_eos_marker_without_blocking():
     assert service.is_startup_finished(lab_id(service, "lab1"), "pc1") is True
 
 
-def test_is_startup_finished_is_false_before_the_marker_exists():
-    service = _service_with_running_machine()
+def test_is_startup_finished_is_false_before_the_marker_exists(tmp_path):
+    service = _service_with_running_machine(tmp_path)
     service.exec_command = lambda *a, **k: (b"", b"", 1)  # type: ignore[method-assign]
     assert service.is_startup_finished(lab_id(service, "lab1"), "pc1") is False
 
@@ -231,7 +232,7 @@ def test_is_startup_finished_requires_running_machine():
         service.is_startup_finished(lab_id(service, "lab1"), "pc1")
 
 
-def test_get_startup_scripts_swallows_a_non_utf8_startup_without_failing_the_whole_panel():
+def test_get_startup_scripts_swallows_a_non_utf8_startup_without_failing_the_whole_panel(tmp_path):
     # The node-info panel shows every device's startup preview at once — one corrupted/binary
     # `.startup` must not blank out every other device's preview (unlike a single explicit file
     # open, where BinaryFileError is the right call — see fs_read_text above).
@@ -240,14 +241,14 @@ def test_get_startup_scripts_swallows_a_non_utf8_startup_without_failing_the_who
     lab.fs.writetext("pc1.startup", "ip addr\n")
     lab.fs.writebytes("pc2.startup", b"\xff\xfe\x00\x01")
 
-    service = KatharaService()
+    service = make_service(store=LabStore(tmp_path / "labs"))
     register_lab(service, lab)
 
     assert service.get_startup_scripts(lab_id(service, "lab1")) == {"pc1": "ip addr\n", "pc2": ""}
 
 
-def test_fs_list_directory_handles_none_stdout_from_exec():
-    service = _service_with_running_machine()
+def test_fs_list_directory_handles_none_stdout_from_exec(tmp_path):
+    service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):
         if command[0:2] == ["sh", "-lc"]:
