@@ -1,4 +1,4 @@
-/* A terminal rendered inside a dockview panel body: control bar on top, xterm filling the rest. */
+/* A terminal session's host element: control bar on top, xterm filling the rest. */
 .kt-term-panel {
   display: flex;
   flex-direction: column;
@@ -30,5 +30,12 @@
 
 .kt-term-screen {
   flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* A place a session is shown in (TerminalSessionsContext's useTerminalSlot): the session's host
+   element, a .kt-term-panel, is moved into it. */
+.kt-term-slot {
+  height: 100%;
   min-height: 0;
 }

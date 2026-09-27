@@ -62,6 +62,7 @@ import { NewLabModal } from "../components/NewLabModal";
 import { RuntimeFilesystemEditor } from "../components/RuntimeFilesystemEditor";
 import { StatsPanel } from "../components/StatsPanel";
 import { TerminalPanel } from "../components/TerminalPanel";
+import { TerminalSessionHosts } from "../components/TerminalSessionHosts";
 import { TopologyActionModal } from "../components/TopologyActionModal";
 import { TopologyContextMenu, type ContextMenuState } from "../components/TopologyContextMenu";
 import { TopologyGraph } from "../components/TopologyGraph";
@@ -71,6 +72,7 @@ import { useDesktopCommand } from "../desktop/DesktopCommands";
 import { desktop, isDesktop, type DesktopDockerStatus } from "../desktop/bridge";
 import { useDockerStatus } from "../desktop/DockerStatusContext";
 import { usePublishOpenLabName } from "../context/OpenLabNameContext";
+import { TerminalSessionsProvider, useTerminalRegistry } from "../context/TerminalSessionsContext";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore, type StartupChange } from "../context/WorkspaceCoreContext";
 import { useLabEvents } from "../hooks/useLabEvents";
@@ -91,6 +93,7 @@ import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
+import { sessionOfTerminalPanel, terminalPanelId, terminalTitle } from "../services/terminalSessions";
 import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import { compareLabsByName, labFolder } from "../services/labPlace";
@@ -331,10 +334,6 @@ const IMPORT_ROW_COMPACT_WIDTH = isDesktop() ? 340 : 260;
 // the tabs).
 const TOPOLOGY_HEIGHT_FRACTION = 0.62;
 
-// Matches an `openTerminal`-minted panel id (`terminal:<machine>:<n>`) so a restored layout's
-// terminals can be told apart from every other panel.
-const TERMINAL_ID_RE = /^terminal:(.*):(\d+)$/;
-
 // The node-info panel's tab title, in one place: a saved layout records the title it was saved with,
 // so onDockReady sets it again after restoring one (see there).
 const NODE_INFO_TITLE = "Inspector";
@@ -406,27 +405,12 @@ function exitMaximized(api: DockviewApi) {
 // survive). All are no-ops when there's nothing to arrange. ---
 const terminalPanelsOf = (api: DockviewApi) => api.panels.filter((p) => p.id.startsWith("terminal:"));
 
-// A layout restored from localStorage can bring back terminal ids (`terminal:<machine>:<n>`) from
-// a previous session — seed `termCounter` from them so a freshly opened terminal never reuses a
-// still-open id. Without this, `termCounter` (a fresh `useRef({})` on every mount) restarts every
-// per-machine counter at 1, and dockview throws "panel with id ... already exists" the moment that
-// collides with a live restored id.
-function seedTermCounterFromPanels(api: DockviewApi, termCounter: Record<string, number>) {
-  for (const p of api.panels) {
-    const match = TERMINAL_ID_RE.exec(p.id);
-    if (!match) continue;
-    const [, machine, numStr] = match;
-    const num = Number(numStr);
-    if (num > (termCounter[machine] ?? 0)) termCounter[machine] = num;
-  }
-}
-
 // Close any terminal panel whose device no longer exists in this lab. Shared by the effect below
 // (reacts to a later `detail` change) and `onDockReady` (handles a lab already loaded by the
 // time a restored layout's terminals first appear).
 function pruneOrphanTerminals(api: DockviewApi, machineNames: Set<string>) {
   for (const p of terminalPanelsOf(api)) {
-    const machine = (p.params as { machine?: string } | undefined)?.machine;
+    const machine = sessionOfTerminalPanel(p.id)?.machine;
     if (machine && !machineNames.has(machine)) p.api.close();
   }
 }
@@ -1023,20 +1007,18 @@ export function WorkspacePage() {
     return () => railDragCleanupRef.current?.();
   }, []);
 
-  // Per-machine "next instance number" so a terminal's #n stays stable for its lifetime.
-  const termCounter = useRef<Record<string, number>>({});
+  const terminals = useTerminalRegistry();
+  const { open: openSession, close: closeSession, adopt: adoptSessions } = terminals;
   const openTerminal = useCallback((machine: string) => {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
-    const num = (termCounter.current[machine] ?? 0) + 1;
-    termCounter.current[machine] = num;
+    const session = openSession(machine);
     const existingTerminal = dockApi.panels.find((p) => p.id.startsWith("terminal:"));
     const devices = dockApi.getPanel("devices");
     dockApi.addPanel({
-      id: `terminal:${machine}:${num}`,
+      id: terminalPanelId(session.id),
       component: "terminal",
-      title: `${machine} #${num}`,
-      params: { machine },
+      title: terminalTitle(session),
       // Group with existing terminals (as tabs) if any; else land as a tab alongside the tool
       // panels (Devices, Lab Configuration, …) on the left; else just drop into a new/active group.
       position: existingTerminal
@@ -1045,7 +1027,7 @@ export function WorkspacePage() {
           ? { referencePanel: "devices", direction: "within" }
           : undefined,
     });
-  }, []);
+  }, [openSession]);
 
   const closeAllTerminals = useCallback(() => {
     const dockApi = dockApiRef.current;
@@ -1129,18 +1111,28 @@ export function WorkspacePage() {
       }
     });
 
+    // Closing a terminal's panel ends its session. Subscribed before the prune below, whose closes
+    // must end their sessions too.
+    event.api.onDidRemovePanel((panel) => {
+      const session = sessionOfTerminalPanel(panel.id);
+      if (session) closeSession(session.id);
+    });
+
+    // A restored layout brings its terminal panels back; the registry adopts one session for each,
+    // which also keeps a terminal opened afterwards from taking a restored panel's id (dockview
+    // throws "panel with id ... already exists" on the collision).
+    adoptSessions(terminalPanelsOf(event.api).flatMap((p) => sessionOfTerminalPanel(p.id) ?? []));
+
     // DockviewReact only mounts once a lab is already loaded (see the `ctxValue && coreCtxValue`
-    // check below), so `detailRef.current` is always populated by the time this runs — do the same
-    // two restored-terminal fixups the rest of the component does on a *later* `detail` change:
-    // seed termCounter so a new terminal can't collide with a restored one's id, and prune any
-    // restored terminal for a device that's since been removed from the lab. Reading `detailRef`
-    // (not `detail`) is what makes this correct despite onDockReady's own `[]` deps — dockview only
-    // calls onReady once, so that's a constraint on this callback, not something to work around.
-    seedTermCounterFromPanels(event.api, termCounter.current);
+    // check below), so `detailRef.current` is always populated by the time this runs — prune any
+    // restored terminal for a device that's since been removed from the lab, as the rest of the
+    // component does on a *later* `detail` change. Reading `detailRef` (not `detail`) is what makes
+    // this correct despite onDockReady running once — dockview only calls onReady once, so that's a
+    // constraint on this callback, not something to work around.
     if (detailRef.current) {
       pruneOrphanTerminals(event.api, new Set(detailRef.current.machines.map((m) => m.name)));
     }
-  }, []);
+  }, [adoptSessions, closeSession]);
 
   // By name, so a lab keeps its place in the rail whatever order the backend happens to list them
   // in (a rename, or a lab adopted from the labs folder, would otherwise land at the end).
@@ -1900,14 +1892,17 @@ export function WorkspacePage() {
           {ctxValue && coreCtxValue ? (
             <WorkspaceProvider value={ctxValue}>
               <WorkspaceCoreProvider value={coreCtxValue}>
-                <DockviewReact
-                  components={DOCK_COMPONENTS}
-                  tabComponents={DOCK_TAB_COMPONENTS}
-                  defaultTabComponent={DockTab}
-                  rightHeaderActionsComponent={GroupHeaderActions}
-                  onReady={onDockReady}
-                  theme={ktTheme === "dark" ? themeDark : themeLight}
-                />
+                <TerminalSessionsProvider value={terminals}>
+                  <TerminalSessionHosts />
+                  <DockviewReact
+                    components={DOCK_COMPONENTS}
+                    tabComponents={DOCK_TAB_COMPONENTS}
+                    defaultTabComponent={DockTab}
+                    rightHeaderActionsComponent={GroupHeaderActions}
+                    onReady={onDockReady}
+                    theme={ktTheme === "dark" ? themeDark : themeLight}
+                  />
+                </TerminalSessionsProvider>
               </WorkspaceCoreProvider>
             </WorkspaceProvider>
           ) : notFound ? (

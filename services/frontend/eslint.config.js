@@ -53,6 +53,8 @@ export default tseslint.config(
             "useGuardedNavigate",
             "useGuardedLinkClick",
             "useLeavePage",
+            "useTerminalRegistry",
+            "useTerminalSessions",
             "defaultOptionsFormState",
             "optionsFormStateFromMachine",
             "optionsFormStateToPayload",
