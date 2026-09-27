@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from "react";
 import { useLiveTty } from "./useLiveTty";
 import { useShellDetection } from "./useShellDetection";
+import { useTerminalTheme } from "./useTerminalTheme";
 import { api } from "../services/api";
 
 // One live terminal session: shell detection, the xterm/websocket wiring, and the auto-connect on
@@ -25,6 +26,7 @@ export function useTerminalSession(labId: string, machine: string, options: Term
   const { focusScopeRef, autoConnect = true } = options;
   const detection = useShellDetection();
   const { shell, shellRef, detectShell } = detection;
+  const { theme } = useTerminalTheme();
 
   const tty = useLiveTty(true, {
     wsUrl: () => api.ttyWsUrl(labId, machine, shellRef.current),
@@ -34,12 +36,7 @@ export function useTerminalSession(labId: string, machine: string, options: Term
       fontSize: 13,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace",
       scrollback: 8000,
-      theme: {
-        background: "#0d1117",
-        foreground: "#d6deeb",
-        cursor: "#7ee787",
-        selectionBackground: "#264f78",
-      },
+      theme,
     },
     sendCloseHandshake: true,
     focusScopeRef,
@@ -67,7 +64,16 @@ export function useTerminalSession(labId: string, machine: string, options: Term
     },
   });
 
-  const { terminalRef, connect, disconnect } = tty;
+  const { containerRef, terminalRef, connect, disconnect } = tty;
+
+  // The options above are read once, when the terminal is built; a scheme picked after that
+  // recolours the live terminal, scrollback included. The box around it takes the scheme's
+  // background too: it shows through the terminal's inset and under the rows FitAddon leaves over.
+  useEffect(() => {
+    if (terminalRef.current) terminalRef.current.options.theme = theme;
+    if (containerRef.current) containerRef.current.style.backgroundColor = theme.background ?? "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]);
 
   // Auto-connect on mount, after detecting which shells the device actually has — defaulting to
   // "bash" fails outright on images without it (Alpine). Deliberately a mount-only effect with a

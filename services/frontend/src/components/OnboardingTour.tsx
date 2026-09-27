@@ -117,7 +117,7 @@ const STEPS: TourStep[] = [
     popover: {
       title: "Terminals",
       description:
-        "Shells on your running devices, all in one tab — open one here, or from a device's right-click menu. Drag one out of the list to give it a panel of its own.",
+        "Shells on your running devices, all in one tab — open one here, or from a device's right-click menu. Split one to work on several side by side, or drag it out of the list into a panel of its own.",
     },
   },
   {

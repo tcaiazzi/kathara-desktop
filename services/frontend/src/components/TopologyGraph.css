@@ -734,6 +734,28 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* An entry with a submenu (TopologyContextMenu): its chevron at the row's end, and the submenu
+   beside the menu, level with the entry, to its right or, flipped, to its left. */
+.kt-topo-menu-parent {
+  position: relative;
+}
+.kt-topo-menu button.kt-topo-menu-opener {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kt-topo-menu button.kt-topo-menu-opener.open {
+  background: var(--kt-menu-hover-bg);
+}
+.kt-topo-submenu {
+  position: absolute;
+  left: calc(100% + 6px);
+}
+.kt-topo-submenu.flip {
+  left: auto;
+  right: calc(100% + 6px);
+}
 
 .kt-topo-terminal-toolbar {
   flex: 0 0 auto;

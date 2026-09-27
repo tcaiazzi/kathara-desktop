@@ -101,6 +101,7 @@ import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import {
   TERMINAL_DRAG_TYPE,
+  TERMINAL_DROP_TARGET_ATTR,
   TERMINALS_PANEL_ID,
   isDropIntoTerminalsTab,
   parseTerminalsTabParams,
@@ -109,6 +110,7 @@ import {
   terminalTitle,
   terminalsTabParams,
 } from "../services/terminalSessions";
+import { removeFrom } from "../services/terminalSplits";
 import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import { compareLabsByName, labFolder } from "../services/labPlace";
@@ -523,7 +525,9 @@ function focusEditing(api: DockviewApi) {
   files.api.setActive();
 }
 
-// The Terminals tab takes the whole screen; everything else joins it as background tabs.
+// The Terminals tab takes the whole screen; everything else joins it as background tabs. The caller
+// first brings every detached terminal back into the tab, since those moves go through the terminal
+// registry rather than the dock alone.
 function focusTerminals(api: DockviewApi) {
   showTerminals(api);
   const terminals = api.getPanel(TERMINALS_PANEL_ID);
@@ -1068,16 +1072,15 @@ export function WorkspacePage() {
     [moveSession],
   );
 
-  // The Terminals tab's sessions live in its dockview params, so the saved layout carries them and a
-  // reload brings them back (onDockReady). A params change is itself a layout change, which saves
-  // the layout; the comparison keeps an unrelated re-render from saving it again.
+  // The Terminals tab's split groups live in its dockview params, so the saved layout carries them
+  // and a reload brings them back (onDockReady). A params change is itself a layout change, which
+  // saves the layout; the comparison keeps an unrelated re-render from saving it again.
   useEffect(() => {
     const panel = dockApiRef.current?.getPanel(TERMINALS_PANEL_ID);
     if (!panel) return;
-    const inTab = terminals.sessions.filter((s) => s.location === "tabs");
-    const params = terminalsTabParams(inTab, terminals.activeId);
+    const params = terminalsTabParams(terminals.groups, terminals.activeId);
     if (JSON.stringify(panel.params ?? null) !== JSON.stringify(params)) panel.api.updateParameters(params);
-  }, [terminals.sessions, terminals.activeId]);
+  }, [terminals.groups, terminals.activeId]);
 
   // Single useDeviceActions instance for the whole workspace — shared by the topology canvas (via
   // WorkspaceContext) and the device rail below, so right-clicking a device in either place means
@@ -1174,6 +1177,16 @@ export function WorkspacePage() {
         e.accept();
       }
     });
+    // Over a pane of the Terminals tab the same drag splits that pane instead (useTerminalPaneDrop), so
+    // the dock shows no overlay there, and with none shown its drop does nothing. The dock listens
+    // for drags in the capture phase, ahead of the pane, which is why the pane cannot just keep the
+    // drag to itself.
+    event.api.onWillShowOverlay((e) => {
+      const native = e.nativeEvent;
+      if (!(native instanceof DragEvent) || !native.dataTransfer?.types.includes(TERMINAL_DRAG_TYPE)) return;
+      const overPane = native.target instanceof Element && native.target.closest(`[${TERMINAL_DROP_TARGET_ATTR}]`);
+      if (overPane) e.preventDefault();
+    });
     event.api.onDidDrop((e) => {
       if (!(e.nativeEvent instanceof DragEvent)) return;
       const id = e.nativeEvent.dataTransfer?.getData(TERMINAL_DRAG_TYPE);
@@ -1214,7 +1227,8 @@ export function WorkspacePage() {
       ...tab.sessions.filter((s) => !detachedIds.has(s.id)).map((s) => ({ ...s, location: "tabs" as const })),
       ...detached.map((s) => ({ ...s, location: "panel" as const })),
     ];
-    adoptSessions(restoredSessions, tab.activeId);
+    const restoredGroups = [...detachedIds].reduce(removeFrom, tab.groups);
+    adoptSessions(restoredSessions, restoredGroups, tab.activeId);
 
     // DockviewReact only mounts once a lab is already loaded (see the `ctxValue && coreCtxValue`
     // check below), so `detailRef.current` is always populated by the time this runs — prune any
@@ -1505,6 +1519,7 @@ export function WorkspacePage() {
     } else if (preset === "editing") {
       focusEditing(dockApi);
     } else if (preset === "terminals") {
+      for (const s of terminalSessionsRef.current) if (s.location === "panel") moveTerminalToTab(s.id);
       focusTerminals(dockApi);
     }
   }

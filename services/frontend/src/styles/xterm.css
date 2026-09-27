@@ -1,0 +1,10 @@
+/* Overrides of xterm's own stylesheet, for every live terminal (hooks/useLiveTty imports both, this
+   one second). xterm paints the scheme's background on its scrollable area only, and draws that
+   area's own scrollbar; its viewport underneath spans the whole terminal element, the inset
+   around the rows included, and is left in xterm.css black and with a native scrollbar that
+   scrolls nothing. See-through and bare, it shows the box behind it instead, which
+   useTerminalSession paints with the scheme's background. */
+.xterm .xterm-viewport {
+  background-color: transparent;
+  scrollbar-width: none;
+}

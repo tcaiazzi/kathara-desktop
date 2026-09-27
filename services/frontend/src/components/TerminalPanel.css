@@ -1,10 +1,9 @@
-/* A terminal session's host element: control bar on top, xterm filling the rest. */
+/* A terminal session's host element: control bar on top, xterm filling the rest edge to edge. */
 .kt-term-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 6px;
   box-sizing: border-box;
 }
 
@@ -14,7 +13,8 @@
   align-items: center;
   gap: 4px;
   flex-wrap: wrap;
-  margin-bottom: 6px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--bs-border-color);
 }
 .kt-term-bar .btn-sm {
   padding-left: 0.4rem;
@@ -28,9 +28,18 @@
   min-width: 110px;
 }
 
+/* Painted with the terminal's own background by useTerminalSession. */
 .kt-term-screen {
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
+}
+/* The inset keeps text off the pane's edges. On the xterm element, not the screen: FitAddon
+   subtracts the element's padding when it sizes the grid, but not its container's. */
+.kt-term-screen .xterm {
+  height: 100%;
+  box-sizing: border-box;
+  padding: 4px 0 0 8px;
 }
 
 /* A place a session is shown in (TerminalSessionsContext's useTerminalSlot): the session's host
@@ -40,40 +49,123 @@
   min-height: 0;
 }
 
-/* The Terminals tab (TerminalsPanel): the selected session on the left, the list on the right. */
+/* The Terminals tab (TerminalsPanel): the compact bar, when shown, above a body holding the
+   shown split group on the left and the list on the right. */
 .kt-terms {
   display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
 }
+.kt-terms-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+/* A flex box, so the shown group's root, a split or a lone pane, fills it. */
 .kt-terms-main {
   flex: 1 1 auto;
+  display: flex;
   min-width: 0;
   min-height: 0;
 }
+/* Its width is the inline flex-basis TerminalsPanel sets and the sash beside it drags; the sash also
+   draws its edge. */
 .kt-terms-list {
-  flex: 0 0 180px;
+  flex-grow: 0;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px;
-  border-left: 1px solid var(--bs-border-color);
+  padding: 8px 6px;
 }
+/* Wraps rather than overflows: the list is as narrow as the viewer drags it. */
 .kt-terms-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 4px;
 }
-.kt-terms-add {
+
+/* The tab's own controls, in the list's head and in the compact bar: one size, 28px square at least,
+   with room for a 16px icon. Scoped here: .kt-ws-mini-btn stays the rail's. */
+.kt-terms-tool,
+.btn.kt-terms-tool {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-color: var(--bs-body-color);
+  --bs-btn-hover-bg: var(--kt-menu-hover-bg);
+  --bs-btn-hover-border-color: var(--bs-secondary-color);
+  --bs-btn-active-color: var(--bs-body-color);
+  --bs-btn-active-bg: var(--kt-menu-hover-bg);
+  --bs-btn-active-border-color: var(--bs-secondary-color);
+  --bs-btn-disabled-color: var(--bs-secondary-color);
+  --bs-btn-disabled-border-color: var(--bs-border-color);
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
+  justify-content: center;
+  gap: 2px;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--bs-body-color);
+  line-height: 1;
+  cursor: pointer;
 }
+.kt-terms-tool:hover:not(:disabled) {
+  background: var(--kt-menu-hover-bg);
+  border-color: var(--bs-secondary-color);
+}
+.kt-terms-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* A split button's caret: narrow, so the icon button and it read as one control. */
+.btn.kt-terms-caret {
+  min-width: 18px;
+  padding: 0 3px;
+}
+/* The head's own settings and Close all, set apart from the new-terminal and split buttons. */
+.kt-terms-head-end {
+  margin-left: auto;
+}
+/* A menu toggle with no caret, where the tab's row has no room for one. */
+.kt-terms-bare.dropdown-toggle::after {
+  display: none;
+}
+
+/* The colour scheme menu's rows: a swatch in the scheme's own colours, the name, the check. */
+.kt-terms-theme-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kt-terms-swatch {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  padding-left: 4px;
+  border-radius: 4px;
+  border: 1px solid var(--bs-border-color);
+  font-family: var(--bs-font-monospace);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  background: var(--kt-term-bg);
+  color: var(--bs-body-color);
+}
+
 .kt-terms-row {
-  padding: 4px 6px;
+  min-height: 30px;
+  padding: 0 6px;
   gap: 6px;
 }
 .kt-terms-icon {
@@ -85,8 +177,11 @@
 .kt-terms-close {
   flex: 0 0 auto;
   display: inline-flex;
-  border-radius: 4px;
-  padding: 1px;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
   color: var(--bs-secondary-color);
   visibility: hidden;
 }
@@ -133,4 +228,299 @@
 .kt-terms-menu {
   max-height: calc(50vh - 24px);
   overflow-y: auto;
+}
+
+/* The shown group's split tree (TerminalsPanel's renderNode): each split lays its children out
+   along its direction, each child growing by its share, with a sash between each two. */
+.kt-split {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.kt-split--row {
+  flex-direction: row;
+}
+.kt-split--column {
+  flex-direction: column;
+}
+.kt-split-child {
+  flex: 1 1 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.kt-split-sash {
+  flex: 0 0 5px;
+  position: relative;
+  touch-action: none;
+  background: transparent;
+  transition: background-color 0.1s;
+}
+.kt-split-sash--row {
+  cursor: col-resize;
+}
+.kt-split-sash--column {
+  cursor: row-resize;
+}
+/* The visible line sits in the middle of the grab area. */
+.kt-split-sash::after {
+  content: "";
+  position: absolute;
+  background: var(--bs-border-color);
+}
+.kt-split-sash--row::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+}
+.kt-split-sash--column::after {
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 1px;
+}
+.kt-split-sash:hover,
+.kt-split-sash:active {
+  background: color-mix(in srgb, var(--bs-primary) 35%, transparent);
+}
+
+/* One pane of a split group; in a group of several, a header names it and the selected one is
+   outlined. */
+.kt-terms-pane {
+  position: relative;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid transparent;
+}
+/* Where a terminal dragged onto the pane will go: the half against the edge it is dropped at,
+   tinted as dockview tints its own drop zones. Above the terminal, and transparent to the drag. */
+.kt-terms-drop {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bs-primary) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bs-primary) 60%, transparent);
+}
+.kt-terms-drop--left {
+  inset: 0 auto 0 0;
+  width: 50%;
+}
+.kt-terms-drop--right {
+  inset: 0 0 0 auto;
+  width: 50%;
+}
+.kt-terms-drop--top {
+  inset: 0 0 auto 0;
+  height: 50%;
+}
+.kt-terms-drop--bottom {
+  inset: auto 0 0 0;
+  height: 50%;
+}
+.kt-terms-pane.active {
+  border-color: var(--bs-primary);
+}
+/* The header of a pane in a group of several: the name to drag it by, its session's compact
+   toolbar (TerminalToolbar's pane variant, moved in by TerminalSession), and its close button. */
+.kt-terms-pane-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 4px 3px 8px;
+  font-size: 12px;
+  background: var(--kt-panel-muted-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+.kt-terms-pane-handle {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 40px;
+  max-width: 45%;
+  cursor: grab;
+}
+.kt-terms-pane-tools,
+.kt-term-toolbar-host {
+  flex: 1 1 auto;
+  display: flex;
+  min-width: 0;
+}
+/* In a pane too narrow for the whole toolbar its end is cut off, the state dot first (the list
+   shows it too), rather than spilling over the pane beside it. */
+.kt-terms-pane-tools {
+  overflow: hidden;
+}
+.kt-terms-pane.active .kt-terms-pane-head {
+  font-weight: 600;
+}
+.kt-terms-pane .kt-term-slot {
+  flex: 1 1 auto;
+  height: auto;
+}
+.kt-terms-pane-head .kt-terms-close {
+  visibility: visible;
+}
+
+/* The list: the rows of the shown group are tinted, and a group of several is bracketed. */
+.kt-terms-row.shown:not(.active) {
+  background: color-mix(in srgb, var(--bs-primary) 6%, transparent);
+}
+/* A group's bracket: each row draws its piece — a vertical line the full height of the row, and a
+   tick to its name — from the middle of the first row to the middle of the last. The line runs 1px
+   past each row's edge, across the list's 2px gap, so the pieces join into one. Positioned against
+   the row rather than laid out in it: a <button>'s flex items do not stretch to its min-height, so
+   a laid-out piece would stop short of the row's edges. */
+.kt-terms-row {
+  position: relative;
+}
+.kt-terms-row.grouped {
+  padding-left: 20px;
+}
+.kt-terms-tree {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 6px;
+  width: 10px;
+}
+.kt-terms-tree::before,
+.kt-terms-tree::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  background: var(--bs-secondary-color);
+  opacity: 0.55;
+}
+.kt-terms-tree::before {
+  top: -1px;
+  bottom: -1px;
+  width: 1.5px;
+}
+.kt-terms-tree.first::before {
+  top: 50%;
+}
+.kt-terms-tree.last::before {
+  bottom: 50%;
+}
+.kt-terms-tree::after {
+  top: 50%;
+  width: 7px;
+  height: 1.5px;
+}
+
+
+/* The compact bar that stands in for the list in a narrow tab. */
+.kt-terms-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+.kt-terms-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+/* TerminalToolbar's pane variant, in a split pane's header: one row, the controls shorter, the
+   state a dot alone. */
+.kt-term-bar--pane {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  border-bottom: none;
+}
+.kt-term-bar--pane .kt-term-shell {
+  min-width: 76px;
+  height: 24px;
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+}
+.kt-term-bar--pane .kt-term-btn {
+  height: 24px;
+  padding: 0 6px;
+}
+.kt-term-bar--pane .kt-term-status {
+  padding: 0 4px;
+  border: none;
+  background: none;
+}
+.kt-term-bar--pane .kt-term-status-dot {
+  width: 8px;
+  height: 8px;
+}
+
+/* TerminalToolbar's buttons and connection state, in the dock and in the popup window alike. */
+.kt-term-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+/* The neutral buttons (Disconnect, Clear) in the body text colour: Bootstrap's grey outline reads
+   as disabled next to the terminal, in the dark theme above all. */
+.kt-term-btn.btn-outline-secondary {
+  --bs-btn-color: var(--bs-body-color);
+  --bs-btn-border-color: var(--bs-border-color);
+  --bs-btn-hover-color: var(--bs-body-color);
+  --bs-btn-hover-bg: var(--kt-menu-hover-bg);
+  --bs-btn-hover-border-color: var(--bs-secondary-color);
+  --bs-btn-active-color: var(--bs-body-color);
+  --bs-btn-active-bg: var(--kt-menu-hover-bg);
+  --bs-btn-active-border-color: var(--bs-secondary-color);
+}
+.kt-term-spin {
+  animation: kt-term-spin 0.8s linear infinite;
+}
+@keyframes kt-term-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.kt-term-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--bs-secondary-color);
+  background: var(--kt-panel-muted-bg);
+  border: 1px solid var(--bs-border-color);
+}
+.kt-term-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kt-node-stopped);
+}
+.kt-term-status.connected {
+  color: var(--bs-success-text-emphasis);
+  border-color: color-mix(in srgb, var(--kt-node-running) 45%, transparent);
+  background: color-mix(in srgb, var(--kt-node-running) 12%, transparent);
+}
+.kt-term-status.connected .kt-term-status-dot {
+  background: var(--kt-node-running);
+}
+.kt-term-status.connecting .kt-term-status-dot {
+  background: var(--bs-warning);
+}
+.kt-term-status.stopped {
+  color: var(--bs-warning-text-emphasis);
 }

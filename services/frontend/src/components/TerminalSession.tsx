@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import type { TerminalStatus } from "../context/TerminalSessionsContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useTerminalSession } from "../hooks/useTerminalSession";
@@ -11,6 +12,12 @@ interface TerminalSessionProps {
   /** The session's own host element (TerminalSessionsContext), which this renders into and which
    *  moves between the slots that show it. */
   host: HTMLElement;
+  /** Where the compact toolbar goes while `inSplit`: the pane header a split group gives each pane. */
+  toolbarHost: HTMLElement;
+  /** Shown as one pane of a split group, whose header carries this session's toolbar. */
+  inSplit: boolean;
+  /** Non-zero, and new, each time the registry asks this session to take keyboard focus. */
+  focusSeq: number;
   /** Tells the registry this session's connection state, which the Terminals tab's list shows. */
   setStatus: (id: string, status: TerminalStatus) => void;
 }
@@ -19,7 +26,7 @@ interface TerminalSessionProps {
 // mounted by the session registry, not by a dock panel, so it survives the panel that shows it
 // changing; lab id and running state come from WorkspaceContext, so it re-renders live as the
 // lab's state changes.
-export function TerminalSession({ id, machine, host, setStatus }: TerminalSessionProps) {
+export function TerminalSession({ id, machine, host, toolbarHost, inSplit, focusSeq, setStatus }: TerminalSessionProps) {
   const ws = useWorkspace();
   const running = ws.detail.machines.some((m) => m.name === machine && m.running);
   // Scopes auto-focus-on-connect to this session, so a background reconnect can't steal focus (and
@@ -40,6 +47,16 @@ export function TerminalSession({ id, machine, host, setStatus }: TerminalSessio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running]);
 
+  // Asked for keyboard focus. A frame later, not at once: the slot that shows this session may be a
+  // dock panel that dockview mounts in a render of its own, after this one, and focusing a terminal
+  // that is not in the page yet does nothing.
+  useEffect(() => {
+    if (!focusSeq) return;
+    const frame = requestAnimationFrame(() => terminalRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusSeq]);
+
   // Neither a dock resize nor a move to another slot fires a window resize, so watch the container
   // and re-fit.
   useEffect(() => {
@@ -51,15 +68,19 @@ export function TerminalSession({ id, machine, host, setStatus }: TerminalSessio
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const toolbar = (
+    <TerminalToolbar
+      variant={inSplit ? "pane" : "panel"}
+      machine={machine}
+      running={running}
+      onClear={() => terminalRef.current?.clear()}
+      {...session}
+    />
+  );
+
   return (
     <>
-      <TerminalToolbar
-        variant="panel"
-        machine={machine}
-        running={running}
-        onClear={() => terminalRef.current?.clear()}
-        {...session}
-      />
+      {inSplit ? createPortal(toolbar, toolbarHost) : toolbar}
       <div ref={containerRef} className="kt-term-screen" onClick={() => terminalRef.current?.focus()} />
     </>
   );

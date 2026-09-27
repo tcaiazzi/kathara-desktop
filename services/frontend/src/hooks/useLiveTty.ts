@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import "../styles/xterm.css";
 import { decodeLiveMessage, type LiveTtyEvent } from "../services/liveTty";
 
 const MIN_TERMINAL_FONT_SIZE = 8;
