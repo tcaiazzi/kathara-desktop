@@ -24,3 +24,11 @@ export function visibleInterfaces(machine: MachineDetail): InterfaceModel[] {
 export function visibleLinks<T extends { name: string }>(links: T[]): T[] {
   return links.filter((l) => l.name !== HOST_BRIDGE);
 }
+
+// The names of the collision domains the user can pick from, alphabetically.
+export function domainNames(links: { name: string }[]): string[] {
+  return visibleLinks(links)
+    .map((l) => l.name)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}

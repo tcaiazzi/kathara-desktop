@@ -97,7 +97,7 @@ import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError, isAbortError } from "../services/api";
-import { visibleLinks } from "../services/constants";
+import { domainNames, visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import {
   TERMINAL_DRAG_TYPE,
@@ -2054,6 +2054,7 @@ export function WorkspacePage() {
         <AddDeviceModal
           show={addDeviceLink.show}
           labId={labId}
+          domains={domainNames(detail.links)}
           prefillLink={addDeviceLink.prefillLink}
           onClose={closeAddDeviceModal}
           onAdded={refreshLab}

@@ -12,24 +12,31 @@ import {
 } from "../services/machineOptionsForm";
 import { MachineOptionsFields } from "./MachineOptionsFields";
 import { ModalSubmitFooter } from "./ModalSubmitFooter";
+import { RowListEditor } from "./RowListEditor";
+
+interface LinkRow {
+  link: string;
+}
 
 interface AddDeviceModalProps {
   show: boolean;
   labId: string;
-  // Prefills "attach to domain" when opened from a domain's context menu.
+  // The lab's collision domains, suggested in each "attach to" row.
+  domains: string[];
+  // Prefills the first "attach to" row when opened from a domain's context menu.
   prefillLink: string | null;
   onClose: () => void;
   onAdded: () => Promise<void>;
 }
 
-// Add-device dialog: the device name and (optionally) which collision domain to attach it to are
-// always visible; every other Kathara "option" (image, mem, bridged, sysctls, volumes, ...) lives
+// Add-device dialog: the device name and (optionally) the collision domains to attach it to, one
+// interface each, are always visible; every other Kathara "option" (image, mem, bridged, sysctls, volumes, ...) lives
 // behind the "Advanced options" toggle, sharing its fields with the post-creation
 // MachineOptionsEditor via MachineOptionsFields so a device can be fully configured at creation
 // time instead of add-then-edit.
-export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: AddDeviceModalProps) {
+export function AddDeviceModal({ show, labId, domains, prefillLink, onClose, onAdded }: AddDeviceModalProps) {
   const [name, setName] = useState("");
-  const [link, setLink] = useState("");
+  const [links, setLinks] = useState<LinkRow[]>([]);
   const [options, setOptions] = useState<OptionsFormState>(defaultOptionsFormState());
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -43,7 +50,7 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
   useEffect(() => {
     if (!show) return;
     setName("");
-    setLink(prefillLink || "");
+    setLinks([{ link: prefillLink || "" }]);
     setOptions(defaultOptionsFormState());
     setAdvancedOpen(false);
     // Reseeds only when the dialog opens: `prefillLink` is read at that moment, and a later change
@@ -56,7 +63,9 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
   }
 
   const nameError = validateDeviceName(name);
-  const linkError = validateDomainName(link);
+  // Empty rows are skipped on submit, so they are neither validated nor numbered.
+  const cleanLinks = links.map((r) => r.link.trim()).filter(Boolean);
+  const linkError = cleanLinks.map(validateDomainName).find((e) => e !== null) ?? null;
   // The advanced fields sit behind a toggle, so their error must also block the submit on its own:
   // a collapsed invalid field would otherwise be sent without the user seeing why it failed.
   const optionsError = optionsFormError(options);
@@ -66,8 +75,7 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
     const cleanName = name.trim();
     if (!canSubmit) return;
     const payload: Parameters<typeof api.addMachine>[1] = { name: cleanName, ...optionsFormStateToPayload(options) };
-    const cleanLink = link.trim();
-    if (cleanLink) payload.interfaces = [{ link: cleanLink, number: 0 }];
+    if (cleanLinks.length) payload.interfaces = cleanLinks.map((link, number) => ({ link, number }));
 
     await runBusy(setBusy, "Add device", async (signal) => {
       await api.addMachine(labId, payload, signal);
@@ -91,7 +99,7 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
           <Form.Control
             autoFocus
             required
-            placeholder="pc1"
+            placeholder="Name of the new device"
             disabled={busy}
             value={name}
             isInvalid={nameError !== null}
@@ -99,16 +107,23 @@ export function AddDeviceModal({ show, labId, prefillLink, onClose, onAdded }: A
           />
           <Form.Control.Feedback type="invalid">{nameError}</Form.Control.Feedback>
         </Form.Group>
-        <Form.Group className="mb-3">
-          <Form.Label>Attach to domain (optional)</Form.Label>
-          <Form.Control
-            placeholder="A"
+        <Form.Group>
+          <Form.Label>Attach to collision domains (optional)</Form.Label>
+          <RowListEditor<LinkRow>
+            columns={[
+              { key: "link", label: "Collision domain", options: domains, placeholder: "Existing or new collision domain" },
+            ]}
+            rows={links}
             disabled={busy}
-            value={link}
-            isInvalid={linkError !== null}
-            onChange={(e) => setLink(e.target.value)}
+            hint={
+              domains.length
+                ? "Each row becomes an interface, numbered eth0, eth1, … in order. Pick an existing collision domain, or type a new name to create one."
+                : "Each row becomes an interface, numbered eth0, eth1, … in order. No domains exist yet — type a name to create one."
+            }
+            onChange={setLinks}
+            emptyRow={() => ({ link: "" })}
           />
-          <Form.Control.Feedback type="invalid">{linkError}</Form.Control.Feedback>
+          {linkError && <div className="small text-danger mb-3">{linkError}</div>}
         </Form.Group>
 
         <Button

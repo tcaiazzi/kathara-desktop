@@ -3,7 +3,7 @@ import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import { useDeployGate } from "./useDeployGate";
 import { api } from "../services/api";
-import { visibleLinks } from "../services/constants";
+import { domainNames } from "../services/constants";
 import { deviceFilesOnDisk } from "../services/labfs";
 import { validateDomainName, validateInterfaceNumber, validateMacAddress } from "../services/names";
 import { openTerminalWindow } from "../services/terminalWindow";
@@ -131,12 +131,6 @@ export function useDeviceActions({
   function machineNames(): string[] {
     return detail?.machines.map((m) => m.name) ?? [];
   }
-  function domainNames(): string[] {
-    return visibleLinks(detail?.links ?? [])
-      .map((l) => l.name)
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b));
-  }
 
   function openAddDevice(prefillLink: string | null = null) {
     onOpenAddDevice(prefillLink);
@@ -146,7 +140,7 @@ export function useDeviceActions({
     setActionConfig({
       title: "Add collision domain",
       submitLabel: "Add Domain",
-      fields: [{ name: "name", label: "Domain name", required: true, placeholder: "A", validate: validateDomainName }],
+      fields: [{ name: "name", label: "Domain name", required: true, placeholder: "Name of the new collision domain", validate: validateDomainName }],
       onSubmit: async ({ name }) => {
         const clean = name.trim();
         if (!clean) return false;
@@ -158,7 +152,7 @@ export function useDeviceActions({
   function openAddInterface(deviceNode: DeviceNode, prefillLink = "") {
     const used = deviceNode.ifaces.map((i) => i.num);
     const nextIf = used.length ? Math.max(...used) + 1 : 0;
-    const domains = domainNames();
+    const domains = domainNames(detail?.links ?? []);
     const running = deviceNode.running;
     const linkField: TopoActionField = {
       name: "link",
@@ -166,7 +160,7 @@ export function useDeviceActions({
       datalistOptions: domains,
       value: domains.includes(prefillLink) ? prefillLink : "",
       required: true,
-      placeholder: "A",
+      placeholder: "Existing or new collision domain",
       validate: validateDomainName,
       hint: domains.length
         ? "Pick an existing collision domain, or type a new name to create one."
