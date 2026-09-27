@@ -2,7 +2,7 @@
 
 FastAPI backend (`src/kathara_api`) that wraps the [Kathara](https://www.kathara.org) network-emulation
 framework and exposes it over HTTP. This document lists every endpoint so they can be reviewed at a
-glance. Generated from `src/kathara_api/routers/*.py`.
+glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added there is added here too.
 
 ## Architecture at a glance
 
@@ -54,11 +54,11 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 - **Authentication (`dependencies.require_auth_token`)** — opt-in, off by default
   (`ApiSettings.auth_token`, env `KATHARA_API_AUTH_TOKEN`). When set, every `/api` route requires
   it as `Authorization: Bearer <token>` **only**. Most get it from the router mount — `main.py`
-  passes `dependencies=[Depends(require_auth_token)]` to `include_router` — while two routers are
-  mounted without it and carry their own check on the route instead. Those two are the only
-  exceptions: `GET /labs/{lab}/stats/stream` declares `require_auth_token_or_query`, which also
-  accepts `?token=`, because a browser's native `EventSource` cannot attach a header; and
-  `tty_live_ws` checks the query-param token by hand, since a websocket scope has no `Request` for
+  passes `dependencies=[Depends(require_auth_token)]` to `include_router` — while three routers are
+  mounted without it and carry their own check on the route instead. Those three are the only
+  exceptions: `GET /labs/{lab}/stats/stream` and `GET /events` declare
+  `require_auth_token_or_query`, which also accepts `?token=`, because a browser's native
+  `EventSource` cannot attach a header; and `tty_live_ws` checks the query-param token by hand, since a websocket scope has no `Request` for
   FastAPI's dependency solver to inject. Everywhere else the token is refused from the URL on
   purpose — a query string ends up in proxy logs, browser history and `Referer`, where a header
   does not. The desktop app is the only caller that sets it — a random value generated per launch
@@ -115,7 +115,7 @@ glance. Generated from `src/kathara_api/routers/*.py`.
   root for anything else) — every path is normalized once on entry (`_clean_offline_path`), so
   `lab.conf` is recognized in any spelling (`./lab.conf`, `//lab.conf`, …) and always routed to the
   validating apply rather than to a raw write — there is deliberately no separate in-memory cache
-  of what's queued, since a cache in front of these writes is the only thing that could drift from
+  of what was written, since a cache in front of these writes is the only thing that could drift from
   disk, and what it would lose is content, silently, on the next undeploy. A device that's already
   running when a write lands is marked "dirty"
   (`LabRegistry.mark_dirty`) so the next redeploy live-pushes exactly the machines that actually
@@ -139,7 +139,7 @@ glance. Generated from `src/kathara_api/routers/*.py`.
 | `docker.errors.NotFound` (incl. `ImageNotFound`) | 404 |
 | `docker.errors.APIError` (any other daemon-side failure) | 502 |
 | `UnauthorizedError` (auth token configured, request has none or the wrong one) | 401 |
-| `ForbiddenOriginError` (cross-origin state-changing request), `PrivilegeError` | 403 |
+| `ForbiddenOriginError` (cross-origin state-changing request), `PrivilegeError`, `LabFilePermissionError` (a lab file another account owns — in practice one a running device wrote as root into `shared/`) | 403 |
 | `PayloadTooLargeError` (body over `max_bytes_per_file`; raised by `main.py`'s size middleware, not `errors.py`) | 413 |
 | `RequestValidationError` (FastAPI body/query validation) | 422 |
 | `pydantic.ValidationError` (a schema validated by service code — e.g. a device derived from lab content) | 422 |
@@ -182,7 +182,6 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/labs/gallery` | Upstream Kathara-Labs catalog (cached; `refresh=true` bypasses the cache), each entry flagged `installed` | `?refresh=false` | `GalleryCatalog` |
 | POST | `/api/labs/gallery` | Install a lab from the upstream gallery (409 if the name exists) | `GalleryInstall {id, name?}` | `LabImportResult` (201) |
 | POST | `/api/labs/open` | Open a host folder as a lab, in place (desktop shell only: `X-Kathara-Shell-Token`; 422 `NotALabError` for a folder that is not a lab unless `init`) | `LabOpen {path, init?}` | `LabImportResult` |
-| GET | `/api/events` | Lab events as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`/`missing`. Accepts `?token=` | — | SSE stream |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
 | GET | `/api/labs/{lab}/location` | Host path of the lab directory (desktop shell only) | — | `LabLocation {path}` |
@@ -211,11 +210,17 @@ that `None` up instead of falling back to a sensible default.
 | POST | `/api/labs/{lab}/close` | Close a lab opened from outside the labs root: undeploy it and forget it, folder untouched (409 for a lab under the root) | — | `Message` |
 | DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk — a lab that is a symlink in the labs root loses the link, never what it points to; 409 for a folder opened from outside the labs root) | — | `Message` |
 
+## Events — `/api/events`
+
+| Method | Path | Purpose | Body / params | Response |
+|---|---|---|---|---|
+| GET | `/api/events` | Lab events for every lab as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`/`missing`/`adopted`. Accepts `?token=` | — | SSE stream |
+
 ## Machines — `/api/labs/{lab}/machines`
 
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
-| POST | `…/machines` | Add + deploy a device | `MachineCreate` | `MachineDetail` (201) |
+| POST | `…/machines` | Add a device to `lab.conf` and the model, stopped, whether or not the lab is running (starting it is a deploy) | `MachineCreate` | `MachineDetail` (201) |
 | PUT | `…/machines/{m}` | Replace a **stopped** device's full option set (lab.conf metadata); 409 while the lab is deployed. A full replacement, not a patch — see the note below | `MachineUpdate` | `MachineDetail` |
 | DELETE | `…/machines/{m}` | Undeploy + remove a device | `?keep_links=false` | `Message` |
 | POST | `…/machines/{m}/connect` | Attach to a collision domain (running → runtime; stopped → lab.conf) | `?link=` `&interface_number=` `&mac_address=` | `MachineDetail` |

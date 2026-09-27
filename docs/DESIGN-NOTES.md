@@ -4,7 +4,8 @@ Constraints that span several files, where no single call site owns the reason. 
 rule about how the code must behave, followed by the files that depend on it. Code comments point
 here instead of repeating the rationale at every site.
 
-For the endpoint reference see `BACKEND.md`; for the Electron startup sequence see `DESKTOP.md`.
+For the endpoint reference see [BACKEND.md](BACKEND.md); for the Electron startup sequence see
+[DESKTOP.md](DESKTOP.md). Paths below are relative to the repo root.
 
 ## Terminal sessions get their own thread pool
 
@@ -44,8 +45,8 @@ Shutdown is explicit, from `main.py`'s lifespan hook, rather than left to `Threa
 `atexit` handler — that one waits for every worker to return, and a blocked TTY read returns only
 when its terminal closes.
 
-Applies to: `services/docker_tty.py`, `routers/exec.py`, `main.py`,
-`tests/unit/test_docker_tty_executor.py`.
+Applies to: `src/kathara_api/services/docker_tty.py`, `src/kathara_api/routers/exec.py`,
+`src/kathara_api/main.py`, `tests/unit/test_docker_tty_executor.py`.
 
 ## The gallery route coordinates on the event loop
 
@@ -61,7 +62,7 @@ a lock across the fetch instead would park a worker thread from the shared pool 
 The synchronous `fetch_catalog` remains for `install_gallery_lab` / `get_entry` and the tests,
 which are not on the event loop.
 
-Applies to: `services/lab_gallery.py`, `routers/labs.py`.
+Applies to: `src/kathara_api/services/lab_gallery.py`, `src/kathara_api/routers/labs.py`.
 
 ## One vocabulary for `lab.conf`, mirrored once in the frontend
 
@@ -81,8 +82,9 @@ The frontend keeps one mirror, `services/frontend/src/services/editorLanguage.ts
 highlighter, the autocompletion and the linter. It must change in the same commit as the backend
 parser; `tests/unit/test_lab_conf_options.py` reads it and fails when the two disagree.
 
-Applies to: `lab_conf_options.py`, `services/lab_import.py`, `services/lab_store.py`,
-`services/lab_conf_edit.py`, `services/serializers.py`, `schemas/machine.py`,
+Applies to: `src/kathara_api/lab_conf_options.py`, `src/kathara_api/services/lab_import.py`,
+`src/kathara_api/services/lab_store.py`, `src/kathara_api/services/lab_conf_edit.py`,
+`src/kathara_api/services/serializers.py`, `src/kathara_api/schemas/machine.py`,
 `services/frontend/src/services/editorLanguage.ts`.
 
 ## The editor's lint severity is one-way
@@ -97,4 +99,4 @@ The rules are a pure function over lines, with no CodeMirror or DOM import, so t
 tested in the DOM-less vitest run; `editor/labConfLint.ts` is only the CodeMirror binding on top.
 
 Applies to: `services/frontend/src/editor/labConfRules.ts`,
-`services/frontend/src/editor/labConfLint.ts`, `services/lab_import.py`.
+`services/frontend/src/editor/labConfLint.ts`, `src/kathara_api/services/lab_import.py`.

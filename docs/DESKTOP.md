@@ -48,7 +48,7 @@ and there a candidate is only accepted if it actually satisfies the checks: an i
 imports `kathara_api` but not `kathara_api.main` (an environment installed before a dependency was
 declared) loses to one that imports both.
 
-`main.ts` then spawns `uvicorn` with that command, waits for `/api/health`, and loads
+`backend.ts`'s `startBackend` then spawns `uvicorn` with that command, waits for `/api/health`, and loads
 `http://127.0.0.1:<port>/`. Because the UI is served over HTTP from the same origin as the
 API, relative `/api` calls, the terminal WebSocket, the stats `EventSource` and
 `BrowserRouter` deep links all work exactly as they do in a browser. The one Electron-specific
@@ -56,8 +56,9 @@ step is on the frontend side: `services/frontend/src/services/api.ts` calls
 `desktop().getAuthToken()` once per page load (a preload-bridge IPC round-trip to `main.ts`'s
 `"auth:get-token"` handler, which reads `backend.ts`'s `backendToken()`) and caches the result,
 attaching it to every request afterwards. A native `WebSocket`/`EventSource` can't set a
-custom header, so `ttyWsUrl`/`statsStreamUrl` append `?token=` instead — the same fallback
-`require_auth_token` accepts on the server.
+custom header, so `ttyWsUrl`/`statsStreamUrl` append `?token=` instead. The server takes the token
+from the URL only on those routes (`require_auth_token_or_query` and the TTY WebSocket's own
+check); everywhere else `require_auth_token` accepts the header alone.
 
 Elevated (root) backend starts and orphan-backend recovery go through the same
 `buildBackendCommand` and carry the same token; see the `runElevatedLinux`/
@@ -107,8 +108,8 @@ arm64 payload.
 
 The dependencies are a plain `pip install --target` tree rather than a virtualenv or an install
 into the interpreter's own `site-packages`, and that is what makes every OS behave the same: it
-needs **nothing writable inside the app at runtime**. That mattered because the alternative never
-worked everywhere — installing at first launch is impossible on an AppImage's read-only squashfs,
+needs **nothing writable inside the app at runtime**, which is the only arrangement that works
+everywhere: installing at first launch is impossible on an AppImage's read-only squashfs,
 on a root-owned `/opt` from the `.deb`/`.rpm`, in a Program Files directory chosen in the NSIS
 installer, and on macOS, where adding files under `Contents/Resources` invalidates the ad-hoc
 signature `afterPack` applies and Apple Silicon then refuses to launch the app at all. (That last
@@ -133,8 +134,7 @@ Two consequences worth knowing:
   defensive: `pywin32` (a dependency of the `docker` SDK on Windows) ships `pywin32.pth`, which is
   the only thing that puts its `win32/` subdirectory on `sys.path` and calls
   `os.add_dll_directory()` for its DLLs. Without it `import win32pipe` fails and every
-  Docker-touching API call on Windows returns `ImportError` — which is exactly what happened when
-  this tree first shipped without it.
+  Docker-touching API call on Windows returns `ImportError`.
 - `--no-compile`, so `.pyc` files are built at runtime instead. A build-time `.pyc` is invalidated
   the moment electron-builder rewrites the source's mtime, and Python would then try to rewrite it
   in a read-only directory on every import. `PYTHONPYCACHEPREFIX` points at the user-data
@@ -154,11 +154,10 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 
 ## Building installers
 
-- `npm run dist:<os>` builds the frontend and the shell, then packages. What it does **not** do is produce the *Python* inputs: it does not build the backend wheel, fetch the
-  interpreter or vendor the dependencies — run `scripts/fetch-python.mjs <os>` and
-  `scripts/vendor-python-deps.mjs <os>` first, or use `make dist-<os>`, which does the whole
-  sequence. Skipping either script produces an installer that builds cleanly and ships an app that
-  cannot start.
+- `npm run dist:<os>` builds the frontend and the shell, then packages. It does **not** produce
+  the *Python* inputs (the backend wheel, the interpreter, the vendored dependencies): the steps
+  and `make dist-<os>`, which runs the whole sequence, are in
+  [DEVELOPMENT.md](DEVELOPMENT.md#building-installers).
 - Each target must be built on its own platform: `.dmg` requires macOS. `.deb` additionally
   requires an **x86_64** host — electron-builder ships `fpm` (which produces the `.deb`) only
   for `linux-x86`, so it cannot be produced on an arm64 machine even though the resulting
@@ -183,10 +182,10 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   own minimize/maximize/close buttons there instead (again VS Code's approach), driven by the
   `window:minimize`/`maximize`/`unmaximize`/`close` IPC; the maximize/restore icon follows the real
   window through the `window:state` push, so it stays right however the state changed — including a
-  double-click on the strip or a keyboard shortcut. `build/setup.html` and `build/splash.html`, which
-  load before the SPA exists, prepend their own minimize/close pair for the same reason. The whole
+  double-click on the strip or a keyboard shortcut. `setup.html` and `splash.html` (`src/`, copied
+  into `build/` by `scripts/build.mjs`), which load before the SPA exists, prepend their own minimize/close pair for the same reason. The whole
   strip drags the window; interactive parts opt out with `.kt-titlebar-nodrag`.
-- **The menu (File / View / Help) is rendered in HTML** (`desktop/TitleBar.tsx`) and
+- **The menu (File / Lab / View / Help) is rendered in HTML** (`desktop/TitleBar.tsx`) and
   dispatches through the same command registry the native menu uses, so both paths run one
   implementation. The native `Menu` stays registered but its bar is hidden, because that `Menu`
   is what binds the keyboard accelerators; on macOS it remains in the system menu bar, where the
@@ -225,10 +224,15 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   accounts' files (`labFolders.ts`'s `reclaimScript`). An opened folder only counts if it is a
   real directory the user owns (`main.ts`'s `reclaimTargets`): the list comes from a file in the
   user's own data directory, not trusted to name `/usr/local`. The prompt lists every path.
+- The same reclaim is offered when the backend refuses to change a lab file another account owns
+  (`LabFilePermissionError`) — in practice one a running device wrote as root into the lab's
+  `shared/` folder. On Linux, `hooks/useReportError.ts` asks the shell which folders hold such files
+  (`lab-files:reclaim-paths`, the same `reclaimTargets` as above) and, if there are any, opens the
+  same password prompt after the error toast. Elsewhere it is only the toast.
 - A folder opened while the backend is (re)starting — a startup, an elevation — is parked and
   opened once the new backend has loaded (`openFolderAsLab`, `replayPendingLabFolder`).
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one. The link
-  carries a name, the route an id (see `docs/BACKEND.md`), so it arrives as `/workspace?lab=<name>`
+  carries a name, the route an id (see [BACKEND.md](BACKEND.md)), so it arrives as `/workspace?lab=<name>`
   and the renderer's deep-link listener (`DesktopCommands.tsx`) resolves the name against a fresh
   lab list before navigating — straight to the lab's route, so a link to the open lab changes
   nothing. `labFolders.ts`'s `folderFromArgv` never takes an argument with a URL scheme for a

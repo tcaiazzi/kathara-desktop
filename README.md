@@ -25,7 +25,9 @@ Everything else — Python, Kathara and the app's own backend — is bundled in 
 first launch downloads and installs nothing and works offline. If something is missing (e.g.
 Docker is not running), the app says what is wrong instead of showing a blank window.
 
-Labs are stored per user, outside the app: `~/.config/kathara-desktop/labs` on Linux.
+Labs are stored per user, outside the app: `~/.config/kathara-desktop/labs` on Linux,
+`~/Library/Application Support/kathara-desktop/labs` on macOS and `%USERPROFILE%\Kathara-Desktop\labs`
+on Windows. *Settings* can point the app at another folder.
 
 ### First launch
 
@@ -44,6 +46,12 @@ there is one, but releases are downloaded and installed manually.
 
 - A topology view, a file/config editor for `lab.conf` and device files, and terminals attached
   to live devices, which can pop out into their own window.
+- Start from a bundled example or from a lab of the [Kathara-Labs](https://github.com/KatharaFramework/Kathara-Labs)
+  gallery, import a `.zip`, or create an empty lab.
+- **File → Open Lab Folder…** (or `kathara-desktop <folder>` from a terminal) opens an existing lab
+  folder where it is, without copying it. Closing it later leaves the folder untouched.
+- A deploy that needs more than an ordinary container, such as a `privileged` device or a host
+  folder mounted into one, asks for your password first.
 - **Open Terminal Here** opens your OS terminal in a lab's directory, so `kathara` commands run
   against that lab (override the emulator with `terminalCommand` in `preferences.json`).
 - **`kathara://lab/<name>`** links open that lab, in the running instance if there is one.

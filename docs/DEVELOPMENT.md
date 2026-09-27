@@ -23,7 +23,9 @@ Three parts, in one repo:
 ## Requirements
 
 A checkout needs [Docker](https://docs.docker.com/get-docker/), plus Python 3.10+ and Node 24 (the
-version in `.nvmrc`, which CI, the Makefile and the Compose dev stack all follow). Node 22.12+ is
+version in `.nvmrc`). CI (`node-version` in `.github/workflows/*.yml`), the Makefile
+(`NODE_VERSION`) and the Compose dev stack (its `node:` image) each pin the same major on their
+own, so moving to another Node version means changing all four. Node 22.12+ is
 the real floor, imposed by Electron's own install/build tooling for `services/desktop`; the repo
 pins one version above it rather than tracking two. None of this is needed to *run* a packaged
 build.
@@ -104,19 +106,31 @@ desktop app sets the ones it needs itself; these matter when running the backend
 | `KATHARA_API_PORT` | `8000` | Bind port |
 | `KATHARA_API_LABS_DIR` | `./data/labs` | Where labs are persisted on disk |
 | `KATHARA_API_STATIC_DIR` | *(unset)* | Serve a built frontend (`services/frontend/dist`) from this process at `/`, with the SPA's Content-Security-Policy on every page (`spa.py`; Vite's dev server sends none). Set by the desktop app; unset when running the backend standalone for development |
-| `KATHARA_API_AUTH_TOKEN` | *(unset)* | Require this exact token (`Authorization: Bearer …` or `?token=`) on every request. Set by the desktop app to a random per-launch value; unset (no auth) everywhere else |
+| `KATHARA_API_AUTH_TOKEN` | *(unset)* | Require this exact token as `Authorization: Bearer …` on every `/api` request. Only the two SSE streams and the terminal WebSocket, which cannot send a header, also take it as `?token=` (see [BACKEND.md](BACKEND.md)). Set by the desktop app to a random per-launch value; unset (no auth) everywhere else |
 | `KATHARA_API_SHELL_TOKEN` | *(unset)* | Required (`X-Kathara-Shell-Token`) by `POST /api/labs/open`, which opens any host folder as a lab. Meant for the desktop shell's main process only; unset closes that route |
 | `KATHARA_API_STATE_DIR` | *(unset)* | Where the list of lab folders opened from outside the labs dir (`known_labs.json`) and the official image list last fetched from Docker Hub (`official_images.json`) are kept. Unset keeps both in memory only |
-| `KATHARA_API_LAB_WATCH_INTERVAL` | `1.0` | Seconds between checks of every loaded lab's `lab.conf` and `*.startup` for changes made outside the app; `0` turns the watcher off |
+| `KATHARA_API_LAB_WATCH_INTERVAL` | `1.0` | Seconds between checks of every loaded lab's `lab.conf` and `*.startup` for changes made outside the app; `0` turns the watcher off. Read once, at startup |
+| `KATHARA_API_KATHARA_CONF_DIR` | *(unset)* | Directory of the `kathara.conf` read at startup and written by every Settings save. Unset means Kathara's own, the one the Kathara CLI uses; set it to keep a test or a throwaway profile away from the user's real file |
+| `KATHARA_API_EXAMPLES_DIR` | *(unset)* | A directory of example labs to offer instead of the ones bundled with the package |
+| `KATHARA_API_GALLERY_REPO` | `KatharaFramework/Kathara-Labs` | GitHub repo browsed by *Browse Kathara Labs* |
+| `KATHARA_API_GALLERY_REF` | `main` | Branch, tag or commit of that repo |
+| `KATHARA_API_GALLERY_SECTION` | `main-labs` | Subtree of the repo to offer; everything outside it is ignored |
+| `KATHARA_API_GALLERY_CACHE_TTL` | `900` | Seconds a fetched gallery catalog is reused |
+| `KATHARA_API_GALLERY_TOKEN` | *(unset)* | GitHub token sent on gallery API calls, to lift the unauthenticated rate limit (60 calls/hour per IP). Needs no scopes |
+| `KATHARA_API_MAX_FILES_PER_LAB` | `200` | Most files one gallery install or `.zip` upload may create |
+| `KATHARA_API_MAX_BYTES_PER_FILE` | `5242880` (5 MB) | Largest single file in a gallery install or upload, and the largest request body |
+| `KATHARA_API_MAX_BYTES_PER_LAB` | `20971520` (20 MB) | Largest total size of one gallery install or upload |
+| `KATHARA_API_TTY_MAX_SESSIONS` | `32` | Live terminal WebSockets open at once; one more is refused (close code 1013) rather than queued |
 | `KATHARA_API_CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins (only needed when the frontend is served from a different origin). `*` is accepted but disables credentialed cross-origin requests — the spec forbids combining the two, and allowing both would let any website call this API |
-| `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override. Only `docker` is supported for now |
+| `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override. Only `docker` is supported |
 | `KATHARA_API_DEFAULT_IMAGE` | *(Kathara default)* | Default device image |
 
 ## Building installers
 
 ```bash
-# Both of these run from services/desktop, and `npm run dist` does NOT run them for you — skip
-# either and the installer builds fine but ships an app that cannot start.
+cd services/desktop
+# Steps 1 and 2 are not run by `npm run dist` — skip either and the installer builds fine but
+# ships an app that cannot start.
 #
 # 1. Downloads and checksum-verifies the Python interpreter the app bundles, into the gitignored
 #    services/desktop/vendor/.
@@ -124,11 +138,13 @@ node scripts/fetch-python.mjs linux            # (or `mac` / `win`)
 # 2. Installs the backend's whole dependency closure for both of that OS's architectures, so the
 #    packaged app installs nothing at runtime. Must run on the OS it targets: pip reads
 #    `sys_platform` markers from the machine it runs on. Needs the wheel from `make wheel` first.
+#    KATHARA_VENDOR_PYTHON picks the host Python that runs pip, for a machine whose default
+#    `python3` is too old for pip's `--report`.
 node scripts/vendor-python-deps.mjs linux      # (or `mac` / `win`)
 
-npm --prefix services/desktop run dist:linux   # AppImage + deb + rpm (x64 + arm64)
-npm --prefix services/desktop run dist:mac     # dmg (x64 + arm64)
-npm --prefix services/desktop run dist:win     # NSIS installer
+npm run dist:linux   # AppImage + deb + rpm (x64 + arm64)
+npm run dist:mac     # dmg (x64 + arm64)
+npm run dist:win     # NSIS installer (x64 + arm64)
 ```
 
 Artifacts land in `services/desktop/release/`. Each target must be built on its own platform
@@ -137,7 +153,7 @@ unsigned; [First launch](../README.md#first-launch) is what a user has to do abo
 
 `make dist-linux` / `dist-mac` / `dist-win` does the whole sequence above in one step — installing
 the npm dependencies, building the backend wheel, fetching the interpreter and vendoring the
-dependencies before packaging — mirroring what the release workflow runs. Use it unless you
+dependencies before packaging — mirroring what `.github/workflows/build-desktop.yml` runs. Use it unless you
 specifically want to repackage without rebuilding the wheel.
 
 `services/desktop/resources/icon.png` is generated from the frontend's Kathara logo by
@@ -157,7 +173,9 @@ Makefile is a step of one of them.
 | `mutation` | Mutation testing of all three trees, never in CI — see [Mutation testing](#mutation-testing) |
 | `install` | `npm ci` in both Node trees (`install-frontend` / `install-desktop` for one) |
 | `frontend` / `shell` | Just one half of `build` |
-| `dist-linux` / `dist-mac` / `dist-win` | A full installer for that OS, from wheel to artifact |
+| `dev-build` | Builds the SPA and launches the desktop app from this checkout, the backend running from `src/`. No install step: run `make install` once first |
+| `dist` | A full installer for the host OS, from wheel to artifact |
+| `dist-linux` / `dist-mac` / `dist-win` | The same, for that OS (each still has to run on it) |
 | `appimage` | Linux AppImage for the host arch only — faster than `dist-linux` |
 | `wheel` | The backend wheel the packaging steps consume |
 | `fetch-python` / `vendor-deps` | The bundled interpreter and its dependency closure (packaging only; `*-host` variants do the host arch alone) |
