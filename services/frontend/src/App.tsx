@@ -10,6 +10,7 @@ import { OpenLabNameProvider } from "./context/OpenLabNameContext";
 import { OnboardingTourProvider } from "./context/OnboardingTourContext";
 import { isDesktop } from "./desktop/bridge";
 import { DesktopCommandsProvider } from "./desktop/DesktopCommands";
+import { BackendStateBanner, BackendStateProvider } from "./desktop/BackendStateContext";
 import { DockerStatusBanner, DockerStatusProvider } from "./desktop/DockerStatusContext";
 import { ElevationProvider } from "./desktop/ElevationContext";
 import { ReclaimLabsDirProvider } from "./desktop/ReclaimLabsDirContext";
@@ -33,6 +34,7 @@ function AppLayout() {
   return (
     <>
       <TopBar />
+      <BackendStateBanner />
       <DockerStatusBanner />
       {/* pb-5: without it, page content stops dead at the last element with no bottom
           breathing room — applied once here instead of on every page. */}
@@ -49,6 +51,7 @@ function AppLayoutFull() {
   return (
     <div className="kt-shell">
       <TopBar />
+      <BackendStateBanner />
       <DockerStatusBanner />
       <main className="kt-shell-main">
         <Outlet />
@@ -86,6 +89,7 @@ export function App() {
                   {/* Routes the Electron shell's native menu and kathara:// links onto the app's own
                       commands. Inert in the browser build. */}
                   <DesktopCommandsProvider>
+                    <BackendStateProvider>
                     <DockerStatusProvider>
                       <OpenLabNameProvider>
                         <UpdateChecker />
@@ -122,6 +126,7 @@ export function App() {
                         </Routes>
                       </OpenLabNameProvider>
                     </DockerStatusProvider>
+                    </BackendStateProvider>
                   </DesktopCommandsProvider>
                 </OnboardingTourProvider>
               </ReclaimLabsDirProvider>

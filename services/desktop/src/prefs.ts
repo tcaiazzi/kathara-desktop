@@ -28,6 +28,9 @@ interface Prefs {
   /** Times a backend has come up healthy on this machine. 0/absent means this is the first
    * launch — read by main.ts to shape the setup page's first-run copy. */
   launchCount?: number;
+  /** The theme the user picked in the app, reported by the SPA (main.ts's ui:set-theme). Absent
+   * means it follows the OS. Read by the setup page and for new windows' background. */
+  theme?: string;
 }
 
 function prefsFile(): string {

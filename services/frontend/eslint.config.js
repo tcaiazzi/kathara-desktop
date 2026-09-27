@@ -53,6 +53,7 @@ export default tseslint.config(
             "useConfirmDiscardAll",
             "useGuardedNavigate",
             "useGuardedLinkClick",
+            "useLeavePage",
             "defaultOptionsFormState",
             "optionsFormStateFromMachine",
             "optionsFormStateToPayload",

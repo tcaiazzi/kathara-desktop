@@ -4,11 +4,12 @@
     <meta charset="utf-8" />
     <title>Kathara Desktop</title>
     <style>
-      /* Follows the OS scheme rather than being dark-only. This page is the first thing the app
-         paints, and the SPA it hands over to defaults to the OS preference too (see
-         services/frontend/index.html and src/hooks/useTheme.ts) — a fixed dark palette here made
-         every light-theme launch open with a dark flash. Values mirror Bootstrap 5's light and
-         dark defaults, which is what the SPA is themed with. */
+      /* Follows the theme the user picked in the app (the shell's `theme`, stamped as
+         data-theme by refresh() below), else the OS scheme — the same rule as the SPA it hands over
+         to (services/frontend/index.html and src/hooks/useTheme.ts), so the two don't flash
+         different colours at each other. Values mirror Bootstrap 5's light and dark defaults,
+         which is what the SPA is themed with. The dark block appears twice because CSS can't
+         share it between the OS query and the explicit choice. */
       :root {
         color-scheme: light dark;
         --bg: #ffffff;
@@ -25,8 +26,25 @@
         --primary-fg: #ffffff;
         --pre-bg: #f8f9fa;
       }
+      :root[data-theme="light"] { color-scheme: light; }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #1e1e1e;
+        --fg: #e6e6e6;
+        --muted: #9aa0a6;
+        --border: #2f2f2f;
+        --ok: #4caf7d;
+        --bad: #e5686b;
+        --warn: #d8b563;
+        --link: #6ea8fe;
+        --btn-bg: #2b2b2b;
+        --btn-border: #3d3d3d;
+        --primary: #2f6feb;
+        --primary-fg: #ffffff;
+        --pre-bg: #161616;
+      }
       @media (prefers-color-scheme: dark) {
-        :root {
+        :root:not([data-theme="light"]) {
           --bg: #1e1e1e;
           --fg: #e6e6e6;
           --muted: #9aa0a6;
@@ -258,8 +276,13 @@
       // backend would otherwise start (see promptForLabsDir() in main.ts). Kept polling every
       // 500ms while this state is current, same as renderStarting() — "Continue"/"Choose a
       // different folder…" both just fire an IPC call and let the next poll pick up wherever the
-      // boot attempt lands next, rather than each managing their own follow-up render.
+      // boot attempt lands next, rather than each managing their own follow-up render. Drawn only
+      // when what it shows changes: redrawing on every poll would wipe the error "Choose…" leaves
+      // and take the focus and hover off its buttons twice a second.
+      let labsDirPromptKey = null;
       function renderLabsDirPrompt(status) {
+        if (labsDirPromptKey === status.defaultDir) return;
+        labsDirPromptKey = status.defaultDir;
         app.innerHTML = `
           <h1>Where should Kathara Desktop store your labs?</h1>
           <p class="sub">
@@ -292,6 +315,49 @@
         };
       }
 
+      // The backend stopped in the middle of a session, and had already been restarted once not
+      // long before (main.ts's onBackendExit): what happened, the log, and a way to try again.
+      function renderCrashed(status) {
+        app.innerHTML = `
+          <h1>The Kathara API stopped</h1>
+          <p class="sub">It stopped while the app was in use, soon after being restarted once
+            already, so it was left down. Unsaved editor changes are gone; everything saved is on
+            disk. Restart it below — if it keeps stopping, the log usually says why.</p>
+          <p class="sub">${esc(status.error)}</p>
+          <p class="sub">If this looks like a bug, <a href="#" data-url="${ISSUES_URL}">open a GitHub issue</a>
+            with the log below pasted in.</p>
+          ${status.logTail ? `<details><summary>Technical details</summary><pre>${esc(status.logTail)}</pre></details>` : ""}
+          <div class="actions">
+            <button class="primary" id="restart">Restart</button>
+            <button id="log">Open log</button>
+            ${status.logTail ? '<button id="copy-log">Copy log</button>' : ""}
+          </div>`;
+        document.getElementById("restart").onclick = () => {
+          const done = window.katharaDesktop.retryStartup();
+          refresh();
+          done.catch(() => {});
+        };
+        wireLogButtons(status);
+      }
+
+      function wireLogButtons(status) {
+        document.getElementById("log").onclick = () => window.katharaDesktop.showBackendLog();
+        const copyBtn = document.getElementById("copy-log");
+        if (copyBtn) {
+          // Copies the same tail already shown above under "Technical details" — good enough to
+          // paste straight into a GitHub issue without a second round trip to read the full file.
+          copyBtn.onclick = () => {
+            window.katharaDesktop.copyToClipboard(status.logTail).then(() => {
+              copyBtn.textContent = "Copied!";
+              setTimeout(() => { copyBtn.textContent = "Copy log"; }, 2000);
+            });
+          };
+        }
+        app.querySelectorAll("a[data-url]").forEach((a) => {
+          a.onclick = (e) => { e.preventDefault(); window.katharaDesktop.openExternal(a.dataset.url); };
+        });
+      }
+
       function renderChecks(status) {
         const failed = status.state === "prereq-failed";
 
@@ -322,25 +388,17 @@
           refresh();
           done.catch(() => {});
         };
-        document.getElementById("log").onclick = () => window.katharaDesktop.showBackendLog();
-        const copyBtn = document.getElementById("copy-log");
-        if (copyBtn) {
-          // Copies the same tail already shown above under "Technical details" — good enough to
-          // paste straight into a GitHub issue without a second round trip to read the full file.
-          copyBtn.onclick = () => {
-            window.katharaDesktop.copyToClipboard(status.logTail).then(() => {
-              copyBtn.textContent = "Copied!";
-              setTimeout(() => { copyBtn.textContent = "Copy log"; }, 2000);
-            });
-          };
-        }
-        app.querySelectorAll("a[data-url]").forEach((a) => {
-          a.onclick = (e) => { e.preventDefault(); window.katharaDesktop.openExternal(a.dataset.url); };
-        });
+        wireLogButtons(status);
       }
 
       async function refresh() {
         const status = await window.katharaDesktop.getStatus();
+        if (status.theme === "light" || status.theme === "dark") {
+          document.documentElement.dataset.theme = status.theme;
+        } else {
+          delete document.documentElement.dataset.theme;
+        }
+        if (status.state !== "labs-dir-prompt") labsDirPromptKey = null;
         if (status.state === "starting") {
           renderStarting(status);
           // The shell navigates away once the backend is healthy, so polling only continues
@@ -349,6 +407,8 @@
         } else if (status.state === "labs-dir-prompt") {
           renderLabsDirPrompt(status);
           setTimeout(refresh, 500);
+        } else if (status.state === "backend-crashed") {
+          renderCrashed(status);
         } else {
           renderChecks(status);
         }

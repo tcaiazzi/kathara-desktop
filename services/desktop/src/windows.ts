@@ -1,24 +1,23 @@
 /** Window creation and the navigation policy that keeps the renderer pinned to the backend. */
 import { app, BrowserWindow, Menu, nativeTheme, shell } from "electron";
 import path from "node:path";
+import { parseUiTheme } from "./crashRecovery";
 import { log } from "./logger";
 import { iconPath, setupPage, splashPage } from "./paths";
+import { readPrefs } from "./prefs";
 
 const PRELOAD = path.join(__dirname, "preload.js");
 
 /**
  * The colour Chromium paints before the page has any of its own, matched to the theme the page is
- * about to choose: setup.html follows the OS scheme, and so does the SPA when the user has never
- * picked a theme explicitly (services/frontend/index.html). Hardcoding the dark value would make
- * every light-theme launch start with a dark rectangle.
- *
- * Read at window-creation time, not tracked: someone who *has* explicitly chosen the theme
- * opposite to their OS still gets one mismatched frame here, because only the renderer knows
- * about that choice (it lives in its localStorage). Not worth a bridge call and a preferences
- * round trip for a single frame of colour.
+ * about to choose: the one the user picked in the app (the SPA reports it, main.ts's
+ * ui:set-theme), else the OS scheme, which is what both setup.html and the SPA follow without a
+ * choice (services/frontend/index.html). Hardcoding the dark value would make every light-theme
+ * launch start with a dark rectangle. Read at window-creation time, not tracked.
  */
 function windowBackground(): string {
-  return nativeTheme.shouldUseDarkColors ? "#151b23" : "#ffffff";
+  const theme = parseUiTheme(readPrefs().theme) ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
+  return theme === "dark" ? "#151b23" : "#ffffff";
 }
 
 /** The frontend's popup terminal route (services/frontend/src/services/terminalWindow.ts). */

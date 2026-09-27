@@ -46,6 +46,17 @@ const authTokenReady: Promise<void> = (async () => {
   }
 })();
 
+/** Re-read the pairing token: a backend restarted by the shell while this page stayed on screen
+ *  (desktop/BackendStateContext.tsx) has a new one, and the old one is refused. */
+export async function refreshAuthToken(): Promise<void> {
+  await authTokenReady;
+  try {
+    cachedAuthToken = (await desktop()?.getAuthToken()) ?? null;
+  } catch {
+    // keep the one we have: failing here only means the next request says why
+  }
+}
+
 function authHeaders(): Record<string, string> {
   return cachedAuthToken ? { Authorization: `Bearer ${cachedAuthToken}` } : {};
 }

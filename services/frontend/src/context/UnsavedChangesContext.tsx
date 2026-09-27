@@ -19,6 +19,11 @@ interface UnsavedChangesApi {
   set(id: string, label: string | null): void;
   /** Resolves true when nothing is dirty or the user agrees to discard every dirty buffer. */
   confirmDiscardAll(): Promise<boolean>;
+  /** Whether any editor holds unsaved edits right now. */
+  hasUnsaved(): boolean;
+  /** confirmDiscardAll for leaving the page itself (a reload, the shell loading another page):
+   *  a yes also stands down the `beforeunload` guard, so the unload isn't questioned again. */
+  confirmLeavingPage(): Promise<boolean>;
 }
 
 const UnsavedChangesCtx = createContext<UnsavedChangesApi | null>(null);
@@ -40,21 +45,25 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     return confirm({ title: "Discard unsaved changes?", message: describeUnsaved(labels), okLabel: "Discard" });
   }, [confirm]);
 
-  // Set once the user has agreed to discard everything for a window close, so the page's own
-  // `beforeunload` below doesn't object a second time to the unload that close then causes.
+  // Set once the user has agreed to discard everything for leaving the page, so the page's own
+  // `beforeunload` below doesn't object a second time to the unload that then follows.
   const leaving = useRef(false);
 
-  // Desktop: the shell asks before closing the window, and the answer comes from the same dialog
-  // every in-app navigation uses, instead of a native message box.
+  const hasUnsaved = useCallback(() => entries.current.size > 0, []);
+
+  const confirmLeavingPage = useCallback(async () => {
+    const ok = await confirmDiscardAll();
+    if (ok) leaving.current = true;
+    return ok;
+  }, [confirmDiscardAll]);
+
+  // Desktop: the shell asks before closing the window or loading another page in it, and the
+  // answer comes from the same dialog every in-app navigation uses, instead of a native message box.
   useEffect(() => {
     const shell = desktop();
     if (!shell) return;
-    return shell.onCloseRequest(async () => {
-      const ok = await confirmDiscardAll();
-      if (ok) leaving.current = true;
-      return ok;
-    });
-  }, [confirmDiscardAll]);
+    return shell.onCloseRequest(confirmLeavingPage);
+  }, [confirmLeavingPage]);
 
   // What still guards a reload, a plain browser tab being closed, and a navigation the desktop
   // shell starts itself — none of which can wait for an in-app dialog.
@@ -69,7 +78,10 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
-  const value = useMemo(() => ({ set, confirmDiscardAll }), [set, confirmDiscardAll]);
+  const value = useMemo(
+    () => ({ set, confirmDiscardAll, hasUnsaved, confirmLeavingPage }),
+    [set, confirmDiscardAll, hasUnsaved, confirmLeavingPage],
+  );
   return <UnsavedChangesCtx.Provider value={value}>{children}</UnsavedChangesCtx.Provider>;
 }
 
@@ -93,6 +105,11 @@ export function useRegisterUnsaved(label: string | null): void {
  *  the open one): ask first, and go ahead only on a true. */
 export function useConfirmDiscardAll(): () => Promise<boolean> {
   return useUnsavedChanges().confirmDiscardAll;
+}
+
+/** For leaving the page itself — see UnsavedChangesApi.confirmLeavingPage. */
+export function useLeavePage(): Pick<UnsavedChangesApi, "hasUnsaved" | "confirmLeavingPage"> {
+  return useUnsavedChanges();
 }
 
 /** `navigate`, preceded by the discard confirmation; resolves false when the user stays. */

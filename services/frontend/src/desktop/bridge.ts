@@ -32,6 +32,10 @@ export interface DesktopDockerStatus {
 export interface DesktopApi {
   isDesktop: true;
   platform: string;
+  /** The theme the user picked, or null when the app follows the OS (hooks/useTheme.ts): the
+   * shell's own pages (setup, crash) and new windows match it, since they can't read this page's
+   * localStorage. */
+  setUiTheme(theme: "light" | "dark" | null): Promise<void>;
   /** Window/shell actions behind the app-drawn menu bar (see TitleBar.tsx). */
   getAppInfo(): Promise<{ version: string; platform: string; home: string }>;
   zoom(direction: "in" | "out" | "reset"): Promise<void>;
@@ -137,13 +141,19 @@ export interface DesktopApi {
    * deployed-labs prompt. Rejects if the directory isn't usable. */
   setLabsDir(path: string): Promise<boolean>;
   resetLabsDir(): Promise<boolean>;
-  /** All four return an unsubscribe function. */
+  /** These subscriptions all return an unsubscribe function. */
   onMenuAction(cb: (action: DesktopMenuAction) => void): () => void;
   onDeepLink(cb: (route: string) => void): () => void;
   onWindowStateChange(cb: (state: { maximized: boolean; fullscreen: boolean }) => void): () => void;
-  /** The window is about to close (its close button, Quit, the OS): resolve true to let it. The
-   * shell holds the close until then — see context/UnsavedChangesContext.tsx. */
+  /** The window is about to close (its close button, Quit, the OS), or the shell is about to load
+   * another page in it (the crash page, the backend at a new address): resolve true to let it. The
+   * shell waits for the answer — see context/UnsavedChangesContext.tsx. */
   onCloseRequest(handler: () => Promise<boolean>): () => void;
+  /** The backend stopped while this page is on screen, and what happened next — parse with
+   *  services/backendState.ts's parseBackendState. */
+  onBackendState(cb: (notice: unknown) => void): () => void;
+  /** Stop whatever backend is left and start the app over (the setup page's "Check again"). */
+  retryStartup(): Promise<void>;
 }
 
 declare global {

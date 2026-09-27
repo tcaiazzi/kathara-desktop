@@ -42,6 +42,7 @@ import {
 } from "./backend";
 import { deepLinkFromArgv } from "./deepLinkRoute";
 import { handleDeepLink, navigateRenderer, registerProtocol } from "./deeplink";
+import { parseUiTheme, resumePathOf, shouldAutoRestart, type UiTheme } from "./crashRecovery";
 import { toElevateOutcome, type ElevateOutcome } from "./elevateOutcome";
 import { ensurePathEnv } from "./env";
 import {
@@ -147,6 +148,10 @@ type Status =
     }
   | { state: "prereq-failed"; checks: Check[]; notice?: string }
   | { state: "backend-failed"; checks: Check[]; error: string; logTail: string }
+  // The backend stopped in the middle of a session, after the one automatic restart a session gets
+  // (crashRecovery.ts's shouldAutoRestart) — distinct from "backend-failed", which is a backend
+  // that never came up, and whose page says so.
+  | { state: "backend-crashed"; error: string; logTail: string }
   // `advisories` carries forward whichever checks didn't block this boot (the only one raised is
   // a stopped Docker daemon) — see prereqs.ts's Preflight.advisories — so the renderer can warn
   // about it without waiting on its own first "docker:check" round trip.
@@ -243,6 +248,12 @@ async function promptForLabsDir(): Promise<void> {
 
 let bootStartedAt = Date.now();
 let bootChecks: Check[] = [];
+/** When the backend was last restarted without asking, after stopping mid-session. */
+let lastAutoRestartAt: number | null = null;
+/** The theme the SPA says the user picked, or null to follow the OS (ui:set-theme below). The
+ * setup page reads it through status:get, and windows.ts paints new windows with it: the SPA's own
+ * choice lives in its localStorage, which neither of them can see. */
+let uiTheme: UiTheme | null = parseUiTheme(readPrefs().theme);
 
 /**
  * The renderer's notification history (ToastContext.tsx), carried across any reload this shell
@@ -297,15 +308,18 @@ const CLOSE_ACK_TIMEOUT_MS = 2000;
 const pendingCloseRequests = new Map<string, { ack: () => void; settle: (allow: boolean) => void }>();
 
 /**
- * Ask the SPA whether the window may close, resolving with its answer.
+ * Ask the SPA whether it may be left — the window closed, or the page replaced by one this shell
+ * loads (the crash page, the backend at a new address) — resolving with its answer.
  *
  * The SPA answers through its own confirmation dialog when an editor holds unsaved edits
  * (context/UnsavedChangesContext.tsx), so the question looks like the rest of the app instead of
- * a native message box. It acknowledges the request first and answers when the user has decided,
- * which can take as long as it takes; a page that never acknowledges (still loading, hung, or not
- * the SPA) must not be able to keep the window open, so only the acknowledgement has a timeout.
+ * a native message box; a yes also stands down its `beforeunload` guard, so the navigation that
+ * follows isn't questioned a second time. It acknowledges the request first and answers when the
+ * user has decided, which can take as long as it takes; a page that never acknowledges (still
+ * loading, hung, or not the SPA) must not be able to keep the window open, so only the
+ * acknowledgement has a timeout.
  */
-function askRendererBeforeClose(target: BrowserWindow): Promise<boolean> {
+function askRendererBeforeLeave(target: BrowserWindow): Promise<boolean> {
   return new Promise((resolve) => {
     const id = randomUUID();
     const settle = (allow: boolean) => {
@@ -317,6 +331,61 @@ function askRendererBeforeClose(target: BrowserWindow): Promise<boolean> {
     pendingCloseRequests.set(id, { ack: () => clearTimeout(timer), settle });
     target.webContents.send("window:close-request", id);
   });
+}
+
+/** What the SPA is told about its backend while it stays on screen after the backend stopped
+ * (onBackendExit): "restarting" right away; "restarted" once a new backend answers at the same
+ * address, so the page carries on with the new pairing token instead of reloading; "down" when it
+ * isn't coming back on its own and the user kept the page, for their unsaved edits, rather than
+ * leave it. Mirrored by services/frontend/src/services/backendState.ts. */
+type BackendStateNotice = { state: "restarting"; cause: string } | { state: "restarted" } | { state: "down"; cause: string };
+
+function tellRenderer(target: BrowserWindow, notice: BackendStateNotice): void {
+  target.webContents.send("backend:state", notice);
+}
+
+/** The backend stopped and is staying down: the crash page, once the app agrees to be left. When it
+ * doesn't, the page stays, and its banner offers the restart itself. */
+function giveUpOnBackend(target: BrowserWindow, cause: string): void {
+  setStatus({ state: "backend-crashed", error: cause, logTail: tailLog() });
+  tellRenderer(target, { state: "down", cause });
+  void askRendererBeforeLeave(target).then((allow) => {
+    if (allow) showSetup(target);
+  });
+}
+
+/**
+ * Start a new backend in place of the one that just stopped, without taking the app off screen.
+ *
+ * At the same address — the normal case, since startBackend reuses the remembered port — the page
+ * only needs the new pairing token (tellRenderer "restarted"); reloading is left to it, so an
+ * unsaved edit survives and can even be saved. At a new address the page has to move there, which
+ * it can only do by being left, so it is asked first.
+ */
+async function restartInPlace(target: BrowserWindow, cause: string): Promise<void> {
+  const pageUrl = target.webContents.getURL();
+  const python = lastPreflight?.python;
+  const staticDir = resolveStaticDir();
+  let baseUrl: string;
+  try {
+    if (!python || !staticDir) throw new Error("the backend can't be restarted from here");
+    baseUrl = (await startBackend(python, staticDir)).baseUrl;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    log(`restart after a crash failed: ${reason}`);
+    giveUpOnBackend(target, `${cause} Restarting it failed: ${reason}`);
+    return;
+  }
+  setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
+  if (new URL(baseUrl).origin === new URL(pageUrl).origin) {
+    tellRenderer(target, { state: "restarted" });
+    return;
+  }
+  if (await askRendererBeforeLeave(target)) {
+    await target.loadURL(`${baseUrl}${resumePathOf(pageUrl) ?? ""}`).catch(() => undefined);
+  } else {
+    tellRenderer(target, { state: "down", cause: `${cause} It was restarted at a different address.` });
+  }
 }
 
 /**
@@ -362,7 +431,7 @@ function attachWindowLifecycle(target: BrowserWindow): void {
     // A second close while the question is still up is the same request, not a new one.
     if (closeAsked) return;
     closeAsked = true;
-    void askRendererBeforeClose(target).then((allow) => {
+    void askRendererBeforeLeave(target).then((allow) => {
       closeAsked = false;
       if (!allow) {
         quitConfirmed = false;
@@ -551,7 +620,16 @@ function optionalString(value: unknown, label: string, maxLength: number): strin
 }
 
 function registerIpc(): void {
-  handleIpc("status:get", () => status);
+  handleIpc("status:get", () => ({ ...status, theme: uiTheme }));
+
+  // The SPA reports the theme the user picked, or null when it follows the OS. Remembered in
+  // prefs so the setup page and the window background match it from the next launch on too.
+  handleIpc("ui:set-theme", (_e, theme: unknown) => {
+    const next = parseUiTheme(theme);
+    if (next === uiTheme) return;
+    uiTheme = next;
+    writePrefs({ theme: next ?? undefined });
+  });
 
   // See carriedNotifications above. `save` is called on every history change (cheap — this is
   // just a variable assignment), so whatever reload happens next always has the latest snapshot,
@@ -1275,15 +1353,28 @@ if (!app.requestSingleInstanceLock()) {
     showSplashPage(win);
 
     onBackendExit((info) => {
-      // An unexpected exit leaves the renderer pointing at a dead origin; show the log instead.
       if (!win) return;
-      setStatus({
-        state: "backend-failed",
-        checks: [],
-        error: `The Kathara API stopped unexpectedly (code ${info.code ?? "unknown"}, signal ${info.signal ?? "none"}).`,
-        logTail: tailLog(),
-      });
-      showSetup(win);
+      const cause = `The Kathara API stopped unexpectedly (code ${info.code ?? "unknown"}, signal ${info.signal ?? "none"}).`;
+      log(cause);
+      const inSession = status.state === "ready" && !win.webContents.getURL().startsWith("file://");
+      if (!inSession) {
+        // Not while the app is in use (it died on its way up, say): the page on screen is ours,
+        // and it shows the log.
+        setStatus({ state: "backend-failed", checks: [], error: cause, logTail: tailLog() });
+        showSetup(win);
+        return;
+      }
+      // Mid-session the app stays on screen — an editor may hold unsaved edits — and hears about
+      // it through tellRenderer. The backend is restarted where it was, once per
+      // AUTO_RESTART_WINDOW_MS; a second crash that soon is left down, for the crash page.
+      const now = Date.now();
+      if (shouldAutoRestart(lastAutoRestartAt, now)) {
+        lastAutoRestartAt = now;
+        tellRenderer(win, { state: "restarting", cause });
+        void runExclusiveBootOp(() => restartInPlace(win!, cause));
+        return;
+      }
+      giveUpOnBackend(win, cause);
     });
 
     // A backend that couldn't be stopped — most likely one still running as root after a failed

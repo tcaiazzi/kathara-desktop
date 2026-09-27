@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { desktop } from "../desktop/bridge";
 
 type ThemeMode = "light" | "dark";
 
@@ -35,7 +36,20 @@ function applyTheme(theme: ThemeMode, persist = true): void {
   const root = document.documentElement;
   root.setAttribute("data-bs-theme", theme);
   root.setAttribute(THEME_ATTR, theme);
-  if (persist) window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  if (persist) {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    reportToShell();
+  }
+}
+
+// The desktop shell's own pages (setup, the crash page) and its new windows follow the same
+// choice, but can't read this page's localStorage: tell it what was picked — or null, "follow the
+// OS", when nothing was. Sent on every choice and once per page load, which also covers a choice
+// made before the shell could hear about it.
+let reportedThisLoad = false;
+function reportToShell(): void {
+  reportedThisLoad = true;
+  void desktop()?.setUiTheme(getStoredTheme()).catch(() => {});
 }
 
 /**
@@ -62,6 +76,7 @@ export function useTheme() {
   });
 
   useEffect(() => {
+    if (!reportedThisLoad) reportToShell();
     const root = document.documentElement;
     const obs = new MutationObserver(() => setTheme(readDomTheme()));
     obs.observe(root, { attributes: true, attributeFilter: [THEME_ATTR] });
