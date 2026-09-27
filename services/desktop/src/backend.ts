@@ -17,7 +17,8 @@ import sudoPrompt from "@vscode/sudo-prompt";
 import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir, stateDir } from "./paths";
 import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
-import type { ElevateFailureReason, ElevateResult } from "./elevateOutcome";
+import type { ElevateFailureReason, ElevateResult, PrivilegedActionResult } from "./elevateOutcome";
+import { errorText } from "./errors";
 import { reclaimScript, type ReclaimTargets } from "./labFolders";
 import { redactEnvArgsForLog } from "./logRedaction";
 import { isPlainAbsolutePath, isUsablePort, quoteForShellString } from "./safety";
@@ -75,6 +76,9 @@ const RECLAIM_TIMEOUT_MS = 120_000;
 const SUDO_RATE_LIMIT_FREE_ATTEMPTS = 5;
 const SUDO_RATE_LIMIT_BASE_MS = 30_000;
 const SUDO_RATE_LIMIT_MAX_MS = 5 * 60_000;
+/** Every sudo-prompt call's options: `name` is the app name its native dialog shows. Shared as
+ * is, since sudo-prompt only writes into the object when `name` is missing. */
+const SUDO_PROMPT_OPTIONS = { name: "Kathara Desktop" };
 
 let child: ChildProcess | null = null;
 let handle: BackendHandle | null = null;
@@ -127,7 +131,7 @@ export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string
     return { ok: false, message: `refusing to kill a suspicious process id: ${String(orphan.pid)}` };
   }
   return new Promise((resolve) => {
-    sudoPrompt.exec(`kill -9 ${orphan.pid}`, { name: "Kathara Desktop" }, (error) => {
+    sudoPrompt.exec(`kill -9 ${orphan.pid}`, SUDO_PROMPT_OPTIONS, (error) => {
       if (error) {
         resolve({ ok: false, message: error.message });
         return;
@@ -212,7 +216,7 @@ function reclaimCommand(targets: ReclaimTargets): { ok: true; script: string | n
   try {
     return { ok: true, script: reclaimScript(targets, owner.uid, owner.gid) };
   } catch (err) {
-    return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    return { ok: false, message: errorText(err) };
   }
 }
 
@@ -235,7 +239,7 @@ export async function reclaimOwnershipWithPrompt(targets: ReclaimTargets): Promi
   if (script === null) return { ok: true };
 
   return new Promise((resolve) => {
-    sudoPrompt.exec(script, { name: "Kathara Desktop" }, (error) => {
+    sudoPrompt.exec(script, SUDO_PROMPT_OPTIONS, (error) => {
       if (error) {
         log(`failed to reclaim ownership of lab files: ${error.message}`);
         resolve({ ok: false, message: error.message });
@@ -258,7 +262,7 @@ export async function reclaimOwnershipWithPrompt(targets: ReclaimTargets): Promi
 export async function reclaimOwnershipWithPassword(
   password: string,
   targets: ReclaimTargets,
-): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+): Promise<PrivilegedActionResult> {
   if (process.platform !== "linux") return { ok: false, reason: "error", message: "not applicable on this platform" };
   const command = reclaimCommand(targets);
   if (!command.ok) return { ok: false, reason: "error", message: command.message };
@@ -275,7 +279,7 @@ export async function reclaimOwnershipWithPassword(
 /** What `openLabFolder` got back: the lab's id, or why the folder didn't open. `notALab` is the
  * backend's NotALabError — a folder with no lab.conf and no device folders, which the caller may
  * offer to initialize. */
-export type OpenLabFolderResult = { ok: true; labId: string } | { ok: false; notALab: boolean; message: string };
+type OpenLabFolderResult = { ok: true; labId: string } | { ok: false; notALab: boolean; message: string };
 
 /** Opening reads the whole folder (bounded by the import caps), so allow for a slow disk. */
 const OPEN_LAB_TIMEOUT_MS = 30_000;
@@ -301,7 +305,7 @@ export async function openLabFolder(folder: string, init: boolean): Promise<Open
       signal: AbortSignal.timeout(OPEN_LAB_TIMEOUT_MS),
     });
   } catch (err) {
-    return { ok: false, notALab: false, message: err instanceof Error ? err.message : String(err) };
+    return { ok: false, notALab: false, message: errorText(err) };
   }
   const body = (await res.json().catch(() => null)) as { id?: unknown; detail?: unknown; error_type?: unknown } | null;
   if (res.ok && typeof body?.id === "string") return { ok: true, labId: body.id };
@@ -378,7 +382,7 @@ async function shutdownAt(baseUrl: string, token: string): Promise<boolean> {
     });
     return await waitForDeath(baseUrl, token, Date.now() + SHUTDOWN_DEATH_POLL_MS);
   } catch (err) {
-    log(`shutdown request to ${baseUrl} failed: ${err instanceof Error ? err.message : String(err)}`);
+    log(`shutdown request to ${baseUrl} failed: ${errorText(err)}`);
     return false;
   }
 }
@@ -486,7 +490,7 @@ async function waitForHealth(
       if (res.ok) return;
       lastError = `HTTP ${res.status}`;
     } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err);
+      lastError = errorText(err);
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
@@ -743,7 +747,7 @@ function sudoEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
  * "rate-limited" without spawning `sudo` at all, so the actual check below never doubles as the
  * oracle described at SUDO_RATE_LIMIT_FREE_ATTEMPTS.
  */
-async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+async function verifySudoPassword(password: string): Promise<PrivilegedActionResult> {
   return withSudoRateLimit(() => runSudoWithPassword(["-v"], password, "sudo password check", { verifyOnly: true }));
 }
 
@@ -754,14 +758,14 @@ async function verifySudoPassword(password: string): Promise<{ ok: true } | { ok
  * count against, and are locked out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
  */
 async function withSudoRateLimit(
-  attempt: () => Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }>,
+  attempt: () => Promise<PrivilegedActionResult>,
   // Which failure reason counts against the lockout. Defaults to "wrong-password" — correct for
   // every `sudo`-backed attempt, where that distinction actually exists. macOS/Windows's
   // sudo-prompt dialog can't tell a dismissed dialog from a wrong password apart (see
   // `verifyCanElevate` below), so its caller passes a predicate that counts "cancelled" instead —
   // otherwise a renderer could trigger the native admin-password dialog without limit.
   countsAsAttempt: (reason: ElevateFailureReason) => boolean = (reason) => reason === "wrong-password",
-): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+): Promise<PrivilegedActionResult> {
   const now = Date.now();
   if (now < sudoLockedUntil) {
     const retryInSeconds = Math.ceil((sudoLockedUntil - now) / 1000);
@@ -810,13 +814,13 @@ function runSudoWithPassword(
   password: string,
   logLabel: string,
   { verifyOnly = false, timeoutMs = SUDO_VERIFY_TIMEOUT_MS }: { verifyOnly?: boolean; timeoutMs?: number } = {},
-): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+): Promise<PrivilegedActionResult> {
   return new Promise((resolve) => {
     let proc: ChildProcess;
     try {
       proc = spawn("sudo", ["-S", "-k", ...argv], { env: sudoEnv(), stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
     } catch (err) {
-      resolve({ ok: false, reason: "error", message: `could not run sudo: ${err instanceof Error ? err.message : String(err)}` });
+      resolve({ ok: false, reason: "error", message: `could not run sudo: ${errorText(err)}` });
       return;
     }
 
@@ -887,7 +891,7 @@ function runSudoWithPassword(
  * the same way `runElevatedNative` collapses them: sudo-prompt can't tell "dialog dismissed" from
  * "wrong password" apart in any stable cross-platform way, so both land on "cancelled" here too.
  */
-export async function verifyCanElevate(password?: string): Promise<{ ok: true } | { ok: false; reason: ElevateFailureReason; message: string }> {
+export async function verifyCanElevate(password?: string): Promise<PrivilegedActionResult> {
   if (process.platform !== "darwin" && process.platform !== "win32") {
     return verifySudoPassword(password ?? "");
   }
@@ -899,7 +903,7 @@ export async function verifyCanElevate(password?: string): Promise<{ ok: true } 
     () =>
       new Promise((resolve) => {
         const cmd = process.platform === "win32" ? "cmd /c exit /b 0" : "/usr/bin/true";
-        sudoPrompt.exec(cmd, { name: "Kathara Desktop" }, (error) => {
+        sudoPrompt.exec(cmd, SUDO_PROMPT_OPTIONS, (error) => {
           resolve(error ? { ok: false, reason: "cancelled", message: error.message } : { ok: true });
         });
       }),
@@ -981,7 +985,7 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
     return { ok: true, handle };
   } catch (err) {
     await stopBackend();
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorText(err);
     // The password already passed `verifySudoPassword`, so this is the backend itself failing to
     // come up as root, not an auth problem — except for the sudoers case, which `-v` does not
     // cover: `-v` only asks "may this user sudo *at all*", while running a command additionally
@@ -1071,7 +1075,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   // POSIX-only variable-name rules and rejects the whole call on the first violation (a single
   // oddly-named inherited variable, e.g. Windows's `ProgramFiles(x86)`, would abort elevation
   // outright) — `appEnv` is already just this app's own known-safe overrides.
-  sudoPrompt.exec(cmd, { name: "Kathara Desktop", env: appEnv }, (error) => {
+  sudoPrompt.exec(cmd, { ...SUDO_PROMPT_OPTIONS, env: appEnv }, (error) => {
     if (!error) return;
     if (!started) {
       // Still starting (or the prompt was dismissed/auth failed) — record it for the catch
@@ -1105,7 +1109,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
     // callback fire and set `execFailure`, which would otherwise rewrite the diagnosis of why
     // this attempt failed into "the elevated command failed to launch".
     const failedToLaunch = execFailure !== null;
-    const message = execFailure ?? (err instanceof Error ? err.message : String(err));
+    const message = execFailure ?? errorText(err);
 
     // Emphatically not `stopBackend()`, which would stop the healthy backend that is still
     // serving the renderer. Only the candidate needs cleaning up, and only if it got as far as
@@ -1154,11 +1158,15 @@ export function backendToken(): string | null {
 }
 
 export async function stopBackend(): Promise<void> {
+  // Every way out of here drops both references, whether or not the process was confirmed gone.
+  const clearHandles = () => {
+    child = null;
+    handle = null;
+  };
   const proc = child;
   const current = handle;
   if (!proc && !current) {
-    child = null;
-    handle = null;
+    clearHandles();
     return;
   }
   stopping = true;
@@ -1185,8 +1193,7 @@ export async function stopBackend(): Promise<void> {
           new Promise<boolean>((r) => setTimeout(() => r(false), SHUTDOWN_HTTP_TIMEOUT_MS)),
         ]);
         if (exitedInTime) {
-          child = null;
-          handle = null;
+          clearHandles();
           return;
         }
       } else {
@@ -1195,25 +1202,22 @@ export async function stopBackend(): Promise<void> {
         // *received* it (it calls os.kill(getpid(), SIGTERM) and returns immediately), not that
         // it's actually gone yet, so poll health instead of assuming success.
         if (await waitForDeath(current.baseUrl, current.token, Date.now() + SHUTDOWN_DEATH_POLL_MS)) {
-          child = null;
-          handle = null;
+          clearHandles();
           return;
         }
         log(`backend at ${current.baseUrl} did not go down after a shutdown request`);
         markOrphaned(await resolvePidForPort(Number(new URL(current.baseUrl).port)), current.baseUrl, current.token);
-        child = null;
-        handle = null;
+        clearHandles();
         return;
       }
     } catch (err) {
-      log(`HTTP shutdown request failed, falling back to signal: ${err instanceof Error ? err.message : String(err)}`);
+      log(`HTTP shutdown request failed, falling back to signal: ${errorText(err)}`);
     }
   }
 
   if (!proc || proc.exitCode !== null) {
     log("no local backend process to signal — giving up");
-    child = null;
-    handle = null;
+    clearHandles();
     return;
   }
 
@@ -1235,8 +1239,7 @@ export async function stopBackend(): Promise<void> {
     // was never delivered in the first place.
     log(`SIGTERM could not be delivered to backend (pid ${pid}) — likely running elevated`);
     markOrphaned(pid, knownBaseUrl, knownToken);
-    child = null;
-    handle = null;
+    clearHandles();
     return;
   }
 
@@ -1260,8 +1263,7 @@ export async function stopBackend(): Promise<void> {
     }
   }
 
-  child = null;
-  handle = null;
+  clearHandles();
 }
 
 export function backendLogPath(): string {

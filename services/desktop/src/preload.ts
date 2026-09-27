@@ -6,7 +6,7 @@
  * entry is attack surface for a page that renders lab content.
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { ElevateFailureReason, ElevateOutcome } from "./elevateOutcome";
+import type { ElevateOutcome, PrivilegedActionResult } from "./elevateOutcome";
 import type { MenuAction } from "./menu";
 import type { DockerStatus } from "./prereqs";
 
@@ -100,7 +100,7 @@ const api = {
    * rate limit with elevateBackend/verifyCanElevate — see backend.ts's withSudoRateLimit. */
   reclaimLabsDirOwnership: (
     password: string,
-  ): Promise<{ ok: false; reason: ElevateFailureReason; message: string } | { ok: true }> =>
+  ): Promise<PrivilegedActionResult> =>
     ipcRenderer.invoke("elevation:reclaim-labs-dir", password),
   /** The folders `reclaimLabsDirOwnership` would fix: those holding files another account owns,
    * such as the ones running devices write as root into a lab's shared/ folder. Linux only; `[]`
@@ -112,7 +112,7 @@ const api = {
    * instead). Never restarts anything and never reloads the window, unlike elevateBackend. */
   verifyCanElevate: (
     password?: string,
-  ): Promise<{ ok: false; reason: ElevateFailureReason; message: string } | { ok: true }> =>
+  ): Promise<PrivilegedActionResult> =>
     ipcRenderer.invoke("elevation:verify", password),
 
   // -- window / shell actions behind the app-drawn menu bar --

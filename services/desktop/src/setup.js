@@ -99,12 +99,11 @@ function dockerCallout(checks) {
   if (failing.length !== 1 || failing[0].id !== "docker") return "";
   const platform = window.katharaDesktop.platform;
   const product = platform === "darwin" || platform === "win32" ? "Docker Desktop" : "Docker Engine";
-  const heading = failing[0].severity === "advisory" ? `Start ${esc(product)}` : `Install ${esc(product)}`;
   return `
     <div class="callout">
       <span class="icon">🐳</span>
       <div>
-        <h2>${heading}</h2>
+        <h2>Install ${esc(product)}</h2>
         <p>${esc(failing[0].remedy ?? failing[0].detail)}</p>
       </div>
     </div>`;
@@ -234,7 +233,6 @@ function renderChecks(status) {
         "app.) Sort out anything marked ✕ below, then choose “Check again”."
       : "Everything it needs is installed, but the API process didn't come up. The " +
         "technical details below usually say why."}</p>
-    ${failed && status.notice ? `<p class="sub">${esc(status.notice)}</p>` : ""}
     ${failed ? dockerCallout(status.checks) : ""}
     ${checksHtml(status.checks)}
     ${!failed && status.error ? `<p class="sub">${esc(status.error)}</p>` : ""}

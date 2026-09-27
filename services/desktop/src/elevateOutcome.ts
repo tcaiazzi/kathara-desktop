@@ -27,6 +27,10 @@ export type ElevateOutcome =
   | { ok: true }
   | { ok: false; reason: ElevateFailureReason; message: string; restarted: boolean };
 
+/** What a privileged action that restarts nothing reports — a sudo password check, a verify, a
+ * reclaim — so unlike `ElevateResult` there is no `restarted` to say. Crosses IPC as is. */
+export type PrivilegedActionResult = { ok: true } | { ok: false; reason: ElevateFailureReason; message: string };
+
 export function toElevateOutcome(result: ElevateResult): ElevateOutcome {
   return result.ok ? { ok: true } : result;
 }

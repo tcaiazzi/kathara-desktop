@@ -5,6 +5,7 @@
  * startup (see main.ts, which fires this alongside startup() rather than inside it).
  */
 import { app } from "electron";
+import { errorText } from "./errors";
 import { log } from "./logger";
 import { isNewer, parseVersion } from "./version";
 
@@ -38,7 +39,7 @@ async function fetchLatestRelease(): Promise<UpdateInfo | null> {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (err) {
-    log(`update check: request failed (${err instanceof Error ? err.message : String(err)})`);
+    log(`update check: request failed (${errorText(err)})`);
     return null;
   }
 

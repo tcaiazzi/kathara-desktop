@@ -45,6 +45,7 @@ import { handleDeepLink, navigateRenderer, registerProtocol } from "./deeplink";
 import { parseUiTheme, resumePathOf, shouldAutoRestart, type UiTheme } from "./crashRecovery";
 import { toElevateOutcome, type ElevateOutcome } from "./elevateOutcome";
 import { ensurePathEnv } from "./env";
+import { errorText } from "./errors";
 import {
   openLabsDir,
   openTerminalHere,
@@ -52,6 +53,7 @@ import {
   pickLabFolder,
   pickLabsDirectory,
   revealPath,
+  withParent,
 } from "./integrations";
 import { handleIpc } from "./ipc";
 import { folderFromArgv, KNOWN_LABS_FILENAME, knownLabDirs, type ReclaimTargets } from "./labFolders";
@@ -118,7 +120,9 @@ const BACKEND_QUERY_TIMEOUT_MS = 5_000;
 /** Every ad-hoc fetch this file makes to its own backend must carry the pairing token
  * (backend.ts generates one per launch — see require_auth_token in src/kathara_api/
  * dependencies.py) or get a 401. `{}` when there's no running backend to have gotten one from
- * (backendToken() is then null anyway), same as an unpaired request would. */
+ * (backendToken() is then null anyway), same as an unpaired request would. Not backend.ts's
+ * authHeaders(token): that one is handed the token of the exact backend it is talking to, this
+ * one reads whichever backend is current. */
 function authHeaders(): HeadersInit {
   const token = backendToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -147,7 +151,7 @@ type Status =
        * setup page's first-run copy ("Welcome to…" vs. "Starting…"). */
       firstRun: boolean;
     }
-  | { state: "prereq-failed"; checks: Check[]; notice?: string }
+  | { state: "prereq-failed"; checks: Check[] }
   | { state: "backend-failed"; checks: Check[]; error: string; logTail: string }
   // The backend stopped in the middle of a session, after the one automatic restart a session gets
   // (crashRecovery.ts's shouldAutoRestart) — distinct from "backend-failed", which is a backend
@@ -372,7 +376,7 @@ async function restartInPlace(target: BrowserWindow, cause: string): Promise<voi
     if (!python || !staticDir) throw new Error("the backend can't be restarted from here");
     baseUrl = (await startBackend(python, staticDir)).baseUrl;
   } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
+    const reason = errorText(err);
     log(`restart after a crash failed: ${reason}`);
     giveUpOnBackend(target, `${cause} Restarting it failed: ${reason}`);
     return;
@@ -573,7 +577,7 @@ async function runStartup(resumePath?: string): Promise<void> {
     }
     replayPendingLabFolder();
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorText(err);
     log(`startup failed: ${error}`);
     setStatus({ state: "backend-failed", checks: preflight.checks, error, logTail: tailLog() });
     showSetup(win);
@@ -708,7 +712,7 @@ function registerIpc(): void {
           if (result.restarted && win && recovered) {
             setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
             const url = new URL(recovered);
-            if (resumeLab) url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
+            if (resumeLab) url.pathname = workspacePath(resumeLab);
             await win.loadURL(url.toString());
             replayPendingLabFolder();
           }
@@ -719,7 +723,7 @@ function registerIpc(): void {
         if (win) {
           const url = new URL(result.handle.baseUrl);
           if (resumeLab) {
-            url.pathname = `/workspace/${encodeURIComponent(resumeLab)}`;
+            url.pathname = workspacePath(resumeLab);
             url.searchParams.set("resumeDeploy", "1");
           }
           await win.loadURL(url.toString());
@@ -787,11 +791,7 @@ function registerIpc(): void {
           }
           // macOS: sudo-prompt's native dialog is reliable here, so a plain confirm first (this
           // isn't a deploy the user just asked for — they only undeployed) is enough.
-          const parent = win;
-          const messageBox = parent
-            ? (o: Electron.MessageBoxOptions) => dialog.showMessageBox(parent, o)
-            : (o: Electron.MessageBoxOptions) => dialog.showMessageBox(o);
-          const { response } = await messageBox({
+          const { response } = await showMessage({
             type: "warning",
             buttons: ["Reclaim now", "Leave as is"],
             defaultId: 0,
@@ -820,7 +820,7 @@ function registerIpc(): void {
         // startup() here would have it wait on bootOpInFlight, which is this very call, and
         // deadlock forever. This is the direct `runStartup` caller startup()'s own doc comment
         // refers to.
-        await runStartup(openLab ? `/workspace/${encodeURIComponent(openLab)}` : undefined);
+        await runStartup(openLab ? workspacePath(openLab) : undefined);
         return { dropped: true };
       });
     },
@@ -1039,7 +1039,7 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
     try {
       resolved = fs.realpathSync(dir);
     } catch (err) {
-      throw new Error(`"${dir}" is not usable: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`"${dir}" is not usable: ${errorText(err)}`);
     }
     if (!pickedLabsDirs.has(resolved)) {
       log(`refused labs directory not chosen through the folder dialog: ${dir}`);
@@ -1048,7 +1048,7 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
     try {
       fs.accessSync(resolved, fs.constants.W_OK);
     } catch (err) {
-      throw new Error(`"${dir}" is not writable: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`"${dir}" is not writable: ${errorText(err)}`);
     }
   }
 
@@ -1073,8 +1073,14 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
   return true;
 }
 
+/** A message box parented to the main window when there is one, parentless otherwise. */
 function showMessage(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
-  return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
+  return withParent(dialog.showMessageBox, win, options);
+}
+
+/** The SPA's route for one lab, wherever this shell sends the window to a lab. */
+function workspacePath(labId: string): string {
+  return `/workspace/${encodeURIComponent(labId)}`;
 }
 
 /**
@@ -1129,7 +1135,7 @@ async function openFolderNow(folder: string): Promise<void> {
     await showMessage({ type: "error", message: "Could not open the lab folder", detail: result.message });
     return;
   }
-  if (win) navigateRenderer(win, `/workspace/${encodeURIComponent(result.labId)}`);
+  if (win) navigateRenderer(win, workspacePath(result.labId));
 }
 
 /** Whether `dir` is a directory — itself, not through a symlink — owned by the current user.
@@ -1259,13 +1265,7 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
   }
   if (deployed.length === 0) return true;
 
-  // Captured into a const: `win` is module-level and mutable, so TypeScript can't keep the
-  // non-null narrowing across the closure below.
-  const parent = win;
-  const messageBox = parent
-    ? (o: Electron.MessageBoxOptions) => dialog.showMessageBox(parent, o)
-    : (o: Electron.MessageBoxOptions) => dialog.showMessageBox(o);
-  const { response } = await messageBox({
+  const { response } = await showMessage({
     type: "warning",
     buttons: [opts.primaryLabel, opts.secondaryLabel, "Cancel"],
     defaultId: 0,
@@ -1289,7 +1289,7 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
           signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
         });
       } catch (err) {
-        log(`undeploy of ${name} failed: ${err instanceof Error ? err.message : String(err)}`);
+        log(`undeploy of ${name} failed: ${errorText(err)}`);
       }
     }
   }
@@ -1426,7 +1426,7 @@ if (!app.requestSingleInstanceLock()) {
             log(`orphaned backend (pid ${info.pid}) force-killed`);
           } else {
             log(`force-kill of orphaned backend (pid ${info.pid}) failed: ${outcome.message}`);
-            void dialog.showErrorBox("Could not stop backend", outcome.message ?? "Unknown error.");
+            dialog.showErrorBox("Could not stop backend", outcome.message ?? "Unknown error.");
           }
         });
     });

@@ -2,6 +2,7 @@
 import { app, BrowserWindow, Menu, nativeTheme, shell } from "electron";
 import path from "node:path";
 import { parseUiTheme } from "./crashRecovery";
+import { errorText } from "./errors";
 import { log } from "./logger";
 import { iconPath, setupPage, splashPage } from "./paths";
 import { readPrefs } from "./prefs";
@@ -33,7 +34,7 @@ const TERMINAL_ROUTE = /^\/labs\/[^/]+\/terminal\/[^/]+$/;
  */
 export function loadIgnoringAbort(promise: Promise<void>, label: string): void {
   promise.catch((err) => {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorText(err);
     if (!message.includes("ERR_ABORTED")) log(`${label} failed to load: ${message}`);
   });
 }

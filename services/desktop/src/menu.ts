@@ -9,8 +9,8 @@
  * this side, never by the renderer (see main.ts's openFolderAsLab).
  */
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron";
-import { backendLogPath } from "./backend";
 import { openLabsDir } from "./integrations";
+import { logFile } from "./paths";
 
 /** The shell's copy, imported as a type by preload.ts. Kept in sync by hand with the renderer's
  *  own DesktopMenuAction (frontend src/desktop/bridge.ts), which is a separate npm package and so
@@ -44,7 +44,7 @@ function item(label: string, action: MenuAction, accelerator?: string): MenuItem
   return { label, accelerator, click: () => send(action) };
 }
 
-export interface MenuHandlers {
+interface MenuHandlers {
   /** File → Open Lab Folder…: main.ts's native dialog and open flow. */
   openLabFolder: () => void;
 }
@@ -131,7 +131,7 @@ export function buildMenu(handlers: MenuHandlers): void {
       role: "help",
       submenu: [
         { label: "Kathará Website", click: () => void shell.openExternal(DOCS_URL) },
-        { label: "Show Backend Log", click: () => void shell.openPath(backendLogPath()) },
+        { label: "Show Backend Log", click: () => void shell.openPath(logFile()) },
         item("Show Onboarding Tour", "help:tour"),
         { label: "Report an Issue…", click: () => void shell.openExternal(ISSUES_URL) },
         { label: `Version ${app.getVersion()}`, enabled: false },

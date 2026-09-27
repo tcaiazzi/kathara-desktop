@@ -49,20 +49,18 @@ export interface PreflightProgress {
 }
 
 export interface Preflight {
-  ok: boolean;
   checks: Check[];
   /**
    * Every *blocking* check passed — the app can boot, even if `advisories` below is non-empty
    * (the only advisory raised is a Docker daemon installed but not running). main.ts gates
-   * startup on this, not on `ok`: `ok` still means "every check, no exceptions" for the setup
-   * page, which cares about the literal all-green state.
+   * startup on this.
    */
   canStart: boolean;
   /** The checks that failed but didn't block startup (severity: "advisory"), for the renderer to
    * warn about once the app is up. Always a subset of `checks`. */
   advisories: Check[];
-  /** The interpreter that satisfied the Python checks, to launch the backend with. Set once
-   * `canStart`, not only once `ok` — see above. */
+  /** The interpreter that satisfied the Python checks, to launch the backend with. Set whenever
+   * `canStart` is, advisories or not. */
   python?: string;
 }
 
@@ -394,7 +392,6 @@ export async function runPreflight(
     remedy: frontendPresent ? undefined : "Build the frontend: npm --prefix services/frontend run build",
   });
 
-  const ok = checks.every((c) => c.ok);
   const advisories = checks.filter((c) => !c.ok && c.severity === "advisory");
   const canStart = checks.every((c) => c.ok || c.severity === "advisory");
   log(
@@ -402,7 +399,6 @@ export async function runPreflight(
       checks.map((c) => `${c.id}=${c.ok}`).join(" "),
   );
   return {
-    ok,
     canStart,
     advisories,
     checks,

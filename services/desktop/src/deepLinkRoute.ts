@@ -13,7 +13,7 @@ export const DEEP_LINK_PROTOCOL = "kathara";
 
 /** What a raw deep link resolves to. `unparsable` and `unrecognised` are kathara:// links worth a
  *  log line; `foreign` is anything else (not a URL, or another scheme) and is dropped silently. */
-export type DeepLinkResolution =
+type DeepLinkResolution =
   | { kind: "route"; route: string }
   | { kind: "unparsable" }
   | { kind: "unrecognised" }

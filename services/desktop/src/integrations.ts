@@ -20,7 +20,7 @@ import { linuxTerminalArgv } from "./terminalArgv";
  * Electron's dialog functions have separate parented and parentless overloads; passing an
  * explicit `undefined` parent takes the parented one with a bad argument. Branch instead.
  */
-function withParent<O, R>(
+export function withParent<O, R>(
   fn: { (parent: BrowserWindow, options: O): Promise<R>; (options: O): Promise<R> },
   win: BrowserWindow | null,
   options: O,
