@@ -51,6 +51,7 @@ export interface WorkspaceCtx {
     | "openDisconnect"
     | "deployDevice"
     | "undeployDevice"
+    | "pendingDevices"
     | "removeDevice"
     | "openRuntimeFs"
     | "openOptions"

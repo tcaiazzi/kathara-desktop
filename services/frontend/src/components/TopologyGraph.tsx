@@ -44,6 +44,7 @@ type DeviceActionsProps = Pick<
   | "openDisconnect"
   | "deployDevice"
   | "undeployDevice"
+  | "pendingDevices"
   | "removeDevice"
   | "openRuntimeFs"
   | "openOptions"
@@ -121,6 +122,7 @@ export function TopologyGraph({
   openDisconnect,
   deployDevice,
   undeployDevice,
+  pendingDevices,
   removeDevice,
   openRuntimeFs,
   openOptions,
@@ -657,6 +659,7 @@ export function TopologyGraph({
                 openOptions,
                 deployDevice,
                 undeployDevice,
+                pendingDevices,
                 removeDevice,
                 refreshStartups,
               }}

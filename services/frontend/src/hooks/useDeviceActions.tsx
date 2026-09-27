@@ -32,6 +32,8 @@ interface UseDeviceActionsOptions {
 
 const EMPTY_MODEL: TopoModel = { nodes: [], edges: [] };
 
+export type DeviceLifecycleAction = "deploy" | "undeploy";
+
 // Every device/domain action (deploy, remove, add/remove interface, open a terminal, …) and the
 // context-menu item lists that expose them, shared by the topology canvas and the workspace
 // sidebar's device list — so "right-click a device" means the exact same thing in both places
@@ -51,6 +53,10 @@ export function useDeviceActions({
   const ensureDeployAuthorized = useDeployGate();
   const [actionConfig, setActionConfig] = useState<TopoActionConfig | null>(null);
   const [startups, setStartups] = useState<Record<string, string>>({});
+  // The deploy or undeploy running on each device, for the buttons that start them to show it.
+  // Fixed when the action starts, not read off `running`: withRefresh refreshes `detail` (so
+  // `running` already flips) before the action ends.
+  const [pendingDevices, setPendingDevices] = useState<Record<string, DeviceLifecycleAction>>({});
 
   // Best-effort fetch of each device's real `<name>.startup` content so callers (the node-info
   // panel) can show it (same source + precedence as the Lab Configuration tab). Inspection-only,
@@ -351,7 +357,18 @@ export function useDeviceActions({
     await withRefresh("Remove device", () => api.removeMachine(labId, name), `Device ${name} removed.`);
   }
 
+  // Runs `work` with `name` marked as running `action`.
+  async function runPending(name: string, action: DeviceLifecycleAction, work: () => Promise<unknown>) {
+    setPendingDevices((p) => ({ ...p, [name]: action }));
+    try {
+      await work();
+    } finally {
+      setPendingDevices(({ [name]: _, ...rest }) => rest);
+    }
+  }
+
   async function deployDevice(deviceNode: DeviceNode) {
+    if (pendingDevices[deviceNode.name]) return;
     // Only ever requests the "volumes" case — never "both", even if this device happens to also
     // be privileged: that would need the same resume-after-reload machinery the full-lab deploy
     // has (see useLabLifecycleActions.ts), which a single device deploy has no way to resume into.
@@ -361,17 +378,22 @@ export function useDeviceActions({
     // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
     const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });
     if (outcome !== "proceed") return;
-    await withRefresh("Deploy device", () => api.deployDevice(labId, deviceNode.name), `Device ${deviceNode.name} deployed.`);
+    await runPending(deviceNode.name, "deploy", () =>
+      withRefresh("Deploy device", () => api.deployDevice(labId, deviceNode.name), `Device ${deviceNode.name} deployed.`),
+    );
   }
 
   async function undeployDevice(deviceNode: DeviceNode) {
+    if (pendingDevices[deviceNode.name]) return;
     const ok = await confirm({
       title: `Undeploy ${deviceNode.name}?`,
       message: "Undeploy the device.",
       okLabel: "Undeploy",
     });
     if (!ok) return;
-    await withRefresh("Undeploy device", () => api.undeployDevice(labId, deviceNode.name), `Device ${deviceNode.name} undeployed.`);
+    await runPending(deviceNode.name, "undeploy", () =>
+      withRefresh("Undeploy device", () => api.undeployDevice(labId, deviceNode.name), `Device ${deviceNode.name} undeployed.`),
+    );
   }
 
   async function removeDomain(domainNode: DomainNode) {
@@ -417,12 +439,13 @@ export function useDeviceActions({
   }
 
   function deviceContextItems(nd: DeviceNode): ContextMenuItem[] {
+    const pending = !!pendingDevices[nd.name];
     const items: ContextMenuItem[] = [
       { label: "Configure Device", action: () => onConfigureDevice(nd.name) },
       { label: detail?.deployed ? "View Options" : "Edit Options", action: () => openOptions(nd) },
     ];
     if (!nd.running) {
-      items.push({ label: "Deploy Device", success: true, action: () => deployDevice(nd) });
+      items.push({ label: "Deploy Device", success: true, disabled: pending, action: () => deployDevice(nd) });
     }
     items.push(
       { label: "Show Runtime Filesystem", ...runningGate(nd), action: () => openRuntimeFs(nd) },
@@ -438,7 +461,7 @@ export function useDeviceActions({
       },
     );
     // Remove is offered running or not: the backend undeploys a running device before removing it.
-    if (nd.running) items.push({ label: "Undeploy Device", danger: true, action: () => undeployDevice(nd) });
+    if (nd.running) items.push({ label: "Undeploy Device", danger: true, disabled: pending, action: () => undeployDevice(nd) });
     items.push({ label: "Remove Device", danger: true, action: () => removeDevice(nd) });
     return items;
   }
@@ -471,6 +494,7 @@ export function useDeviceActions({
     openDisconnect,
     deployDevice,
     undeployDevice,
+    pendingDevices,
     removeDevice,
     openRuntimeFs,
     openOptions,

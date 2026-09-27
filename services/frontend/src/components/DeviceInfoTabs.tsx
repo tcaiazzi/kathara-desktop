@@ -6,6 +6,7 @@ import {
   Folder,
   FolderOpen,
   Info,
+  Loader2,
   Network,
   Play,
   Plug,
@@ -47,6 +48,7 @@ type DeviceInfoActions = Pick<
   | "openOptions"
   | "deployDevice"
   | "undeployDevice"
+  | "pendingDevices"
   | "removeDevice"
   | "refreshStartups"
 >;
@@ -203,6 +205,9 @@ export function DeviceInfoTabs({
     <div className="hint mb-2">Changes to these files apply the next time {device} starts.</div>
   );
   const deployFailed = !node.running && hasDeployFailure(detail) && detail.deploy_failed_machines.includes(device);
+  // While one runs its button stays and spins, even once the refresh has flipped `running`.
+  const pending = actions.pendingDevices[device];
+  const showUndeploy = pending ? pending === "undeploy" : node.running;
 
   return (
     <div className="kt-devinfo">
@@ -211,37 +216,37 @@ export function DeviceInfoTabs({
           <h4 className="mb-0 me-1">{device}</h4>
           <span className={`kt-state ${node.running ? "running" : "stopped"}`}>{deviceStateLabel(node)}</span>
           <div className="d-flex gap-2 ms-auto flex-wrap">
-            {node.running ? (
-              <>
-                <SplitButton
-                  size="sm"
-                  variant="dark"
-                  title={
-                    <span className="d-inline-flex align-items-center">
-                      <SquareTerminal size={14} className="me-1" />
-                      Open Terminal
-                    </span>
-                  }
-                  onClick={() => actions.openWorkspaceTerminal(node)}
-                >
-                  <Dropdown.Item onClick={() => actions.openTerminalPopup(node)}>Open in a popup window</Dropdown.Item>
-                </SplitButton>
-                <Button size="sm" variant="outline-danger" onClick={() => void actions.undeployDevice(node)}>
-                  <Square size={13} className="me-1" />
-                  Undeploy
-                </Button>
-              </>
+            {node.running && (
+              <SplitButton
+                size="sm"
+                variant="dark"
+                title={
+                  <span className="d-inline-flex align-items-center">
+                    <SquareTerminal size={14} className="me-1" />
+                    Open Terminal
+                  </span>
+                }
+                onClick={() => actions.openWorkspaceTerminal(node)}
+              >
+                <Dropdown.Item onClick={() => actions.openTerminalPopup(node)}>Open in a popup window</Dropdown.Item>
+              </SplitButton>
+            )}
+            {showUndeploy ? (
+              <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.undeployDevice(node)}>
+                {pending ? <Loader2 size={13} className="me-1 kt-explorer-spin" /> : <Square size={13} className="me-1" />}
+                {pending ? "Undeploying…" : "Undeploy"}
+              </Button>
             ) : (
-              <Button size="sm" variant="outline-success" onClick={() => void actions.deployDevice(node)}>
-                <Play size={13} className="me-1" />
-                Deploy
+              <Button size="sm" variant="outline-success" disabled={!!pending} onClick={() => void actions.deployDevice(node)}>
+                {pending ? <Loader2 size={13} className="me-1 kt-explorer-spin" /> : <Play size={13} className="me-1" />}
+                {pending ? "Deploying…" : "Deploy"}
               </Button>
             )}
             <Button size="sm" variant="outline-secondary" onClick={() => actions.openOptions(node)}>
               <SlidersHorizontal size={13} className="me-1" />
               {detail.deployed ? "View Options" : "Edit Options"}
             </Button>
-            <Button size="sm" variant="outline-danger" onClick={() => void actions.removeDevice(node)}>
+            <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.removeDevice(node)}>
               <Trash2 size={13} className="me-1" />
               Remove
             </Button>
