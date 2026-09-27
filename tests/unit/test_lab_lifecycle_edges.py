@@ -445,8 +445,8 @@ def test_a_delete_that_fails_part_way_keeps_the_lab_listed_and_says_why(service,
 
 
 def test_a_lab_with_a_folder_the_user_cant_empty_is_refused_whole(service, facade, monkeypatch):
-    """A folder a device left owned by root is found before anything is removed: the delete is
-    refused with the path, nothing is deleted and the lab stays listed as it is."""
+    """A folder a device left owned by root is found before anything is undeployed or removed:
+    the delete is refused with the path, and the lab stays listed and running as it is."""
     demo = lab_id(service, "l")
     model = service.registry.get(demo)
     directory = service.registry.directory(demo)
@@ -458,6 +458,7 @@ def test_a_lab_with_a_folder_the_user_cant_empty_is_refused_whole(service, facad
         service.delete_lab(demo)
 
     assert removed == []
+    assert facade.undeploy_calls == []
     assert service.registry.get(demo) is model
     assert service.registry.directory(demo) == directory
 

@@ -363,6 +363,15 @@ def test_writing_a_file_another_account_owns_names_it(tmp_path, monkeypatch):
         service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/notes.txt", "changed\n")
 
 
+def test_creating_a_file_in_a_folder_another_account_owns_names_the_folder(tmp_path, monkeypatch):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_mkdir_offline(lab_id(service, "testlab"), "/shared/results")
+    monkeypatch.setattr(fs.osfs.OSFS, "open", _deny(str(store.lab_dir("testlab") / "shared" / "results" / "new.txt")))
+
+    with pytest.raises(LabFilePermissionError, match=r"^`/shared/results` is owned by another account"):
+        service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/results/new.txt", "x\n")
+
+
 def test_deleting_a_folder_another_account_owns_names_what_blocked_it(tmp_path, monkeypatch):
     service, store = _two_machine_lab(tmp_path)
     service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/results/out.txt", "r\n")

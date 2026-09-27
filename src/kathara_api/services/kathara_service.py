@@ -257,6 +257,9 @@ def _lab_file_permissions(method):
             denied = _permission_denied_path(exc)
             if denied is None:
                 raise
+            # Creating a file fails on the folder that would hold it, and names the file.
+            if denied and not os.path.lexists(denied):
+                denied = os.path.dirname(denied)
             path = _lab_display_path(denied, self._lab_dir(lab_id))
             raise LabFilePermissionError(f"{_owned_by_another_account(path)}, so the app can't change it.") from exc
 
@@ -2691,6 +2694,17 @@ class KatharaService:
                     f"`{self._lab_label(lab_id)}` is a folder opened from outside the labs folder, so it "
                     "can't be deleted from here. Close it instead."
                 )
+            # Before the undeploy, so a refused delete leaves the lab exactly as it was, running
+            # included. A device writing a new root-owned file after this check is what the
+            # part-way failure below still covers.
+            if lab_dir is not None:
+                blocked = self.store.first_undeletable(lab_dir)
+                if blocked is not None:
+                    path = _lab_display_path(str(blocked), lab_dir)
+                    raise LabFilePermissionError(
+                        f"`{self._lab_label(lab_id)}` can't be deleted: {_owned_by_another_account(path)}. "
+                        "Nothing was deleted."
+                    )
             try:
                 self._facade().undeploy_lab(lab_hash=lab_id)
             except DockerDaemonConnectionError:
@@ -2711,13 +2725,6 @@ class KatharaService:
         # reloading it from disk instead could fail on a lab.conf already removed.
         with self._claiming(lab_id):
             label = self._lab_label(lab_id)
-            if lab_dir is not None:
-                blocked = self.store.first_undeletable(lab_dir)
-                if blocked is not None:
-                    path = _lab_display_path(str(blocked), lab_dir)
-                    raise LabFilePermissionError(
-                        f"`{label}` can't be deleted: {_owned_by_another_account(path)}. Nothing was deleted."
-                    )
             lab = self.registry.remove(lab_id)
             if lab_dir is None:
                 return
