@@ -109,6 +109,10 @@ export function AutocompleteInput({
               pick(matches[highlight].option);
             }
           } else if (e.key === "Escape") {
+            // Consumed: an enclosing react-bootstrap Modal closes on any Escape not
+            // `defaultPrevented`, which would throw away the whole form to dismiss a suggestion.
+            // With the list already closed, the early return above lets Escape close the dialog.
+            e.preventDefault();
             setOpen(false);
           }
         }}
