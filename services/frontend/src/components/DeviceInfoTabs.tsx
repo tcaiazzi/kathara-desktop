@@ -1,6 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button, Dropdown, SplitButton, Tab, Tabs } from "react-bootstrap";
-import { FolderOpen, Play, Plug, SlidersHorizontal, SquareTerminal, Square, Trash2, Unplug } from "lucide-react";
+import {
+  FileTerminal,
+  Folder,
+  FolderOpen,
+  Info,
+  Network,
+  Play,
+  Plug,
+  SlidersHorizontal,
+  SquareTerminal,
+  Square,
+  Trash2,
+  Unplug,
+  type LucideIcon,
+} from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useElementSize } from "../hooks/useElementSize";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
@@ -215,13 +229,13 @@ export function DeviceInfoTabs({
 
       <div className="kt-devinfo-tabs" data-tour="node-info-tabs">
         <Tabs activeKey={tab} onSelect={(k) => k && selectTab(k as DeviceInfoTab)} className="mb-2">
-          <Tab eventKey="overview" title="Overview">
+          <Tab eventKey="overview" title={<TabTitle icon={Info} label="Overview" />}>
             <OverviewTab node={node} machine={machine} />
           </Tab>
-          <Tab eventKey="network" title="Network">
+          <Tab eventKey="network" title={<TabTitle icon={Network} label="Network" />}>
             <NetworkTab node={node} actions={actions} />
           </Tab>
-          <Tab eventKey="scripts" title={<TabTitle label="Scripts" dirty={!!(dirty.startup || dirty.shutdown)} />}>
+          <Tab eventKey="scripts" title={<TabTitle icon={FileTerminal} label="Scripts" dirty={!!(dirty.startup || dirty.shutdown)} />}>
             {runningHint}
             <DeviceScriptSection
               labId={labId}
@@ -243,7 +257,7 @@ export function DeviceInfoTabs({
             />
             {node.running && <DeviceStartupLog labId={labId} device={device} />}
           </Tab>
-          <Tab eventKey="files" title={<TabTitle label="Files" dirty={!!dirty.files} />}>
+          <Tab eventKey="files" title={<TabTitle icon={Folder} label="Files" dirty={!!dirty.files} />}>
             <div className="kt-devinfo-files">
               {runningHint}
               {node.running && (
@@ -274,16 +288,17 @@ export function DeviceInfoTabs({
   );
 }
 
-function TabTitle({ label, dirty }: { label: string; dirty: boolean }) {
+function TabTitle({ icon: Icon, label, dirty = false }: { icon: LucideIcon; label: string; dirty?: boolean }) {
   return (
-    <>
+    <span className="d-inline-flex align-items-center">
+      <Icon size={14} className="me-1" aria-hidden />
       {label}
       {dirty && (
         <span className="text-warning" title="Unsaved changes" aria-label="Unsaved changes">
-          {" "}●
+          {"\u00a0"}●
         </span>
       )}
-    </>
+    </span>
   );
 }
 
