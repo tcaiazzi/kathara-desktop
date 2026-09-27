@@ -76,7 +76,7 @@ const STEPS: TourStep[] = [
     needsDevice: true,
     popover: {
       title: "Configure the device",
-      description: "Overview has its options, Network its interfaces, Scripts its startup and shutdown scripts, and Files the folder copied into it. Deploy, Open Terminal, Options and Remove sit right above.",
+      description: "Overview has its options and startup log, Network its interfaces, Scripts its startup and shutdown scripts, and Files the folder copied into it. Deploy, Open Terminal, Options and Remove sit right above.",
     },
   },
   {

@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useElementSize } from "../hooks/useElementSize";
+import { useStartupStatus } from "../hooks/useStartupStatus";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { api } from "../services/api";
 import { savedDeviceTab, type DeviceInfoTab } from "../services/deviceInfoTabs";
@@ -86,8 +87,8 @@ function saveTab(tab: DeviceInfoTab) {
 }
 
 // The Inspector for one device: a fixed header with its state and the actions on the device
-// as a whole (deploy/undeploy, terminal, options, remove), then four
-// tabs — Overview (options), Network (interfaces), Scripts (boot scripts and startup log) and Files
+// as a whole (deploy/undeploy, terminal, options, remove), then four tabs — Overview (options and
+// startup log), Network (interfaces), Scripts (boot scripts and startup log) and Files
 // (the device's own folder). Mounted per device (keyed by name), so switching device starts afresh.
 // Every tab stays mounted while another is shown, so an editor left open keeps its text; the
 // workspace asks this component first (the selection guard) whenever changing device would drop one.
@@ -181,6 +182,12 @@ export function DeviceInfoTabs({
 
   const { ref: filesRef, width: filesWidth } = useElementSize<HTMLDivElement>();
 
+  // Polled here, once, since both Overview and Scripts show it.
+  const startupStatus = useStartupStatus(labId, device, node.running);
+  const startupLog = node.running && (
+    <DeviceStartupLog status={startupStatus} hasCommands={startupPreview.trim() !== ""} />
+  );
+
   const runningHint = node.running && (
     <div className="hint mb-2">Changes to these files apply the next time {device} starts.</div>
   );
@@ -236,6 +243,7 @@ export function DeviceInfoTabs({
         <Tabs activeKey={tab} onSelect={(k) => k && selectTab(k as DeviceInfoTab)} className="mb-2">
           <Tab eventKey="overview" title={<TabTitle icon={Info} label="Overview" />}>
             <OverviewTab node={node} machine={machine} />
+            {startupLog}
           </Tab>
           <Tab eventKey="network" title={<TabTitle icon={Network} label="Network" />}>
             <NetworkTab node={node} actions={actions} ipMismatches={ipMismatches} />
@@ -260,9 +268,7 @@ export function DeviceInfoTabs({
               onSaved={relist}
               onDirtyChange={onShutdownDirty}
             />
-            {node.running && (
-              <DeviceStartupLog labId={labId} device={device} hasCommands={startupPreview.trim() !== ""} />
-            )}
+            {startupLog}
           </Tab>
           <Tab eventKey="files" title={<TabTitle icon={Folder} label="Files" dirty={!!dirty.files} />}>
             <div className="kt-devinfo-files">
