@@ -30,8 +30,8 @@ NAMESPACE = "kathara"
 REPOSITORIES_URL = f"https://hub.docker.com/v2/repositories/{NAMESPACE}/"
 TAGS_URL = "https://hub.docker.com/v2/repositories/{image_name}/tags/"
 
-# Docker Hub's own maximum. One page covers the org today (25 repos); the `next` walk below is
-# what keeps that from mattering.
+# Docker Hub's own maximum, so the org's repos usually fit in one page; the `next` walk below still
+# fetches every page when they don't.
 PAGE_SIZE = 100
 # A pagination loop (a `next` that never terminates) would otherwise hang the request. Nothing
 # legitimate gets near this at 100 per page.
