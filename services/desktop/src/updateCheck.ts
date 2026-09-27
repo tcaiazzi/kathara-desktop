@@ -10,7 +10,7 @@ import { isNewer, parseVersion } from "./version";
 
 // The repo release.yml actually publishes to (see its tag_name: v<package.json version>).
 // Deliberately not the KatharaFramework repo that pyproject.toml lists for bug reports and
-// setup.html links for issues: update checks follow the builds, issues follow the upstream project.
+// setup.js links for issues: update checks follow the builds, issues follow the upstream project.
 // Not a setting either — changing where this app is distributed from is a maintainer decision, not
 // a per-install preference.
 const REPO = "tcaiazzi/kathara-desktop";

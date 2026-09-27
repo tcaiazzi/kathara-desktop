@@ -94,11 +94,9 @@ export function backendSrcDir(): string | null {
  * Windows only: bind-mounting anything under `userData` (`%APPDATA%\Roaming\...`) can be denied
  * outright by Docker Desktop — AppData is a location commonly watched/locked by antivirus/EDR
  * tooling, unlike an ordinary user-created folder — so Windows gets a plain folder under the
- * profile root instead. No legacy fallback: the app has no real installed base yet (only test
- * releases), so there's no existing AppData folder that needs preserving. Not Documents\...
- * either: Documents is
- * frequently OneDrive-synced via Known Folder Move, and cloud placeholder files there are at
- * least as likely to break bind mounts as AppData is.
+ * profile root instead. Not Documents\... either: Documents is frequently OneDrive-synced via
+ * Known Folder Move, and cloud placeholder files there are at least as likely to break bind
+ * mounts as AppData is.
  */
 export function defaultLabsDir(): string {
   if (process.platform === "win32") {
@@ -111,7 +109,7 @@ export function defaultLabsDir(): string {
  * Lab storage root actually in effect. Prefers a user-chosen directory (Settings → "Change…",
  * services/frontend's SettingsPage) over the default, but only if it still exists — a configured
  * directory that vanished (an unplugged drive, a deleted folder) falls back silently instead of
- * failing backend startup, the same guard idiom as frontendDir()/iconPath() above.
+ * failing backend startup, the same guard idiom as frontendDir() above and iconPath() below.
  *
  * Validated as well as existence-checked, because this value is what becomes
  * KATHARA_API_LABS_DIR: on the elevated macOS path sudo-prompt writes every env value into

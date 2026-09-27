@@ -31,7 +31,7 @@ export interface BackendHandle {
    * (waitForHealth, shutdownAt, the /api/system admin check), and handed to the renderer over
    * IPC (main.ts's "auth:get-token") so it can do the same. */
   token: string;
-  /** The second per-launch secret, KATHARA_API_SHELL_TOKEN: the only thing `POST /labs/open`
+  /** The second per-launch secret, KATHARA_API_SHELL_TOKEN: the only thing `POST /api/labs/open`
    * accepts (src/kathara_api/dependencies.py's require_shell_token). Unlike `token`, it never
    * leaves this module — not to main.ts, not over IPC — so nothing the renderer runs can open an
    * arbitrary host folder as a lab; `openLabFolder` below is its one use. */
@@ -41,8 +41,6 @@ export interface BackendHandle {
 function authHeaders(token: string): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
-
-
 
 const HEALTH_TIMEOUT_MS = 45_000;
 const HEALTH_POLL_MS = 250;
@@ -255,7 +253,7 @@ export async function reclaimOwnershipWithPrompt(targets: ReclaimTargets): Promi
  * invocation, so unlike a `sudo -n`/cached-ticket approach it doesn't depend on this headless
  * spawn sharing any session/tty state with a previous one. Shares `runSudoWithPassword` and the
  * rate limiter with `verifySudoPassword`, so this doesn't open a second password oracle alongside
- * the one Step 1 (SUDO_RATE_LIMIT_FREE_ATTEMPTS) already closed.
+ * the one SUDO_RATE_LIMIT_FREE_ATTEMPTS closes.
  */
 export async function reclaimOwnershipWithPassword(
   password: string,
@@ -423,7 +421,6 @@ function findFreePort(): Promise<number> {
     });
   });
 }
-
 
 /** Bind-test a specific port on the loopback interface. Racy by nature — something can take it
  * between this check and the child's own bind — which is exactly the race findFreePort() already
@@ -628,8 +625,8 @@ async function buildBackendCommand(
     // verbatim, which the app then invites the user to open and share (Help menu, the setup/
     // error page's log tail). This app is a single-user desktop backend with no operational need
     // for an access log; not logging the URLs at all is simpler and more durable than trying to
-    // redact just the token out of them (see logRaw's own redaction below for the defence that
-    // still applies if this ever gets re-enabled or a caller logs a raw URL some other way).
+    // redact just the token out of them (see logger.ts's logRaw for the redaction that still
+    // applies if this ever gets re-enabled or a caller logs a raw URL some other way).
     "--no-access-log",
   ];
 
@@ -1067,7 +1064,7 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
   // defence, not the only one.
   const cmd = [python, ...args].map((arg) => quoteForShellString(arg)).join(" ");
   // Not `handle`: that still points at the backend this one is trying to replace, so it can't
-  // stand in for "the elevated one is up" the way it could when this path stopped it first.
+  // stand in for "the elevated one is up".
   let started = false;
   let execFailure: string | null = null;
   // `appEnv`, not the full inherited environment: `options.env` here is validated against

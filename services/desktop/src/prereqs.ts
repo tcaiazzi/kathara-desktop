@@ -145,7 +145,7 @@ export async function checkDockerStatus(): Promise<DockerStatus> {
     return {
       state: "stopped",
       detail: (res.stderr.trim() || "docker info failed").split("\n")[0],
-      // No "then choose Check again" here — unlike "missing" below, this state never strands the
+      // No "then choose Check again" here — unlike "missing" above, this state never strands the
       // user on a page with only a manual retry button: it's advisory (Preflight.canStart treats
       // it as non-blocking), so the app is already open, and DockerStatusContext.tsx polls this
       // same check in the background and clears the warning on its own once Docker answers.

@@ -24,13 +24,12 @@ extraResources:
   # runtime — the icon electron-builder bakes into the installer isn't reachable from code.
   - from: resources/icon.png
     to: icon.png
-  # Nothing from vendor/ ships unscoped any more. It holds three build inputs, all of them
-  # per-(os, arch) and all picked up by the platform-scoped extraResources below: the interpreter
-  # (fetch-python.mjs), the dependency closure installed for that target (vendor-python-deps.mjs),
-  # and kathara-api-rest's own wheel — which is no longer shipped at all, because
-  # vendor-python-deps.mjs has already installed it into every site-packages-<os>-<arch>/ tree.
-  # A packaged app therefore carries a complete, ready-to-run Python environment and installs
-  # nothing on first launch.
+  # Nothing from vendor/ ships unscoped. It holds three build inputs: the per-(os, arch)
+  # interpreter (fetch-python.mjs) and the dependency closure installed for that target
+  # (vendor-python-deps.mjs), both picked up by the platform-scoped extraResources below, and
+  # kathara-api-rest's own wheel, which does not ship at all: vendor-python-deps.mjs installs it
+  # into every site-packages-<os>-<arch>/ tree. A packaged app therefore carries a complete,
+  # ready-to-run Python environment and installs nothing on first launch.
 
 # kathara://lab/<name> — the runtime side is in src/deeplink.ts.
 protocols:
@@ -60,22 +59,22 @@ linux:
   # ("kathara-desktop.desktop"), which is also what Electron passes to app.setDesktopName() and
   # therefore what the window's app_id/WM_CLASS becomes. All three have to agree for a desktop
   # environment to group a running window under this launcher instead of showing it as a separate,
-  # icon-less entry — and without `desktopName` they did not: the file was named after
+  # icon-less entry — and without `desktopName` they would not: the file would be named after
   # `executableName` ("kathara-desktop", from package.json's `name`), StartupWMClass after this
   # file's productName ("Kathara-Desktop"), and the runtime app_id after package.json's productName
-  # ("Kathara Desktop"). `desktopName` is what fixes the Linux window identity without calling
+  # ("Kathara Desktop"). `desktopName` is what pins the Linux window identity without calling
   # app.setName(), which src/main.ts deliberately avoids because it would also rename the macOS
   # menu-bar and Dock label.
   #
-  # This key is a no-op today — `desktopName` and `executableName` resolve to the same
-  # "kathara-desktop", so the filename is unchanged (and the kathara:// scheme handler, registered
-  # by desktop-file id, keeps working). It is set anyway so the two are *held* equal rather than
-  # coincidentally equal if `name`/`productName` ever diverge, and because electron-builder v27
-  # makes `true` the default.
+  # This key changes nothing in the output while `desktopName` and `executableName` both resolve
+  # to "kathara-desktop": the filename is the same either way (and the kathara:// scheme handler,
+  # registered by desktop-file id, keeps working). It is set anyway so the two are *held* equal
+  # rather than coincidentally equal if `name`/`productName` ever diverge, and because
+  # electron-builder v27 makes `true` the default.
   syncDesktopName: true
   # The launcher label the user actually reads. It otherwise defaults to productName, which is
   # hyphenated on purpose so every artifact filename comes out space-free (see nsis.artifactName
-  # below) — a good reason for a filename and a bad one for a menu entry, which was showing
+  # below) — a good reason for a filename and a bad one for a menu entry, which would read
   # "Kathara-Desktop". Overriding just this key keeps both: the label reads naturally while the
   # .deb/.rpm/AppImage filenames stay hyphenated. `entry` is deep-assigned over the computed
   # values, so nothing else in the file changes; note that Exec cannot be set here (electron-builder
@@ -100,9 +99,9 @@ deb:
   # Required by fpm; taken from package.json's author, stated here so it is obvious where to
   # change it when the project has a dedicated packaging address.
   maintainer: Kathara Framework <tommaso@kathara.org>
-  # Docker is still a soft recommendation (apt can't see whether Docker is actually running, and
-  # `docker.io` isn't the only way to get it — see src/prereqs.ts's checkDocker()). Python is no
-  # longer listed: the app bundles its own interpreter (paths.ts's bundledPythonPath()) and never
+  # Docker is only a soft recommendation (apt can't see whether Docker is actually running, and
+  # `docker.io` isn't the only way to get it — see src/prereqs.ts's checkDockerStatus()). Python
+  # is not listed: the app bundles its own interpreter (paths.ts's bundledPythonPath()) and never
   # requires a system one.
   recommends: ["docker.io (>= 17.03.2) | docker-ce (>= 17.03.2)"]
 
@@ -116,19 +115,17 @@ mac:
   # makes the app harder to launch. `identity: null` skips *all* signing here, including the
   # ad-hoc one Apple Silicon requires just to launch an app at all (Intel only needs Gatekeeper's
   # "unidentified developer" bypassed, e.g. right-click → Open) — scripts/sign-mac-arm64.js
-  # applies that ad-hoc signature separately for the arm64 build, afterPack — including, now, the
-  # bundled Python interpreter below, which needs the same per-binary ad-hoc signature to exec at
-  # all on Apple Silicon. First run still needs
-  # `xattr -dr com.apple.quarantine "/Applications/Kathara-Desktop.app"` (or right-click → Open) either
-  # way, since none of this is a real Developer ID signature.
+  # applies that ad-hoc signature separately for the arm64 build, afterPack — including the
+  # bundled Python interpreter and its vendored dependencies below, whose Mach-O files need the
+  # same per-binary ad-hoc signature to exec at all on Apple Silicon. First run still needs
+  # `xattr -dr com.apple.quarantine "/Applications/Kathara-Desktop.app"` (or right-click → Open)
+  # either way, since none of this is a real Developer ID signature.
   hardenedRuntime: false
   identity: null
   extraResources:
     - from: vendor/python-mac-${arch}
       to: python
-    # The dependency closure pip installed for this exact target (vendor-python-deps.mjs), put on
-    # PYTHONPATH when the shell spawns uvicorn — see paths.ts's bundledSitePackages(). Scoped per
-    # arch for the same reason the interpreter is: the C extensions in it are arch-specific.
+    # Same as linux's site-packages entry above.
     - from: vendor/site-packages-mac-${arch}
       to: site-packages
 
@@ -142,9 +139,7 @@ win:
   extraResources:
     - from: vendor/python-win-${arch}
       to: python
-    # The dependency closure pip installed for this exact target (vendor-python-deps.mjs), put on
-    # PYTHONPATH when the shell spawns uvicorn — see paths.ts's bundledSitePackages(). Scoped per
-    # arch for the same reason the interpreter is: the C extensions in it are arch-specific.
+    # Same as linux's site-packages entry above.
     - from: vendor/site-packages-win-${arch}
       to: site-packages
 
@@ -154,7 +149,7 @@ nsis:
   createDesktopShortcut: true
   # Visible labels, not filenames — the Start-menu/desktop shortcut and the "Installed apps" entry.
   # Both default to productName, hyphenated for the filename reason below, which read as
-  # "Kathara-Desktop" and "Kathara-Desktop 0.1.4". Same override as linux.desktop.entry.Name above:
+  # "Kathara-Desktop" and "Kathara-Desktop <version>". Same override as linux.desktop.entry.Name above:
   # the labels read naturally, the artifact filenames stay space-free.
   shortcutName: Kathara Desktop
   uninstallDisplayName: Kathara Desktop ${version}

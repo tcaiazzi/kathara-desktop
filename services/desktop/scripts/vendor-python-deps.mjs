@@ -88,8 +88,8 @@ const OPTIONAL_ACCELERATORS = new Set(["httptools", "uvloop", "watchfiles"]);
  * `pywin32.pth`, and it is the only thing that puts pywin32's `win32/`, `win32/lib/` and
  * `pythonwin/` subdirectories on sys.path *and* calls `os.add_dll_directory()` for the DLLs in
  * `pywin32_system32/`. Without it `import win32pipe` fails outright, and on Windows the docker SDK
- * needs exactly that module to reach Docker Desktop over its named pipe — which surfaced as every
- * Docker-touching API call failing with `ImportError`.
+ * needs exactly that module to reach Docker Desktop over its named pipe — so without this file,
+ * every Docker-touching API call fails with `ImportError`.
  *
  * `site` imports a module named `sitecustomize` at interpreter startup, after PYTHONPATH is
  * already on sys.path, so this file is found here without any further wiring.
@@ -225,7 +225,7 @@ function vendorTarget(os, arch, wheel, packages) {
     abi: ABI_TAG,
     // The local wheel by *content*, not just by the name==version below. kathara-api-rest is the
     // one package here whose source changes without its version changing — a developer editing
-    // src/kathara_api and rebuilding produces a different 0.1.4 wheel every time — so keying on
+    // src/kathara_api and rebuilding produces a different wheel at the same version — so keying on
     // the version alone would report "already vendored" and quietly ship the previous build's
     // backend inside the installer.
     backend: createHash("sha256").update(readFileSync(wheel)).digest("hex").slice(0, 16),

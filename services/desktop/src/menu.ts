@@ -58,8 +58,8 @@ export function buildMenu(handlers: MenuHandlers): void {
       ? ([{ role: "appMenu" }] satisfies MenuItemConstructorOptions[])
       : []),
     // A bare `role: "editMenu"` would register Cmd/Ctrl+C/X/V/A as *native* accelerators,
-    // intercepted by Electron before the keydown ever reaches the renderer — the same problem
-    // Save already had to route around below. registerAccelerator: false on Copy/Cut/Paste/
+    // intercepted by Electron before the keydown ever reaches the renderer — the same reason
+    // Save below is registered without one. registerAccelerator: false on Copy/Cut/Paste/
     // SelectAll lets the fs explorer's own scoped keydown listener
     // (useFsClipboardShortcuts) and react-arborist's built-in Ctrl/Cmd+A handle them instead;
     // normal text-field editing still works, since the browser handles those keys natively

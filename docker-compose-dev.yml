@@ -43,7 +43,7 @@ services:
       - "8000:8000"
 
   frontend:
-    image: node:24-alpine # keep in step with .nvmrc — every other Node in this repo comes from there
+    image: node:24-alpine # keep in step with .nvmrc, the Makefile's NODE_VERSION and the workflows' node-version
     working_dir: /app
     volumes:
       - ./services/frontend:/app
@@ -53,7 +53,7 @@ services:
     # Runs on every container start, before Vite. `npm ci` reinstalls node_modules from the
     # lockfile, so a start never inherits the half-written volume an interrupted previous start
     # can leave behind. `--no-audit`/`--no-fund` drop two registry round-trips that have nothing
-    # to do with starting the dev server and were most of the wait.
+    # to do with starting the dev server and would be most of the wait.
     command: sh -c "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
     ports:
       - "5173:5173"

@@ -2,12 +2,12 @@
 // passed (`npm run dist -- --win`, `-- --linux AppImage`, …) and always pinning the config file.
 //
 // Its reason to exist is the environment it sets up: ELECTRON_BUILDER_7Z_FILTER has to be BCJ2 for
-// every Windows build, and there is no way to express that in electron-builder.yml. It used to be
-// declared by each caller instead — the two GitHub workflows and the Makefile's `dist-win` — which
-// left `npm run dist:win` (the command docs/DEVELOPMENT.md tells a maintainer to run, and
-// what a bare `make dist` resolves to on a Windows host) as the one entrance without it, silently
-// shipping a broken arm64 installer. Setting it here means every caller inherits it, so there is
-// one place to get it right instead of four.
+// every Windows build, and there is no way to express that in electron-builder.yml. Every entrance
+// to a Windows build — the two GitHub workflows, the Makefile's `dist-win`, and `npm run dist:win`
+// (the command docs/DEVELOPMENT.md tells a maintainer to run, and what a bare `make dist` resolves
+// to on a Windows host) — goes through this script, so this is the one place to get it right. An
+// entrance that declared the variable itself instead would be one that can forget it, and
+// forgetting it silently ships a broken arm64 installer.
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";

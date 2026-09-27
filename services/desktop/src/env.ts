@@ -2,7 +2,7 @@
  * A GUI app launched by double-click (Finder, Dock, a .desktop file) does not inherit the PATH
  * a Terminal session has — macOS in particular starts it with just /usr/bin:/bin:/usr/sbin:/sbin,
  * so Homebrew (/opt/homebrew/bin, /usr/local/bin) and Docker Desktop's CLI symlink are invisible
- * even though `docker` works fine from a Terminal. That breaks checkDocker() (prereqs.ts) and
+ * even though `docker` works fine from a Terminal. That breaks checkDockerStatus() (prereqs.ts) and
  * every PATH-based Python lookup (pythonCandidates()), with no hint that PATH is the culprit.
  *
  * Fix: ask the user's own login shell what its PATH is (sourcing their .zprofile/.profile, where
@@ -57,7 +57,7 @@ async function resolvePathEnv(): Promise<void> {
     }
   } catch (err) {
     // Best effort: if the login shell can't be queried, fall back to whatever PATH Electron
-    // already has: the checks below then report whatever isn't reachable on it.
+    // already has: the preflight checks (prereqs.ts) then report whatever isn't reachable on it.
     log(`could not resolve login shell PATH via ${shell}: ${err instanceof Error ? err.message : err}`);
   }
 }

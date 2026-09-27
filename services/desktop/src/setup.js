@@ -87,13 +87,13 @@ function checksHtml(checks, showRemedy = true) {
   return `<ul>${items}</ul>`;
 }
 
-// A stopped Docker daemon is advisory (main.ts's canStart/severity split) and never reaches
+// A stopped Docker daemon is advisory (prereqs.ts's canStart/severity split) and never reaches
 // this page on its own — the app boots straight into the workspace and warns from there
 // instead (DockerStatusContext.tsx). So Docker being the *only* thing still failing here
 // means it's genuinely missing, not just unstarted: the callout points at installation, not
-// at "open the app and wait". This is additive to checksHtml() above,
-// not a replacement: the checklist still lists Docker (and its own remedy text) normally
-// underneath, for anyone who scrolls past the callout.
+// at "open the app and wait". This is additive to checksHtml() above, not a replacement: the
+// checklist still lists Docker (and its own remedy text) normally underneath, for anyone who
+// scrolls past the callout.
 function dockerCallout(checks) {
   const failing = checks.filter((c) => !c.ok);
   if (failing.length !== 1 || failing[0].id !== "docker") return "";

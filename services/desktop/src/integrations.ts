@@ -44,7 +44,7 @@ export async function pickLabsDirectory(win: BrowserWindow | null): Promise<stri
 /**
  * Let the user pick a folder to open as a lab (File → Open Lab Folder…). Selection only: main.ts
  * hands the pick to the backend, and that path — chosen here, in a native dialog the renderer
- * cannot fake — is the only kind the backend's `POST /labs/open` is ever given.
+ * cannot fake — is the only kind the backend's `POST /api/labs/open` is ever given.
  */
 export async function pickLabFolder(win: BrowserWindow | null): Promise<string | null> {
   const result = await withParent(dialog.showOpenDialog, win, {
@@ -73,8 +73,7 @@ export async function pickHostDirectory(
     title: "Choose a host directory to mount",
     properties: ["openDirectory", "createDirectory", "showHiddenFiles"],
     // Re-picking starts where the field already points, when that still exists. Undefined — not
-    // "/", which names nothing on Windows — lets
-    // the OS reopen wherever the user last was.
+    // "/", which names nothing on Windows — lets the OS reopen wherever the user last was.
     defaultPath: current && fs.existsSync(current) ? current : undefined,
   });
   return result.canceled ? null : (result.filePaths[0] ?? null);
@@ -96,14 +95,6 @@ export function openLabsDir(): void {
   void shell.openPath(dir);
 }
 
-/**
- * Build the argv that opens a terminal window at `cwd`, per platform, optionally running
- * `command` in it. With no command, the emulator just opens with the user's default shell.
- *
- * On Linux there is no single answer, so the first emulator that exists on PATH wins;
- * a user whose emulator isn't listed can override it in preferences.json with
- * `terminalCommand`, where "{cmd}" is substituted with the shell command.
- */
 /**
  * spawn() for a detached, "fire and forget" process this app never tracks or waits on (an
  * external terminal emulator). A ChildProcess with no 'error' listener throws its error as an
@@ -130,11 +121,20 @@ export async function openTerminalHere(labDir: string): Promise<void> {
   await spawnTerminal(labDir);
 }
 
-// `command` has no caller — the only entry point is `openTerminalHere`, which opens a
-// plain shell. It is kept, with the per-platform branches that serve it, because it is the whole
-// reason `terminalCommand`'s "{cmd}" placeholder exists, and because the macOS throwaway-script
-// path (mkdtemp + "wx" + cleanup) is deliberate in every detail and would be worse to re-derive
-// from scratch than to leave in place.
+/**
+ * Open a terminal window at `labDir`, per platform, optionally running `command` in it. With no
+ * command, the emulator just opens with the user's default shell.
+ *
+ * On Linux there is no single answer, so the first emulator that exists on PATH wins;
+ * a user whose emulator isn't listed can override it in preferences.json with
+ * `terminalCommand`, where "{cmd}" is substituted with the shell command.
+ *
+ * `command` has no caller — the only entry point is `openTerminalHere`, which opens a
+ * plain shell. It is kept, with the per-platform branches that serve it, because it is the whole
+ * reason `terminalCommand`'s "{cmd}" placeholder exists, and because the macOS throwaway-script
+ * path (mkdtemp + "wx" + cleanup) is deliberate in every detail and would be worse to re-derive
+ * from scratch than to leave in place.
+ */
 async function spawnTerminal(labDir: string, command?: string): Promise<void> {
   if (!fs.existsSync(labDir)) throw new Error(`lab directory does not exist: ${labDir}`);
 

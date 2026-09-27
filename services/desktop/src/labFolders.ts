@@ -25,8 +25,8 @@ const WINDOWS_DRIVE_RE = /^[a-z]:([\\/]|$)/i;
  * anything with a URL scheme. That last rule is a security one, not a nicety: the OS hands the app
  * every `kathara:` link a web page opens, and one without `//` (`kathara:../../../home/u/x`) is
  * neither a deep link (deepLinkRoute.ts wants `kathara://`) nor, once resolved, anything but an
- * attacker-chosen absolute path. The last remaining argument is the one, resolved against `cwd` (the *calling*
- * shell's, for a second instance), and only if it really is a directory.
+ * attacker-chosen absolute path. The last remaining argument is the one, resolved against `cwd`
+ * (the *calling* shell's, for a second instance), and only if it really is a directory.
  */
 export function folderFromArgv(
   argv: string[],

@@ -167,12 +167,13 @@ const api = {
   onDeepLink: (cb: (route: string) => void) => subscribe<string>("deeplink", cb),
   onWindowStateChange: (cb: (state: { maximized: boolean; fullscreen: boolean }) => void) =>
     subscribe<{ maximized: boolean; fullscreen: boolean }>("window:state", cb),
-  /** The window is about to close, or the shell is about to replace this page: `handler` decides,
-   * typically by asking the user about unsaved edits in the app's own dialog. Acknowledged at once so the shell knows an answer is coming
-   * (see main.ts's askRendererBeforeClose); a handler that throws lets the window close. */
   /** The backend stopped while this page is on screen, and what happened next — see main.ts's
    * BackendStateNotice and onBackendExit. */
   onBackendState: (cb: (notice: unknown) => void) => subscribe<unknown>("backend:state", cb),
+  /** The window is about to close, or the shell is about to replace this page: `handler` decides,
+   * typically by asking the user about unsaved edits in the app's own dialog. Acknowledged at once
+   * so the shell knows an answer is coming (see main.ts's askRendererBeforeLeave); a handler that
+   * throws lets the window close. */
   onCloseRequest: (handler: () => Promise<boolean>) =>
     subscribe<string>("window:close-request", (id) => {
       void ipcRenderer.invoke("window:close-ack", id);

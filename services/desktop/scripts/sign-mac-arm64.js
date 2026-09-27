@@ -38,9 +38,9 @@ function isMachO(filePath) {
  *                                      pydantic_core, aiohttp, uvloop, yaml, httptools, …
  *
  * Signing the dependencies here, at build time, is what lets every OS run the backend straight out
- * of the bundled interpreter. The alternative the app used to have — pip installing them at first
- * launch — could never work on macOS, because writing into Contents/Resources invalidates the seal
- * this signature creates and the app then refuses to launch.
+ * of the bundled interpreter. Installing them at first launch instead cannot work on macOS:
+ * writing into Contents/Resources invalidates the seal this signature creates, and the app then
+ * refuses to launch.
  *
  * Symlinks (python-build-standalone ships e.g. bin/python3 -> python3.12) are skipped: the real
  * file they point to is signed anyway when readdir reaches it as its own entry.

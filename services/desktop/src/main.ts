@@ -92,12 +92,11 @@ app.commandLine.appendSwitch("disable-features", "OverscrollHistoryNavigation");
 // so this stays correct on every platform, not just Linux.
 //
 // Deliberately app.setPath('userData', ...) rather than app.setName('kathara-desktop'): setName
-// would also rename the macOS menu-bar app label and Dock name, which is not what was asked.
+// would also rename the macOS menu-bar app label and Dock name, which must keep the product name.
 // Must run before requestSingleInstanceLock() below — the single-instance lock file is
-// itself written under userData, so calling this any later would leave it in the old folder.
-// Existing data already at the old path (labs, preferences.json) is left there untouched,
-// not moved — same "leave old data behind, don't migrate silently" choice already made for
-// the labs-directory setting itself.
+// itself written under userData, so calling this any later would put it in Electron's default
+// folder instead. Nothing under any other folder is migrated here, the same "never move data
+// silently" rule the labs-directory setting follows.
 app.setPath("userData", path.join(app.getPath("appData"), "kathara-desktop"));
 
 // Local-only crash reporting: no uploadToServer, no submitURL, nothing reads these dumps
@@ -125,7 +124,7 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-/** Ordered boot phases. KEEP IN SYNC with MAIN_PHASES and PHASE_LABEL in setup.html. */
+/** Ordered boot phases. KEEP IN SYNC with MAIN_PHASES and PHASE_LABEL in setup.js. */
 type BootPhase =
   | "environment"     // querying the login shell for PATH
   | "frontend"        // locating (and, under AppImage, copying) the bundled SPA
@@ -137,7 +136,8 @@ type Status =
   | {
       state: "starting";
       phase: BootPhase;
-      /** Free-text fallback; the page prefers its own copy for `phase`. */
+      /** The lead line under the heading, except on a first run, which has its own. The ladder
+       * labels `phase` with setup.js's own PHASE_LABEL, not with this. */
       message: string;
       /** Epoch ms this attempt began, so the page can render elapsed time between polls. */
       startedAt: number;
@@ -302,7 +302,7 @@ let onSetupPage = false;
 let quitConfirmed = false;
 
 /** How long the renderer has to acknowledge a close request before the window closes anyway —
- * see askRendererBeforeClose. Only the acknowledgement is timed, never the user's answer. */
+ * see askRendererBeforeLeave. Only the acknowledgement is timed, never the user's answer. */
 const CLOSE_ACK_TIMEOUT_MS = 2000;
 
 /** Close requests sent to the renderer and not yet answered, by request id. */
@@ -912,8 +912,8 @@ function registerIpc(): void {
   // handler that reached for `win` would let a popup minimize — or close — the window behind it.
   handleIpc("window:zoom", (e, direction: unknown) => {
     // Matched exhaustively rather than defaulting: with a fall-through, every value the union
-    // doesn't cover — including `undefined` — quietly meant "zoom out". Refusing is cheaper to
-    // explain than a window that shrinks for no reason.
+    // doesn't cover — including `undefined` — would quietly mean "zoom out". Refusing is cheaper
+    // to explain than a window that shrinks for no reason.
     if (direction !== "in" && direction !== "out" && direction !== "reset") {
       log(`refused window:zoom for ${JSON.stringify(direction)}`);
       return;
@@ -940,7 +940,7 @@ function registerIpc(): void {
   handleIpc("window:maximize", (e) => senderWindow(e)?.maximize());
   handleIpc("window:unmaximize", (e) => senderWindow(e)?.unmaximize());
   handleIpc("window:close", (e) => senderWindow(e)?.close());
-  // The SPA's side of askRendererBeforeClose: an acknowledgement as soon as a close request
+  // The SPA's side of askRendererBeforeLeave: an acknowledgement as soon as a close request
   // arrives, then the user's answer. Unknown ids (an answer arriving after the timeout already
   // closed the question) are ignored, and anything but a literal `true` keeps the window open.
   handleIpc("window:close-ack", (_e, id: unknown) => {
@@ -1014,7 +1014,7 @@ function registerIpc(): void {
  * on disk untouched, by design — this never moves anything.
  *
  * Resolves `true` if the change was applied (a restart is now in flight — startup()'s own
- * win.loadURL/showSetupPage calls take it from here), `false` if the user cancelled at the
+ * win.loadURL/showSetup calls take it from here), `false` if the user cancelled at the
  * deployed-labs prompt (no changes made, nothing to undo). Throws for anything it refuses — a
  * path that isn't a plain absolute one, one the folder dialog never offered, or a directory that
  * isn't writable — so the caller sees the problem immediately instead of after a restart that
@@ -1064,8 +1064,8 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
   // Nothing is created here on purpose. A `mkdir -p` of the target before the prompt above would
   // leave directories behind on disk for a call the user never confirmed — the common case, since
   // that prompt is skipped entirely when no labs are deployed. It isn't needed either: the dialog
-  // creates the folder it returns (`createDirectory`), and backend.ts
-  // mkdirs the effective labs dir right before spawning uvicorn regardless.
+  // creates the folder it returns (`createDirectory`), and backend.ts mkdirs the effective labs
+  // dir right before spawning uvicorn regardless.
   writePrefs({ labsDir: isDefault ? undefined : dir });
   log(`labs directory set to ${dir}`);
   await stopBackend();
@@ -1347,7 +1347,7 @@ if (!app.requestSingleInstanceLock()) {
     // first paint. Anything that shells out (the login shell's PATH, the Docker and Python
     // probes) happens inside startup(), below, with the window already up reporting it.
     //
-    // registerIpc() first of all: setup.html calls status:get as soon as it loads.
+    // registerIpc() first of all: setup.js calls status:get as soon as it loads.
     registerIpc();
     // Started here, not inside startup(): this is a one-shot external network call, unrelated
     // to getting the local backend healthy (startup() re-runs on every retry/elevation/labs-dir
@@ -1466,7 +1466,7 @@ if (!app.requestSingleInstanceLock()) {
   //
   // SIGHUP is deliberately absent: a windowed app should survive its launching terminal going
   // away, and merely installing a handler cancels the SIGHUP-ignore that nohup sets up — which
-  // made the app exit silently the moment the shell that started it closed.
+  // would make the app exit silently the moment the shell that started it closed.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       log(`received ${signal}; quitting`);
@@ -1521,10 +1521,10 @@ if (!app.requestSingleInstanceLock()) {
       loadIgnoringAbort(win.loadURL(base), "main window");
     } else {
       // Covers every non-"ready" status (backend-failed, prereq-failed, starting,
-      // labs-dir-prompt) and the ready-but-no-baseUrl edge case: setup.html polls status:get and
+      // labs-dir-prompt) and the ready-but-no-baseUrl edge case: setup.js polls status:get and
       // renders whichever of those applies on its own — nothing else to decide here. Without
-      // this, closing the window while the backend is down left the Dock icon with nothing to
-      // reopen but a force-quit.
+      // this, closing the window while the backend is down would leave the Dock icon with
+      // nothing to reopen but a force-quit.
       showSetup(win);
     }
   });

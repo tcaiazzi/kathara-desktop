@@ -1,7 +1,7 @@
 /**
  * A small preferences file in userData. Deliberately not electron-store: the shell only needs
- * to remember a handful of user choices (a terminal override, a custom labs directory), and a
- * hand-rolled JSON read/write avoids a dependency for that.
+ * to remember a handful of values (the fields of `Prefs` below), and a hand-rolled JSON
+ * read/write avoids a dependency for that.
  */
 import { app } from "electron";
 import fs from "node:fs";
@@ -20,7 +20,7 @@ interface Prefs {
    * Loopback port the backend was last started on successfully. Reused on the next launch when
    * it is still bindable, so the renderer keeps the same origin across a relaunch — Chromium
    * keys localStorage by origin *including the port*, so a fresh OS-assigned port every launch
-   * (see backend.ts's findFreePort) silently discarded the SPA's theme, dock layout,
+   * (see backend.ts's findFreePort) would silently discard the SPA's theme, dock layout,
    * last-opened lab and any unsaved topology position drafts every single time. Falls back to a
    * fresh free port when the remembered one is no longer free — see backend.ts's rememberedPort.
    */

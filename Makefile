@@ -33,7 +33,7 @@ endif
 
 # Pin local npm/node invocations to the same Node version CI uses (see .github/workflows/*.yml).
 # Only applies when nvm is installed; on CI (no nvm, Node already on PATH via actions/setup-node)
-# RUN_NODE is empty and recipes behave exactly as before.
+# RUN_NODE is empty and recipes run with whatever Node is on PATH.
 NODE_VERSION := 24
 NVM_SH := $(HOME)/.nvm/nvm.sh
 ifneq (,$(wildcard $(NVM_SH)))
@@ -144,7 +144,7 @@ mutation-backend:
 ## it) and declares that; it is otherwise independent of `fetch-python`, which it never reads —
 ## every version and ABI it resolves against is passed to pip explicitly.
 
-# Both removals are load-bearing, and each covered up a different way of shipping stale code:
+# Both removals are load-bearing, and each prevents a different way of shipping stale code:
 #   - build/: setuptools' build_py copies changed sources into build/lib but never removes ones
 #     deleted from the source tree, so a dropped file (a retired bundled example, say) keeps being
 #     packed into every subsequent wheel.

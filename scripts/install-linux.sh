@@ -23,9 +23,9 @@ warn() { printf '  ! %s\n' "$1"; }
 pass() { printf '  \xe2\x9c\x93 %s\n' "$1"; }
 
 # Asks before either privileged operation below (piping get.docker.com into sudo sh, or adding
-# the user to the docker group — root-equivalent, given access to the Docker socket). Not run
-# non-interactively today (see docs/DEVELOPMENT.md), but if stdin isn't a terminal there is no one to ask,
-# so proceed rather than hang forever on a `read` that will never get input.
+# the user to the docker group — root-equivalent, given access to the Docker socket). Nothing in
+# the repo runs it non-interactively (see docs/DEVELOPMENT.md), but if stdin isn't a terminal
+# there is no one to ask, so proceed rather than hang forever on a `read` that will never get input.
 confirm() {
   if [ ! -t 0 ]; then
     return 0

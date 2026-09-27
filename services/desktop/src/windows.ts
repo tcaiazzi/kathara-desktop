@@ -12,8 +12,8 @@ const PRELOAD = path.join(__dirname, "preload.js");
  * The colour Chromium paints before the page has any of its own, matched to the theme the page is
  * about to choose: the one the user picked in the app (the SPA reports it, main.ts's
  * ui:set-theme), else the OS scheme, which is what both setup.html and the SPA follow without a
- * choice (services/frontend/public/theme-init.js). Hardcoding the dark value would make every light-theme
- * launch start with a dark rectangle. Read at window-creation time, not tracked.
+ * choice (services/frontend/public/theme-init.js). Hardcoding the dark value would make every
+ * light-theme launch start with a dark rectangle. Read at window-creation time, not tracked.
  */
 function windowBackground(): string {
   const theme = parseUiTheme(readPrefs().theme) ?? (nativeTheme.shouldUseDarkColors ? "dark" : "light");
@@ -26,10 +26,10 @@ const TERMINAL_ROUTE = /^\/labs\/[^/]+\/terminal\/[^/]+$/;
 /**
  * `loadURL`/`loadFile` but with their rejection actually consumed instead of merely `void`-ed —
  * `void` only silences the "unused promise" lint, it does nothing to stop a later rejection from
- * being an *unhandled* one, which with no `process.on("unhandledRejection")` net crashes the
- * whole main process. `ERR_ABORTED` is the routine case here (a later navigation — a backend
- * restart, another loadURL — superseded this one before it finished), so it's swallowed
- * silently; anything else is logged so a genuine load failure doesn't just vanish.
+ * being an *unhandled* one, which main.ts's `unhandledRejection` safety net reports as an
+ * internal error and answers with the setup page. `ERR_ABORTED` is the routine case here (a later
+ * navigation — a backend restart, another loadURL — superseded this one before it finished), so
+ * it's swallowed silently; anything else is logged so a genuine load failure doesn't just vanish.
  */
 export function loadIgnoringAbort(promise: Promise<void>, label: string): void {
   promise.catch((err) => {
@@ -177,7 +177,7 @@ export function createMainWindow(): BrowserWindow {
     // titleBarOverlay is requested, because Chromium's overlay buttons only take a background
     // and symbol colour, not a different icon style, which is exactly what looked out of place.
     // TitleBar.tsx draws its own minimize/maximize/close buttons there instead (VS Code's
-    // approach), driven by the window:minimize/maximize/unmaximize/close IPC below.
+    // approach), driven by the window:minimize/maximize/unmaximize/close IPC handlers in main.ts.
     titleBarStyle: "hidden",
     webPreferences: {
       preload: PRELOAD,
