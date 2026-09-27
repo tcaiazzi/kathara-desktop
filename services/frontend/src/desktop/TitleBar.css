@@ -68,6 +68,7 @@
   border-radius: 0;
 }
 .kt-titlebar-menu-btn:hover,
+.kt-titlebar-menu-btn:focus-visible,
 .kt-titlebar-menu-btn[aria-expanded="true"] {
   background: var(--kt-menu-hover-bg);
 }
@@ -99,7 +100,13 @@
   padding: 5px 10px;
   border-radius: 4px;
 }
-.kt-titlebar-item:hover:not(:disabled) {
+/* Keyboard focus looks like the pointer's hover: the menu shows one highlighted item either way. */
+.kt-titlebar-menu-btn:focus-visible,
+.kt-titlebar-item:focus-visible {
+  outline: none;
+}
+.kt-titlebar-item:hover:not(:disabled),
+.kt-titlebar-item:focus-visible:not(:disabled) {
   background: var(--bs-primary);
   color: #fff;
 }

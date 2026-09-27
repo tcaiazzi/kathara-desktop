@@ -1201,19 +1201,28 @@ export function WorkspacePage() {
     });
   }
 
-  // Electron's native menu (File / Lab) drives the same handlers as the on-screen controls.
-  // No-ops in the browser build. Deploy and Undeploy are separate menu items over one toggle,
-  // so each checks the current state — otherwise "Deploy" on a running lab would tear it down.
+  // The File and Lab menus (native and title bar) drive the same handlers as the on-screen
+  // controls. No-ops in the browser build. Deploy and Undeploy are separate menu items over one
+  // toggle, so each checks the current state — otherwise "Deploy" on a running lab would tear it
+  // down — and says why when it does nothing, since a keyboard shortcut gives no other feedback.
   useDesktopCommand("lab:new", () => setShowNew(true));
   useDesktopCommand("lab:import", () => setShowUpload(true));
   useDesktopCommand("lab:browse", () => setShowGallery(true));
   useDesktopCommand("lab:deploy", () => {
-    if (detail && !detail.deployed) void handleDeployToggle().catch(() => {});
+    if (!detail) toast.show("Open a lab first.", "info");
+    else if (detail.deployed) toast.show(`Lab "${detail.name ?? detail.id}" is already deployed.`, "info");
+    else void handleDeployToggle().catch(() => {});
   });
   useDesktopCommand("lab:undeploy", () => {
-    if (detail?.deployed) void handleDeployToggle().catch(() => {});
+    if (!detail) toast.show("Open a lab first.", "info");
+    else if (!detail.deployed) toast.show(`Lab "${detail.name ?? detail.id}" isn't deployed.`, "info");
+    else void handleDeployToggle().catch(() => {});
   });
   useDesktopCommand("lab:reload", async () => {
+    if (!labId) {
+      toast.show("Open a lab first.", "info");
+      return;
+    }
     await load();
     await reloadLabs();
   });

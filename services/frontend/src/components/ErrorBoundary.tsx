@@ -4,14 +4,11 @@ import { RefreshCw } from "lucide-react";
 import { useLocation } from "react-router-dom";
 import { desktop, isDesktop } from "../desktop/bridge";
 import { copyText } from "../services/clipboard";
+import { ISSUES_URL } from "../services/constants";
 
 interface FallbackProps {
   error: Error;
 }
-
-// Same repo pyproject.toml lists under "Bug Reports" — the canonical upstream, not the fork
-// updateCheck.ts polls for releases (see that file's own comment on the difference).
-const ISSUES_URL = "https://github.com/KatharaFramework/kathara-desktop/issues/new";
 
 interface CrashScreenProps extends FallbackProps {
   heading: string;

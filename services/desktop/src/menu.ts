@@ -24,9 +24,13 @@ export type MenuAction =
   | "lab:undeploy"
   | "lab:reload"
   | "view:settings"
+  | "view:toggle-theme"
   | "help:tour";
 
+// The renderer keeps its own copies (frontend src/services/constants.ts): the main process shares
+// no module graph with it, so the two are kept in step by hand.
 const DOCS_URL = "https://www.kathara.org/";
+const ISSUES_URL = "https://github.com/KatharaFramework/kathara-desktop/issues/new";
 
 function send(action: MenuAction): void {
   // Fall back to the first window: getFocusedWindow() is null whenever the OS focus sits
@@ -93,6 +97,17 @@ export function buildMenu(handlers: MenuHandlers): void {
         isMac ? { role: "close" } : { role: "quit" },
       ],
     },
+    // Acts on the lab open in the focused window; the renderer ignores the ones that don't apply
+    // (Deploy on a running lab, anything with no lab open) and says so.
+    {
+      label: "Lab",
+      submenu: [
+        item("Deploy Lab", "lab:deploy", "CmdOrCtrl+Shift+D"),
+        item("Undeploy Lab", "lab:undeploy", "CmdOrCtrl+Shift+U"),
+        { type: "separator" },
+        item("Reload Lab", "lab:reload", "CmdOrCtrl+Shift+R"),
+      ],
+    },
     {
       label: "View",
       submenu: [
@@ -105,6 +120,7 @@ export function buildMenu(handlers: MenuHandlers): void {
         { role: "zoomOut" },
         { type: "separator" },
         { role: "togglefullscreen" },
+        item("Toggle Dark Theme", "view:toggle-theme"),
         // Kept in release builds on purpose: the UI drives a local API, and the console is
         // often the fastest way for a user to tell us what went wrong.
         { role: "toggleDevTools" },
@@ -117,6 +133,7 @@ export function buildMenu(handlers: MenuHandlers): void {
         { label: "Kathará Website", click: () => void shell.openExternal(DOCS_URL) },
         { label: "Show Backend Log", click: () => void shell.openPath(backendLogPath()) },
         item("Show Onboarding Tour", "help:tour"),
+        { label: "Report an Issue…", click: () => void shell.openExternal(ISSUES_URL) },
         { label: `Version ${app.getVersion()}`, enabled: false },
       ],
     },

@@ -24,7 +24,8 @@ import katharaLogoDark from "../assets/kathara-logo-dark.png";
 import { ImageDownloadBadge } from "../components/ImageDownloadBadge";
 import { NotificationsPanel } from "../components/NotificationsPanel";
 import { useTheme } from "../hooks/useTheme";
-import { DOCS_URL } from "../services/constants";
+import { DOCS_URL, ISSUES_URL } from "../services/constants";
+import { adjacentMenu, firstFocusable, lastFocusable, nextFocusable } from "../services/menuNav";
 import { desktop, type DesktopMenuAction } from "./bridge";
 import { useDesktopDispatch } from "./DesktopCommands";
 import { useDockerStatus } from "./DockerStatusContext";
@@ -40,6 +41,15 @@ type Entry = Item | "separator";
 
 function isSeparator(entry: Entry): entry is "separator" {
   return entry === "separator";
+}
+
+/** The items of the open menu, in order; separators are not items. */
+function openMenuItems(bar: HTMLElement | null): HTMLButtonElement[] {
+  return [...(bar?.querySelectorAll<HTMLButtonElement>('.kt-titlebar-dropdown [role="menuitem"]') ?? [])];
+}
+
+function menuButtons(bar: HTMLElement | null): HTMLButtonElement[] {
+  return [...(bar?.querySelectorAll<HTMLButtonElement>(".kt-titlebar-menu-btn") ?? [])];
 }
 
 export function TitleBar() {
@@ -99,6 +109,81 @@ export function TitleBar() {
   // Click-outside and Escape close the menu, as a native menu would.
   useDismissOnOutside(barRef, open !== null, () => setOpen(null));
 
+  // Which item to focus once a menu has rendered. Set when a menu opens from the keyboard, or
+  // ←/→ move to the next menu; never for a mouse open, which leaves focus in the page as a native
+  // menu does — until an arrow key is pressed.
+  const [focusRequest, setFocusRequest] = useState<"first" | "last" | null>(null);
+  useEffect(() => {
+    if (open === null || focusRequest === null) return;
+    const items = openMenuItems(barRef.current);
+    const focusable = items.map((b) => !b.disabled);
+    const i = focusRequest === "first" ? firstFocusable(focusable) : lastFocusable(focusable);
+    // A menu with every item disabled (Lab, with no lab open) keeps focus on its own button, so
+    // the keyboard is never left on the page body.
+    if (i >= 0) items[i].focus();
+    else menuButtons(barRef.current)[titlesRef.current.indexOf(open)]?.focus();
+    setFocusRequest(null);
+  }, [open, focusRequest]);
+
+  // The menu titles, for ←/→ below, which run outside a render.
+  const titlesRef = useRef<string[]>([]);
+
+  // Keyboard inside an open menu, following the WAI-ARIA menu pattern: ↑/↓ walk the items (skipping
+  // separators and disabled ones, wrapping), Home/End jump to either end, ←/→ switch menu, Escape
+  // closes and gives focus back, Tab closes and lets focus move on. Enter and Space are the item
+  // buttons' own. Listens in the capture phase, ahead of useDismissOnOutside's Escape: that one
+  // closes the menu, and React re-renders between the two listeners, so reading the open menu's
+  // items after it would find none.
+  useEffect(() => {
+    if (open === null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const items = openMenuItems(barRef.current);
+      const focusable = items.map((b) => !b.disabled);
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      const focusAt = (i: number) => {
+        if (i >= 0) items[i].focus();
+      };
+      switch (e.key) {
+        case "ArrowDown":
+          focusAt(nextFocusable(focusable, current, 1));
+          break;
+        case "ArrowUp":
+          focusAt(nextFocusable(focusable, current, -1));
+          break;
+        case "Home":
+          focusAt(firstFocusable(focusable));
+          break;
+        case "End":
+          focusAt(lastFocusable(focusable));
+          break;
+        case "ArrowLeft":
+        case "ArrowRight": {
+          const titles = titlesRef.current;
+          setOpen(titles[adjacentMenu(titles.length, titles.indexOf(open), e.key === "ArrowRight" ? 1 : -1)]);
+          setFocusRequest("first");
+          break;
+        }
+        case "Escape":
+          // useDismissOnOutside closes the menu; this only puts focus back where it came from.
+          if (current >= 0) {
+            (focusBeforeMenu.current ?? menuButtons(barRef.current)[titlesRef.current.indexOf(open)])?.focus();
+          }
+          return;
+        case "Tab":
+          // From the menu's own button, so Tab moves on from the menu bar instead of from an item
+          // that is gone by the time the browser moves focus.
+          if (current >= 0) menuButtons(barRef.current)[titlesRef.current.indexOf(open)]?.focus();
+          setOpen(null);
+          return;
+        default:
+          return;
+      }
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [open]);
+
   const platform = shell?.platform ?? "linux";
   const mod = platform === "darwin" ? "⌘" : "Ctrl";
 
@@ -109,6 +194,9 @@ export function TitleBar() {
     },
     [dispatch],
   );
+
+  const openLabName = useOpenLabName();
+  const noLab = !openLabName;
 
   const menus: { title: string; items: Entry[] }[] = [
     {
@@ -127,6 +215,15 @@ export function TitleBar() {
       ],
     },
     {
+      title: "Lab",
+      items: [
+        { label: "Deploy Lab", accel: `${mod}+Shift+D`, run: command("lab:deploy"), disabled: noLab },
+        { label: "Undeploy Lab", accel: `${mod}+Shift+U`, run: command("lab:undeploy"), disabled: noLab },
+        "separator",
+        { label: "Reload Lab", accel: `${mod}+Shift+R`, run: command("lab:reload"), disabled: noLab },
+      ],
+    },
+    {
       title: "View",
       items: [
         { label: "Actual Size", accel: `${mod}+0`, run: () => void shell?.zoom("reset").catch(() => {}) },
@@ -134,6 +231,7 @@ export function TitleBar() {
         { label: "Zoom Out", accel: `${mod}+-`, run: () => void shell?.zoom("out").catch(() => {}) },
         "separator",
         { label: "Toggle Full Screen", run: () => void shell?.toggleFullScreen().catch(() => {}) },
+        { label: "Toggle Dark Theme", run: command("view:toggle-theme") },
         { label: "Toggle Developer Tools", run: () => void shell?.toggleDevTools().catch(() => {}) },
       ],
     },
@@ -143,13 +241,15 @@ export function TitleBar() {
         { label: "Kathará Website", run: () => void shell?.openExternal(DOCS_URL).catch(() => {}) },
         { label: "Show Backend Log", run: () => void shell?.showBackendLog().catch(() => {}) },
         { label: "Show Onboarding Tour", run: command("help:tour") },
+        { label: "Report an Issue…", run: () => void shell?.openExternal(ISSUES_URL).catch(() => {}) },
         "separator",
         { label: version ? `Version ${version}` : "Version…", disabled: true },
       ],
     },
   ];
 
-  const openLabName = useOpenLabName();
+  titlesRef.current = menus.map((m) => m.title);
+
   const title = location.pathname.startsWith("/settings")
     ? "Settings — Kathara Desktop"
     : openLabName || "Kathara Desktop";
@@ -171,8 +271,8 @@ export function TitleBar() {
         <img src={dark ? katharaLogoDark : katharaLogo} alt="Kathara" />
       </Link>
 
-      <div className="kt-titlebar-menu kt-titlebar-nodrag">
-        {menus.map((menu) => (
+      <div className="kt-titlebar-menu kt-titlebar-nodrag" role="menubar">
+        {menus.map((menu, index) => (
           <div key={menu.title} style={{ position: "relative", display: "flex" }}>
             <button
               type="button"
@@ -185,7 +285,30 @@ export function TitleBar() {
                 e.preventDefault();
                 focusBeforeMenu.current = document.activeElement as HTMLElement | null;
               }}
-              onClick={() => setOpen((c) => (c === menu.title ? null : menu.title))}
+              onClick={(e) => {
+                const opening = open !== menu.title;
+                setOpen(opening ? menu.title : null);
+                // A click with no pointer behind it (detail 0) is Enter or Space: the keyboard opens
+                // the menu with focus in it, and Escape brings it back to this button.
+                if (opening && e.detail === 0) {
+                  focusBeforeMenu.current = e.currentTarget;
+                  setFocusRequest("first");
+                }
+              }}
+              onKeyDown={(e) => {
+                // With a menu open, the window listener above owns the arrows.
+                if (open !== null) return;
+                if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                  e.preventDefault();
+                  focusBeforeMenu.current = e.currentTarget;
+                  setOpen(menu.title);
+                  setFocusRequest(e.key === "ArrowDown" ? "first" : "last");
+                } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                  e.preventDefault();
+                  const buttons = menuButtons(barRef.current);
+                  buttons[adjacentMenu(buttons.length, index, e.key === "ArrowRight" ? 1 : -1)]?.focus();
+                }
+              }}
               // Once any menu is open, hovering another switches to it — how every native menu
               // bar behaves.
               onMouseEnter={() => setOpen((c) => (c === null ? c : menu.title))}
@@ -205,6 +328,11 @@ export function TitleBar() {
                       role="menuitem"
                       className="kt-titlebar-item"
                       disabled={entry.disabled}
+                      // While the keyboard is in the menu, the pointer takes focus with it, so the
+                      // arrows carry on from the item under it.
+                      onMouseEnter={(e) => {
+                        if (e.currentTarget.parentElement?.contains(document.activeElement)) e.currentTarget.focus();
+                      }}
                       onClick={() => {
                         setOpen(null);
                         entry.run?.();

@@ -14,6 +14,7 @@ export type DesktopMenuAction =
   | "lab:undeploy"
   | "lab:reload"
   | "view:settings"
+  | "view:toggle-theme"
   | "help:tour";
 
 /** Mirrors ElevateFailureReason in services/desktop/src/backend.ts. Duplicated by hand, not

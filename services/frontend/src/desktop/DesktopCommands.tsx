@@ -8,6 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { useToast } from "../context/ToastContext";
 import { useGuardedNavigate } from "../context/UnsavedChangesContext";
+import { useTheme } from "../hooks/useTheme";
 import { api } from "../services/api";
 import { labNamed } from "../services/labPlace";
 import { desktop, type DesktopMenuAction } from "./bridge";
@@ -26,6 +27,7 @@ export function DesktopCommandsProvider({ children }: { children: React.ReactNod
   // Settings and deep links (a kathara:// link, File → Open Lab Folder…) both leave the open lab,
   // so they ask about unsaved edits first, like every in-app navigation.
   const navigate = useGuardedNavigate();
+  const { toggle: toggleTheme } = useTheme();
   const toast = useToast();
   // A set per action, not one handler: "Save" is offered by every editor panel on screen, and
   // each decides for itself whether it owns the command (it checks whether focus is inside it),
@@ -44,14 +46,18 @@ export function DesktopCommandsProvider({ children }: { children: React.ReactNod
 
   const dispatch = useCallback(
     (action: DesktopMenuAction) => {
-      // Navigation is the provider's own job: it needs no page to be mounted.
+      // Navigation and the theme are the provider's own job: they need no page to be mounted.
       if (action === "view:settings") {
         void navigate("/settings");
         return;
       }
+      if (action === "view:toggle-theme") {
+        toggleTheme();
+        return;
+      }
       for (const handler of handlers.current.get(action) ?? []) void handler();
     },
-    [navigate],
+    [navigate, toggleTheme],
   );
 
   useEffect(() => {

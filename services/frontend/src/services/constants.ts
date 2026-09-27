@@ -6,6 +6,12 @@ import type { InterfaceModel, MachineDetail } from "./types";
 // the renderer), which must be kept in step by hand if this ever changes.
 export const DOCS_URL = "https://www.kathara.org/";
 
+// Where a bug is reported: the Help menu and the error screen both open it. The repo pyproject.toml
+// lists under "Bug Reports" — the canonical upstream, not the fork updateCheck.ts polls for releases
+// (see that file's own comment on the difference). Same by-hand copy in services/desktop/src/menu.ts
+// as DOCS_URL above, and in setup.html, which has no module to import.
+export const ISSUES_URL = "https://github.com/KatharaFramework/kathara-desktop/issues/new";
+
 // Kathara's own internal collision domain, present on every deployed lab; hidden from
 // topology/tables since it's an implementation detail, not something the user created.
 export const HOST_BRIDGE = "kathara_host_bridge";
