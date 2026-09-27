@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Table } from "react-bootstrap";
 import { useToast } from "../context/ToastContext";
 import { api } from "../services/api";
-import type { MachineStats } from "../services/types";
+import { statsRows } from "../services/statsRows";
+import type { MachineDetail, MachineStats } from "../services/types";
 import { Panel } from "./Panel";
 
 interface StatsPanelProps {
   labId: string;
   deployed: boolean;
+  // Every device of the lab, and whether it runs: the table lists them all (services/statsRows.ts).
+  machines: readonly Pick<MachineDetail, "name" | "running" | "status">[];
 }
 
 // Live device statistics, streamed over a native EventSource — see `api.statsStreamUrl` for why
 // that works without any SSE parsing here.
-export function StatsPanel({ labId, deployed }: StatsPanelProps) {
+export function StatsPanel({ labId, deployed, machines }: StatsPanelProps) {
   const [rows, setRows] = useState<Record<string, MachineStats>>({});
   const [streaming, setStreaming] = useState(false);
   const sourceRef = useRef<EventSource | null>(null);
@@ -56,7 +59,7 @@ export function StatsPanel({ labId, deployed }: StatsPanelProps) {
   // Stop the stream when navigating away from this lab or unmounting.
   useEffect(() => stop, [labId]);
 
-  const sorted = Object.values(rows).sort((a, b) => a.name.localeCompare(b.name));
+  const table = statsRows(machines, rows);
 
   return (
     <Panel
@@ -75,8 +78,7 @@ export function StatsPanel({ labId, deployed }: StatsPanelProps) {
       }
     >
       {!deployed && <p className="text-muted mb-0">Deploy the lab to view live stats.</p>}
-      {deployed && sorted.length === 0 && <p className="text-muted mb-0">Waiting for samples…</p>}
-      {sorted.length > 0 && (
+      {deployed && table.length > 0 && (
         <Table size="sm" responsive className="mb-0">
           <thead>
             <tr>
@@ -90,7 +92,7 @@ export function StatsPanel({ labId, deployed }: StatsPanelProps) {
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r) => (
+            {table.map((r) => (
               <tr key={r.name}>
                 <td className="font-monospace">{r.name}</td>
                 <td className="text-muted">{r.status || "—"}</td>

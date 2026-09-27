@@ -4,6 +4,22 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState, type
 // once instead of it staying silently stuck on "seen" forever.
 const LS_ONBOARDING = "kt-onboarding-tour-v1";
 
+/** What the tour needs from the open workspace. WorkspacePage registers it while it is mounted
+ *  (useOnboardingTourWorkspace); until then the tour has nothing to drive. */
+export interface TourWorkspace {
+  /** Brings a dock panel (e.g. "devices", "files") to the front of its tab group before the tour
+   *  highlights it — panels sharing a group show only one at a time. */
+  focusPanel(panelId: string): void;
+  /** Selects the lab's first device unless one is already selected, so the Inspector step has
+   *  something to show (it is blank until a device is selected). */
+  selectFirstDevice(): void;
+  /** Whether the open lab has any device — the device steps are left out of the tour otherwise. */
+  hasDevices(): boolean;
+  /** Records the dock's active tabs and the selection, and returns what puts them back: the tour
+   *  switches both as it goes, and hands the workspace back as it found it. */
+  saveView(): () => void;
+}
+
 interface OnboardingTourApi {
   /** `auto: true` (first-time trigger) is a no-op once the tour has been seen or skipped;
    *  `auto: false` (Help menu / navbar replay) always shows it. Both are no-ops until a lab is
@@ -21,19 +37,10 @@ interface OnboardingTourInternal extends OnboardingTourApi {
   setTourReady: (ready: boolean) => void;
   /** OnboardingTour.tsx-only: persists "seen" so it never auto-shows again this browser profile. */
   markSeen: () => void;
-  /** OnboardingTour.tsx-only: switches the dock to the given panel id (e.g. "devices", "files")
-   *  before highlighting it — those two share one tab group, so only one is ever visually active,
-   *  and the tour needs to bring forward whichever one its current step is actually about. A
-   *  no-op until WorkspacePage registers the real implementation (see `registerFocusPanel`). */
-  focusPanel: (panelId: string) => void;
-  /** WorkspacePage-only: wires `focusPanel` to its own dockview API instance. */
-  registerFocusPanel: (fn: (panelId: string) => void) => void;
-  /** OnboardingTour.tsx-only: selects the lab's first device so the "Inspector" step has
-   *  something to actually show — that panel renders nothing until a device is selected. A
-   *  no-op until WorkspacePage registers the real implementation. */
-  selectFirstDevice: () => void;
-  /** WorkspacePage-only: wires `selectFirstDevice` to its own `setSelectedId`. */
-  registerSelectFirstDevice: (fn: () => void) => void;
+  /** OnboardingTour.tsx-only: the workspace the tour is walking through, or null. */
+  workspace: () => TourWorkspace | null;
+  /** WorkspacePage-only: registers (or, with null, withdraws) the workspace. */
+  registerWorkspace: (ws: TourWorkspace | null) => void;
 }
 
 const OnboardingTourCtx = createContext<OnboardingTourInternal | null>(null);
@@ -47,18 +54,13 @@ export function OnboardingTourProvider({ children }: { children: ReactNode }) {
   // A ref, not state: purely an imperative escape hatch (like a DOM ref), never read during
   // render — re-rendering the whole tree whenever WorkspacePage's dockview API instance changes
   // identity would be pure waste.
-  const focusPanelImpl = useRef<(panelId: string) => void>(() => {});
-  const selectFirstDeviceImpl = useRef<() => void>(() => {});
+  const workspaceRef = useRef<TourWorkspace | null>(null);
 
   const setTourReady = useCallback((r: boolean) => setReady(r), []);
-  const registerFocusPanel = useCallback((fn: (panelId: string) => void) => {
-    focusPanelImpl.current = fn;
+  const registerWorkspace = useCallback((ws: TourWorkspace | null) => {
+    workspaceRef.current = ws;
   }, []);
-  const focusPanel = useCallback((panelId: string) => focusPanelImpl.current(panelId), []);
-  const registerSelectFirstDevice = useCallback((fn: () => void) => {
-    selectFirstDeviceImpl.current = fn;
-  }, []);
-  const selectFirstDevice = useCallback(() => selectFirstDeviceImpl.current(), []);
+  const workspace = useCallback(() => workspaceRef.current, []);
 
   const markSeen = useCallback(() => {
     seenRef.current = true;
@@ -77,22 +79,10 @@ export function OnboardingTourProvider({ children }: { children: ReactNode }) {
       ready,
       setTourReady,
       markSeen,
-      focusPanel,
-      registerFocusPanel,
-      selectFirstDevice,
-      registerSelectFirstDevice,
+      workspace,
+      registerWorkspace,
     }),
-    [
-      requestTour,
-      requestCount,
-      ready,
-      setTourReady,
-      markSeen,
-      focusPanel,
-      registerFocusPanel,
-      selectFirstDevice,
-      registerSelectFirstDevice,
-    ],
+    [requestTour, requestCount, ready, setTourReady, markSeen, workspace, registerWorkspace],
   );
 
   return <OnboardingTourCtx.Provider value={value}>{children}</OnboardingTourCtx.Provider>;
@@ -113,20 +103,11 @@ export function useOnboardingTourReady(): (ready: boolean) => void {
   return ctx.setTourReady;
 }
 
-/** WorkspacePage-only: lets the tour bring a dock panel (e.g. "devices", "files") to the front
- *  of its tab group before highlighting it. */
-export function useOnboardingTourFocusPanel(): (fn: (panelId: string) => void) => void {
+/** WorkspacePage-only: registers what the tour drives in the open workspace (TourWorkspace). */
+export function useOnboardingTourWorkspace(): (ws: TourWorkspace | null) => void {
   const ctx = useContext(OnboardingTourCtx);
-  if (!ctx) throw new Error("useOnboardingTourFocusPanel must be used within an OnboardingTourProvider");
-  return ctx.registerFocusPanel;
-}
-
-/** WorkspacePage-only: lets the tour select the lab's first device (so the Inspector has something
- *  to show) before that step is highlighted. */
-export function useOnboardingTourSelectFirstDevice(): (fn: () => void) => void {
-  const ctx = useContext(OnboardingTourCtx);
-  if (!ctx) throw new Error("useOnboardingTourSelectFirstDevice must be used within an OnboardingTourProvider");
-  return ctx.registerSelectFirstDevice;
+  if (!ctx) throw new Error("useOnboardingTourWorkspace must be used within an OnboardingTourProvider");
+  return ctx.registerWorkspace;
 }
 
 /** OnboardingTour.tsx-only: the raw signal + gating state needed to actually drive driver.js. */

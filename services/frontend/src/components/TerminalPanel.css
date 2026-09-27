@@ -20,9 +20,12 @@
   padding-left: 0.4rem;
   padding-right: 0.4rem;
 }
+/* As wide as the shell names need beside the select's arrow, which a fixed 74px clipped; `auto`
+   because Bootstrap's .form-select fills the whole row otherwise. */
 .kt-term-shell {
   flex: 0 0 auto;
-  width: 74px;
+  width: auto;
+  min-width: 110px;
 }
 
 .kt-term-screen {

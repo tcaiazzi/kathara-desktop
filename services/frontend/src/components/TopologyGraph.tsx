@@ -8,6 +8,7 @@ import { useBusyAction } from "../hooks/useBusyAction";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { useForceLayout } from "../hooks/useForceLayout";
 import { api, isAbortError } from "../services/api";
+import { plural } from "../services/format";
 import { machineStartupText } from "../services/labfs";
 import { CATEGORY_ICON, CATEGORY_LABEL, type DeviceCategory } from "../services/deviceIcon";
 import { deviceIpMismatches, ipMismatches, matchesSavedLayout, type NodePositions } from "../services/topology";
@@ -651,8 +652,8 @@ export function TopologyGraph({
             {!selectedNode ? (
             <>
               <div className="hint">
-                {model.nodes.filter((n) => n.type === "dev").length} device(s),{" "}
-                {model.nodes.filter((n) => n.type === "cd").length} collision domain(s).
+                {plural(model.nodes.filter((n) => n.type === "dev").length, "device")},{" "}
+                {plural(model.nodes.filter((n) => n.type === "cd").length, "collision domain")}.
               </div>
               <div className="hint" style={{ marginTop: 6 }}>
                 Click a node to inspect its topological details.

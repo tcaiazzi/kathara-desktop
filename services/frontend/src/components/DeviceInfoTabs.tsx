@@ -260,7 +260,9 @@ export function DeviceInfoTabs({
               onSaved={relist}
               onDirtyChange={onShutdownDirty}
             />
-            {node.running && <DeviceStartupLog labId={labId} device={device} />}
+            {node.running && (
+              <DeviceStartupLog labId={labId} device={device} hasCommands={startupPreview.trim() !== ""} />
+            )}
           </Tab>
           <Tab eventKey="files" title={<TabTitle icon={Folder} label="Files" dirty={!!dirty.files} />}>
             <div className="kt-devinfo-files">

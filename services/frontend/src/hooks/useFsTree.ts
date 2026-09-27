@@ -6,6 +6,7 @@ import { useToast } from "../context/ToastContext";
 import { useRegisterUnsaved } from "../context/UnsavedChangesContext";
 import { ApiError, isAbortError } from "../services/api";
 import { saveBlob } from "../services/download";
+import { plural } from "../services/format";
 import {
   dirsToLoad,
   entryToNode,
@@ -956,7 +957,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
           if (pasted > 0) await Promise.all([refreshDir(destDir), ...Array.from(cutParents).map(refreshDir)]);
         }
         if (pasted > 0) {
-          toast.show(`Pasted ${pasted} item(s) into ${destDir}.`, "success");
+          toast.show(`Pasted ${plural(pasted, "item")} into ${destDir}.`, "success");
         }
       });
     },

@@ -14,6 +14,8 @@ interface TourStep {
   tourPanel?: string;
   /** The Inspector is blank until a device is selected — this step picks the first one first. */
   tourSelectFirstDevice?: boolean;
+  /** About a device: left out of the tour when the lab has none. */
+  needsDevice?: boolean;
 }
 
 // Inspector/Lab Details/Lab Configuration/Runtime Filesystem/Statistics share one
@@ -62,6 +64,7 @@ const STEPS: TourStep[] = [
     element: groupElement("node-info-tab"),
     tourPanel: "node-info",
     tourSelectFirstDevice: true,
+    needsDevice: true,
     popover: {
       title: "Inspector",
       description: "Click any device — in the topology or the Lab Details list — to see and change everything about it here.",
@@ -70,6 +73,7 @@ const STEPS: TourStep[] = [
   {
     element: '[data-tour="node-info-tabs"] .nav-tabs',
     tourPanel: "node-info",
+    needsDevice: true,
     popover: {
       title: "Configure the device",
       description: "Overview has its options, Network its interfaces, Scripts its startup and shutdown scripts, and Files the folder copied into it. Deploy, Open Terminal, Options and Remove sit right above.",
@@ -153,7 +157,7 @@ const MAX_POLL_FRAMES = 30;
  *  already been requested) lives in OnboardingTourContext so the Help menu / navbar trigger don't
  *  need to reach into this component directly. */
 export function OnboardingTour() {
-  const { requestCount, ready, markSeen, requestTour, focusPanel, selectFirstDevice } = useOnboardingTourInternal();
+  const { requestCount, ready, markSeen, requestTour, workspace } = useOnboardingTourInternal();
   const toast = useToast();
   const driverRef = useRef<Driver | null>(null);
   const readyRef = useRef(ready);
@@ -177,6 +181,13 @@ export function OnboardingTour() {
       if (cancelled) return;
       driverRef.current?.destroy();
 
+      const ws = workspace();
+      const steps = STEPS.filter((step) => !step.needsDevice || ws?.hasDevices());
+      const restoreView = ws?.saveView();
+      // Which way the tour is going, so a step with nothing to show is skipped in that direction —
+      // skipping forwards from Back would bounce straight back to the step just left.
+      let lastIndex = -1;
+
       const driverObj = driver({
         showProgress: true,
         showButtons: ["next", "previous", "close"],
@@ -187,32 +198,35 @@ export function OnboardingTour() {
         smoothScroll: true,
         stagePadding: 8,
         popoverClass: "kt-tour-popover",
-        steps: STEPS,
+        steps,
         onHighlightStarted: (element, driveStep) => {
           const step = driveStep as TourStep;
+          const index = driverObj.getActiveIndex() ?? 0;
+          const backwards = index < lastIndex;
+          lastIndex = index;
 
           // The Inspector is blank until a device is selected — pick the first one so this step
           // has real content to point at, same as any user clicking a device would trigger.
-          if (step.tourSelectFirstDevice) selectFirstDevice();
+          if (step.tourSelectFirstDevice) ws?.selectFirstDevice();
 
           // The whole group box is highlighted (see `groupElement`) regardless of which of its
           // tabs is active, but the *content* shown inside it isn't — bring the right one forward
           // so what's actually visible under the spotlight matches what this step is about.
-          if (step.tourPanel) focusPanel(step.tourPanel);
+          if (step.tourPanel) ws?.focusPanel(step.tourPanel);
 
-          // A target that's been collapsed/hidden between the request and this step (e.g. a
-          // dockview group the user shrank mid-tour) gets skipped instead of showing a spotlight
-          // on nothing.
-          if (!element) return;
-          const r = element.getBoundingClientRect();
-          if (r.width === 0 || r.height === 0) {
-            if (driverObj.hasNextStep()) driverObj.moveNext();
-            else driverObj.destroy();
-          }
+          // A target that is missing (its panel closed) or collapsed (a dockview group shrunk to
+          // nothing) is skipped, instead of a popover pointing at nothing. driver.js passes no
+          // element for a target it can't find.
+          const r = element?.getBoundingClientRect();
+          if (r && r.width > 0 && r.height > 0) return;
+          if (backwards && driverObj.hasPreviousStep()) driverObj.movePrevious();
+          else if (driverObj.hasNextStep()) driverObj.moveNext();
+          else driverObj.destroy();
         },
         onDestroyStarted: () => {
           markSeen();
           driverObj.destroy();
+          restoreView?.();
         },
       });
 
@@ -236,9 +250,8 @@ export function OnboardingTour() {
     return () => {
       cancelled = true;
     };
-    // `readyRef` is a ref (read live, not a dep by design); `toast`/`markSeen`/`focusPanel`/
-    // `selectFirstDevice` are stable across renders. Only a new request should ever restart this
-    // effect.
+    // `readyRef` is a ref (read live, not a dep by design); `toast`/`markSeen`/`workspace` are
+    // stable across renders. Only a new request should ever restart this effect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestCount]);
 

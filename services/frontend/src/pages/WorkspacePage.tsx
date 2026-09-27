@@ -76,9 +76,8 @@ import { WorkspaceCoreProvider, useWorkspaceCore, type StartupChange } from "../
 import { useLabEvents } from "../hooks/useLabEvents";
 import {
   useOnboardingTour,
-  useOnboardingTourFocusPanel,
   useOnboardingTourReady,
-  useOnboardingTourSelectFirstDevice,
+  useOnboardingTourWorkspace,
 } from "../context/OnboardingTourContext";
 import { useToast } from "../context/ToastContext";
 import { useConfirmDiscardAll, useGuardedNavigate } from "../context/UnsavedChangesContext";
@@ -172,7 +171,7 @@ function StatsPanel_() {
   const ws = useWorkspace();
   return (
     <div className="kt-ws-panel">
-      <StatsPanel labId={ws.labId} deployed={ws.detail.deployed} />
+      <StatsPanel labId={ws.labId} deployed={ws.detail.deployed} machines={ws.detail.machines} />
     </div>
   );
 }
@@ -557,7 +556,9 @@ interface LabRowLabelProps {
 // A rail row's name, plus the folder the lab sits in, which is what tells two labs with the same
 // name apart (services/labPlace.ts).
 function LabRowLabel({ lab, home }: LabRowLabelProps) {
-  const folder = lab.path ? labFolder(lab.path, home) : null;
+  // Only a folder opened from elsewhere says where it is: every managed lab sits in the same labs
+  // folder, so repeating it under each name says nothing (the hover card still has it).
+  const folder = lab.path && !lab.managed ? labFolder(lab.path, home) : null;
   const problem = lab.problem ? PROBLEM_LABEL[lab.problem] ?? lab.problem : null;
   const hint = [folder, problem].filter(Boolean).join(" · ");
   return (
@@ -696,8 +697,7 @@ export function WorkspacePage() {
   const didRedirect = useRef(false);
   const setTourReady = useOnboardingTourReady();
   const { requestTour } = useOnboardingTour();
-  const registerTourFocusPanel = useOnboardingTourFocusPanel();
-  const registerTourSelectFirstDevice = useOnboardingTourSelectFirstDevice();
+  const registerTourWorkspace = useOnboardingTourWorkspace();
   const autoTourRequested = useRef(false);
   const isAdmin = useIsAdmin();
   const homeDir = useHomeDir();
@@ -865,19 +865,35 @@ export function WorkspacePage() {
       requestTour({ auto: true });
     }
   }, [detail, requestTour, isAdmin]);
-  // "Lab Details" and "Lab Configuration" share one tab group (see buildDefaultLayout) — only one is
-  // ever visually on top, so the tour brings the right one forward as it reaches each step.
+  // What the onboarding tour drives here (TourWorkspace). Panels sharing a tab group show one at a
+  // time, so it brings each step's panel forward; the Inspector is blank with nothing selected, so
+  // it selects the first device — only when nothing is selected, which also leaves an Inspector
+  // edit in progress alone. When it ends, the tabs and the selection go back as they were.
   useEffect(() => {
-    registerTourFocusPanel((panelId) => dockApiRef.current?.getPanel(panelId)?.api.setActive());
-  }, [registerTourFocusPanel]);
-  // The Inspector shows nothing until a device is selected — the tour picks the first one so that
-  // step has real content to point at.
-  useEffect(() => {
-    registerTourSelectFirstDevice(() => {
-      const first = detailRef.current?.machines[0];
-      if (first) setSelectedId(`dev:${first.name}`);
+    registerTourWorkspace({
+      focusPanel: (panelId) => dockApiRef.current?.getPanel(panelId)?.api.setActive(),
+      selectFirstDevice: () => {
+        const first = detailRef.current?.machines[0];
+        if (first && selectedIdRef.current === null) setSelectedId(`dev:${first.name}`);
+      },
+      hasDevices: () => (detailRef.current?.machines.length ?? 0) > 0,
+      saveView: () => {
+        const api = dockApiRef.current;
+        const tabs = api ? api.groups.flatMap((g) => (g.activePanel ? [g.activePanel.id] : [])) : [];
+        const focused = api?.activePanel?.id;
+        const selection = selectedIdRef.current;
+        return () => {
+          const now = dockApiRef.current;
+          // The group that had the focus goes last, so it has it again.
+          for (const id of [...tabs.filter((id) => id !== focused), ...(focused ? [focused] : [])]) {
+            now?.getPanel(id)?.api.setActive();
+          }
+          setSelectedId(selection);
+        };
+      },
     });
-  }, [registerTourSelectFirstDevice]);
+    return () => registerTourWorkspace(null);
+  }, [registerTourWorkspace]);
   // The shell can land the window on a lab this page has never listed — a folder it just opened
   // (File → Open Lab Folder…, `kathara-desktop <folder>`) — so a route naming an id the list
   // doesn't have refreshes the list — once while it stays missing, and again if it goes missing
@@ -1504,16 +1520,21 @@ export function WorkspacePage() {
                 )}
               </div>
             )}
+            {/* Always there, above "Select other labs" too: typing in it opens the list. */}
+            <Form.Control
+              size="sm"
+              type="search"
+              placeholder="Filter labs…"
+              aria-label="Filter labs"
+              value={labFilter}
+              onChange={(e) => {
+                setLabFilter(e.target.value);
+                if (e.target.value.trim()) setLabPickerOpen(true);
+              }}
+              className="mb-2"
+            />
             {showLabList ? (
               <>
-                <Form.Control
-                  size="sm"
-                  type="search"
-                  placeholder="Filter labs…"
-                  value={labFilter}
-                  onChange={(e) => setLabFilter(e.target.value)}
-                  className="mb-2"
-                />
                 <div className="kt-ws-list">
                   {labs == null && labsError ? (
                     <div className="kt-ws-error">

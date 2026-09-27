@@ -5,6 +5,8 @@ import type { StartupStatus } from "../services/types";
 interface DeviceStartupLogProps {
   labId: string;
   device: string;
+  /** Whether the device has anything to run at boot: a non-empty `.startup` or exec_commands. */
+  hasCommands: boolean;
 }
 
 // A running device's boot-time startup log (/var/log/startup.log), polled until its startup
@@ -15,7 +17,7 @@ interface DeviceStartupLogProps {
 // Deliberately no backoff/cap on the retry interval: a startup script can legitimately run for a
 // long time, and the user watching this panel wants to see it evolve the whole way, not have the
 // polling slow down or give up on a startup that's merely slow rather than broken.
-export function DeviceStartupLog({ labId, device }: DeviceStartupLogProps) {
+export function DeviceStartupLog({ labId, device, hasCommands }: DeviceStartupLogProps) {
   const [status, setStatus] = useState<StartupStatus | null>(null);
 
   useEffect(() => {
@@ -41,11 +43,15 @@ export function DeviceStartupLog({ labId, device }: DeviceStartupLogProps) {
     };
   }, [labId, device]);
 
+  // A device with nothing to run at boot (a capture box like wireshark) finishes at once with no
+  // output: say so, rather than "finished" over an empty log.
+  const nothingToRun = !hasCommands && status?.finished && !status.log;
+
   return (
     <div className="iface">
       <div className="d-flex align-items-center justify-content-between">
         <span style={{ fontWeight: 600 }}>Startup Log</span>
-        {status && (
+        {status && !nothingToRun && (
           <span className={`kt-state ${status.finished ? "done" : "pending"}`}>
             {status.finished ? "finished" : "running…"}
           </span>
@@ -53,6 +59,8 @@ export function DeviceStartupLog({ labId, device }: DeviceStartupLogProps) {
       </div>
       {status?.log ? (
         <pre className="startup">{status.log}</pre>
+      ) : nothingToRun ? (
+        <div className="hint">No startup commands.</div>
       ) : (
         <div className="hint">{status ? "No output yet." : "Loading…"}</div>
       )}
