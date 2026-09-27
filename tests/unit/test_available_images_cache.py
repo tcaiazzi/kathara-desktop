@@ -12,7 +12,9 @@ from docker.errors import APIError
 from Kathara.exceptions import DockerDaemonConnectionError, HTTPConnectionError
 
 from kathara_api.services import docker_hub
+from kathara_api.services import kathara_service as kathara_service_module
 from kathara_api.services.kathara_service import KatharaService
+from kathara_api.services.official_images_cache import OFFICIAL_IMAGES_FILENAME, OfficialImagesFile
 
 
 def _patch_official(monkeypatch, images):
@@ -183,3 +185,104 @@ def test_local_images_skip_dangling_and_untagged_entries(monkeypatch):
     service = _service_with_local(monkeypatch, [[], ["<none>:<none>"], ["alpine:latest"]])
 
     assert service.list_local_images() == ["alpine"]
+
+
+# --- the copy kept in the state directory ------------------------------------
+
+_DAY = 24 * 3600
+_NOW = 1_800_000_000.0
+
+
+class _Hub:
+    """Docker Hub as ``docker_hub.list_tagged_images`` sees it: the images it answers with, or
+    ``None`` for unreachable. Counts the fetches."""
+
+    def __init__(self, images):
+        self.images = images
+        self.fetches = 0
+
+    def __call__(self):
+        self.fetches += 1
+        if self.images is None:
+            raise HTTPConnectionError("Docker Hub unreachable")
+        return list(self.images)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """Wall-clock and monotonic time, both under the test's control."""
+    now = {"wall": _NOW, "mono": 5000.0}
+    monkeypatch.setattr(kathara_service_module.time, "time", lambda: now["wall"])
+    monkeypatch.setattr(kathara_service_module.time, "monotonic", lambda: now["mono"])
+    return now
+
+
+def _service_with_file(monkeypatch, tmp_path, hub):
+    monkeypatch.setattr(docker_hub, "list_tagged_images", hub)
+    service = KatharaService()
+    service._images_file = OfficialImagesFile(tmp_path / OFFICIAL_IMAGES_FILENAME)
+    return service
+
+
+def _store(tmp_path, images, fetched_at):
+    OfficialImagesFile(tmp_path / OFFICIAL_IMAGES_FILENAME).save(images, fetched_at)
+
+
+def test_a_fetched_list_is_served_after_a_restart_without_asking_docker_hub(monkeypatch, tmp_path, clock):
+    hub = _Hub(["kathara/base", "kathara/frr"])
+    _service_with_file(monkeypatch, tmp_path, hub)._official_images()
+
+    clock["wall"] += 3600
+    restarted = _service_with_file(monkeypatch, tmp_path, hub)
+
+    assert restarted._official_images() == ["kathara/base", "kathara/frr"]
+    assert hub.fetches == 1
+
+
+def test_a_copy_older_than_a_day_is_fetched_again_and_replaced(monkeypatch, tmp_path, clock):
+    _store(tmp_path, ["kathara/base"], _NOW - _DAY - 1)
+    hub = _Hub(["kathara/base", "kathara/pox"])
+    service = _service_with_file(monkeypatch, tmp_path, hub)
+
+    assert service._official_images() == ["kathara/base", "kathara/pox"]
+    assert hub.fetches == 1
+    assert OfficialImagesFile(tmp_path / OFFICIAL_IMAGES_FILENAME).load() == (["kathara/base", "kathara/pox"], _NOW)
+
+
+def test_an_old_copy_is_served_while_docker_hub_is_unreachable_without_asking_again_at_once(
+    monkeypatch, tmp_path, clock
+):
+    _store(tmp_path, ["kathara/base"], _NOW - 30 * _DAY)
+    hub = _Hub(None)
+    service = _service_with_file(monkeypatch, tmp_path, hub)
+
+    assert service._official_images() == ["kathara/base"]
+    clock["mono"] += service._IMAGES_CACHE_TTL - 1
+    assert service._official_images() == ["kathara/base"]
+    assert hub.fetches == 1
+
+
+def test_a_copy_dated_in_the_future_is_fetched_again(monkeypatch, tmp_path, clock):
+    _store(tmp_path, ["kathara/base"], _NOW + 3600)
+    hub = _Hub(["kathara/frr"])
+
+    assert _service_with_file(monkeypatch, tmp_path, hub)._official_images() == ["kathara/frr"]
+    assert hub.fetches == 1
+
+
+def test_an_unreadable_copy_is_ignored(monkeypatch, tmp_path, clock):
+    (tmp_path / OFFICIAL_IMAGES_FILENAME).write_text('{"version": 1, "images": "kathara/base"', encoding="utf-8")
+    hub = _Hub(["kathara/frr"])
+
+    assert _service_with_file(monkeypatch, tmp_path, hub)._official_images() == ["kathara/frr"]
+
+
+def test_a_state_directory_that_cannot_be_written_only_costs_the_copy(monkeypatch, tmp_path, clock):
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("", encoding="utf-8")
+    monkeypatch.setattr(docker_hub, "list_tagged_images", _Hub(["kathara/base"]))
+    service = KatharaService()
+    service._images_file = OfficialImagesFile(blocker / OFFICIAL_IMAGES_FILENAME)
+
+    assert service._official_images() == ["kathara/base"]
+    assert list(tmp_path.iterdir()) == [blocker]

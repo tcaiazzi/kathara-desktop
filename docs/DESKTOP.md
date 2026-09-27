@@ -28,7 +28,8 @@ the backend start. `startBackend` then:
   writes.
 - Sets `KATHARA_API_STATIC_DIR` to the built frontend, `KATHARA_API_LABS_DIR` to the per-user lab
   directory and `KATHARA_API_STATE_DIR` to the app's user-data directory, where the backend keeps
-  its list of lab folders opened from elsewhere (`known_labs.json`).
+  its list of lab folders opened from elsewhere (`known_labs.json`) and the official image list
+  last fetched from Docker Hub (`official_images.json`).
 
 Which interpreter runs it is decided by `prereqs.ts`'s `pythonCandidates()`, and a packaged app
 has exactly one: the interpreter **bundled inside it** (`paths.ts`'s `bundledPythonPath()` →

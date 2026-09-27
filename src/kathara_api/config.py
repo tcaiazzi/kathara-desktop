@@ -109,7 +109,8 @@ class ApiSettings(BaseSettings):
     shell_token: Optional[str] = None
 
     # Where the backend keeps state that belongs to no single lab: the list of lab directories
-    # opened from outside labs_dir (services/known_labs.py). Unset means that list is kept in
+    # opened from outside labs_dir (services/known_labs.py) and the official image list last
+    # fetched from Docker Hub (services/official_images_cache.py). Unset means both are kept in
     # memory only; the desktop app points it at its own per-user data directory.
     state_dir: Optional[str] = None
 

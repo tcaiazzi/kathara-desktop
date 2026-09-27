@@ -105,6 +105,7 @@ from .known_labs import KNOWN_LABS_FILENAME, KnownLabs
 from .lab_events import LabEvents
 from .lab_store import LabPlace, LabStore, is_within, lab_id_for
 from .lab_watch import STARTUP_SUFFIX
+from .official_images_cache import OFFICIAL_IMAGES_FILENAME, OfficialImagesFile
 from .registry import DeployFailure, LabRegistry
 
 logger = logging.getLogger("kathara_api")
@@ -228,11 +229,15 @@ def _walk(target_fs, path: str = "/") -> Generator[tuple[str, bool], None, None]
 class KatharaService:
     """Thread-safe wrapper around ``Kathara.get_instance()``."""
 
-    # How long a fetched Docker Hub image list stays valid before the next call re-fetches it.
-    # DockerHubApi.get_tagged_images() has no caching of its own and fans out one HTTP request per
-    # official image (~20-30) on every call — fine for the CLI's one-shot settings menu, too slow
-    # and too chatty to redo on every "Add device"/options-editor open in a long-lived UI session.
+    # How long a fetched Docker Hub image list stays valid in memory before the next call looks
+    # again. Listing it fans out one HTTP request per official image (~20-30) — fine for the CLI's
+    # one-shot settings menu, too slow and too chatty to redo on every "Add device"/options-editor
+    # open in a long-lived UI session.
     _IMAGES_CACHE_TTL = 300
+    # How old the copy kept in the state directory (official_images_cache.py) may be and still be
+    # served instead of fetching: the list changes rarely, so a restarted app need not fetch again
+    # the same day. An older copy is still served when Docker Hub can't be reached.
+    _IMAGES_FILE_TTL = 24 * 3600
 
     # How long a failed `Kathara.get_instance()` is remembered before the next call retries the
     # connection. Deliberately short: it exists so that opening the app costs *one* connection
@@ -275,11 +280,15 @@ class KatharaService:
         self._unadoptable_lock = threading.Lock()
         self.registry = LabRegistry()
         self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
+        state_dir = get_settings().state_dir_path()
         # Lab directories opened from outside the store's root (open_lab) — see known_labs.py.
         if known is None:
-            state_dir = get_settings().state_dir_path()
             known = KnownLabs(state_dir / KNOWN_LABS_FILENAME if state_dir is not None else None)
         self.known = known
+        # The official image list as last fetched, across restarts — see _official_images.
+        self._images_file = OfficialImagesFile(
+            state_dir / OFFICIAL_IMAGES_FILENAME if state_dir is not None else None
+        )
         # Changes to labs made outside this app, for GET /api/events — see handle_disk_change —
         # the labs whose outside lab.conf edit is waiting for them to be undeployed, and the
         # deployed labs whose folder is gone, waiting the same way to be dropped from the list.
@@ -677,26 +686,44 @@ class KatharaService:
         )
 
     def _official_images(self) -> list[str]:
-        """The Docker Hub half, cached in-process for ``_IMAGES_CACHE_TTL`` seconds.
+        """The Docker Hub half, cached in memory for ``_IMAGES_CACHE_TTL`` seconds and on disk.
 
         Only this half is cached: it is a ~20-request fan-out over the network, while
         ``list_local_images`` is a millisecond call to the local daemon that must stay fresh so
         an image the user just pulled shows up without waiting out a TTL.
+
+        Past the memory TTL, the copy in the state directory (``_images_file``) is served while
+        younger than ``_IMAGES_FILE_TTL``; otherwise Docker Hub is asked, and a successful answer
+        replaces both. When it can't be reached, an older copy on disk is served rather than
+        nothing — kept in memory like a fetched one, so an offline app doesn't wait out the
+        request timeout on every open of a picker.
         """
         with self._images_cache_lock:
             if self._images_cache is not None and time.monotonic() - self._images_cache_at < self._IMAGES_CACHE_TTL:
                 # A copy, not the cached list itself: a caller that mutated it in place would
                 # corrupt the cache for everyone else.
                 return list(self._images_cache)
+        stored = self._images_file.load()
+        # A copy dated in the future (the clock was set back since) has no age to trust.
+        age = time.time() - stored.fetched_at if stored is not None else None
+        if stored is not None and 0 <= age < self._IMAGES_FILE_TTL:
+            return self._remember_official_images(stored.images)
         try:
             images = docker_hub.list_tagged_images()
         except HTTPConnectionError:
-            # Not cached, so the next call retries rather than latching the picker into a
-            # Hub-less state for five minutes after a brief network blip.
             logger.debug("Could not list the official Kathara images from Docker Hub", exc_info=True)
+            if stored is not None:
+                return self._remember_official_images(stored.images)
+            # Nothing to fall back on, and not cached either: the next call retries rather than
+            # latching the picker into a Hub-less state for five minutes after a brief blip.
             return []
+        self._images_file.save(images, time.time())
+        return self._remember_official_images(images)
+
+    def _remember_official_images(self, images: list[str]) -> list[str]:
+        """Keep ``images`` as the in-memory official list for ``_IMAGES_CACHE_TTL``; a copy back."""
         with self._images_cache_lock:
-            self._images_cache = images
+            self._images_cache = list(images)
             self._images_cache_at = time.monotonic()
         return list(images)
 

@@ -128,11 +128,11 @@ export function labsDir(): string {
 }
 
 /**
- * Where the backend keeps state belonging to no single lab (KATHARA_API_STATE_DIR) — today the
- * list of lab folders opened from outside the labs directory (labFolders.ts's
- * KNOWN_LABS_FILENAME). The per-user app data directory, next to preferences.json, rather than
- * the labs directory: that list names *which* folders the app may read and write, so it must not
- * live inside one of them.
+ * Where the backend keeps state belonging to no single lab (KATHARA_API_STATE_DIR): the list of
+ * lab folders opened from outside the labs directory (labFolders.ts's KNOWN_LABS_FILENAME) and
+ * the official image list last fetched from Docker Hub. The per-user app data directory, next to
+ * preferences.json, rather than the labs directory: that list of folders names *which* folders
+ * the app may read and write, so it must not live inside one of them.
  */
 export function stateDir(): string {
   return app.getPath("userData");
