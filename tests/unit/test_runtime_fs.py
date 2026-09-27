@@ -562,6 +562,25 @@ def test_removing_a_running_device_hands_keep_links_to_kathara(service, facade, 
     assert "pc1" not in service.registry.get(lab_id(service, "l")).machines
 
 
+def test_removing_a_device_deletes_its_scripts_and_folder_but_not_a_plain_file_of_its_name(tmp_path, facade):
+    """A device's folder is ``<name>/`` only when it is a directory, as for Kathara itself: a plain
+    file called ``<name>`` is left in place, and the removal still succeeds."""
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
+    make_lab(
+        service,
+        "disk",
+        {"lab.conf": "pc1[0]=A\npc2[0]=A\n", "pc1.startup": "ip a\n", "pc2.startup": "", "pc2": "notes\n",
+         "pc1/etc/motd": "hi\n"},
+    )
+    lab_dir = service.store.lab_dir("disk")
+
+    service.remove_machine(lab_id(service, "disk"), "pc1")
+    service.remove_machine(lab_id(service, "disk"), "pc2")
+
+    assert sorted(p.name for p in lab_dir.iterdir()) == ["lab.conf", "pc2"]
+    assert (lab_dir / "pc2").read_text() == "notes\n"
+
+
 def test_connecting_a_stopped_device_appends_the_next_interface_with_its_mac_to_lab_conf(tmp_path, facade):
     service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
     make_lab(service, "disk", {"lab.conf": "pc1[0]=A\n"})

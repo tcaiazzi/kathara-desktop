@@ -4,6 +4,7 @@ import { useToast } from "../context/ToastContext";
 import { useDeployGate } from "./useDeployGate";
 import { api } from "../services/api";
 import { visibleLinks } from "../services/constants";
+import { deviceFilesOnDisk } from "../services/labfs";
 import { openTerminalWindow } from "../services/terminalWindow";
 import { computeTopology, type DeviceNode, type DomainNode, type TopoModel } from "../services/topology";
 import type { LabDetail } from "../services/types";
@@ -278,14 +279,55 @@ export function useDeviceActions({
     });
   }
 
+  // The confirmation names every file the removal deletes (KatharaService._remove_machine_fs), read
+  // from the lab root just before asking. A listing that fails never blocks the removal: the
+  // message then names the files that may be there instead.
   async function removeDevice(deviceNode: DeviceNode) {
+    const name = deviceNode.name;
+    let files: string[] | null = null;
+    try {
+      files = deviceFilesOnDisk(name, (await api.fsListOffline(labId, "/")).entries);
+    } catch {
+      // fall back to the generic list below
+    }
     const ok = await confirm({
-      title: `Remove ${deviceNode.name}?`,
-      message: "This undeploys the device and removes it from the lab topology.",
+      title: `Remove ${name}?`,
+      message: (
+        <>
+          {deviceNode.running && (
+            <p>
+              <code>{name}</code> is running: it is stopped first.
+            </p>
+          )}
+          {files === null ? (
+            <p>
+              Its files in the lab folder — <code>{name}.startup</code>, <code>{name}.shutdown</code> and the{" "}
+              <code>{name}/</code> folder, where present — are permanently deleted.
+            </p>
+          ) : files.length ? (
+            <>
+              <p className="mb-1">Permanently deleted from the lab folder:</p>
+              <ul>
+                {files.map((f) => (
+                  <li key={f}>
+                    <code>{f}</code>
+                    {f.endsWith("/") && " and everything in it"}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>It has no files in the lab folder.</p>
+          )}
+          <p className="mb-0">
+            Its lines are removed from lab.conf, so a collision domain only it uses disappears too.
+          </p>
+        </>
+      ),
       okLabel: "Remove",
     });
     if (!ok) return;
-    await withRefresh(() => api.removeMachine(labId, deviceNode.name), `Device ${deviceNode.name} removed.`);
+    await withRefresh(() => api.removeMachine(labId, name), `Device ${name} removed.`);
   }
 
   async function deployDevice(deviceNode: DeviceNode) {
@@ -374,11 +416,9 @@ export function useDeviceActions({
         action: () => openDisconnect(nd),
       },
     );
-    items.push(
-      nd.running
-        ? { label: "Undeploy Device", danger: true, action: () => undeployDevice(nd) }
-        : { label: "Remove Device", danger: true, action: () => removeDevice(nd) },
-    );
+    // Remove is offered running or not: the backend undeploys a running device before removing it.
+    if (nd.running) items.push({ label: "Undeploy Device", danger: true, action: () => undeployDevice(nd) });
+    items.push({ label: "Remove Device", danger: true, action: () => removeDevice(nd) });
     return items;
   }
 

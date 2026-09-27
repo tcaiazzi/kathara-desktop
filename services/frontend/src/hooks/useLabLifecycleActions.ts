@@ -218,12 +218,15 @@ export function useLabLifecycleActions() {
     [ensureDeployAuthorized, requestDeployAuth, requestImageDownload, requestReclaimAuth, runBusy, toast],
   );
 
+  // Names the folder that goes: deleting a managed lab removes its whole directory for good.
   const deleteLab = useCallback(
-    async (lab: LabRef, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
+    async (lab: LabRef & { path: string | null }, setBusy: (busy: boolean) => void, onDone: () => Promise<void>) => {
       const name = labLabel(lab);
       const ok = await confirm({
         title: `Delete ${name}?`,
-        message: `This undeploys and removes lab "${name}".`,
+        message: lab.path
+          ? `The folder ${lab.path} and every file in it are permanently deleted — they are not moved to the trash. If the lab is running, its devices are stopped first.`
+          : `This undeploys lab "${name}". It has no folder on disk.`,
         okLabel: "Delete",
       });
       if (!ok) return;

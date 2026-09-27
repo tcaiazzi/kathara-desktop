@@ -1112,7 +1112,7 @@ export function WorkspacePage() {
   // which may be a different one — in that case the open lab stays put. A managed lab is deleted
   // with its directory; a folder opened from elsewhere is the user's own, so it is only closed —
   // the backend refuses the other way round for each (see LabSummary.managed).
-  async function handleRemove(lab: LabRef & { managed: boolean }) {
+  async function handleRemove(lab: LabRef & { managed: boolean; path: string | null }) {
     // Closing keeps the folder, so an unsaved edit to one of its files would be lost for no
     // reason; deleting takes the files with it, so its own confirmation says all there is.
     if (!lab.managed && lab.id === labId && !(await confirmDiscardAll())) return;

@@ -5,7 +5,7 @@
 
 import { FileCog, FileText, Map as MapIcon, Terminal, type LucideIcon } from "lucide-react";
 
-import type { MachineDetail } from "./types";
+import type { FsEntry, MachineDetail } from "./types";
 
 // Startup script shown for a machine: its real `<name>.startup` content if present, else the
 // machine's live exec_commands (matches what the Editor renders).
@@ -27,4 +27,16 @@ export function fileIcon(name: string): LucideIcon {
   if (name === "lab.layout") return MapIcon;
   if (name.endsWith(".startup") || name.endsWith(".shutdown") || name.endsWith(".sh")) return Terminal;
   return FileText;
+}
+
+// What removing device `name` deletes from the lab folder, given the lab root's listing: its
+// `<name>.startup` and `<name>.shutdown` scripts, and its `<name>/` folder — reported with the
+// trailing slash, and only when it is a directory. The rule is KatharaService._remove_machine_fs's
+// (and Kathara's own, which takes `<name>` as a device's folder only when it is one): a plain file
+// of that name stays, so the Remove Device confirmation must not list it.
+export function deviceFilesOnDisk(name: string, rootEntries: FsEntry[]): string[] {
+  const byName = new Map(rootEntries.map((e) => [e.name, e]));
+  const files = [`${name}.startup`, `${name}.shutdown`].filter((f) => byName.get(f) && !byName.get(f)?.is_dir);
+  if (byName.get(name)?.is_dir) files.push(`${name}/`);
+  return files;
 }

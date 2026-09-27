@@ -2475,11 +2475,17 @@ class KatharaService:
     def _remove_machine_fs(lab: Lab, machine_name: str) -> None:
         """Recursively delete a device's on-disk files: its ``<name>.startup``/``.shutdown`` scripts
         and its ``<name>/`` folder (Kathara's own ``delete_fs`` can't — it uses ``removedir``, which
-        fails on a non-empty folder)."""
+        fails on a non-empty folder).
+
+        ``<name>`` is the device's folder only when it is a directory, the same rule Kathara's own
+        ``Machine`` applies when it loads one: a plain file of that name belongs to the user, not
+        to the device, and stays. The Remove Device confirmation lists exactly these files
+        (``deviceFilesOnDisk`` in the frontend's ``services/labfs.ts``) and must follow this.
+        """
         for fname in (f"{machine_name}.startup", f"{machine_name}.shutdown"):
             if lab.fs.exists(fname):
                 lab.fs.remove(fname)
-        if lab.fs.exists(machine_name):
+        if lab.fs.isdir(machine_name):
             _remove_tree(lab.fs, machine_name)
 
     def connect_machine(
