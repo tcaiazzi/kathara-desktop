@@ -32,6 +32,7 @@ import {
   List,
   Loader2,
   Maximize,
+  Minimize,
   MoreHorizontal,
   PanelLeftClose,
   PanelLeftOpen,
@@ -220,43 +221,56 @@ function DockTab(props: IDockviewPanelHeaderProps) {
 // one resolves to a real component instead of failing.
 const DOCK_TAB_COMPONENTS = { fixed: DockTab };
 
-// A collapse/expand toggle rendered in every group's header (right side). Collapsing shrinks the
-// group to a header strip; the toggle (and clicking the strip) expands it again. Gives the bottom
-// tools panel — and any other group — the same collapse affordance as the sidebar.
+// Rendered in every group's header (right side): Maximize/Restore, and a collapse/expand toggle.
+// Maximize is dockview's own — the group fills the grid while the others stay where they were, so
+// Restore puts the layout back exactly. Collapsing shrinks the group to a header strip; the toggle
+// (and clicking the strip) expands it again, giving the bottom tools panel — and any other group —
+// the same collapse affordance as the sidebar. It is hidden while the group is maximized, where
+// there is nothing to collapse into.
 function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
   const groupApi = props.api;
   const [collapsed, setCollapsed] = useState(() => groupApi.height <= COLLAPSE_THRESHOLD);
+  const [maximized, setMaximized] = useState(() => groupApi.isMaximized());
   useEffect(() => {
     const d = groupApi.onDidDimensionsChange((e) => setCollapsed(e.height <= COLLAPSE_THRESHOLD));
     return () => d.dispose();
   }, [groupApi]);
+  useEffect(() => {
+    // Also fires when dockview leaves the maximized state on its own (another group activated).
+    const d = props.containerApi.onDidMaximizedGroupChange((e) => {
+      if (e.group === props.group) setMaximized(e.isMaximized);
+    });
+    return () => d.dispose();
+  }, [props.containerApi, props.group]);
   return (
     <div className="kt-ws-group-actions">
       <button
         className="kt-ws-group-btn"
-        title="Maximize panel"
-        aria-label="Maximize panel"
-        onClick={() => maximizeGroup(props.containerApi, props.group)}
+        title={maximized ? "Restore panel" : "Maximize panel"}
+        aria-label={maximized ? "Restore panel" : "Maximize panel"}
+        onClick={() => (groupApi.isMaximized() ? groupApi.exitMaximized() : groupApi.maximize())}
       >
-        <Maximize size={14} aria-hidden="true" />
+        {maximized ? <Minimize size={14} aria-hidden="true" /> : <Maximize size={14} aria-hidden="true" />}
       </button>
-      <button
-        className="kt-ws-group-btn"
-        title={collapsed ? "Expand panel" : "Collapse panel"}
-        aria-label={collapsed ? "Expand panel" : "Collapse panel"}
-        onClick={() => {
-          if (collapsed) {
-            groupApi.setSize({ height: RESTORE_GROUP_HEIGHT });
-          } else {
-            // Lower the min-height first — dockview's default group minimum (~100px) would otherwise
-            // stop it from shrinking to a header-only strip.
-            groupApi.setConstraints({ minimumHeight: COLLAPSED_GROUP_HEIGHT });
-            groupApi.setSize({ height: COLLAPSED_GROUP_HEIGHT });
-          }
-        }}
-      >
-        {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
-      </button>
+      {!maximized && (
+        <button
+          className="kt-ws-group-btn"
+          title={collapsed ? "Expand panel" : "Collapse panel"}
+          aria-label={collapsed ? "Expand panel" : "Collapse panel"}
+          onClick={() => {
+            if (collapsed) {
+              groupApi.setSize({ height: RESTORE_GROUP_HEIGHT });
+            } else {
+              // Lower the min-height first — dockview's default group minimum (~100px) would otherwise
+              // stop it from shrinking to a header-only strip.
+              groupApi.setConstraints({ minimumHeight: COLLAPSED_GROUP_HEIGHT });
+              groupApi.setSize({ height: COLLAPSED_GROUP_HEIGHT });
+            }
+          }}
+        >
+          {collapsed ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
+        </button>
+      )}
     </div>
   );
 }
@@ -372,13 +386,10 @@ function mergeOthersInto(api: DockviewApi, target: DockviewGroupPanel, keep: Set
   }
 }
 
-// Maximize a single group in place — used by the per-panel header's "Maximize panel" button.
-// mergeOthersInto activates whichever panel it moves in last, so re-assert the tab that was
-// active before the merge (same pattern as focusTopology/focusEditing/focusTerminals below).
-function maximizeGroup(api: DockviewApi, group: DockviewGroupPanel) {
-  const active = group.activePanel;
-  mergeOthersInto(api, group, new Set([group]));
-  active?.api.setActive();
+// Leave a maximized group first: the presets rearrange the whole grid, and one group filling it
+// would hide the result (and keep a stale "Restore" pointing at the old arrangement).
+function exitMaximized(api: DockviewApi) {
+  if (api.hasMaximizedGroup()) api.exitMaximizedGroup();
 }
 
 // --- Preset layouts (reposition existing panels via moveTo — no unmount, so terminal sessions
@@ -1028,6 +1039,8 @@ export function WorkspacePage() {
       }
     }
     if (!restored) buildDefaultLayout(event.api);
+    // The saved layout records a maximized group too; the app always opens with the full grid.
+    exitMaximized(event.api);
 
     // Subscribed before the fixups below run their own `p.api.close()`, on purpose: that close is
     // itself a layout change, and it must be persisted like any other — registering this first is
@@ -1301,6 +1314,7 @@ export function WorkspacePage() {
   function applyPreset(preset: LayoutPreset) {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
+    exitMaximized(dockApi);
     if (preset === "default") {
       resetLayout(dockApi);
     } else if (preset === "topology") {
