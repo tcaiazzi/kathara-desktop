@@ -8,10 +8,20 @@ moment a write stops being readable from disk across either rebuild, which is wh
 front of these writes would have to survive.
 """
 
+import os
+import shutil
+
 import fs.errors
+import fs.osfs
 import pytest
 
-from kathara_api.errors import ApiError, BinaryFileError, LabConfLockedError, PathNotFoundError
+from kathara_api.errors import (
+    ApiError,
+    BinaryFileError,
+    LabConfLockedError,
+    LabFilePermissionError,
+    PathNotFoundError,
+)
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services.kathara_service import ROOT_MACHINE, KatharaService
@@ -332,6 +342,87 @@ def test_a_file_moves_between_a_device_folder_and_shared_both_ways(tmp_path):
     service.fs_move_offline(lab_id(service, "testlab"), "/shared/motd", "/pc2/motd")
     assert (store.lab_dir("testlab") / "pc2" / "motd").read_text() == "hi\n"
     assert not (store.lab_dir("testlab") / "shared" / "motd").exists()
+
+
+# -- files another account owns (a running device writes shared/ as root) ----------------------
+
+
+def _deny(path):
+    def refuse(*_args, **_kwargs):
+        raise fs.errors.PermissionDenied(exc=PermissionError(13, "Permission denied", path))
+
+    return refuse
+
+
+def test_writing_a_file_another_account_owns_names_it(tmp_path, monkeypatch):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/notes.txt", "hi\n")
+    monkeypatch.setattr(fs.osfs.OSFS, "open", _deny(str(store.lab_dir("testlab") / "shared" / "notes.txt")))
+
+    with pytest.raises(LabFilePermissionError, match=r"^`/shared/notes.txt` is owned by another account"):
+        service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/notes.txt", "changed\n")
+
+
+def test_deleting_a_folder_another_account_owns_names_what_blocked_it(tmp_path, monkeypatch):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/results/out.txt", "r\n")
+    blocked = str(store.lab_dir("testlab") / "shared" / "results" / "out.txt")
+
+    def refuse(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", blocked)
+
+    monkeypatch.setattr(shutil, "rmtree", refuse)
+
+    with pytest.raises(LabFilePermissionError, match=r"^`/shared/results/out.txt` is owned by another account"):
+        service.fs_delete_offline(lab_id(service, "testlab"), "/shared/results", recursive=True)
+
+
+def test_other_failures_are_not_reported_as_permission_problems(tmp_path, monkeypatch):
+    service, _ = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/results/out.txt", "r\n")
+
+    def refuse(path, *args, **kwargs):
+        raise shutil.Error([(path, path, "[Errno 28] No space left on device")])
+
+    monkeypatch.setattr(shutil, "copytree", refuse)
+
+    with pytest.raises(shutil.Error):
+        service.fs_copy_offline(lab_id(service, "testlab"), "/shared/results", "/pc1/results")
+
+
+def test_search_skips_a_file_it_cant_read(tmp_path, monkeypatch):
+    service, store = _two_machine_lab(tmp_path)
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/a.txt", "needle\n")
+    service.fs_write_text_offline(lab_id(service, "testlab"), "/shared/b.txt", "needle\n")
+    unreadable = str(store.lab_dir("testlab") / "shared" / "b.txt")
+    real_readtext = fs.osfs.OSFS.readtext
+
+    def readtext(self, path, *args, **kwargs):
+        if self.getsyspath(path) == unreadable:
+            _deny(unreadable)()
+        return real_readtext(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(fs.osfs.OSFS, "readtext", readtext)
+
+    matches, _ = service.fs_search_offline(lab_id(service, "testlab"), "/shared", "needle")
+    assert [m.path for m in matches] == ["/shared/a.txt"]
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0, reason="root can empty any folder")
+def test_first_undeletable_finds_a_folder_with_entries_the_user_cant_remove(tmp_path):
+    lab = tmp_path / "lab"
+    (lab / "shared" / "results").mkdir(parents=True)
+    (lab / "shared" / "results" / "out.txt").write_text("r\n")
+    (lab / "shared" / "empty").mkdir()
+    (lab / "shared" / "empty").chmod(0o500)
+    assert LabStore.first_undeletable(lab) is None
+
+    (lab / "shared" / "results").chmod(0o500)
+    try:
+        assert LabStore.first_undeletable(lab) == lab / "shared" / "results"
+    finally:
+        (lab / "shared" / "results").chmod(0o700)
+        (lab / "shared" / "empty").chmod(0o700)
 
 
 # -- <machine>.startup: just a real file at the lab root, no special-casing needed ------------

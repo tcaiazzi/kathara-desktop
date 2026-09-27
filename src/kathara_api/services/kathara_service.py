@@ -22,6 +22,8 @@ Design notes:
   than silently doing nothing.
 """
 
+import errno
+import functools
 import io
 import logging
 import os
@@ -70,6 +72,7 @@ from ..errors import (
     LabCloseRefusedError,
     LabConfLockedError,
     LabDeleteRefusedError,
+    LabFilePermissionError,
     LabRenameLockedError,
     LabTransitioningError,
     LinkInUseError,
@@ -206,6 +209,58 @@ def _copy_tree(src_fs, src: str, dst_fs, dst: str) -> None:
         fs.copy.copy_dir(src_fs, src, dst_fs, dst)
         return
     shutil.copytree(src_real, dst_real, symlinks=True, dirs_exist_ok=True)
+
+
+_PERMISSION_ERRNO_MARKS = (f"[Errno {errno.EACCES}]", f"[Errno {errno.EPERM}]")
+
+
+def _permission_denied_path(exc: Exception) -> Optional[str]:
+    """The real path a permission failure is about, ``""`` when it is one but names no path, or
+    ``None`` when ``exc`` is some other failure. pyfilesystem's ``PermissionDenied`` keeps the
+    ``OSError`` it wraps; ``shutil.copytree`` collects its failures as ``(src, dst, str(why))``,
+    so only the message tells a permission failure apart there."""
+    if isinstance(exc, fs.errors.PermissionDenied):
+        filename = getattr(exc.exc, "filename", None)
+        return os.fsdecode(filename) if filename is not None else ""
+    if isinstance(exc, PermissionError):
+        return os.fsdecode(exc.filename) if exc.filename is not None else ""
+    if isinstance(exc, shutil.Error) and exc.args and isinstance(exc.args[0], list):
+        for src, _dst, why in exc.args[0]:
+            if any(mark in str(why) for mark in _PERMISSION_ERRNO_MARKS):
+                return os.fsdecode(src)
+    return None
+
+
+def _lab_display_path(real: str, lab_dir: Optional[Path]) -> str:
+    """``real`` as the offline API names it (``/shared/x``), or as it is when outside the lab."""
+    if lab_dir is not None and real and is_within(Path(real), lab_dir):
+        relative = Path(real).resolve().relative_to(lab_dir.resolve()).as_posix()
+        return "/" if relative == "." else f"/{relative}"
+    return real
+
+
+def _owned_by_another_account(path: str) -> str:
+    what = f"`{path}`" if path else "A file"
+    return f"{what} is owned by another account (usually root: a running device wrote it)"
+
+
+def _lab_file_permissions(method):
+    """Decorates an offline fs operation taking ``lab_id`` first, so a file the user can't write
+    — typically one a running device wrote as root into ``shared/`` — is reported by name as a
+    LabFilePermissionError instead of an unhandled 500."""
+
+    @functools.wraps(method)
+    def wrapper(self: "KatharaService", lab_id: str, *args, **kwargs):
+        try:
+            return method(self, lab_id, *args, **kwargs)
+        except (fs.errors.PermissionDenied, PermissionError, shutil.Error) as exc:
+            denied = _permission_denied_path(exc)
+            if denied is None:
+                raise
+            path = _lab_display_path(denied, self._lab_dir(lab_id))
+            raise LabFilePermissionError(f"{_owned_by_another_account(path)}, so the app can't change it.") from exc
+
+    return wrapper
 
 
 def _walk(target_fs, path: str = "/") -> Generator[tuple[str, bool], None, None]:
@@ -1843,6 +1898,7 @@ class KatharaService:
             result[name] = text
         return result
 
+    @_lab_file_permissions
     def fs_list_offline(self, lab_id: str, path: str) -> list[FsEntry]:
         """A directory listing straight off the real fs — no synthesized entries. A device with
         nothing on disk yet simply doesn't appear at the root, the same way an empty/nonexistent
@@ -1868,6 +1924,7 @@ class KatharaService:
             # legitimate empty listing, not an error.
         return sorted(entries.values(), key=lambda e: (not e.is_dir, e.name.lower()))
 
+    @_lab_file_permissions
     def fs_search_offline(
         self, lab_id: str, path: str, query: str, case_sensitive: bool = False
     ) -> tuple[list[FsSearchMatch], bool]:
@@ -1910,6 +1967,8 @@ class KatharaService:
                     continue  # binary — same tolerance as every other offline text read
                 except fs.errors.ResourceError:
                     continue  # vanished between walk() and readtext() — benign race
+                except fs.errors.PermissionDenied:
+                    continue  # unreadable (a device's root-owned file): nothing to match in it
 
                 remaining = _SEARCH_MAX_TOTAL_MATCHES - len(matches)
                 file_matches, file_capped = _search_lines_in_text(
@@ -1941,6 +2000,7 @@ class KatharaService:
             raise ApiError(f"`{path}` is a directory. Use list to navigate it.")
         return target_fs, guest
 
+    @_lab_file_permissions
     def fs_read_text_offline(self, lab_id: str, path: str) -> str:
         path = self._clean_offline_path(path)
         # Only the text read short-circuits lab.conf: it is the one whose content the API owns a
@@ -1953,10 +2013,12 @@ class KatharaService:
         except UnicodeDecodeError as exc:
             raise BinaryFileError("File is not UTF-8 text. Use download for binary files.") from exc
 
+    @_lab_file_permissions
     def fs_read_bytes_offline(self, lab_id: str, path: str) -> bytes:
         target_fs, guest = self._resolve_offline_file(lab_id, self._clean_offline_path(path))
         return target_fs.readbytes(guest)
 
+    @_lab_file_permissions
     def fs_write_text_offline(self, lab_id: str, path: str, content: str) -> int:
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
@@ -1977,6 +2039,7 @@ class KatharaService:
                 self.registry.mark_dirty(lab_id, dirty)
         return len(content.encode("utf-8"))
 
+    @_lab_file_permissions
     def fs_upload_bytes_offline(self, lab_id: str, path: str, content: bytes) -> int:
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
@@ -2005,6 +2068,7 @@ class KatharaService:
                 self.registry.mark_dirty(lab_id, dirty)
         return len(content)
 
+    @_lab_file_permissions
     def fs_mkdir_offline(self, lab_id: str, path: str) -> None:
         path = self._clean_offline_path(path)
         self._check_not_transitioning(lab_id)
@@ -2020,6 +2084,7 @@ class KatharaService:
             if dirty:
                 self.registry.mark_dirty(lab_id, dirty)
 
+    @_lab_file_permissions
     def fs_delete_offline(self, lab_id: str, path: str, recursive: bool = False) -> None:
         path = self._clean_offline_path(path)
         if self._is_lab_conf(path):
@@ -2101,6 +2166,7 @@ class KatharaService:
 
         return lab, src_fs, source_guest, dst_fs, dest_guest
 
+    @_lab_file_permissions
     def fs_move_offline(self, lab_id: str, source_path: str, destination_path: str) -> None:
         source_path = self._clean_offline_path(source_path)
         destination_path = self._clean_offline_path(destination_path)
@@ -2131,6 +2197,7 @@ class KatharaService:
                 if dirty:
                     self.registry.mark_dirty(lab_id, dirty)
 
+    @_lab_file_permissions
     def fs_copy_offline(self, lab_id: str, source_path: str, destination_path: str) -> None:
         source_path = self._clean_offline_path(source_path)
         destination_path = self._clean_offline_path(destination_path)
@@ -2644,6 +2711,13 @@ class KatharaService:
         # reloading it from disk instead could fail on a lab.conf already removed.
         with self._claiming(lab_id):
             label = self._lab_label(lab_id)
+            if lab_dir is not None:
+                blocked = self.store.first_undeletable(lab_dir)
+                if blocked is not None:
+                    path = _lab_display_path(str(blocked), lab_dir)
+                    raise LabFilePermissionError(
+                        f"`{label}` can't be deleted: {_owned_by_another_account(path)}. Nothing was deleted."
+                    )
             lab = self.registry.remove(lab_id)
             if lab_dir is None:
                 return
@@ -2652,7 +2726,8 @@ class KatharaService:
             except OSError as exc:
                 if lab is not None and lab_dir.is_dir():
                     self.registry.add(lab, lab_dir)
-                raise ApiError(
+                error = LabFilePermissionError if isinstance(exc, PermissionError) else ApiError
+                raise error(
                     f"`{label}` could not be deleted completely: {exc.strerror or exc} ({exc.filename}). "
                     "What is left is still listed; try again once that is fixed."
                 ) from exc

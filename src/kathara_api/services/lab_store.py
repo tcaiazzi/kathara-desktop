@@ -527,6 +527,25 @@ class LabStore:
             shutil.rmtree(directory)
 
     @staticmethod
+    def first_undeletable(directory: Path) -> Optional[Path]:
+        """The first folder under ``directory`` (itself included) whose contents this user can't
+        remove, or ``None`` when ``delete_lab`` can remove all of it. Removing an entry needs
+        write and search permission on the folder holding it, so a folder that has entries and
+        lacks either — or that can't even be listed — stops the delete part-way. Asked before a
+        delete starts, so a lab with files a device left owned by root is refused whole, never
+        left half-removed. A link to a folder elsewhere is only unlinked, so nothing in it counts.
+        """
+        if _is_link(directory) or not directory.is_dir():
+            return None
+        unlistable: list[Path] = []
+        for root, dirnames, filenames in os.walk(directory, onerror=lambda e: unlistable.append(Path(e.filename))):
+            if unlistable:
+                break
+            if (dirnames or filenames) and not os.access(root, os.W_OK | os.X_OK):
+                return Path(root)
+        return unlistable[0] if unlistable else None
+
+    @staticmethod
     def rename_lab(directory: Path, new_name: str) -> Path:
         """Rename a lab directory in place, next to where it already is, and return its new path.
 

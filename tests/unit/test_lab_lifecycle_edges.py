@@ -18,7 +18,7 @@ from Kathara.exceptions import (
 )
 from Kathara.model.Lab import Lab
 
-from kathara_api.errors import ApiError, LabAlreadyRegisteredError
+from kathara_api.errors import ApiError, LabAlreadyRegisteredError, LabFilePermissionError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import kathara_service as kathara_service_module
@@ -442,6 +442,24 @@ def test_a_delete_that_fails_part_way_keeps_the_lab_listed_and_says_why(service,
     assert service.registry.get(demo) is model
     assert [lab.hash for lab in service.list_labs()] == [demo]
     assert facade.undeploy_calls == [{"lab_hash": demo}]
+
+
+def test_a_lab_with_a_folder_the_user_cant_empty_is_refused_whole(service, facade, monkeypatch):
+    """A folder a device left owned by root is found before anything is removed: the delete is
+    refused with the path, nothing is deleted and the lab stays listed as it is."""
+    demo = lab_id(service, "l")
+    model = service.registry.get(demo)
+    directory = service.registry.directory(demo)
+    monkeypatch.setattr(service.store, "first_undeletable", lambda d: d / "shared" / "results")
+    removed = []
+    monkeypatch.setattr(service.store, "delete_lab", removed.append)
+
+    with pytest.raises(LabFilePermissionError, match=r"`/shared/results` is owned by another account.*Nothing was deleted"):
+        service.delete_lab(demo)
+
+    assert removed == []
+    assert service.registry.get(demo) is model
+    assert service.registry.directory(demo) == directory
 
 
 def test_stats_stream_asks_for_that_lab_and_waits_only_the_rest_of_the_interval(service, facade, monkeypatch):

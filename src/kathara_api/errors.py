@@ -132,6 +132,15 @@ class ShellOnlyError(ApiError):
     status_code = status.HTTP_403_FORBIDDEN
 
 
+class LabFilePermissionError(ApiError):
+    """Raised when the backend can't change or remove a file in a lab folder because another
+    account owns it. In practice that account is root: running devices write into the lab's
+    `shared/` folder, which Kathara bind-mounts at `/shared`, as root. A distinct class so the
+    frontend can offer to reclaim the files for the user (ReclaimLabsDirContext.tsx)."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+
+
 class NotALabError(ApiError):
     """Raised when opening a directory that holds neither a ``lab.conf`` nor any device folder.
 
@@ -318,10 +327,11 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     # pyfilesystem2 offline-fs errors reachable from fs_write_text_offline/_write_lab_root_files,
     # fs_mkdir_offline and fs_upload_bytes_offline: a write/mkdir whose target path collides with
     # something already on disk of the wrong kind, or that isn't there when a read expects it —
-    # a real but non-malicious input error, not a server bug. Other FSError siblings not listed
-    # here (PermissionDenied, OperationTimeout, ResourceLocked, ...) are left to the catch-all 500
-    # on purpose: nothing reaches them without a filesystem-level fault outside the caller's
-    # control.
+    # a real but non-malicious input error, not a server bug. PermissionDenied is not listed:
+    # the offline fs operations turn it into LabFilePermissionError, which names the file (its
+    # own message is only "permission denied"). Other FSError siblings (OperationTimeout,
+    # ResourceLocked, ...) are left to the catch-all 500 on purpose: nothing reaches them without
+    # a filesystem-level fault outside the caller's control.
     fs.errors.ResourceNotFound: status.HTTP_404_NOT_FOUND,
     fs.errors.FileExpected: status.HTTP_400_BAD_REQUEST,
     fs.errors.DirectoryExpected: status.HTTP_400_BAD_REQUEST,

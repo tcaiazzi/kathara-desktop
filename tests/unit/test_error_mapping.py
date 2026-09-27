@@ -13,7 +13,7 @@ from Kathara.exceptions import (
 )
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from kathara_api.errors import SettingsLockedError, register_exception_handlers
+from kathara_api.errors import LabFilePermissionError, SettingsLockedError, register_exception_handlers
 
 
 def _client_raising(exc: Exception) -> TestClient:
@@ -49,6 +49,13 @@ def test_privilege_error_maps_to_403():
     resp = client.get("/boom")
     assert resp.status_code == 403
     assert resp.json()["error_type"] == "PrivilegeError"
+
+
+def test_lab_file_permission_error_maps_to_403_with_its_message():
+    client = _client_raising(LabFilePermissionError("`/shared/x` is owned by another account"))
+    resp = client.get("/boom")
+    assert resp.status_code == 403
+    assert resp.json() == {"detail": "`/shared/x` is owned by another account", "error_type": "LabFilePermissionError"}
 
 
 def test_settings_locked_maps_to_409():
