@@ -44,7 +44,7 @@ endif
 
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
-        wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell \
+        wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell dev-build \
         check lint typecheck test coverage check-frontend check-desktop check-backend \
         mutation mutation-frontend mutation-desktop mutation-backend \
         clean clean-wheel clean-python clean-deps clean-mutation distclean
@@ -182,6 +182,12 @@ shell: install-desktop
 	$(RUN_NODE) npm run build --prefix $(DESKTOP_DIR)
 
 build: frontend shell
+
+# Builds the SPA and launches the desktop app from this checkout, the backend running from src/.
+# No install step, so it stays fast: run `make install` once first. `npm start` builds the shell.
+dev-build:
+	$(RUN_NODE) npm run build --prefix $(FRONTEND_DIR)
+	$(RUN_NODE) npm start --prefix $(DESKTOP_DIR)
 
 ## ---- installer packaging ---------------------------------------------------
 
