@@ -162,7 +162,7 @@ class DockerTtySession:
         self._client = client
         self._container_id = container_id
         self._shell_cmd = resolve_shell_path(shell)
-        self._exec_id: str | None = None
+        self._exec_id: Optional[str] = None
         self._socket = None
 
     def start(self) -> None:
@@ -227,17 +227,22 @@ class DockerTtySession:
     # Parallel to the sync methods above rather than replacing them, so a test double can still
     # implement (or override) just the sync ones. routers/exec.py:tty_live_ws uses only these.
 
+    @staticmethod
+    async def _offload(fn, *args):
+        """Run ``fn(*args)`` on the dedicated TTY executor and await its result."""
+        return await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), fn, *args)
+
     async def astart(self) -> None:
-        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.start)
+        await self._offload(self.start)
 
     async def aread(self, size: int = 4096) -> bytes:
-        return await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.read, size)
+        return await self._offload(self.read, size)
 
     async def awrite(self, data: bytes) -> None:
-        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.write, data)
+        await self._offload(self.write, data)
 
     async def aresize(self, cols: int, rows: int) -> None:
-        await asyncio.get_running_loop().run_in_executor(_get_tty_executor(), self.resize, cols, rows)
+        await self._offload(self.resize, cols, rows)
 
     async def aclose(self) -> None:
         # On the default executor, not the TTY one: this is what unblocks the session's read, so

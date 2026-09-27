@@ -364,16 +364,21 @@ def known_error_detail(exc: Exception) -> Optional[str]:
     a message written for the user — or None for one that reaches the catch-all, whose text may
     carry host paths or other internals and so only goes to the log. For code that keeps an error
     to show later, outside the request that raised it (``KatharaService.deploy_lab``)."""
-    if isinstance(exc, ApiError) or isinstance(exc, tuple(KATHARA_STATUS_MAP)):
-        return str(exc) or exc.__class__.__name__
-    if isinstance(exc, (docker.errors.APIError, SyntaxError)):
+    if isinstance(exc, (ApiError, docker.errors.APIError, SyntaxError, *KATHARA_STATUS_MAP)):
         return str(exc) or exc.__class__.__name__
     return None
 
 
+def error_response(status_code: int, detail: str, error_type: str) -> JSONResponse:
+    """A response carrying this API's uniform ``ErrorResponse`` body. Every error answer goes
+    through here, including the ones ``main.py``'s middlewares build before any handler runs."""
+    return JSONResponse(
+        status_code=status_code, content=ErrorResponse(detail=detail, error_type=error_type).model_dump()
+    )
+
+
 def _error_response(exc: Exception, code: int) -> JSONResponse:
-    body = ErrorResponse(detail=str(exc) or exc.__class__.__name__, error_type=exc.__class__.__name__)
-    return JSONResponse(status_code=code, content=body.model_dump())
+    return error_response(code, str(exc) or exc.__class__.__name__, exc.__class__.__name__)
 
 
 # What a value failing one of the schemas' `pattern=` constraints must look like, keyed by that
@@ -442,11 +447,11 @@ def _validation_error_response(exc: RequestValidationError) -> JSONResponse:
     ``detail`` as a plain string, and a client that doesn't special-case this one shape would
     otherwise render the raw list (e.g. JS: ``String(anErrorList)`` -> ``"[object Object]"``).
     """
-    body = ErrorResponse(
-        detail=_flatten_validation_detail(exc.errors(), drop_source=True),
-        error_type="RequestValidationError",
+    return error_response(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        _flatten_validation_detail(exc.errors(), drop_source=True),
+        "RequestValidationError",
     )
-    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content=body.model_dump())
 
 
 def _model_validation_error_response(exc: ValidationError) -> JSONResponse:
@@ -460,11 +465,11 @@ def _model_validation_error_response(exc: ValidationError) -> JSONResponse:
     ``str(exc)`` is not used: pydantic renders it over several lines and ends it with a link to its
     own documentation, which is not an answer to "what is wrong with my lab".
     """
-    body = ErrorResponse(
-        detail=_flatten_validation_detail(exc.errors(), drop_source=False),
-        error_type=exc.__class__.__name__,
+    return error_response(
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
+        _flatten_validation_detail(exc.errors(), drop_source=False),
+        exc.__class__.__name__,
     )
-    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content=body.model_dump())
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -532,8 +537,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         if exc.status_code >= 500:
             logger.error("HTTPException raised with a server-error status: %s", detail)
-        body = ErrorResponse(detail=detail, error_type="HTTPException")
-        return JSONResponse(status_code=exc.status_code, content=body.model_dump())
+        return error_response(exc.status_code, detail, "HTTPException")
 
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)
 
@@ -547,5 +551,6 @@ def register_exception_handlers(app: FastAPI) -> None:
         # handler in this file returns a user-facing detail on purpose, this one is the
         # catch-all for bugs, not expected input errors.
         logger.exception("Unhandled error while processing request")
-        body = ErrorResponse(detail="Internal server error.", error_type=exc.__class__.__name__)
-        return JSONResponse(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, content=body.model_dump())
+        return error_response(
+            status.HTTP_500_INTERNAL_SERVER_ERROR, "Internal server error.", exc.__class__.__name__
+        )

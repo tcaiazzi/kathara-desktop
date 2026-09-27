@@ -130,13 +130,11 @@ def classify_images(
             local[name] = docker_image.get_local(name)
         except ImageNotFound:
             states[name] = "missing"
-        except APIError:
+        except Exception:
             # Anything else the daemon says (a 500, an auth failure, an unusable reference) is not
             # evidence that the image is absent. Reporting it as `missing` would put a *mandatory*
-            # download in front of a lab whose images are all present.
-            logger.debug("image presence check failed for %s", name, exc_info=True)
-            states[name] = "unknown"
-        except Exception:  # a broken check must never block a deploy
+            # download in front of a lab whose images are all present — and a broken check must
+            # never block a deploy.
             logger.debug("image presence check failed for %s", name, exc_info=True)
             states[name] = "unknown"
 

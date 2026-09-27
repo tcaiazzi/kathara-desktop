@@ -13,6 +13,7 @@ from Kathara.model.Lab import Lab
 from Kathara.model.Machine import Machine
 
 from ..errors import ApiError
+from ..lab_conf_options import IMAGE_KEY
 from ..schemas.lab import LabCreate
 from ..schemas.machine import MachineCreate, MachineOptionsBase
 from .lab_store import lab_id_for
@@ -60,7 +61,7 @@ def _machine_kwargs(spec: MachineOptionsBase) -> dict:
     """Build the kwargs dict consumed by ``Machine.update_meta``."""
     kwargs: dict = {}
     if spec.image is not None:
-        kwargs["image"] = spec.image
+        kwargs[IMAGE_KEY] = spec.image
     if spec.mem is not None:
         kwargs["mem"] = spec.mem
     if spec.cpus is not None:

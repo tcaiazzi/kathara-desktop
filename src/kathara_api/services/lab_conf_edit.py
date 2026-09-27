@@ -87,7 +87,7 @@ def _classify(raw: str) -> _Line:
         return _Line(raw=raw, kind=_Kind.COMMENT)
 
     indent = raw[: len(raw) - len(raw.lstrip())]
-    trailer = raw[len(raw.rstrip()) :] if raw.strip() else ""
+    trailer = raw[len(raw.rstrip()) :]
 
     m = lab_import.CONF_LINE_RE.match(stripped)
     if m:
@@ -474,9 +474,9 @@ def add_interface(text: str, device: str, number: Optional[int], link: str, mac_
     return new_text
 
 
-def remove_interface(text: str, device: str, link: str, *, renumber: bool = True) -> str:
-    """Delete ``device``'s interface line for collision domain ``link`` and, by default, renumber
-    its higher-numbered interfaces down so numbering stays sequential from 0 (a gap is an error
+def remove_interface(text: str, device: str, link: str) -> str:
+    """Delete ``device``'s interface line for collision domain ``link`` and renumber its
+    higher-numbered interfaces down so numbering stays sequential from 0 (a gap is an error
     for both this project's parser and Kathara's own ``Machine.check``, so a bare line delete
     would leave a ``lab.conf`` that can no longer be loaded or deployed). Unknown device/link:
     returns ``text`` unchanged.
@@ -487,8 +487,7 @@ def remove_interface(text: str, device: str, link: str, *, renumber: bool = True
     removed = doc.remove_interface(device, link)
     if removed is None:
         return text
-    if renumber:
-        doc.renumber_interfaces(device)
+    doc.renumber_interfaces(device)
     return doc.render()
 
 

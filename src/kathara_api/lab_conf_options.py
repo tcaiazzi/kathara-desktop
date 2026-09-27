@@ -67,7 +67,8 @@ SCALAR_OPTIONS: tuple[str, ...] = (
 # the JSON/model field name (plural). Both spellings matter: the singular is what a lab.conf line
 # says, the plural is what `machine.meta` and the request schema call it.
 #
-# ORDER IS ALSO THE RENDER ORDER, for the same reason as SCALAR_OPTIONS.
+# ORDER IS ALSO THE RENDER ORDER, for the same reason as SCALAR_OPTIONS: `lab_store.gen_device_lines`
+# loops over it too.
 GROUP_OPTIONS: dict[str, str] = {
     "port": "ports",
     "env": "envs",

@@ -6,15 +6,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from . import __version__
 from .config import format_mb, get_settings
 from .dependencies import get_service, is_origin_allowed, require_auth_token
-from .errors import ForbiddenOriginError, register_exception_handlers
+from .errors import ForbiddenOriginError, error_response, register_exception_handlers
 from .routers import events, labs, links, machines, stats, system
 from .routers import exec as exec_router
-from .schemas.common import ErrorResponse
 from .services.docker_tty import shutdown_tty_executor
 from .services.lab_watch import LabWatcher
 from .spa import mount_spa
@@ -112,10 +110,7 @@ def create_app() -> FastAPI:
                 f"Origin {request.headers.get('origin')!r} is not allowed to make state-changing "
                 "requests to this backend."
             )
-            return JSONResponse(
-                status_code=exc.status_code,
-                content=ErrorResponse(detail=str(exc), error_type=type(exc).__name__).model_dump(),
-            )
+            return error_response(exc.status_code, str(exc), type(exc).__name__)
         return await call_next(request)
 
     # Cheap, early reject for the common case (a client that sends `Content-Length`, which every
@@ -142,15 +137,11 @@ def create_app() -> FastAPI:
             # "NetworkError"/"Failed to fetch" instead of ever surfacing this JSON body.
             async for _ in request.stream():
                 pass
-            return JSONResponse(
-                status_code=413,
-                content=ErrorResponse(
-                    detail=(
-                        f"Request body is {format_mb(int(content_length))}, more than the "
-                        f"{format_mb(max_body_bytes)} this server allows."
-                    ),
-                    error_type="PayloadTooLargeError",
-                ).model_dump(),
+            return error_response(
+                413,
+                f"Request body is {format_mb(int(content_length))}, more than the "
+                f"{format_mb(max_body_bytes)} this server allows.",
+                "PayloadTooLargeError",
             )
         return await call_next(request)
 

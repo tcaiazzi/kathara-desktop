@@ -94,7 +94,7 @@ class LabWatcher:
         self._interval = interval
         self._seen: dict[str, dict[str, _Signature]] = {}
         self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._thread: Optional[threading.Thread] = None
 
     def poll_once(self) -> None:
         """One pass over every lab: run ``on_poll``, then report each lab's changed names to

@@ -22,6 +22,7 @@ from ..lab_conf_options import (
     DEVICE_NAME_CHARS,
     DEVICE_NAME_PATTERN,
     IDENTIFIER_RE,
+    IMAGE_KEY,
     INTERPRETED_OPTIONS,
     LAB_CONF_FILENAME,
     MEM_PATTERN,
@@ -161,7 +162,7 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
         )
         return
 
-    if opt == "image":
+    if opt == IMAGE_KEY:
         machine.image = value
     elif opt == "mem":
         # Stripped: the whitespace before a trailing `# comment` stays in `value`, and Kathara reads

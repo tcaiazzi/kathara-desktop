@@ -25,7 +25,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, BinaryIO, NamedTuple, Optional, Union
+from typing import Any, BinaryIO, Callable, NamedTuple, Optional, Union
 
 from Kathara import utils as kathara_utils
 from Kathara.exceptions import LabNotFoundError
@@ -35,11 +35,13 @@ from ..config import format_mb, get_settings
 from ..errors import ApiError, InvalidArchiveError, LabAlreadyRegisteredError
 from ..lab_conf_options import (
     DEFAULT_IMAGE,
+    GROUP_OPTIONS,
     IMAGE_KEY,
     LAB_CONF_FILENAME,
     MODELED_META_KEYS,
     SCALAR_OPTIONS,
 )
+from ..schemas.common import reject_lab_conf_quotes
 
 logger = logging.getLogger("kathara_api")
 
@@ -94,6 +96,12 @@ def is_within(path: Path, base: Path) -> bool:
     return resolved == resolved_base or resolved_base in resolved.parents
 
 
+def _require_dir(directory: Path) -> None:
+    """Raise ``LabNotFoundError`` (404) unless the lab directory ``directory`` exists."""
+    if not directory.is_dir():
+        raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+
+
 def _is_link(path: Path) -> bool:
     """Whether ``path`` is itself a link to a directory elsewhere: a symlink, or on Windows a
     junction (``mklink /J``), which ``shutil.rmtree`` refuses just the same. ``os.path.isjunction``
@@ -124,11 +132,36 @@ def conf_value(value: Any) -> str:
     human would write by hand.
     """
     text = str(value)
-    if '"' in text or "'" in text or "\n" in text or "\r" in text:
-        raise ApiError(f"Cannot write value {text!r} to lab.conf: it contains a quote or newline.")
+    try:
+        reject_lab_conf_quotes(text)
+    except ValueError:
+        raise ApiError(
+            f"Cannot write value {text!r} to lab.conf: it contains a quote or newline."
+        ) from None
     if not text or any(c.isspace() for c in text) or "#" in text:
         return f'"{text}"'
     return text
+
+
+# The values of the lines a repeating option's `device.meta` entry renders to, keyed by its
+# lab.conf spelling. GROUP_OPTIONS decides the order the groups are written in; a group missing
+# here is a KeyError on the first render, never one silently left out of the file.
+_GROUP_LINE_VALUES: dict[str, Callable[[Any], list[str]]] = {
+    "port": lambda ports: [
+        f"{host_port}:{guest_port}/{protocol}" for (host_port, protocol), guest_port in ports.items()
+    ],
+    "env": lambda envs: [f"{env_key}={env_value}" for env_key, env_value in envs.items()],
+    "sysctl": lambda sysctls: [
+        f"{sysctl_key}={sysctl_value}" for sysctl_key, sysctl_value in sysctls.items()
+    ],
+    "ulimit": lambda ulimits: [
+        f'{ulimit_key}={limits["soft"]}:{limits["hard"]}' for ulimit_key, limits in ulimits.items()
+    ],
+    "volume": lambda volumes: [
+        f'{host_path}|{volume["guest_path"]}|{volume["mode"]}' for host_path, volume in volumes.items()
+    ],
+    "exec": lambda commands: list(commands),
+}
 
 
 # The scalar render order and the "already has a home" set both come from `lab_conf_options` —
@@ -171,18 +204,9 @@ def gen_device_lines(device) -> list[str]:
         if value not in absent:
             lines.append(f'{name}[{key}]={conf_value(value)}')
 
-    for (host_port, protocol), guest_port in meta.get("ports", {}).items():
-        lines.append(f'{name}[port]="{host_port}:{guest_port}/{protocol}"')
-    for env_key, env_value in meta.get("envs", {}).items():
-        lines.append(f'{name}[env]="{env_key}={env_value}"')
-    for sysctl_key, sysctl_value in meta.get("sysctls", {}).items():
-        lines.append(f'{name}[sysctl]="{sysctl_key}={sysctl_value}"')
-    for ulimit_key, limits in meta.get("ulimits", {}).items():
-        lines.append(f'{name}[ulimit]="{ulimit_key}={limits["soft"]}:{limits["hard"]}"')
-    for host_path, volume in meta.get("volumes", {}).items():
-        lines.append(f'{name}[volume]="{host_path}|{volume["guest_path"]}|{volume["mode"]}"')
-    for command in meta.get("exec_commands", []):
-        lines.append(f'{name}[exec]="{command}"')
+    for key, field in GROUP_OPTIONS.items():
+        for value in _GROUP_LINE_VALUES[key](meta.get(field, {})):
+            lines.append(f'{name}[{key}]="{value}"')
 
     # Pass-through metas this API doesn't interpret (see lab_builder.apply_options), sorted for
     # stable output.
@@ -288,7 +312,7 @@ class LabStore:
         """
         return [self.root / name for name in self.lab_names()]
 
-    def write_lab(self, name: str, files: dict[str, Union[str, bytes]], dirs: list[str] | None = None) -> Path:
+    def write_lab(self, name: str, files: dict[str, Union[str, bytes]], dirs: Optional[list[str]] = None) -> Path:
         """Write a lab directory verbatim from a path->content map, atomically.
 
         Content is written into a private scratch dir (``_new_scratch_dir``) and then
@@ -398,7 +422,7 @@ class LabStore:
         self._written_conf.pop(directory.resolve(), None)
 
     def _write_conf(self, directory: Path, text: str) -> Path:
-        final = directory / LAB_CONF_FILENAME
+        final = self.lab_conf_path(directory)
         self._atomic_write_text(final, text)
         self._written_conf[directory.resolve()] = self._digest(text)
         return final
@@ -446,8 +470,7 @@ class LabStore:
         which regenerates the file from a ``Lab`` model (lossy, and used only where there is no
         source file to preserve: ``create_lab`` and ``open_lab(init=True)``).
         """
-        if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        _require_dir(directory)
         return self._write_conf(directory, text)
 
     @staticmethod
@@ -474,8 +497,7 @@ class LabStore:
         a 404. A hand-edited or truncated layout file must never break the topology view, so parse
         errors are logged and treated the same as "no layout".
         """
-        if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        _require_dir(directory)
         path = self.layout_path(directory)
         if not path.is_file() or not is_within(path, directory):
             return None
@@ -491,9 +513,8 @@ class LabStore:
 
     def write_layout(self, directory: Path, data: dict[str, Any]) -> Path:
         """Write ``lab.layout`` atomically (tmp file + ``os.replace``), or raise ``LabNotFoundError``."""
-        if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
-        final = directory / LAYOUT_FILENAME
+        _require_dir(directory)
+        final = self.layout_path(directory)
         tmp = directory / f".{LAYOUT_FILENAME}.tmp"
         tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
         os.replace(tmp, final)
@@ -506,8 +527,7 @@ class LabStore:
         deleting a nonexistent lab's layout has no sensible "nothing to do" reading the way an
         absent layout file does.
         """
-        if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        _require_dir(directory)
         path = self.layout_path(directory)
         if not path.is_file():
             return False
@@ -555,8 +575,7 @@ class LabStore:
         Refuses to clobber an existing directory; renaming to the same name is a no-op.
         """
         new_clean = sanitize_lab_name(new_name)
-        if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        _require_dir(directory)
         if new_clean == directory.name:
             return directory
         target = directory.parent / new_clean
@@ -687,8 +706,7 @@ class LabStore:
         Files are stored at the archive root (``lab.conf``, ``pc1.startup``, ``pc1/…``), so a plain
         ``unzip`` and this store's own ``extract_zip`` both round-trip the result cleanly.
         """
-        if not directory.is_dir():
-            raise LabNotFoundError(f"Lab `{directory.name}` not found.")
+        _require_dir(directory)
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
             for root, _dirs, files in os.walk(directory):

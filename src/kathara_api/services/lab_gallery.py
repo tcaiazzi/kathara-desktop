@@ -200,7 +200,7 @@ def _disambiguate(roots: list[str]) -> dict[str, str]:
             )
             candidate = f"{base}_{suffix}" if suffix else base
             # A name is a directory name; keep it inside LAB_NAME_RE's 64-char budget.
-            names[root] = candidate[:64] if len(candidate) > 64 else candidate
+            names[root] = candidate[:64]
     return names
 
 

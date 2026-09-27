@@ -138,6 +138,17 @@ PRIVILEGED_ONLY_WITH_LAB = (
 )
 
 
+def _lab_not_found(lab_id: str) -> LabNotFoundError:
+    """The 404 for an unknown ``lab_id``, worded the same by every lookup that raises it."""
+    return LabNotFoundError(f"Lab `{lab_id}` not found.")
+
+
+def _decode(output: Optional[bytes]) -> str:
+    """A command's output stream as text: None (some backends' empty stream) as "", bytes that
+    aren't UTF-8 replaced rather than failing the read."""
+    return (output or b"").decode("utf-8", "replace")
+
+
 def _privileged_device_refused(exc: Exception) -> bool:
     """Whether ``exc`` is Kathara refusing a privileged device to a backend that isn't root — and
     not one of its other PrivilegeErrors (external collision domains), which a whole-lab deploy
@@ -412,13 +423,19 @@ class KatharaService:
         """``_lab_dir``, for callers with nothing to do without a directory: 404 when there is none."""
         directory = self._lab_dir(lab_id)
         if directory is None:
-            raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+            raise _lab_not_found(lab_id)
         return directory
 
     def _lab_label(self, lab_id: str) -> str:
         """How to name ``lab_id`` in a message a person reads: its name when the lab is loaded."""
         lab = self.registry.get(lab_id)
         return lab.name if lab is not None and lab.name else lab_id
+
+    @staticmethod
+    def _has_running_device(lab: Lab) -> bool:
+        """Whether any of ``lab``'s devices has a container, as the model last saw it — the test
+        every "while it is deployed" gate uses."""
+        return any(m.api_object is not None for m in lab.machines.values())
 
     def _assert_dir_free(self, directory: Path) -> None:
         """Refuse a lab directory already taken, in the registry or merely on disk.
@@ -899,7 +916,7 @@ class KatharaService:
         failed: list[str] = []
         with self._mutate_lock:
             for lab in self.registry.all():
-                if any(m.api_object is not None for m in lab.machines.values()):
+                if self._has_running_device(lab):
                     try:
                         self.undeploy_lab(lab.hash)
                     except Exception:
@@ -1113,10 +1130,16 @@ class KatharaService:
         if "/" in clean:
             top = clean.split("/", 1)[0]
             return top if lab.machines.get(top) is not None else None
-        if clean.endswith(".startup"):
-            candidate = clean[: -len(".startup")]
+        if clean.endswith(STARTUP_SUFFIX):
+            candidate = clean[: -len(STARTUP_SUFFIX)]
             return candidate if lab.machines.get(candidate) is not None else None
         return None
+
+    def _mark_dirty_for(self, lab: Lab, lab_id: str, path: str) -> None:
+        """Mark the device a write to ``path`` belongs to dirty (``_dirty_target_for``), if any."""
+        dirty = self._dirty_target_for(lab, path)
+        if dirty:
+            self.registry.mark_dirty(lab_id, dirty)
 
     @staticmethod
     def _fs_entry(info, parent_normalized: str) -> FsEntry:
@@ -1248,7 +1271,7 @@ class KatharaService:
         with self._mutate_lock:
             lab_dir = self._lab_dir(lab_id)
             if lab_dir is None and self.registry.get(lab_id) is None:
-                raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+                raise _lab_not_found(lab_id)
             if lab_dir is not None and self.store.is_under_root(lab_dir):
                 raise LabCloseRefusedError(
                     f"`{self._lab_label(lab_id)}` is in the labs folder, so it can't be closed. Delete it instead."
@@ -1356,7 +1379,7 @@ class KatharaService:
         from the app or the CLI. Refreshed first for that reason (see ``_lab_conf_changed_on_disk``).
         """
         lab = self.get_lab_or_reconstruct(lab_id)
-        if any(m.api_object is not None for m in lab.machines.values()):
+        if self._has_running_device(lab):
             if lab_id not in self._missing_pending:
                 self._missing_pending.add(lab_id)
                 self._publish_disk_event(
@@ -1387,7 +1410,7 @@ class KatharaService:
         # Refreshed first: a lab stopped from outside the app still carries its old api_objects
         # until something asks Docker (see _refresh_from_api).
         lab = self.get_lab_or_reconstruct(lab_id)
-        if any(m.api_object is not None for m in lab.machines.values()):
+        if self._has_running_device(lab):
             if own:
                 return True  # a live edit this app made itself, already in the model
             if lab_id not in self._conf_pending:
@@ -1893,14 +1916,14 @@ class KatharaService:
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)  # raises LabNotFoundError if unknown
-            if any(m.api_object is not None for m in lab.machines.values()):
+            if self._has_running_device(lab):
                 raise LabConfLockedError(
                     f"Cannot edit lab.conf while `{lab.name}` is deployed. Undeploy it first."
                 )
             # A lab with no directory is reconstruct-only, i.e. running, so it never gets here.
             lab_dir = self._existing_lab_dir(lab_id)
             files, _dirs = self.store.read_lab(lab_dir)
-            files["lab.conf"] = content
+            files[LAB_CONF_FILENAME] = content
             t = lab_import.translate_lab_files(files, lab_dir.name)
             if t.errors:
                 raise ApiError("; ".join(t.errors))
@@ -1914,8 +1937,7 @@ class KatharaService:
             # Rebuild under the same id, replacing the previous registration/model, from the
             # text just written.
             self.registry.remove(lab_id)
-            new_lab = self._build_and_register(t.payload, lab_dir)
-            return new_lab
+            return self._build_and_register(t.payload, lab_dir)
 
     # -- offline lab filesystem (the Lab Configuration tab) --------------------
     #
@@ -2093,9 +2115,7 @@ class KatharaService:
                 self._write_lab_root_files(lab, {guest: content}, [])
             else:
                 self._write_machine_files(lab, owner, {guest: content}, [])
-            dirty = self._dirty_target_for(lab, path)
-            if dirty:
-                self.registry.mark_dirty(lab_id, dirty)
+            self._mark_dirty_for(lab, lab_id, path)
         return len(content.encode("utf-8"))
 
     @_lab_file_permissions
@@ -2125,9 +2145,7 @@ class KatharaService:
             if parent and parent != "/":
                 target_fs.makedirs(parent, recreate=True)
             target_fs.writebytes(guest, content)
-            dirty = self._dirty_target_for(lab, path)
-            if dirty:
-                self.registry.mark_dirty(lab_id, dirty)
+            self._mark_dirty_for(lab, lab_id, path)
         return len(content)
 
     @_lab_file_permissions
@@ -2144,9 +2162,7 @@ class KatharaService:
                 self._write_lab_root_files(lab, {}, [guest])
             else:
                 self._write_machine_files(lab, owner, {}, [guest])
-            dirty = self._dirty_target_for(lab, path)
-            if dirty:
-                self.registry.mark_dirty(lab_id, dirty)
+            self._mark_dirty_for(lab, lab_id, path)
 
     @_lab_file_permissions
     def fs_delete_offline(self, lab_id: str, path: str, recursive: bool = False) -> None:
@@ -2201,9 +2217,7 @@ class KatharaService:
                 _remove_tree(target_fs, guest)
             else:
                 target_fs.remove(guest)
-            dirty = self._dirty_target_for(lab, path)
-            if dirty:
-                self.registry.mark_dirty(lab_id, dirty)
+            self._mark_dirty_for(lab, lab_id, path)
 
     def _resolve_two_ended_offline_op(self, lab_id: str, source_path: str, destination_path: str):
         """Resolve both ends of a move or a copy to ``(lab, src_fs, src_guest, dst_fs, dst_guest)``.
@@ -2269,9 +2283,7 @@ class KatharaService:
                     src_fs.remove(source_guest)
 
             for p in (source_path, destination_path):
-                dirty = self._dirty_target_for(lab, p)
-                if dirty:
-                    self.registry.mark_dirty(lab_id, dirty)
+                self._mark_dirty_for(lab, lab_id, p)
 
     @_lab_file_permissions
     def fs_copy_offline(self, lab_id: str, source_path: str, destination_path: str) -> None:
@@ -2294,9 +2306,7 @@ class KatharaService:
             else:
                 fs.copy.copy_file(src_fs, source_guest, dst_fs, dest_guest)
 
-            dirty = self._dirty_target_for(lab, destination_path)
-            if dirty:
-                self.registry.mark_dirty(lab_id, dirty)
+            self._mark_dirty_for(lab, lab_id, destination_path)
 
     # -- resolving a lab and refreshing it from Docker -------------------------
 
@@ -2326,15 +2336,15 @@ class KatharaService:
         # there is genuinely no such lab, which is the same 404 as "nothing is running under it".
         facade = self._facade_or_offline()
         if facade is None:
-            raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+            raise _lab_not_found(lab_id)
         try:
             reconstructed = facade.get_lab_from_api(lab_hash=lab_id)
         except LabNotFoundError as exc:
-            raise LabNotFoundError(f"Lab `{lab_id}` not found.") from exc
+            raise _lab_not_found(lab_id) from exc
 
         # get_lab_from_api returns an empty Lab when nothing is running under that hash.
         if not reconstructed.machines:
-            raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+            raise _lab_not_found(lab_id)
         return reconstructed
 
     def list_labs(self) -> list[Lab]:
@@ -2705,7 +2715,7 @@ class KatharaService:
                 lab = self.registry.get(lab_id)
                 lab_dir = self._lab_dir(lab_id)
                 if lab is None and lab_dir is None:
-                    raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+                    raise _lab_not_found(lab_id)
                 self._facade().undeploy_lab(
                     lab_hash=lab_id,
                     selected_machines=selected_machines,
@@ -2756,7 +2766,7 @@ class KatharaService:
             lab_dir = self._existing_lab_dir(lab_id)
             if clean_new == lab_dir.name:
                 return lab
-            if any(m.api_object is not None for m in lab.machines.values()):
+            if self._has_running_device(lab):
                 raise LabRenameLockedError(
                     f"Cannot rename `{lab.name}` while it is deployed. Undeploy it first."
                 )
@@ -2793,7 +2803,7 @@ class KatharaService:
         with self._mutate_lock:
             lab_dir = self._lab_dir(lab_id)
             if self.registry.get(lab_id) is None and lab_dir is None:
-                raise LabNotFoundError(f"Lab `{lab_id}` not found.")
+                raise _lab_not_found(lab_id)
             if lab_dir is not None and not self.store.is_under_root(lab_dir):
                 raise LabDeleteRefusedError(
                     f"`{self._lab_label(lab_id)}` is a folder opened from outside the labs folder, so it "
@@ -2870,7 +2880,7 @@ class KatharaService:
             stdout, _, _ = self.exec_command(lab_id, machine_name, ["sh", "-lc", probe], wait=False)
         except Exception:
             stdout = None
-        found = {ln.strip() for ln in (stdout or b"").decode("utf-8", "replace").splitlines() if ln.strip()}
+        found = {ln.strip() for ln in _decode(stdout).splitlines() if ln.strip()}
         available = [name for name in SHELL_PATHS if name in found]
         return available or list(SHELL_PATHS)
 
@@ -2910,7 +2920,7 @@ class KatharaService:
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
-            if any(m.api_object is not None for m in lab.machines.values()):
+            if self._has_running_device(lab):
                 raise LabConfLockedError(
                     f"Cannot edit device options while `{lab.name}` is deployed. Undeploy it first."
                 )
@@ -3134,11 +3144,11 @@ class KatharaService:
             raise MachineNotRunningError(machine_name)
         return machine
 
-    def _running_guest_path(self, lab_id: str, machine_name: str, path: str) -> tuple[Machine, str]:
-        """Assert the device is running and return ``(machine, normalized_guest_path)`` — the common
-        preamble of every ``fs_*`` runtime-filesystem method."""
-        machine = self._get_running_machine(lab_id, machine_name)
-        return machine, self.normalize_guest_path(path)
+    def _running_guest_path(self, lab_id: str, machine_name: str, path: str) -> str:
+        """Assert the device is running and return the normalized guest path — the common preamble
+        of every ``fs_*`` runtime-filesystem method."""
+        self._get_running_machine(lab_id, machine_name)
+        return self.normalize_guest_path(path)
 
     def _exec_checked(
         self,
@@ -3193,7 +3203,7 @@ class KatharaService:
     def fs_list_directory(self, lab_id: str, machine_name: str, path: str) -> list[FsEntry]:
         """List a directory of a running device (``_FS_LIST_SCRIPT``), directories first, a symlink to a
         directory counted as one. ``ApiError`` when the listing fails."""
-        _, normalized = self._running_guest_path(lab_id, machine_name, path)
+        normalized = self._running_guest_path(lab_id, machine_name, path)
         # The path travels as a positional argument (`$1`, after `$0`), never spliced into the
         # script text, so it needs no shell quoting.
         stdout, _ = self._exec_checked(
@@ -3240,7 +3250,7 @@ class KatharaService:
 
     def fs_read_bytes(self, lab_id: str, machine_name: str, path: str) -> bytes:
         """A file of a running device, read in one exec. ``ApiError`` for a directory or a failed read."""
-        _, normalized = self._running_guest_path(lab_id, machine_name, path)
+        normalized = self._running_guest_path(lab_id, machine_name, path)
         quoted = shlex.quote(normalized)
         # A single exec instead of a `test -d` probe followed by a separate `cat` — halves the
         # docker-exec round trips for every Runtime FS file open.
@@ -3249,7 +3259,7 @@ class KatharaService:
         if exit_code == self._FS_READ_IS_DIR_EXIT:
             raise ApiError(f"Path `{normalized}` is a directory. Use list to navigate it.")
         if exit_code != 0:
-            err = (stderr or b"").decode("utf-8", errors="replace").strip()
+            err = _decode(stderr).strip()
             raise ApiError(f"Read file `{normalized}` failed: {err or f'exit code {exit_code}'}")
         return stdout or b""
 
@@ -3272,7 +3282,7 @@ class KatharaService:
         stdout, _, exit_code = self.exec_command(lab_id, machine_name, ["cat", "/var/log/startup.log"], wait=False)
         if exit_code != 0:
             return ""
-        return (stdout or b"").decode("utf-8", errors="replace")
+        return _decode(stdout)
 
     def is_startup_finished(self, lab_id: str, machine_name: str) -> bool:
         """Whether the device's startup commands (`.startup` script + `exec_commands`) have finished
@@ -3307,7 +3317,7 @@ class KatharaService:
             except Exception:
                 continue
             if exit_code == 0:
-                result[name] = live_addresses.parse_ip_o_addr((stdout or b"").decode("utf-8", "replace"))
+                result[name] = live_addresses.parse_ip_o_addr(_decode(stdout))
         return result
 
     # Overwrites `$1` with the content of the staged file `$2`, then removes `$2` whatever happened.
@@ -3319,14 +3329,14 @@ class KatharaService:
     def fs_write_text(self, lab_id: str, machine_name: str, path: str, content: str) -> int:
         """Write ``content`` over a file of a running device, or create it, keeping an existing file's
         metadata (``_write_in_place``). Returns the bytes written."""
-        _, normalized = self._running_guest_path(lab_id, machine_name, path)
+        normalized = self._running_guest_path(lab_id, machine_name, path)
         data = content.encode("utf-8")
         self._write_in_place(lab_id, machine_name, normalized, data)
         return len(data)
 
     def fs_upload_bytes(self, lab_id: str, machine_name: str, path: str, content: bytes) -> int:
         """``fs_write_text`` for raw bytes. Returns their count."""
-        _, normalized = self._running_guest_path(lab_id, machine_name, path)
+        normalized = self._running_guest_path(lab_id, machine_name, path)
         self._write_in_place(lab_id, machine_name, normalized, content)
         return len(content)
 
@@ -3357,7 +3367,7 @@ class KatharaService:
 
     def fs_mkdir(self, lab_id: str, machine_name: str, path: str) -> None:
         """Create a directory, and any missing parents, on a running device."""
-        _, normalized = self._running_guest_path(lab_id, machine_name, path)
+        normalized = self._running_guest_path(lab_id, machine_name, path)
         self._exec_checked(
             lab_id,
             machine_name,
@@ -3369,7 +3379,7 @@ class KatharaService:
     def fs_move(self, lab_id: str, machine_name: str, source_path: str, destination_path: str) -> None:
         """Move a path on a running device with ``mv``: into a destination directory that exists,
         not over it."""
-        _, source = self._running_guest_path(lab_id, machine_name, source_path)
+        source = self._running_guest_path(lab_id, machine_name, source_path)
         destination = self.normalize_guest_path(destination_path)
         self._exec_checked(
             lab_id,
@@ -3385,7 +3395,7 @@ class KatharaService:
         # Like `mv` above, `cp -a` copies *into* an existing destination directory rather than
         # replacing it — for both, the frontend deletes a confirmed directory collision before
         # calling this.
-        _, source = self._running_guest_path(lab_id, machine_name, source_path)
+        source = self._running_guest_path(lab_id, machine_name, source_path)
         destination = self.normalize_guest_path(destination_path)
         self._exec_checked(
             lab_id,
@@ -3397,7 +3407,7 @@ class KatharaService:
 
     def fs_delete(self, lab_id: str, machine_name: str, path: str, recursive: bool = False) -> None:
         """Delete a path on a running device: a file or an empty directory, or anything when ``recursive``."""
-        _, normalized = self._running_guest_path(lab_id, machine_name, path)
+        normalized = self._running_guest_path(lab_id, machine_name, path)
         if recursive:
             self._exec_checked(
                 lab_id,
@@ -3439,7 +3449,7 @@ class KatharaService:
                     link.external.append(lab_builder.build_external_link(iface))
             if not link.machines:
                 self.registry.add_draft(lab_id, link_name)
-            if any(m.api_object is not None for m in lab.machines.values()):
+            if self._has_running_device(lab):
                 self._facade().deploy_link(link)
         return link
 
