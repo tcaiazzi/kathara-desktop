@@ -174,3 +174,14 @@ export function desktop(): DesktopApi | null {
 export function isDesktop(): boolean {
   return desktop() !== null;
 }
+
+// Opens an external URL via the desktop shell when available, else a plain new tab — so links
+// behave the same in the Electron and browser builds.
+export function openLink(url: string): void {
+  const shell = desktop();
+  if (shell) {
+    void shell.openExternal(url);
+  } else {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}

@@ -1,7 +1,8 @@
 import { Bell, Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useDismissOnOutside } from "../hooks/useDismissOnOutside";
-import { openLink, useNotifications } from "../context/ToastContext";
+import { useNotifications } from "../context/ToastContext";
+import { openLink } from "../desktop/bridge";
 import { copyText } from "../services/clipboard";
 import type { NotificationHistoryItem } from "../services/notificationHistory";
 import "./NotificationsPanel.css";

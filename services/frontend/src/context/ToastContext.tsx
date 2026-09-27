@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ToastContainer, Toast, Button } from "react-bootstrap";
-import { desktop } from "../desktop/bridge";
+import { desktop, openLink } from "../desktop/bridge";
 import { errorMessage } from "../services/api";
 import {
   allRead,
@@ -42,17 +42,6 @@ const ToastCtx = createContext<ToastApi | null>(null);
 const NotificationsCtx = createContext<NotificationsApi | null>(null);
 
 let nextId = 1;
-
-// Opens a ToastAction's url via the desktop shell when available, else a plain new tab — keeps
-// notification links working the same in both the Electron and browser builds.
-export function openLink(url: string): void {
-  const shell = desktop();
-  if (shell) {
-    void shell.openExternal(url);
-  } else {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }
-}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
