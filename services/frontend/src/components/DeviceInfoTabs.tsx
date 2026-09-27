@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useConfirm } from "../context/ConfirmContext";
 import { useElementSize } from "../hooks/useElementSize";
+import { useOnLabFilesChanged } from "../hooks/useLabFilesSync";
 import { useStartupStatus } from "../hooks/useStartupStatus";
 import type { UseDeviceActions } from "../hooks/useDeviceActions";
 import { api } from "../services/api";
@@ -128,6 +129,8 @@ export function DeviceInfoTabs({
   const [onDisk, setOnDisk] = useState<{ startup: boolean; shutdown: boolean; folder: boolean } | null>(null);
   const [listing, setListing] = useState(0);
   const relist = useCallback(() => setListing((n) => n + 1), []);
+  // A device's folder can also appear or go from another tree (Lab Configuration).
+  useOnLabFilesChanged(relist);
   useEffect(() => {
     const controller = new AbortController();
     api

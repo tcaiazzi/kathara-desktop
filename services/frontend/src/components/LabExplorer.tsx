@@ -4,6 +4,7 @@ import { useConfirm } from "../context/ConfirmContext";
 import { useToast } from "../context/ToastContext";
 import type { StartupChange } from "../context/WorkspaceCoreContext";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
+import { useAnnouncingSource, useOnLabFilesChanged } from "../hooks/useLabFilesSync";
 import { api, ApiError, isAbortError } from "../services/api";
 import { labTreeKey } from "../services/labfs";
 import type { LabConfView, LabDetail } from "../services/types";
@@ -185,7 +186,8 @@ export function LabExplorer({ labId, detail, onStructuralChange, onStartupFileSa
   const treeKey = labTreeKey(detail);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const refreshKey = useMemo(() => ({}), [treeKey, startupChange]);
-  const tree = useFsTree({ source, scopeKey: labId, refreshKey });
+  const tree = useFsTree({ source: useAnnouncingSource(labId, source), scopeKey: labId, refreshKey });
+  useOnLabFilesChanged(() => void tree.reload(), labId);
 
   // Read through refs so this effect doesn't re-run on every keystroke in the editor. Keyed off
   // `bufferPath` rather than `selected`: it's the file whose content `dirty`/`setBuffer` actually

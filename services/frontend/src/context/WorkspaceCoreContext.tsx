@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { ContextMenuState } from "../components/TopologyContextMenu";
+import type { LabFilesChange } from "../services/labFilesSync";
 import type { LabDetail } from "../services/types";
 
 /** Startup scripts of the open lab that changed on disk outside the app (hooks/useLabEvents),
@@ -28,6 +29,10 @@ interface WorkspaceCoreCtx {
   runtimeFsPreferredMachine: string | null;
   /** The latest outside change to the open lab's startup scripts, or null — see StartupChange. */
   startupChange: StartupChange | null;
+  /** The latest change a file tree made to the open lab's folder, or null — see
+   *  hooks/useLabFilesSync.ts, the only reader and writer of these two. */
+  labFilesChange: LabFilesChange | null;
+  notifyLabFilesChanged: (origin: string) => void;
   /** Selection setter that leaves focus alone — lets a panel drive the shared selection without
    *  forcing the Inspector into focus the way WorkspaceCtx's setter does. Like that one, it
    *  asks the selection guard first and resolves false when the selection stays. */

@@ -113,6 +113,7 @@ import {
 import { removeFrom } from "../services/terminalSplits";
 import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
+import type { LabFilesChange } from "../services/labFilesSync";
 import { compareLabsByName, labFolder } from "../services/labPlace";
 import { hasDeployFailure, labDotState, labRunLabel, labRunState, labRunSummary } from "../services/labRunState";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
@@ -1110,6 +1111,12 @@ export function WorkspacePage() {
   // device preview and the file editor.
   const [startupChange, setStartupChange] = useState<StartupChange | null>(null);
   useEffect(() => setStartupChange(null), [labId]);
+  const [labFilesChange, setLabFilesChange] = useState<LabFilesChange | null>(null);
+  useEffect(() => setLabFilesChange(null), [labId]);
+  const notifyLabFilesChanged = useCallback(
+    (origin: string) => setLabFilesChange((prev) => ({ origin, seq: (prev?.seq ?? 0) + 1 })),
+    [],
+  );
   useLabEvents((event) => {
     const listChanged = event.kind === "conf-reloaded" || event.kind === "missing" || event.kind === "adopted";
     if (listChanged) void reloadLabs();
@@ -1488,6 +1495,8 @@ export function WorkspacePage() {
             onRefresh: refreshLab,
             refreshStartups: deviceActions.refreshStartups,
             startupChange,
+            labFilesChange,
+            notifyLabFilesChanged,
             runtimeFsPreferredMachine,
             setSelectedId: selectNodeQuietly,
             setContextMenu: setCtxMenu,
@@ -1499,6 +1508,8 @@ export function WorkspacePage() {
       refreshLab,
       deviceActions.refreshStartups,
       startupChange,
+      labFilesChange,
+      notifyLabFilesChanged,
       runtimeFsPreferredMachine,
       selectNodeQuietly,
     ],

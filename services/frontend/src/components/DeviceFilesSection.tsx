@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useFsTree, type FsTreeSource } from "../hooks/useFsTree";
+import { useAnnouncingSource, useOnLabFilesChanged } from "../hooks/useLabFilesSync";
 import { api, ApiError } from "../services/api";
 import { fromLabPath, isSharedPath, SHARED_DIR, toLabPath, withSharedFolder } from "../services/deviceFs";
 import { FsTreePanel } from "./FsTreePanel";
@@ -128,7 +129,9 @@ export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, la
     };
   }, [labId, device, onChanged]);
 
-  const tree = useFsTree({ source, scopeKey: `${labId}/device/${device}` });
+  const scopeKey = `${labId}/device/${device}`;
+  const tree = useFsTree({ source: useAnnouncingSource(scopeKey, source), scopeKey });
+  useOnLabFilesChanged(() => void tree.reload(), scopeKey);
 
   const label = tree.dirty && tree.bufferPath ? source.labels.unsaved(tree.bufferPath) : null;
   useEffect(() => onDirtyChange(label), [label, onDirtyChange]);
