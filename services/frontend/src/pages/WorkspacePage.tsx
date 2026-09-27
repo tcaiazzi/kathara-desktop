@@ -1546,7 +1546,7 @@ export function WorkspacePage() {
             <div className="kt-ws-rail-head">
               <span>Labs</span>
               <button className="kt-ws-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar" onClick={() => setRailOpen(false)}>
-                <PanelLeftClose size={16} aria-hidden="true" />
+                <PanelLeftClose size={18} aria-hidden="true" />
               </button>
             </div>
             {/* Only alongside the lab list: with a lab open the rail is about that lab, and the
@@ -1808,7 +1808,7 @@ export function WorkspacePage() {
         </>
       ) : (
         <button className="kt-ws-rail-reopen" title="Show sidebar" aria-label="Show sidebar" onClick={() => setRailOpen(true)}>
-          <PanelLeftOpen size={16} aria-hidden="true" />
+          <PanelLeftOpen size={18} aria-hidden="true" />
         </button>
       )}
 

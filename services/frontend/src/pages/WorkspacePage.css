@@ -50,6 +50,7 @@
   justify-content: center;
   border: none;
   border-right: 1px solid var(--bs-border-color);
+  padding: 0;
   background: var(--kt-panel-muted-bg);
   color: var(--bs-secondary-color);
   cursor: pointer;
@@ -238,8 +239,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: 1px solid var(--bs-border-color);
   border-radius: 7px;
   background: var(--kt-panel-muted-bg);
@@ -261,6 +263,11 @@
 }
 .kt-ws-collapse-btn:active {
   transform: translateY(0);
+}
+/* Without this a flex item shrinks the icon below its size attribute, squashing the glyph. */
+.kt-ws-collapse-btn svg,
+.kt-ws-rail-reopen svg {
+  flex-shrink: 0;
 }
 
 /* Maximize + collapse/expand toggles shown in every dockview group header (right side). */
