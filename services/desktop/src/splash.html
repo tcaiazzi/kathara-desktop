@@ -2,62 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Everything this page runs and draws is a file next to it (build.mjs copies them): no
+         inline script or style, so nothing injected into it could run. The shell's bridge
+         (window.katharaDesktop) comes from the preload script, which no policy applies to. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'" />
     <title>Kathara Desktop</title>
-    <style>
-      /* Fixed white, not the OS scheme like setup.html: the logo is a dark mark on a transparent
-         background, so it needs a deliberately light canvas rather than whatever the user's
-         theme happens to be. */
-      html, body {
-        margin: 0; height: 100%;
-        background: #ffffff;
-      }
-      body {
-        display: flex; align-items: center; justify-content: center;
-      }
-      .kt-content {
-        display: flex; flex-direction: column; align-items: center; gap: 1.75rem;
-        animation: kt-fade-in .5s ease;
-      }
-      @keyframes kt-fade-in {
-        from { opacity: 0; transform: translateY(6px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      img {
-        max-width: 60%; max-height: 60%;
-      }
-      .spinner {
-        display: inline-block; width: 2rem; height: 2rem; border-radius: 50%;
-        border: 3px solid rgba(13, 110, 253, .15); border-top-color: #0d6efd;
-        animation: spin .9s cubic-bezier(.55, 0, .45, 1) infinite;
-      }
-      @keyframes spin { to { transform: rotate(360deg); } }
-      .loading-text {
-        margin: 0; min-height: 1.3em; min-width: 15rem; text-align: center;
-        color: #6c757d; font: italic 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
-        letter-spacing: .01em;
-        opacity: 1; transition: opacity .25s ease;
-      }
-      .loading-text.fading {
-        opacity: 0;
-      }
-
-      /* Same reasoning as setup.html's captions bar: no native frame, so Windows/Linux otherwise
-         get no window controls at all for as long as this page is on screen. */
-      .kt-captions {
-        position: fixed; top: 0; left: 0; right: 0; height: 2rem;
-        display: flex; justify-content: flex-end;
-        -webkit-app-region: drag;
-      }
-      .kt-caption-btn {
-        -webkit-app-region: no-drag;
-        width: 2.75rem; height: 2rem; border: none; border-radius: 0;
-        background: transparent; color: #212529;
-        display: flex; align-items: center; justify-content: center;
-        font: 14px/1 system-ui, -apple-system, "Segoe UI", sans-serif; cursor: pointer;
-      }
-      .kt-caption-btn:hover { background: rgba(0, 0, 0, .1); }
-      .kt-caption-btn.close:hover { background: #e81123; color: #ffffff; }
-    </style>
+    <link rel="stylesheet" href="splash.css" />
   </head>
   <body>
     <div class="kt-content">
@@ -65,46 +15,6 @@
       <span class="spinner" aria-label="Loading"></span>
       <p class="loading-text" id="loading-text"></p>
     </div>
-    <script>
-      // Purely decorative — no relation to the real boot phases shown later on setup.html if
-      // startup takes the slow path. Just something fun to look at while the window is blank.
-      const LOADING_MESSAGES = [
-        "Waking up the routers…",
-        "Untangling the cables…",
-        "Counting the packets…",
-        "Bribing the switches…",
-        "Asking Docker nicely…",
-        "Booting virtual routers…",
-        "Warming up the terminals…",
-        "Herding the interfaces…",
-      ];
-      const loadingText = document.getElementById("loading-text");
-      let msgIndex = Math.floor(Math.random() * LOADING_MESSAGES.length);
-      loadingText.textContent = LOADING_MESSAGES[msgIndex];
-
-      // Crossfades rather than swapping instantly — the fade duration below must match the
-      // ".loading-text" opacity transition in the stylesheet, so the text swap lands exactly
-      // when it's fully invisible.
-      function showNextMessage() {
-        msgIndex = (msgIndex + 1) % LOADING_MESSAGES.length;
-        loadingText.classList.add("fading");
-        setTimeout(() => {
-          loadingText.textContent = LOADING_MESSAGES[msgIndex];
-          loadingText.classList.remove("fading");
-        }, 250);
-      }
-      setInterval(showNextMessage, 2200);
-
-      if (window.katharaDesktop.platform !== "darwin") {
-        const captions = document.createElement("div");
-        captions.className = "kt-captions";
-        captions.innerHTML = `
-          <button type="button" class="kt-caption-btn" aria-label="Minimize" title="Minimize">&#x2212;</button>
-          <button type="button" class="kt-caption-btn close" aria-label="Close" title="Close">&#x2715;</button>`;
-        captions.children[0].onclick = () => void window.katharaDesktop.minimizeWindow();
-        captions.children[1].onclick = () => void window.katharaDesktop.closeWindow();
-        document.body.prepend(captions);
-      }
-    </script>
+    <script src="splash.js"></script>
   </body>
 </html>

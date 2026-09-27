@@ -65,9 +65,9 @@ export function useTheme() {
     if (typeof document === "undefined") return "light";
     // Nothing has stamped the DOM attribute yet — seed it from last session's choice, falling back
     // to the OS preference, so this instance's initial read is correct without waiting for an
-    // effect. Normally unreachable: index.html stamps both attributes before first paint (which is
-    // what stops the flash of the wrong theme); this is the fallback for when that script was
-    // blocked, and applies the same rule.
+    // effect. Normally unreachable: public/theme-init.js, which index.html loads before first
+    // paint, stamps both attributes (which is what stops the flash of the wrong theme); this is
+    // the fallback for when that script didn't run, and applies the same rule.
     if (!document.documentElement.hasAttribute(THEME_ATTR)) {
       const stored = getStoredTheme();
       applyTheme(stored ?? systemTheme(), stored !== null);

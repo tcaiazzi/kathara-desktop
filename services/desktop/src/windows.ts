@@ -12,7 +12,7 @@ const PRELOAD = path.join(__dirname, "preload.js");
  * The colour Chromium paints before the page has any of its own, matched to the theme the page is
  * about to choose: the one the user picked in the app (the SPA reports it, main.ts's
  * ui:set-theme), else the OS scheme, which is what both setup.html and the SPA follow without a
- * choice (services/frontend/index.html). Hardcoding the dark value would make every light-theme
+ * choice (services/frontend/public/theme-init.js). Hardcoding the dark value would make every light-theme
  * launch start with a dark rectangle. Read at window-creation time, not tracked.
  */
 function windowBackground(): string {

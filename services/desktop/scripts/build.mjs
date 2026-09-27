@@ -1,5 +1,5 @@
-// Bundles the Electron main and preload scripts to CommonJS and copies the static status page
-// next to them. Electron's main process is CJS, and the preload runs sandboxed (it may only
+// Bundles the Electron main and preload scripts to CommonJS and copies the static pages next to
+// them. Electron's main process is CJS, and the preload runs sandboxed (it may only
 // require "electron"), so both are bundled with `electron` left external.
 import { build } from "esbuild";
 import { cp, mkdir, rm } from "node:fs/promises";
@@ -27,9 +27,14 @@ await build({
   logLevel: "info",
 });
 
-// Loaded with loadFile() at runtime, so it has to sit beside the bundles.
-await cp(path.join(root, "src", "setup.html"), path.join(outdir, "setup.html"));
-await cp(path.join(root, "src", "splash.html"), path.join(outdir, "splash.html"));
+// Loaded with loadFile() at runtime, so they have to sit beside the bundles — each page with the
+// script and stylesheet it loads by relative path (its Content-Security-Policy allows no inline
+// ones).
+for (const page of ["setup", "splash"]) {
+  for (const ext of ["html", "js", "css"]) {
+    await cp(path.join(root, "src", `${page}.${ext}`), path.join(outdir, `${page}.${ext}`));
+  }
+}
 // splash.html references this by its own relative path, so it must land right next to it.
 await cp(path.join(root, "resources", "splash.png"), path.join(outdir, "splash.png"));
 

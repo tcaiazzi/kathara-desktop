@@ -21,10 +21,39 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-# index.html is the one file whose name never changes, so it's the one file a browser must
-# never keep: every asset it references is content-hashed, but a stale index.html would go on
-# pointing at the previous build's chunks after the app updates.
-_INDEX_HEADERS = {"Cache-Control": "no-store"}
+# What every page of the SPA may load, sent with index.html — the one document the SPA has: a
+# client-side route and the terminal popup window are index.html too. Everything comes from the
+# app's own origin, the API's WebSocket and event streams included (`'self'` covers `ws:` on the
+# same host and port). The two exceptions are ones the app's libraries need: inline styles (xterm
+# injects <style> elements and style attributes) and `data:` images (Bootstrap's and CodeMirror's
+# icons are SVGs in their CSS). No inline script at all, which is why index.html loads its theme
+# script as a file (services/frontend/public/theme-init.js).
+#
+# A header rather than a <meta> tag in index.html: Vite's dev server injects an inline script
+# into that page (React's fast-refresh preamble), which a policy baked into the file would block.
+# The dev server serves the page itself and sends none of this.
+_SPA_CSP = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "font-src 'self'",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    ]
+)
+
+# A browser must never keep index.html: every asset it references is content-hashed, but a stale
+# index.html would go on pointing at the previous build's chunks after the app updates.
+_INDEX_HEADERS = {"Cache-Control": "no-store", "Content-Security-Policy": _SPA_CSP}
+# The build's other files outside assets/ (copied from the frontend's public/, such as
+# theme-init.js) keep their names across builds too, so a browser must not reuse one unchecked
+# either: revalidated on every load (FileResponse answers with an ETag) rather than never cached.
+_ROOT_FILE_HEADERS = {"Cache-Control": "no-cache"}
 
 
 def mount_spa(app: FastAPI, static_dir: Path, api_prefix: str) -> None:
@@ -65,7 +94,7 @@ def mount_spa(app: FastAPI, static_dir: Path, api_prefix: str) -> None:
             # `full_path` is client-controlled: resolve it and confirm it stayed inside the
             # build directory before touching it, so `../../etc/passwd` can't escape.
             candidate = (static_dir / full_path).resolve()
-            if candidate.is_relative_to(root) and candidate.is_file():
-                return FileResponse(candidate)
+            if candidate.is_relative_to(root) and candidate.is_file() and candidate != index_file:
+                return FileResponse(candidate, headers=_ROOT_FILE_HEADERS)
 
         return FileResponse(index_file, headers=_INDEX_HEADERS)

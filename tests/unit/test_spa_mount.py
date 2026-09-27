@@ -56,6 +56,28 @@ def test_client_side_routes_fall_back_to_index(client, path):
     assert "id=root" in res.text
 
 
+@pytest.mark.parametrize("path", ["/", "/workspace/mylab", "/labs/mylab/terminal/pc1", "/index.html"])
+def test_every_page_of_the_spa_carries_its_content_security_policy(client, path):
+    res = client.get(path)
+    policy = res.headers["content-security-policy"]
+    assert "script-src 'self'" in policy
+    assert "unsafe-inline" not in policy.split("script-src", 1)[1].split(";", 1)[0]
+    assert res.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("path", [f"{API_PREFIX}/health", "/docs", "/assets/index-abc123.js"])
+def test_the_policy_is_only_sent_with_the_spa_page(client, path):
+    """/docs loads Swagger UI from a CDN with inline scripts, which the SPA's policy would block."""
+    res = client.get(path)
+    assert res.status_code == 200
+    assert "content-security-policy" not in res.headers
+
+
+def test_a_file_at_the_build_root_is_revalidated_on_every_load(client):
+    # Its name doesn't change across builds, so a cached copy could outlive an update.
+    assert client.get("/favicon.svg").headers["cache-control"] == "no-cache"
+
+
 def test_real_file_is_served_over_the_fallback(client):
     res = client.get("/favicon.svg")
     assert res.status_code == 200

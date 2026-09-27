@@ -1,0 +1,133 @@
+/* The stylesheet of setup.html, a file of its own because the page's Content-Security-Policy
+   applies no inline style. */
+
+/* Follows the theme the user picked in the app (the shell's `theme`, stamped as
+   data-theme by setup.js's refresh()), else the OS scheme — the same rule as the SPA it hands
+   over to (services/frontend/public/theme-init.js and src/hooks/useTheme.ts), so the two don't flash
+   different colours at each other. Values mirror Bootstrap 5's light and dark defaults,
+   which is what the SPA is themed with. The dark block appears twice because CSS can't
+   share it between the OS query and the explicit choice. */
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #212529;
+  --muted: #6c757d;
+  --border: #dee2e6;
+  --ok: #198754;
+  --bad: #dc3545;
+  --warn: #997404;
+  --link: #0d6efd;
+  --btn-bg: #f8f9fa;
+  --btn-border: #ced4da;
+  --primary: #0d6efd;
+  --primary-fg: #ffffff;
+  --pre-bg: #f8f9fa;
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1e1e1e;
+  --fg: #e6e6e6;
+  --muted: #9aa0a6;
+  --border: #2f2f2f;
+  --ok: #4caf7d;
+  --bad: #e5686b;
+  --warn: #d8b563;
+  --link: #6ea8fe;
+  --btn-bg: #2b2b2b;
+  --btn-border: #3d3d3d;
+  --primary: #2f6feb;
+  --primary-fg: #ffffff;
+  --pre-bg: #161616;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1e1e1e;
+    --fg: #e6e6e6;
+    --muted: #9aa0a6;
+    --border: #2f2f2f;
+    --ok: #4caf7d;
+    --bad: #e5686b;
+    --warn: #d8b563;
+    --link: #6ea8fe;
+    --btn-bg: #2b2b2b;
+    --btn-border: #3d3d3d;
+    --primary: #2f6feb;
+    --primary-fg: #ffffff;
+    --pre-bg: #161616;
+  }
+}
+body {
+  margin: 0; padding: 2.5rem clamp(1.5rem, 6vw, 4rem);
+  background: var(--bg); color: var(--fg);
+  font: 14px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1 { font-size: 1.35rem; margin: 0 0 .35rem; font-weight: 600; }
+.sub { color: var(--muted); margin: 0 0 1.75rem; }
+ul { list-style: none; padding: 0; margin: 0 0 1.75rem; }
+li { display: grid; grid-template-columns: 1.4rem 1fr; gap: .65rem;
+     padding: .7rem 0; border-bottom: 1px solid var(--border); }
+.mark { font-weight: 700; }
+.ok .mark { color: var(--ok); }
+.bad .mark { color: var(--bad); }
+.warn .mark { color: var(--warn); }
+.name { font-weight: 600; }
+.detail { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: .82rem; word-break: break-word; }
+.remedy { margin-top: .3rem; color: var(--warn); }
+.labs-dir-path { margin-bottom: 1.5rem; }
+.error-text { color: var(--bad); }
+a { color: var(--link); }
+.actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+button {
+  font: inherit; padding: .5rem 1rem; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--btn-border); background: var(--btn-bg); color: var(--fg);
+}
+button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
+button:hover { filter: brightness(1.15); }
+pre { background: var(--pre-bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: .8rem; overflow: auto; max-height: 15rem; font-size: .78rem; }
+.spinner { display: inline-block; width: .85rem; height: .85rem; border-radius: 50%;
+           border: 2px solid var(--btn-border); border-top-color: var(--link);
+           animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ladder { list-style: none; padding: 0; margin: 0 0 1.25rem; }
+.ladder li { display: flex; align-items: center; gap: .55rem; padding: .3rem 0; }
+.ladder .mark { display: inline-flex; width: 1.1rem; justify-content: center; font-weight: 700; }
+.ladder-done { color: var(--ok); }
+.ladder-done .mark { color: var(--ok); }
+.ladder-current { color: var(--fg); font-weight: 600; }
+.ladder-pending { color: var(--muted); }
+details { margin: 0 0 1rem; }
+details summary { cursor: pointer; color: var(--muted); }
+details pre { margin-top: .5rem; }
+.callout {
+  display: flex; gap: .9rem; align-items: flex-start;
+  border: 1px solid var(--warn); border-radius: 8px;
+  padding: 1rem 1.15rem; margin: 0 0 1.5rem;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+.callout .icon { font-size: 1.6rem; line-height: 1; }
+.callout h2 { margin: 0 0 .3rem; font-size: 1.05rem; }
+.callout p { margin: 0; color: var(--fg); }
+
+/* This page has no native window frame (windows.ts's createMainWindow uses
+   titleBarStyle: "hidden"), which on macOS still leaves the traffic lights in place but on
+   Windows/Linux leaves the window with no controls at all — the app normally draws its own
+   (TitleBar.tsx), but that component lives in the SPA, not on this static page, so it has to
+   draw a minimal version of its own instead. */
+.kt-captions {
+  position: fixed; top: 0; left: 0; right: 0; height: 2rem;
+  display: flex; justify-content: flex-end;
+  -webkit-app-region: drag;
+}
+.kt-caption-btn {
+  -webkit-app-region: no-drag;
+  width: 2.75rem; height: 2rem; border: none; border-radius: 0;
+  background: transparent; color: var(--fg);
+  display: flex; align-items: center; justify-content: center;
+  font: inherit; cursor: pointer;
+}
+.kt-caption-btn:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.kt-caption-btn.close:hover { background: #e81123; color: #ffffff; }
+body.kt-has-captions { padding-top: 2rem; }

@@ -42,19 +42,25 @@ function frontendDir(): string | null {
  * real directory on disk that any UID can read.
  *
  * Copies the frontend out to a stable, real on-disk location once (cached across launches) and
- * returns that instead. Keyed on a hash of `index.html`'s own content, not `app.getVersion()`:
- * Vite fingerprints every asset's filename into the script/link tags `index.html` references, so
- * any real change to the build changes this file's bytes too — a version bump reliably causes
- * one anyway, but keying on content instead also self-invalidates a rebuild that ships under the
- * *same* version (e.g. a local dev/test cycle) — the case a version-only key would go on serving
- * a stale copy for. Recomputed on every launch.
+ * returns that instead. Keyed on a hash of the files at the build's root, not `app.getVersion()`:
+ * Vite fingerprints every file under `assets/` into the script/link tags `index.html` references,
+ * so a change to any of them changes `index.html`'s bytes too, while the root's other files
+ * (copied from the frontend's `public/`, such as `theme-init.js`) keep their names across builds
+ * and so are hashed themselves. A version bump reliably changes the key anyway, but keying on
+ * content also self-invalidates a rebuild that ships under the *same* version (e.g. a local
+ * dev/test cycle) — the case a version-only key would go on serving a stale copy for. Recomputed
+ * on every launch.
  */
 export function resolveStaticDir(): string | null {
   const candidate = frontendDir();
   if (!candidate || !process.env.APPIMAGE) return candidate;
 
-  const indexHtml = fs.readFileSync(path.join(candidate, "index.html"));
-  const key = crypto.createHash("sha256").update(indexHtml).digest("hex").slice(0, 16);
+  const hash = crypto.createHash("sha256");
+  for (const name of fs.readdirSync(candidate).sort()) {
+    const file = path.join(candidate, name);
+    if (fs.statSync(file).isFile()) hash.update(name).update("\0").update(fs.readFileSync(file));
+  }
+  const key = hash.digest("hex").slice(0, 16);
 
   const cacheRoot = path.join(app.getPath("userData"), "frontend-cache");
   const cached = path.join(cacheRoot, key);
