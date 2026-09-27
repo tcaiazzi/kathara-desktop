@@ -403,26 +403,7 @@ export function TopologyGraph({
   const hasFixedLayout = !!savedLayout && Object.keys(savedLayout).length > 0;
 
   return (
-    <div className="mt-3">
-      {/* On a canvas too narrow for the toolbars, the hints would wrap over several lines and take
-          that room from the graph itself. */}
-      {!compactToolbar && (
-        <div className="kt-topo-hints">
-          {(
-            [
-              ["drag", "nodes"],
-              ["scroll", "zoom"],
-              ["click", "inspect"],
-              ["dbl-click", "edit"],
-              ["right-click", "actions"],
-            ] as const
-          ).map(([key, label]) => (
-            <span className="kt-topo-hint" key={key}>
-              <kbd>{key}</kbd> {label}
-            </span>
-          ))}
-        </div>
-      )}
+    <div>
       <div className="kt-topo-wrap">
         <div className="kt-topo-canvas" ref={canvasWrapRef}>
           <div

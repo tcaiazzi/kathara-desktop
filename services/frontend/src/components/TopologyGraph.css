@@ -7,34 +7,6 @@
   margin-top: 12px;
 }
 
-/* Interaction hints ("legend") above the canvas: keycap-style action chips. */
-.kt-topo-hints {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 12px;
-  margin-bottom: 8px;
-  font-size: var(--kt-topo-fs-base);
-  color: var(--bs-secondary-color);
-}
-.kt-topo-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.kt-topo-hint kbd {
-  font-family: inherit;
-  font-size: var(--kt-topo-fs-sm);
-  font-weight: 600;
-  color: var(--bs-body-color);
-  background: var(--kt-panel-muted-bg);
-  border: 1px solid var(--bs-border-color);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  padding: 1px 6px;
-  line-height: 1.4;
-}
-
 /* 460px is only a fallback default for a bare (non-dockview) mount — the real app's WorkspacePage
    overrides both this and .kt-topo-side's height to fill their dockview panel (see
    ".kt-ws-panel-fill .kt-topo-canvas" in WorkspacePage.css), so changing this value has no visible
