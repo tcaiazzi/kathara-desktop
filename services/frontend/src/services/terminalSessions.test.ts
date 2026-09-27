@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { sessionOfTerminalPanel, terminalPanelId, terminalTitle } from "./terminalSessions";
+import {
+  activeAfterClose,
+  parseTerminalsTabParams,
+  sessionOfTerminalPanel,
+  terminalPanelId,
+  terminalSession,
+  terminalsTabParams,
+  terminalTitle,
+} from "./terminalSessions";
 
 describe("terminal panel ids", () => {
   it("round-trip a session id through its panel id", () => {
@@ -17,6 +25,56 @@ describe("terminal panel ids", () => {
   });
 
   it("title a session by device and instance number", () => {
-    expect(terminalTitle({ id: "pc1:2", machine: "pc1", num: 2 })).toBe("pc1 #2");
+    expect(terminalTitle(terminalSession("pc1", 2))).toBe("pc1 #2");
+  });
+});
+
+describe("Terminals tab params", () => {
+  const sessions = [terminalSession("r1", 1), terminalSession("pc1", 4)];
+
+  it("read back exactly what they wrote", () => {
+    const params = JSON.parse(JSON.stringify(terminalsTabParams(sessions, "pc1:4")));
+    expect(parseTerminalsTabParams(params)).toEqual({ sessions, activeId: "pc1:4" });
+  });
+
+  it("read as empty when the tab has no params at all", () => {
+    expect(parseTerminalsTabParams(undefined)).toEqual({ sessions: [], activeId: null });
+    expect(parseTerminalsTabParams({})).toEqual({ sessions: [], activeId: null });
+  });
+
+  it("drop malformed and duplicate sessions and keep the rest in order", () => {
+    const params = {
+      sessions: [{ machine: "r1", num: 1 }, { machine: "", num: 2 }, { machine: "r2", num: 0 }, "x", { machine: "r1", num: 1 }, { machine: "r3", num: 2 }],
+      activeId: "r3:2",
+    };
+    expect(parseTerminalsTabParams(params)).toEqual({
+      sessions: [terminalSession("r1", 1), terminalSession("r3", 2)],
+      activeId: "r3:2",
+    });
+  });
+
+  it("fall back to the first session when the active one is not among them", () => {
+    expect(parseTerminalsTabParams({ sessions: [{ machine: "r1", num: 1 }], activeId: "gone:9" }).activeId).toBe("r1:1");
+    expect(parseTerminalsTabParams({ sessions: [], activeId: "gone:9" }).activeId).toBeNull();
+  });
+});
+
+describe("activeAfterClose", () => {
+  const ids = ["a", "b", "c"];
+
+  it("keeps the active session when another one closes", () => {
+    expect(activeAfterClose(ids, "a", "b")).toBe("b");
+  });
+
+  it("moves to the session that took the closed one's place", () => {
+    expect(activeAfterClose(ids, "b", "b")).toBe("c");
+  });
+
+  it("moves to the one before when the last one closes", () => {
+    expect(activeAfterClose(ids, "c", "c")).toBe("b");
+  });
+
+  it("leaves nothing active when the only session closes", () => {
+    expect(activeAfterClose(["a"], "a", "a")).toBeNull();
   });
 });

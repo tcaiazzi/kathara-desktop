@@ -1,6 +1,6 @@
 // The Workspace screen and everything that arranges it: the dockview panel area, the panels'
 // thin wrappers around the real components, and the layout commands behind the Layout menu
-// (default, focus presets, terminal tiling, maximize).
+// (default, focus presets, maximize).
 //
 // Most of this file is dockview bookkeeping rather than UI. dockview owns the panel tree
 // imperatively through a `DockviewApi`, not as React children, so adding, moving, closing and
@@ -63,6 +63,7 @@ import { RuntimeFilesystemEditor } from "../components/RuntimeFilesystemEditor";
 import { StatsPanel } from "../components/StatsPanel";
 import { TerminalPanel } from "../components/TerminalPanel";
 import { TerminalSessionHosts } from "../components/TerminalSessionHosts";
+import { TerminalsPanel } from "../components/TerminalsPanel";
 import { TopologyActionModal } from "../components/TopologyActionModal";
 import { TopologyContextMenu, type ContextMenuState } from "../components/TopologyContextMenu";
 import { TopologyGraph } from "../components/TopologyGraph";
@@ -72,7 +73,11 @@ import { useDesktopCommand } from "../desktop/DesktopCommands";
 import { desktop, isDesktop, type DesktopDockerStatus } from "../desktop/bridge";
 import { useDockerStatus } from "../desktop/DockerStatusContext";
 import { usePublishOpenLabName } from "../context/OpenLabNameContext";
-import { TerminalSessionsProvider, useTerminalRegistry } from "../context/TerminalSessionsContext";
+import {
+  TerminalSessionsProvider,
+  useTerminalRegistry,
+  type TerminalSessionEntry,
+} from "../context/TerminalSessionsContext";
 import { WorkspaceProvider, useWorkspace } from "../context/WorkspaceContext";
 import { WorkspaceCoreProvider, useWorkspaceCore, type StartupChange } from "../context/WorkspaceCoreContext";
 import { useLabEvents } from "../hooks/useLabEvents";
@@ -93,7 +98,12 @@ import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError, isAbortError } from "../services/api";
 import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
-import { sessionOfTerminalPanel, terminalPanelId, terminalTitle } from "../services/terminalSessions";
+import {
+  parseTerminalsTabParams,
+  sessionOfTerminalPanel,
+  terminalPanelId,
+  terminalsTabParams,
+} from "../services/terminalSessions";
 import { deployButtonLabel, type DeployPhase } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
 import { compareLabsByName, labFolder } from "../services/labPlace";
@@ -179,8 +189,9 @@ function StatsPanel_() {
   );
 }
 
-// Stable component map for dockview. Terminals are opened on demand as `terminal` panels (one per
-// session), so — unlike the fixed panels — there's no single "terminals" entry in the default layout.
+// Stable component map for dockview. `terminals` is the fixed Terminals tab holding the workspace's
+// terminals; `terminal` is a single terminal detached into a panel of its own, which exists only
+// while that terminal is open.
 const DOCK_COMPONENTS = {
   topology: TopologyPanel,
   "node-info": NodeInfoPanel,
@@ -188,11 +199,13 @@ const DOCK_COMPONENTS = {
   files: FilesPanel,
   "runtime-fs": RuntimeFsPanel,
   stats: StatsPanel_,
+  terminals: TerminalsPanel,
   terminal: TerminalPanel,
 };
 
-// Every panel in this dock is a fixed part of the workspace except the terminals, which are
-// opened on demand (one per session) and are the only ones a user should be able to close.
+// Every panel in this dock is a fixed part of the workspace except a detached terminal, which exists
+// only while its terminal is open and is the only one a user should be able to close. Closing it
+// ends that terminal (see onDockReady).
 function isFixedPanel(id: string): boolean {
   return !id.startsWith("terminal:");
 }
@@ -284,7 +297,7 @@ function GroupHeaderActions(props: IDockviewHeaderActionsProps) {
 // and onDockReady below accepts anything that parses, with no schema check beyond this key. Bump
 // the version suffix whenever the default arrangement changes or a persisted panel title changes,
 // or everyone with a saved layout keeps both the old arrangement and the old tab names for good.
-const LS_LAYOUT = "kt-ws-layout-v7";
+const LS_LAYOUT = "kt-ws-layout-v8";
 const LS_RAIL = "kt-ws-rail-open";
 const LS_RAIL_W = "kt-ws-rail-width";
 const LS_LAST_LAB = "kt-ws-last-lab";
@@ -337,6 +350,7 @@ const TOPOLOGY_HEIGHT_FRACTION = 0.62;
 // The node-info panel's tab title, in one place: a saved layout records the title it was saved with,
 // so onDockReady sets it again after restoring one (see there).
 const NODE_INFO_TITLE = "Inspector";
+const TERMINALS_TITLE = "Terminals";
 
 function buildDefaultLayout(api: DockviewApi) {
   // Topology first: its own full-width row on top, with nothing else yet so it fills the canvas.
@@ -353,6 +367,7 @@ function buildDefaultLayout(api: DockviewApi) {
   api.addPanel({ id: "files", component: "files", title: "Lab Configuration", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "runtime-fs", component: "runtime-fs", title: "Runtime Filesystem", position: { referencePanel: "devices", direction: "within" } });
   api.addPanel({ id: "stats", component: "stats", title: "Statistics", position: { referencePanel: "devices", direction: "within" } });
+  api.addPanel({ id: "terminals", component: "terminals", title: TERMINALS_TITLE, position: { referencePanel: "devices", direction: "within" } });
   if (api.height) {
     api.getPanel("topology")?.api.group.api.setSize({ height: Math.round(api.height * TOPOLOGY_HEIGHT_FRACTION) });
   }
@@ -382,6 +397,24 @@ function showNodeInfo(api: DockviewApi) {
   });
 }
 
+// Bring the Terminals tab forward, re-adding it beside Lab Details if a saved layout lacks it. Unlike
+// showNodeInfo it always foregrounds the tab, even over the topology: it only runs when the user has
+// just asked for a terminal.
+function showTerminals(api: DockviewApi) {
+  const terminals = api.getPanel("terminals");
+  if (terminals) {
+    terminals.api.setActive();
+    return;
+  }
+  const devices = api.getPanel("devices");
+  api.addPanel({
+    id: "terminals",
+    component: "terminals",
+    title: TERMINALS_TITLE,
+    position: devices ? { referencePanel: "devices", direction: "within" } : undefined,
+  });
+}
+
 // Move every panel that isn't already in a kept group into `target`, as a background tab —
 // rather than shrinking the other groups to strips, this removes them outright (an empty group
 // closes itself), so the kept group(s) actually get the full available space instead of sharing
@@ -405,84 +438,36 @@ function exitMaximized(api: DockviewApi) {
 // survive). All are no-ops when there's nothing to arrange. ---
 const terminalPanelsOf = (api: DockviewApi) => api.panels.filter((p) => p.id.startsWith("terminal:"));
 
-// Close any terminal panel whose device no longer exists in this lab. Shared by the effect below
-// (reacts to a later `detail` change) and `onDockReady` (handles a lab already loaded by the
-// time a restored layout's terminals first appear).
-function pruneOrphanTerminals(api: DockviewApi, machineNames: Set<string>) {
-  for (const p of terminalPanelsOf(api)) {
-    const machine = sessionOfTerminalPanel(p.id)?.machine;
-    if (machine && !machineNames.has(machine)) p.api.close();
+// End every session in `sessions`. A detached one ends by closing its panel, whose removal ends the
+// session (see onDockReady), so the panel never outlives it; one in the Terminals tab ends directly.
+function closeTerminalSessions(
+  api: DockviewApi,
+  sessions: TerminalSessionEntry[],
+  closeSession: (id: string) => void,
+) {
+  for (const s of sessions) {
+    const panel = s.location === "panel" ? api.getPanel(terminalPanelId(s.id)) : undefined;
+    if (panel) panel.api.close();
+    else closeSession(s.id);
   }
 }
 
-// Equalize a terminal grid's row/column split ratios: same width for every column within a row,
-// same height for every row. An incomplete last row (fewer columns) legitimately ends up wider
-// per column — tmux does the same, and it's an acceptable tradeoff.
-//
-// Sizes are derived from the grid's own current combined bounding box so this only touches space
-// the grid already owns. Setting an explicit size makes dockview snapshot the new ratio as that
-// split's proportion; a later resize of an ancestor (mergeOthersInto freeing space by removing a
-// sibling group) redistributes using that saved proportion, so equal ratios survive the later grow.
-function equalizeTerminalGrid(rows: DockviewGroupPanel[][]) {
-  const groups = rows.flat();
-  if (!groups.length) return;
-  const rects = groups.map((g) => g.element.getBoundingClientRect());
-  const gridWidth = Math.max(...rects.map((r) => r.right)) - Math.min(...rects.map((r) => r.left));
-  const gridHeight = Math.max(...rects.map((r) => r.bottom)) - Math.min(...rects.map((r) => r.top));
-  const rowHeight = Math.round(gridHeight / rows.length);
-  for (const row of rows) {
-    const colWidth = Math.round(gridWidth / row.length);
-    for (const g of row) g.api.setSize({ width: colWidth });
-    // Height is shared by the whole row (only width is per-group) — one call per row suffices.
-    row[0].api.setSize({ height: rowHeight });
-  }
+// The sessions whose device no longer exists in this lab. Shared by the effect below (reacts to a
+// later `detail` change) and `onDockReady` (handles a lab already loaded by the time a restored
+// layout's terminals first appear).
+function orphanSessions(sessions: TerminalSessionEntry[], machineNames: Set<string>) {
+  return sessions.filter((s) => !machineNames.has(s.machine));
 }
 
-// All open terminals tiled into a roughly-square grid (tmux-like), each cell the same size.
-// Returns the row groupings so callers can re-equalize later (e.g. after freeing more space).
-function tileTerminals(api: DockviewApi): DockviewGroupPanel[][] {
-  const terms = terminalPanelsOf(api);
-  if (!terms.length) return [];
-  const cols = Math.ceil(Math.sqrt(terms.length));
-  const numRows = Math.ceil(terms.length / cols);
-
-  // Phase 1: stack one seed group per row, top-to-bottom, before any row is split into columns.
-  // Splitting rows first — rather than interleaving row and column splits — keeps every row a
-  // direct sibling of the others spanning the full grid width. Splitting a new row below a row
-  // that's already been divided into columns would nest it under just one of those columns
-  // instead, leaving another column spanning the full grid height alongside it.
-  const rowSeeds: DockviewGroupPanel[] = [terms[0].api.group];
-  for (let r = 1; r < numRows; r++) {
-    const seedTerm = terms[r * cols];
-    seedTerm.api.moveTo({ group: rowSeeds[r - 1], position: "bottom" as const });
-    rowSeeds.push(seedTerm.api.group);
-  }
-
-  // Phase 2: within each row's now-fixed full-width slot, split off its remaining columns.
-  const rows: DockviewGroupPanel[][] = rowSeeds.map((seed) => [seed]);
-  for (let r = 0; r < numRows; r++) {
-    const end = Math.min(r * cols + cols, terms.length);
-    let prev = rowSeeds[r];
-    for (let i = r * cols + 1; i < end; i++) {
-      terms[i].api.moveTo({ group: prev, position: "right" as const });
-      prev = terms[i].api.group;
-      rows[r].push(prev);
-    }
-  }
-
-  equalizeTerminalGrid(rows);
-  return rows;
-}
-
-// Default: one shared tab group below with the inspector, every tool panel, and every open
-// terminal; the topology full-width on top. Without unmounting anything.
+// Default: one shared tab group below with the inspector, every tool panel, the Terminals tab and
+// every detached terminal; the topology full-width on top. Without unmounting anything.
 function resetLayout(api: DockviewApi) {
   const devices = api.getPanel("devices");
   const topo = api.getPanel("topology");
   if (!devices || !topo) return;
   // Reset shouldn't leave the inspector hidden — bring it back if it was closed.
   if (!api.getPanel("node-info")) showNodeInfo(api);
-  for (const id of ["node-info", "files", "runtime-fs", "stats"]) {
+  for (const id of ["node-info", "files", "runtime-fs", "stats", "terminals"]) {
     api.getPanel(id)?.api.moveTo({ group: devices.api.group });
   }
   for (const p of terminalPanelsOf(api)) p.api.moveTo({ group: devices.api.group });
@@ -514,21 +499,13 @@ function focusEditing(api: DockviewApi) {
   files.api.setActive();
 }
 
-// All open terminals tiled into a grid taking the whole screen; everything else joins the first
-// terminal's group as background tabs. No-op if none are open (open one via "+ Terminal" first).
+// The Terminals tab takes the whole screen; everything else joins it as background tabs.
 function focusTerminals(api: DockviewApi) {
-  if (!terminalPanelsOf(api).length) return;
-  const rows = tileTerminals(api); // arrange + size them equally among themselves first
-  const groups = new Set(rows.flat());
-  // Re-fetch: tiling just moved them into new groups.
-  const terms = terminalPanelsOf(api);
-  mergeOthersInto(api, terms[0].api.group, groups);
-  // mergeOthersInto grows the grid's footprint by removing its siblings; dockview's proportional
-  // resize should already preserve the equal ratios set above, but re-measuring against the
-  // final, fully-grown footprint is cheap and removes any reliance on that assumption (e.g.
-  // rounding drift compounding across several nested splits).
-  equalizeTerminalGrid(rows);
-  terms[0].api.setActive();
+  showTerminals(api);
+  const terminals = api.getPanel("terminals");
+  if (!terminals) return;
+  mergeOthersInto(api, terminals.api.group, new Set([terminals.api.group]));
+  terminals.api.setActive();
 }
 
 interface LabRowLabelProps {
@@ -1009,31 +986,34 @@ export function WorkspacePage() {
 
   const terminals = useTerminalRegistry();
   const { open: openSession, close: closeSession, adopt: adoptSessions } = terminals;
+  // The latest sessions, for the callbacks below that must not change identity with them.
+  const terminalSessionsRef = useRef(terminals.sessions);
+  terminalSessionsRef.current = terminals.sessions;
+
+  // A new terminal always opens in the Terminals tab, as the one it shows.
   const openTerminal = useCallback((machine: string) => {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
-    const session = openSession(machine);
-    const existingTerminal = dockApi.panels.find((p) => p.id.startsWith("terminal:"));
-    const devices = dockApi.getPanel("devices");
-    dockApi.addPanel({
-      id: terminalPanelId(session.id),
-      component: "terminal",
-      title: terminalTitle(session),
-      // Group with existing terminals (as tabs) if any; else land as a tab alongside the tool
-      // panels (Devices, Lab Configuration, …) on the left; else just drop into a new/active group.
-      position: existingTerminal
-        ? { referenceGroup: existingTerminal.group, direction: "within" }
-        : devices
-          ? { referencePanel: "devices", direction: "within" }
-          : undefined,
-    });
+    openSession(machine);
+    showTerminals(dockApi);
   }, [openSession]);
 
   const closeAllTerminals = useCallback(() => {
     const dockApi = dockApiRef.current;
     if (!dockApi) return;
-    for (const p of terminalPanelsOf(dockApi)) p.api.close();
-  }, []);
+    closeTerminalSessions(dockApi, terminalSessionsRef.current, closeSession);
+  }, [closeSession]);
+
+  // The Terminals tab's sessions live in its dockview params, so the saved layout carries them and a
+  // reload brings them back (onDockReady). A params change is itself a layout change, which saves
+  // the layout; the comparison keeps an unrelated re-render from saving it again.
+  useEffect(() => {
+    const panel = dockApiRef.current?.getPanel("terminals");
+    if (!panel) return;
+    const inTab = terminals.sessions.filter((s) => s.location === "tabs");
+    const params = terminalsTabParams(inTab, terminals.activeId);
+    if (JSON.stringify(panel.params ?? null) !== JSON.stringify(params)) panel.api.updateParameters(params);
+  }, [terminals.sessions, terminals.activeId]);
 
   // Single useDeviceActions instance for the whole workspace — shared by the topology canvas (via
   // WorkspaceContext) and the device rail below, so right-clicking a device in either place means
@@ -1077,8 +1057,9 @@ export function WorkspacePage() {
   useEffect(() => {
     const dockApi = dockApiRef.current;
     if (!dockApi || !detail) return;
-    pruneOrphanTerminals(dockApi, new Set(detail.machines.map((m) => m.name)));
-  }, [detail]);
+    const orphans = orphanSessions(terminalSessionsRef.current, new Set(detail.machines.map((m) => m.name)));
+    closeTerminalSessions(dockApi, orphans, closeSession);
+  }, [detail, closeSession]);
 
   const onDockReady = useCallback((event: DockviewReadyEvent) => {
     dockApiRef.current = event.api;
@@ -1118,10 +1099,18 @@ export function WorkspacePage() {
       if (session) closeSession(session.id);
     });
 
-    // A restored layout brings its terminal panels back; the registry adopts one session for each,
-    // which also keeps a terminal opened afterwards from taking a restored panel's id (dockview
-    // throws "panel with id ... already exists" on the collision).
-    adoptSessions(terminalPanelsOf(event.api).flatMap((p) => sessionOfTerminalPanel(p.id) ?? []));
+    // A restored layout brings back the Terminals tab's sessions, in its params, and every detached
+    // terminal's panel; the registry adopts one session for each. That also keeps a terminal opened
+    // afterwards from taking a restored panel's id (dockview throws "panel with id ... already
+    // exists" on the collision). A session found in both places is the detached one.
+    const tab = parseTerminalsTabParams(event.api.getPanel("terminals")?.params);
+    const detached = terminalPanelsOf(event.api).flatMap((p) => sessionOfTerminalPanel(p.id) ?? []);
+    const detachedIds = new Set(detached.map((s) => s.id));
+    const restoredSessions: TerminalSessionEntry[] = [
+      ...tab.sessions.filter((s) => !detachedIds.has(s.id)).map((s) => ({ ...s, location: "tabs" as const })),
+      ...detached.map((s) => ({ ...s, location: "panel" as const })),
+    ];
+    adoptSessions(restoredSessions, tab.activeId);
 
     // DockviewReact only mounts once a lab is already loaded (see the `ctxValue && coreCtxValue`
     // check below), so `detailRef.current` is always populated by the time this runs — prune any
@@ -1130,7 +1119,8 @@ export function WorkspacePage() {
     // this correct despite onDockReady running once — dockview only calls onReady once, so that's a
     // constraint on this callback, not something to work around.
     if (detailRef.current) {
-      pruneOrphanTerminals(event.api, new Set(detailRef.current.machines.map((m) => m.name)));
+      const orphans = orphanSessions(restoredSessions, new Set(detailRef.current.machines.map((m) => m.name)));
+      closeTerminalSessions(event.api, orphans, closeSession);
     }
   }, [adoptSessions, closeSession]);
 
@@ -1353,6 +1343,7 @@ export function WorkspacePage() {
         configureRequest,
         registerSelectionGuard,
         openTerminal,
+        closeAllTerminals,
         openRuntimeFsPanel,
         nodeInfoHost,
         setNodeInfoHost,

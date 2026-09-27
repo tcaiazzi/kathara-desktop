@@ -115,7 +115,7 @@ const STEPS: TourStep[] = [
     element: '[data-tour="terminal-btn"]',
     popover: {
       title: "Terminals",
-      description: "Open a shell on any running device — you can have several at once, tiled or tabbed.",
+      description: "Open a shell on any running device — you can have several at once, listed in the Terminals tab.",
     },
   },
   {

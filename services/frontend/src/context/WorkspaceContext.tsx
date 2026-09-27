@@ -20,8 +20,10 @@ export interface WorkspaceCtx {
   configureRequest: { device: string; seq: number } | null;
   /** Installs the check every selection change passes first — the Inspector's, for its edits. */
   registerSelectionGuard: (guard: SelectionGuard | null) => void;
-  /** Open a live terminal for a device as a new dockview panel. */
+  /** Open a live terminal for a device in the Terminals tab, and bring that tab forward. */
   openTerminal: (machine: string) => void;
+  /** End every terminal, in the Terminals tab and detached alike. */
+  closeAllTerminals: () => void;
   /** Switch to the Runtime Filesystem dock panel, preselecting `machine`. */
   openRuntimeFsPanel: (machine: string) => void;
   /** DOM node of the Inspector dock panel, or null when that panel is closed. The

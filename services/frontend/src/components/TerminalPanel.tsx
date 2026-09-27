@@ -1,7 +1,6 @@
 import type { IDockviewPanelProps } from "dockview-react";
-import { useTerminalSlot } from "../hooks/useTerminalSlot";
 import { sessionOfTerminalPanel } from "../services/terminalSessions";
-import "./TerminalPanel.css";
+import { TerminalSlot } from "./TerminalSlot";
 
 // A dock panel showing one terminal session on its own. The session lives in the registry
 // (TerminalSessionsContext) and this panel only lends it a place, so dockview owning the tab
@@ -10,6 +9,5 @@ import "./TerminalPanel.css";
 // saved layout restores.
 export function TerminalPanel(props: IDockviewPanelProps) {
   const sessionId = sessionOfTerminalPanel(props.api.id)?.id ?? props.api.id;
-  const slotRef = useTerminalSlot(sessionId);
-  return <div className="kt-term-slot" ref={slotRef} />;
+  return <TerminalSlot sessionId={sessionId} />;
 }

@@ -39,3 +39,62 @@
   height: 100%;
   min-height: 0;
 }
+
+/* The Terminals tab (TerminalsPanel): the selected session on the left, the list on the right. */
+.kt-terms {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.kt-terms-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+.kt-terms-list {
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+  border-left: 1px solid var(--bs-border-color);
+}
+.kt-terms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.kt-terms-add {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+}
+.kt-terms-row {
+  padding: 4px 6px;
+  gap: 6px;
+}
+.kt-terms-icon {
+  flex: 0 0 auto;
+  color: var(--bs-secondary-color);
+}
+/* Shown on the hovered and the selected row only, as an IDE's terminal list does, so the list reads
+   as names rather than a column of buttons. */
+.kt-terms-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  border-radius: 4px;
+  padding: 1px;
+  color: var(--bs-secondary-color);
+  visibility: hidden;
+}
+.kt-terms-row:hover .kt-terms-close,
+.kt-terms-row.active .kt-terms-close {
+  visibility: visible;
+}
+.kt-terms-close:hover {
+  background: var(--kt-menu-hover-bg);
+  color: var(--bs-body-color);
+}
