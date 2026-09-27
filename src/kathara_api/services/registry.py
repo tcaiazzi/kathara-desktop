@@ -14,7 +14,7 @@ deliberately is none. Reads resolve through ``KatharaService._offline_fs_owner``
 instead.
 
 It also keeps each lab's last deploy failure, so a lab left partly running by one can say why —
-see ``set_deploy_failure``.
+see ``set_deploy_failure`` — and its draft collision domains, see ``add_draft``.
 
 The registry is process-local; the server therefore must run with a single worker.
 """
@@ -48,6 +48,7 @@ class LabRegistry:
         self._dirs: dict[str, Path] = {}
         self._dirty: dict[str, set[str]] = {}
         self._deploy_failures: dict[str, DeployFailure] = {}
+        self._drafts: dict[str, set[str]] = {}
         self._lock = threading.RLock()
 
     def add(self, lab: Lab, directory: Path) -> None:
@@ -75,6 +76,7 @@ class LabRegistry:
         with self._lock:
             self._dirty.pop(lab_id, None)
             self._deploy_failures.pop(lab_id, None)
+            self._drafts.pop(lab_id, None)
             self._dirs.pop(lab_id, None)
             return self._labs.pop(lab_id, None)
 
@@ -107,6 +109,26 @@ class LabRegistry:
     def deploy_failure(self, lab_id: str) -> Optional[DeployFailure]:
         with self._lock:
             return self._deploy_failures.get(lab_id)
+
+    # -- draft collision domains ------------------------------------------------
+
+    def add_draft(self, lab_id: str, link_name: str) -> None:
+        """Record a collision domain added with no device on it. lab.conf has no way to write such a
+        domain down — domains exist there only through the interfaces that name them — so this is
+        the only place it lives: it survives the lab being rebuilt from lab.conf
+        (``KatharaService._reload_lab_from_disk``), not a backend restart or a rename."""
+        with self._lock:
+            self._drafts.setdefault(lab_id, set()).add(link_name)
+
+    def discard_draft(self, lab_id: str, link_name: str) -> None:
+        with self._lock:
+            names = self._drafts.get(lab_id)
+            if names is not None:
+                names.discard(link_name)
+
+    def drafts(self, lab_id: str) -> set[str]:
+        with self._lock:
+            return set(self._drafts.get(lab_id, ()))
 
     # -- dirty-machine tracking -------------------------------------------------
 

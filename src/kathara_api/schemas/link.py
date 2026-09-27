@@ -19,3 +19,6 @@ class LinkDetail(BaseModel):
     machines: list[str] = Field(default_factory=list)
     external: list[str] = Field(default_factory=list)
     running: bool = False
+    # No device on it yet, so not in lab.conf: shown until one is connected, kept only for the
+    # backend's session (see KatharaService.add_link).
+    draft: bool = False

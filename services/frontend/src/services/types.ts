@@ -198,6 +198,9 @@ export interface LinkDetail {
   machines: string[];
   external: string[];
   running: boolean;
+  // No device on it yet, so not in lab.conf: kept for the backend's session only, until a device
+  // is connected to it (KatharaService.add_link).
+  draft: boolean;
 }
 
 export interface LabDetail extends LabSummary {

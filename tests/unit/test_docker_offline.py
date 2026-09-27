@@ -168,13 +168,23 @@ def test_wipe_reports_a_dead_daemon_as_a_failure_instead_of_raising(dead_daemon,
         pytest.param(lambda s: s.deploy_lab(lab_id(s, "offlinelab")), id="deploy_lab"),
         pytest.param(lambda s: s.undeploy_lab(lab_id(s, "offlinelab")), id="undeploy_lab"),
         pytest.param(lambda s: s.exec_command(lab_id(s, "offlinelab"), "pc1", ["true"]), id="exec_command"),
-        pytest.param(lambda s: s.add_link(lab_id(s, "offlinelab"), "newlink"), id="add_link"),
-        pytest.param(lambda s: s.remove_link(lab_id(s, "offlinelab"), "shared"), id="remove_link"),
     ],
 )
 def test_docker_dependent_operations_still_raise(dead_daemon, service, operation):
     with pytest.raises(DockerDaemonConnectionError):
         operation(service)
+
+
+def test_collision_domains_of_a_stopped_lab_are_edited_without_a_daemon(dead_daemon, service):
+    """A stopped lab has no networks: adding a domain only records it (as a draft, until a device
+    is on it) and removing one only edits the model and lab.conf."""
+    lab = lab_id(service, "offlinelab")
+
+    service.add_link(lab, "newlink")
+    assert "newlink" in service.get_lab_or_reconstruct(lab).links
+
+    service.remove_link(lab, "newlink")
+    assert "newlink" not in service.get_lab_or_reconstruct(lab).links
 
 
 # -- the negative cache ------------------------------------------------------------------------

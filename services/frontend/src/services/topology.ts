@@ -41,6 +41,8 @@ export interface DomainNode {
   name: string;
   external: string[];
   running: boolean;
+  // A domain with no device on it, not saved in lab.conf yet (LinkDetail.draft).
+  draft: boolean;
   members: string[];
   x: number;
   y: number;
@@ -106,10 +108,19 @@ export function computeTopology(
   detail: LabDetail,
   startups?: Record<string, string>,
 ): TopoModel {
-  const cds = new Map<string, { name: string; external: string[]; running: boolean; machines: Set<string> }>();
+  const cds = new Map<
+    string,
+    { name: string; external: string[]; running: boolean; draft: boolean; machines: Set<string> }
+  >();
   for (const lk of detail.links) {
     if (lk.name === HOST_BRIDGE) continue;
-    cds.set(lk.name, { name: lk.name, external: lk.external, running: lk.running, machines: new Set(lk.machines) });
+    cds.set(lk.name, {
+      name: lk.name,
+      external: lk.external,
+      running: lk.running,
+      draft: lk.draft,
+      machines: new Set(lk.machines),
+    });
   }
   // Domains listed in detail.links trust the backend's running flag as-is; domains only inferred
   // below (from a device interface, with no entry in detail.links) don't have one yet — that path
@@ -141,7 +152,9 @@ export function computeTopology(
     for (const it of visibleInterfaces(m)) {
       const ifIps = ips[it.num] || [];
       node.ifaces.push({ num: it.num, link: it.link, mac: it.mac_address, ips: ifIps });
-      if (!cds.has(it.link)) cds.set(it.link, { name: it.link, external: [], running: node.running, machines: new Set() });
+      if (!cds.has(it.link)) {
+        cds.set(it.link, { name: it.link, external: [], running: node.running, draft: false, machines: new Set() });
+      }
       const cd = cds.get(it.link)!;
       cd.machines.add(m.name);
       if (!explicitDomains.has(it.link) && node.running) cd.running = true;
@@ -156,6 +169,8 @@ export function computeTopology(
       name: cd.name,
       external: cd.external,
       running: cd.running,
+      // A device on it makes it saved, whatever the listing said a moment earlier.
+      draft: cd.draft && cd.machines.size === 0,
       members: [...cd.machines],
       x: 0,
       y: 0,

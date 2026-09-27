@@ -611,6 +611,12 @@ export function TopologyGraph({
               <span className="swatch cd domain-external" />
               external domain
             </div>
+            {model.nodes.some((nd) => nd.type === "cd" && nd.draft) && (
+              <div className="lg">
+                <span className="swatch cd domain-draft" />
+                draft domain (not saved)
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -1578,7 +1578,12 @@ export function WorkspacePage() {
                       >
                         <span className={`kt-ws-dot ${lk.running ? "running" : "stopped"}`} />
                         <span className="kt-ws-row-name">{lk.name}</span>
-                        <span className="kt-ws-row-meta">{lk.machines.length}</span>
+                        <span
+                          className="kt-ws-row-meta"
+                          title={lk.draft ? "Not saved in lab.conf until a device is connected" : undefined}
+                        >
+                          {lk.draft ? "draft" : lk.machines.length}
+                        </span>
                       </button>
                     ))}
                   </div>

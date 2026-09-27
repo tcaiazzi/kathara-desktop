@@ -1556,6 +1556,14 @@ class KatharaService:
             return None
         lab = lab_builder.build_lab(t.payload, path=str(lab_dir))
         self.registry.add(lab, lab_dir)
+        # lab.conf can't hold a domain with no device on it, so the drafts are put back by hand;
+        # one a device has since been connected to is in lab.conf now, and stops being a draft.
+        for name in self.registry.drafts(lab.hash):
+            existing = lab.links.get(name)
+            if existing is not None and existing.machines:
+                self.registry.discard_draft(lab.hash, name)
+            else:
+                lab.get_or_new_link(name)
         return lab
 
     def _adopt_populated_dir(self, clean_name: str) -> tuple[Lab, list[str]]:
@@ -3016,6 +3024,10 @@ class KatharaService:
         # `lab`/`link` read *inside* the lock (see add_machine's comment on why), along with the
         # `link.external` model mutation — building it outside the lock is the same class of
         # issue as reading stale state: a concurrent operation on this lab could run in between.
+        #
+        # A domain added with no device on it can't be written to lab.conf, so it is kept as a draft
+        # (LabRegistry.add_draft) until a device is connected to it. Its Docker network is created
+        # only while the lab is running: a stopped lab creates its networks when it is deployed.
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
@@ -3023,7 +3035,10 @@ class KatharaService:
             if external:
                 for iface in external:
                     link.external.append(lab_builder.build_external_link(iface))
-            self._facade().deploy_link(link)
+            if not link.machines:
+                self.registry.add_draft(lab_id, link_name)
+            if any(m.api_object is not None for m in lab.machines.values()):
+                self._facade().deploy_link(link)
         return link
 
     def remove_link(self, lab_id: str, link_name: str) -> None:
@@ -3047,7 +3062,11 @@ class KatharaService:
                     f"({', '.join(running)}); stop them (or the lab) before removing it."
                 )
 
-            self._facade().undeploy_link(link)
+            # Only a domain whose network exists has one to remove: a draft on a stopped lab never
+            # had one (add_link).
+            if link.api_object is not None:
+                self._facade().undeploy_link(link)
+            self.registry.discard_draft(lab_id, link_name)
 
             # Every attached machine is stopped (checked above): persist the removal to lab.conf,
             # the same way disconnect_machine's stopped branch does for a single interface.

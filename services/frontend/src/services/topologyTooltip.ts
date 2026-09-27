@@ -37,9 +37,12 @@ export function tooltipHtml(nd: TopoNode): string {
     return rows.join("");
   }
   const rows: string[] = [
-    `<div class="tt-title">${esc(nd.name)}<span class="tt-tag">${nd.external.length ? "external" : "collision domain"}</span></div>`,
+    `<div class="tt-title">${esc(nd.name)}<span class="tt-tag">${
+      nd.external.length ? "external" : nd.draft ? "draft" : "collision domain"
+    }</span></div>`,
     ttRow("devices", nd.members.join(", ") || "—"),
   ];
+  if (nd.draft) rows.push('<div class="tt-sub">Not saved in lab.conf until a device is connected.</div>');
   if (nd.external.length) rows.push(ttRow("host", nd.external.join(", ")));
   return rows.join("");
 }

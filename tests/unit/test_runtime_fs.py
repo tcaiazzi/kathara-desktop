@@ -16,7 +16,7 @@ from Kathara.exceptions import MachineNotRunningError
 from kathara_api.errors import ApiError, UnsupportedOperationError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
-from kathara_api.services import lab_builder
+from kathara_api.services import lab_builder, serializers
 from kathara_api.services.docker_tty import SHELL_PATHS
 from kathara_api.services.kathara_service import KatharaService
 from kathara_api.services.lab_store import LabStore
@@ -417,6 +417,81 @@ def test_add_link_without_external_interfaces(service, facade):
 
     assert facade.deployed_links == [link]
     assert link.external == []
+
+
+# ---------------------------------------------------------------------------
+# A collision domain with no device on it: a draft
+# ---------------------------------------------------------------------------
+
+
+class _LinkFacade(_RuntimeFacade):
+    def __init__(self):
+        super().__init__()
+        self.undeployed_links = []
+
+    def undeploy_link(self, link):
+        self.undeployed_links.append(link.name)
+
+
+@pytest.fixture
+def stopped_disk_lab(tmp_path):
+    """A stopped lab on disk: pc1 on collision domain A."""
+    facade = _LinkFacade()
+    service = make_service(store=LabStore(tmp_path / "labs"), facade=facade)
+    make_lab(service, "disk", {"lab.conf": "pc1[0]=A\n"})
+    return service, facade
+
+
+def _link_detail(service, name):
+    lab = service.get_lab_or_reconstruct(lab_id(service, "disk"))
+    return next(link for link in serializers.lab_to_detail(lab).links if link.name == name)
+
+
+def test_a_domain_added_to_a_stopped_lab_is_a_draft_with_no_network(stopped_disk_lab):
+    service, facade = stopped_disk_lab
+
+    service.add_link(lab_id(service, "disk"), "B")
+
+    assert facade.deployed_links == []
+    detail = _link_detail(service, "B")
+    assert (detail.draft, detail.running) == (True, False)
+    assert _link_detail(service, "A").draft is False
+
+
+def test_a_draft_survives_the_lab_being_rebuilt_from_lab_conf(stopped_disk_lab):
+    """lab.conf can't hold a domain with no device, and a stopped lab is rebuilt from it after
+    every write the app makes to it."""
+    service, _ = stopped_disk_lab
+    service.add_link(lab_id(service, "disk"), "B")
+
+    service._reload_lab_from_disk(service.store.lab_dir("disk"))
+
+    assert _link_detail(service, "B").draft is True
+
+
+def test_connecting_a_device_to_a_draft_saves_it_and_ends_the_draft(stopped_disk_lab):
+    service, _ = stopped_disk_lab
+    lab = lab_id(service, "disk")
+    service.add_link(lab, "B")
+
+    service.connect_machine(lab, "pc1", "B")
+    service._reload_lab_from_disk(service.store.lab_dir("disk"))
+
+    assert "pc1[1]=" in service.store.read_lab_conf_text(service.store.lab_dir("disk"))
+    assert _link_detail(service, "B").draft is False
+    assert service.registry.drafts(lab) == set()
+
+
+def test_removing_a_draft_needs_no_network_and_forgets_it(stopped_disk_lab):
+    service, facade = stopped_disk_lab
+    lab = lab_id(service, "disk")
+    service.add_link(lab, "B")
+
+    service.remove_link(lab, "B")
+    service._reload_lab_from_disk(service.store.lab_dir("disk"))
+
+    assert facade.undeployed_links == []
+    assert "B" not in service.get_lab_or_reconstruct(lab).links
 
 
 @pytest.fixture

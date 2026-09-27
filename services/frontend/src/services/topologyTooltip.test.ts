@@ -30,6 +30,7 @@ function domain(overrides: Partial<DomainNode> = {}): DomainNode {
     name: "A",
     external: [],
     running: false,
+    draft: false,
     members: ["pc1", "pc2"],
     x: 0,
     y: 0,
@@ -92,6 +93,12 @@ describe("collision-domain tooltip", () => {
   it("lists the attached devices", () => {
     expect(text(tooltipHtml(domain()))).toBe("A collision domain devices pc1, pc2");
     expect(text(tooltipHtml(domain({ members: [] })))).toBe("A collision domain devices —");
+  });
+
+  it("marks a draft domain and says it is not saved yet", () => {
+    expect(text(tooltipHtml(domain({ members: [], draft: true })))).toBe(
+      "A draft devices — Not saved in lab.conf until a device is connected.",
+    );
   });
 
   it("marks an external domain and names its host interfaces", () => {

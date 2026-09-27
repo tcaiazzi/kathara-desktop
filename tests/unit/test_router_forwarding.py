@@ -337,7 +337,7 @@ def test_add_link_returns_201_and_forwards_external_interfaces(api):
     res = client.post("/api/labs/l/links", json={"name": "A", "external": ["eth0"]})
 
     assert res.status_code == 201
-    assert res.json() == {"name": "A", "machines": ["pc1"], "external": [], "running": False}
+    assert res.json() == {"name": "A", "machines": ["pc1"], "external": [], "running": False, "draft": False}
     assert service.calls == [("add_link", ("l", "A"), {"external": ["eth0"]})]
 
 

@@ -191,7 +191,7 @@ describe("computeTopology", () => {
             exec_commands: ["ip address add 10.0.0.1/24 dev eth0"],
           }),
         ],
-        [{ name: "A", machines: ["r1"], external: [], running: true }],
+        [{ name: "A", machines: ["r1"], external: [], running: true, draft: false }],
       ),
       { r1: "ip address add 10.0.1.1/24 dev eth1\n" },
     );
@@ -213,7 +213,7 @@ describe("computeTopology", () => {
     const model = computeTopology(
       lab(
         [machine({ interfaces: [iface(0, "A"), iface(1, HOST_BRIDGE)] })],
-        [{ name: HOST_BRIDGE, machines: ["pc1"], external: [], running: true }],
+        [{ name: HOST_BRIDGE, machines: ["pc1"], external: [], running: true, draft: false }],
       ),
     );
 
@@ -225,7 +225,7 @@ describe("computeTopology", () => {
     const model = computeTopology(
       lab(
         [machine({ running: true, interfaces: [iface(0, "A")] })],
-        [{ name: "A", machines: ["pc1"], external: ["eth0"], running: false }],
+        [{ name: "A", machines: ["pc1"], external: ["eth0"], running: false, draft: false }],
       ),
     );
 
@@ -246,13 +246,23 @@ describe("computeTopology", () => {
     expect(allStopped.nodes.find((n) => n.id === "cd:X")).toMatchObject({ running: false });
   });
 
-  it("shows a listed domain with no device attached", () => {
-    const model = computeTopology(lab([], [{ name: "EMPTY", machines: [], external: [], running: false }]));
+  it("shows a listed domain with no device attached, as the draft the backend says it is", () => {
+    const model = computeTopology(lab([], [{ name: "EMPTY", machines: [], external: [], running: false, draft: true }]));
 
     expect(model.nodes).toEqual([
-      { id: "cd:EMPTY", type: "cd", name: "EMPTY", external: [], running: false, members: [], x: 0, y: 0, dx: 0, dy: 0 },
+      { id: "cd:EMPTY", type: "cd", name: "EMPTY", external: [], running: false, draft: true, members: [], x: 0, y: 0, dx: 0, dy: 0 },
     ]);
     expect(model.edges).toEqual([]);
+  });
+
+  it("never shows a domain with a device on it as a draft, nor one only an interface names", () => {
+    const pc1 = machine({ name: "pc1", interfaces: [{ num: 0, link: "A", mac_address: null }, { num: 1, link: "B", mac_address: null }] });
+    const model = computeTopology(lab([pc1], [{ name: "A", machines: [], external: [], running: false, draft: true }]));
+
+    expect(model.nodes.filter((n) => n.type === "cd").map((n) => [n.name, n.type === "cd" && n.draft])).toEqual([
+      ["A", false],
+      ["B", false],
+    ]);
   });
 });
 

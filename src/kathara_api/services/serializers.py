@@ -105,6 +105,9 @@ def link_to_detail(link: Link) -> LinkDetail:
         machines=list(link.machines.keys()),
         external=[ext.get_full_name() for ext in link.external],
         running=link.api_object is not None,
+        # lab.conf holds a domain only through the interfaces on it, so one with none (and no
+        # external interface) is not saved anywhere yet — see LabRegistry.add_draft.
+        draft=not link.machines and not link.external,
     )
 
 

@@ -708,7 +708,9 @@ export function useForceLayout(
         // running/stopped border-stroke color, not a color-only distinction.
         g.append(badge(-w / 2 + 3, -14, `b-state${nd.running ? "" : " stopped"}`, ""));
       } else {
-        g = svgEl("g", { class: `kt-topo-node n-cd${nd.external.length ? " external" : ""}` });
+        g = svgEl("g", {
+          class: `kt-topo-node n-cd${nd.external.length ? " external" : ""}${nd.draft ? " draft" : ""}`,
+        });
         g.append(svgEl("circle", { r: 18 }));
         g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", y: 5 }, nd.name));
       }
