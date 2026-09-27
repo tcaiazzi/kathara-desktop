@@ -71,10 +71,11 @@ class LabWatcher:
     ``changed_names`` covers files that appeared, changed or disappeared since the previous poll —
     every one of them, when the lab's folder itself is gone. A lab seen for the first time only
     sets the baseline — it was just loaded, so there is nothing to catch up on — and a lab whose
-    folder can't be listed is skipped, its baseline left as it was (see ``snapshot``). ``on_change`` returns the names it could not deal with yet (the lab is
-    mid-deploy, or deployed and its lab.conf has to wait): their baseline stays where it was, so
-    the same change is offered again next poll instead of being lost, while every other name
-    moves on and is not reported twice.
+    folder can't be listed is skipped, its baseline left as it was (see ``snapshot``).
+    ``on_change`` returns the names it could not deal with yet (the lab is mid-deploy, or deployed
+    and its lab.conf has to wait): their baseline stays where it was, so the same change is offered
+    again next poll instead of being lost, while every other name moves on and is not reported
+    twice.
 
     ``on_poll``, if given, runs at the start of every poll — for work on the same beat that isn't
     about one lab's files (``KatharaService.rescan_labs_root``, which picks up new lab folders).

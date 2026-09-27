@@ -80,13 +80,12 @@ async def tty_live_ws(
     # A WebSocket handshake carries no Authorization header a browser can set, so the pairing
     # token (see dependencies.require_auth_token) travels as a query param instead — checked by
     # hand rather than via the same Depends(): FastAPI's dependency solver can't supply a
-    # `Request`-typed dependency in a
-    # websocket scope (there is no Request there, only WebSocket), and errors on every connection
-    # if one is attached router- or route-wide, e.g. through the router-level `dependencies=`
-    # main.py otherwise uses for every other router. Closing before ever calling accept() makes
-    # uvicorn reject the handshake itself (an HTTP 403, verified manually), rather than opening a
-    # live socket only to immediately close it — an unpaired caller gets no socket at all. A
-    # no-op when auth_token is unset, same as require_auth_token.
+    # `Request`-typed dependency in a websocket scope (there is no Request there, only WebSocket),
+    # and errors on every connection if one is attached router- or route-wide, e.g. through the
+    # router-level `dependencies=` main.py otherwise uses for every other router. Closing before
+    # ever calling accept() makes uvicorn reject the handshake itself (an HTTP 403, verified
+    # manually), rather than opening a live socket only to immediately close it — an unpaired
+    # caller gets no socket at all. A no-op when auth_token is unset, same as require_auth_token.
     expected_token = get_settings().auth_token
     if expected_token:
         supplied_token = websocket.query_params.get("token")

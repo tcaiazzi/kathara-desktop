@@ -102,7 +102,8 @@ class SettingsPersistError(ApiError):
 
 
 class LabAlreadyRegisteredError(ApiError):
-    """Raised when creating a lab whose name already exists in the registry."""
+    """Raised when a lab's directory is already taken — by a registered lab, or merely by a folder
+    on disk — whether by a create, an install or a rename's target."""
 
     status_code = status.HTTP_409_CONFLICT
 
@@ -136,7 +137,8 @@ class LabFilePermissionError(ApiError):
     """Raised when the backend can't change or remove a file in a lab folder because another
     account owns it. In practice that account is root: running devices write into the lab's
     `shared/` folder, which Kathara bind-mounts at `/shared`, as root. A distinct class so the
-    frontend can offer to reclaim the files for the user (ReclaimLabsDirContext.tsx)."""
+    frontend can offer to reclaim the files for the user (hooks/useReportError.ts, which opens the
+    modal in ReclaimLabsDirContext.tsx)."""
 
     status_code = status.HTTP_403_FORBIDDEN
 
@@ -249,13 +251,15 @@ class UnsupportedOperationError(ApiError):
 
 
 class PathNotFoundError(ApiError):
-    """Raised when an offline lab filesystem path doesn't exist."""
+    """Raised when an offline lab filesystem path doesn't exist, or when the path given to open
+    as a lab is not a folder (``KatharaService.open_lab``)."""
 
     status_code = status.HTTP_404_NOT_FOUND
 
 
 class BinaryFileError(ApiError):
-    """Raised when a runtime filesystem path is read as text but isn't valid UTF-8.
+    """Raised when a file — in a lab's own folder or on a running device — is read as text but
+    isn't valid UTF-8.
 
     A distinct class (rather than a generic ApiError) so the frontend can detect this specific
     case by `error_type` and offer a binary-aware fallback (download/delete, no text preview)

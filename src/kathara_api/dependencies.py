@@ -24,9 +24,9 @@ def _request_token(request: Request, *, allow_query: bool) -> str | None:
     The `Authorization` header covers every plain fetch, whatever its method (see
     services/frontend/src/services/api.ts). ``allow_query=True`` additionally accepts ``?token=``,
     needed only where a browser's native ``EventSource`` can't set custom headers on its handshake —
-    ``statsStreamUrl`` is the sole caller of that shape (``/tty/ws`` is a native ``WebSocket``
-    with the same constraint, but it checks its token by hand rather than through this dependency —
-    see routers/exec.py). Every other route only ever needs the header, so accepting ``?token=``
+    ``statsStreamUrl`` and ``labEventsUrl`` are the callers of that shape (``/tty/ws`` is a native
+    ``WebSocket`` with the same constraint, but it checks its token by hand rather than through this
+    dependency — see routers/exec.py). Every other route only ever needs the header, so accepting ``?token=``
     there too would just widen the token's exposure (query strings end up in proxy/access logs,
     browser history, `Referer` headers) for no functional reason.
     """
@@ -62,8 +62,8 @@ def require_auth_token(request: Request) -> None:
 def require_auth_token_or_query(request: Request) -> None:
     """Same as :func:`require_auth_token`, but also accepts ``?token=``.
 
-    Reserved for the one plain HTTP route a browser's native ``EventSource`` can't attach an
-    ``Authorization`` header to (``/stats/stream``) — every other route should keep using
+    Reserved for the plain HTTP routes a browser's native ``EventSource`` can't attach an
+    ``Authorization`` header to (``/stats/stream``, ``/events``) — every other route should keep using
     :func:`require_auth_token` instead, so the token isn't accepted from a URL (and therefore
     from proxy logs, browser history, `Referer`) where a header would do.
     """

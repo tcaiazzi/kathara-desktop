@@ -4,9 +4,8 @@ Normally the SPA is served by something else: Vite's dev server proxies ``/api``
 backend, both in a plain host dev run and in the Docker Compose dev stack, which has no
 reverse proxy of its own (services/frontend/vite.config.ts, docker-compose-dev.yml). Either
 way the browser sees a single origin, which is what the frontend's transport layer assumes
-throughout: relative
-``/api`` fetches, a WebSocket URL built from ``window.location.host``, a relative
-``EventSource`` URL, and ``BrowserRouter`` deep links.
+throughout: relative ``/api`` fetches, a WebSocket URL built from ``window.location.host``, a
+relative ``EventSource`` URL, and ``BrowserRouter`` deep links.
 
 The desktop app (services/desktop) has no reverse proxy to put in front, so it points
 ``KATHARA_API_STATIC_DIR`` at the bundled build and lets this process serve it. That keeps

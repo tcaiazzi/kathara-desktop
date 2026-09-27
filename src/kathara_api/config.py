@@ -77,9 +77,9 @@ class ApiSettings(BaseSettings):
     # One shared set of caps rather than one per path — a mis-set gallery_repo (or a hostile
     # fork) and a zip bomb are the same failure mode: something that turns one request into a
     # disk- or memory-filling write.
-    # The defaults match what the gallery import has enforced from the start; overridable because a
+    # The defaults leave upstream's own gallery labs (tens of KB) ample room; overridable because a
     # *local* upload is the user's own content, not fetched from a repo — a course bundling a large
-    # binary or packet capture may need more room than upstream's own labs (tens of KB) ever would.
+    # binary or packet capture may need more room than those labs ever would.
     max_files_per_lab: int = 200
     max_bytes_per_file: int = 5 * 1024 * 1024
     max_bytes_per_lab: int = 20 * 1024 * 1024
@@ -118,8 +118,8 @@ class ApiSettings(BaseSettings):
     # holds a thread of services/docker_tty.py's dedicated executor for as long as the terminal
     # stays open (a blocking socket read in a loop) — the executor is sized from this (two workers
     # per session), so a session beyond the cap is rejected outright (WS close code 1013) instead
-    # of queueing silently behind whichever session frees up first. Overridable for hosts with more or fewer
-    # cores than the default assumes.
+    # of queueing silently behind whichever session frees up first. Overridable for hosts with more
+    # or fewer cores than the default assumes.
     tty_max_sessions: int = 32
 
     # Seconds between two checks of every loaded lab's lab.conf and *.startup for changes made

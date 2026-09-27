@@ -116,7 +116,7 @@ def list_available_images(service: KatharaService = Depends(get_service)) -> Ava
 
 
 # Images are a host-wide resource, not a lab's, so these two are global rather than nested under
-# /labs/{name} — the caller already knows which images it asked about (GET /labs/{name}/images).
+# /labs/{lab_id} — the caller already knows which images it asked about (GET /labs/{lab_id}/images).
 
 
 @router.post("/images/pull", response_model=ImagePullResult)
@@ -128,9 +128,8 @@ def pull_images(
     Synchronous on purpose: the frontend fires this *without awaiting it* and polls
     `/images/pull/progress` for the bar (the same fire-and-poll shape the desktop shell's setup
     page uses), then uses this request's own completion as the authoritative "done". A background
-    thread would buy nothing here — a sync handler occupies one anyio threadpool worker for the
-    duration, exactly as a deploy already does — and this module would be the only place in the
-    backend spawning threads.
+    thread would buy nothing here: a sync handler occupies one anyio threadpool worker for the
+    duration, exactly as a deploy does.
     """
     return ImagePullResult(pulled=service.pull_images(payload.images))
 

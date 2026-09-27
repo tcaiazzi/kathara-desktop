@@ -672,7 +672,7 @@ def test_fs_delete_offline_still_allows_deleting_a_root_level_file_or_dir(tmp_pa
     assert (store.lab_dir("testlab") / "lab.conf").exists()
 
 
-# -- regression: deploy/undeploy/rename must never lose queued content ------------------------
+# -- deploy/undeploy/rename must never lose written content -----------------------------------
 
 
 def test_undeploy_does_not_lose_root_or_device_content(tmp_path):

@@ -113,7 +113,7 @@ from .registry import DeployFailure, LabRegistry
 
 logger = logging.getLogger("kathara_api")
 
-# Reserved "machine name" for files/dirs queued directly under the lab root (no device) — the Lab
+# Reserved "machine name" for files/dirs directly under the lab root (no device) — the Lab
 # Configuration tab's tree root. Structurally impossible for a real device to collide with: device
 # names are validated against MACHINE_NAME_PATTERN (schemas/machine.py), which is lowercase-only.
 ROOT_MACHINE = "ROOT"
@@ -211,6 +211,11 @@ def _copy_tree(src_fs, src: str, dst_fs, dst: str) -> None:
     shutil.copytree(src_real, dst_real, symlinks=True, dirs_exist_ok=True)
 
 
+# -- permission failures on a lab's on-disk fs -----------------------------------------------------
+#
+# What turns a file the user can't change in a lab folder into a LabFilePermissionError naming it.
+
+
 _PERMISSION_ERRNO_MARKS = (f"[Errno {errno.EACCES}]", f"[Errno {errno.EPERM}]")
 
 
@@ -261,9 +266,14 @@ def _lab_file_permissions(method):
             if denied and not os.path.lexists(denied):
                 denied = os.path.dirname(denied)
             path = _lab_display_path(denied, self._lab_dir(lab_id))
-            raise LabFilePermissionError(f"{_owned_by_another_account(path)}, so the app can't change it.") from exc
+            raise LabFilePermissionError(
+                f"{_owned_by_another_account(path)}, so the app can't change it."
+            ) from exc
 
     return wrapper
+
+
+# -- symlink-safe tree operations, continued -------------------------------------------------------
 
 
 def _walk(target_fs, path: str = "/") -> Generator[tuple[str, bool], None, None]:
@@ -366,7 +376,7 @@ class KatharaService:
         # nothing if the storage root does not exist yet.
         self._reload_from_disk()
 
-    # -- lifecycle / settings -------------------------------------------------
+    # -- locks, transitions and the facade -------------------------------------
 
     def _begin_transition(self, lab_id: str) -> None:
         with self._transitioning_lock:
@@ -429,9 +439,9 @@ class KatharaService:
         the winner with its 201 and its registry entry and no files on disk. Every path that
         claims or releases a directory holds this instead: the four creation paths
         (``create_lab``, ``upload_lab``, and ``install_example`` and ``install_gallery_lab`` through
-        ``_install_from``), ``rename_lab`` for the directory it moves to, and ``delete_lab`` —
-        unregistering and removing the directory are what *release* it, so they race a concurrent
-        create of it.
+        ``_install_from``), ``open_lab`` for the folder it registers, ``rename_lab`` for the
+        directory it moves to, and ``close_lab`` and ``delete_lab`` — unregistering (and, for a
+        delete, removing the directory) is what *releases* it, so it races a concurrent create.
 
         Keyed by id rather than by name because the id *is* the directory (``lab_id_for``): a
         creation path claims the id of the directory it is about to write.
@@ -553,6 +563,8 @@ class KatharaService:
         """
         self._clear_undeployed_state(lab, set(lab.machines))
         return lab
+
+    # -- settings and system info ----------------------------------------------
 
     def load_persisted_settings(self) -> None:
         """Load the saved settings from ``kathara.conf`` (``settings_store.conf_path``) at startup.
@@ -726,6 +738,8 @@ class KatharaService:
             "is_admin": is_admin(),
         }
 
+    # -- image suggestions (Docker Hub and the local daemon) -------------------
+
     def list_available_images(self) -> AvailableImages:
         """Image-field suggestions, split into the official Kathara images on Docker Hub and the
         images already present on this machine's Docker daemon.
@@ -813,7 +827,7 @@ class KatharaService:
 
         Deliberately the manager's client and not a `docker.from_env()` of our own: Kathara builds
         that client from the user's settings (`docker.DockerClient(base_url=remote_url, ...)` when
-        `remote_url` is set — DockerManager.py:62-73), so a client we made ourselves would talk to
+        `remote_url` is set — `DockerManager.__init__`), so a client we made ourselves would talk to
         a different daemon than the one the deploy uses. This reaches past the facade contract
         (`manager.client` / `manager.docker_image` are internals), which is why every use goes
         through this one accessor: an upstream refactor then breaks in one legible place instead of
@@ -849,6 +863,8 @@ class KatharaService:
     def pull_images(self, images: list[str]) -> list[str]:
         """Download exactly `images`, one at a time, publishing progress for the poll endpoint."""
         return image_pull.pull_images(self._docker_manager(), images)
+
+    # -- host-wide: wipe, sysctls ----------------------------------------------
 
     def wipe(self) -> list[str]:
         """Undeploy every lab kathara-desktop itself has registered and deployed.
@@ -915,14 +931,15 @@ class KatharaService:
             raise LabAlreadyRegisteredError(f"Lab `{spec.name}` already exists.")
         return lab
 
+    # -- offline lab filesystem: path resolution and writes --------------------
+
     def _write_machine_files(
         self, lab: Lab, machine_name: str, files: dict[str, str], dirs: list[str]
     ) -> None:
         """Write an explicit files/dirs edit onto one machine's own on-disk folder.
 
-        Only ever called with the caller's own payload, never a whole accumulated pending map —
-        re-writing everything a machine has ever queued on every single edit would be wasteful and
-        would keep touching files nothing asked to change.
+        Writes exactly the caller's payload and nothing else, so an edit never touches a file it
+        did not ask to change.
         """
         machine = self._registered_machine(lab, machine_name)
         if dirs:
@@ -935,8 +952,8 @@ class KatharaService:
             machine.create_file_from_string(content, path)
 
     def _write_lab_root_files(self, lab: Lab, files: dict[str, str], dirs: list[str]) -> None:
-        """Same as ``_write_machine_files``, but for files/dirs queued under the ROOT_MACHINE
-        bucket (the Lab Configuration tab's tree root, no device) — written straight onto the
+        """Same as ``_write_machine_files``, but for files/dirs under the ROOT_MACHINE bucket
+        (the Lab Configuration tab's tree root, no device) — written straight onto the
         lab's own on-disk directory, alongside ``lab.conf`` and each device's folder. Real files,
         just not consumed by deploy (nothing under Kathara's deploy machinery reads outside
         ``lab.conf``/``<machine>/``/``<machine>.startup``/``shared/``)."""
@@ -1016,8 +1033,8 @@ class KatharaService:
     def _is_lab_conf(path: str) -> bool:
         """Whether an already-cleaned offline path denotes the lab's own ``lab.conf``.
 
-        Mirrors the normalized comparison the lab-root guard in `fs_delete_offline` already uses,
-        and for the same reason its comment gives.
+        A normalized comparison, like the lab-root guard in `fs_delete_offline`, for the reason
+        that guard's comment gives.
         """
         return path.strip("/") == LAB_CONF_FILENAME
 
@@ -1098,6 +1115,8 @@ class KatharaService:
             size=info.size,
             mtime=modified.timestamp() if modified else None,
         )
+
+    # -- lab lifecycle, continued: create, open, close -------------------------
 
     def _adopt_lab_dir(self, lab_dir: Path, t: lab_import.LabImportTranslation) -> Lab:
         """Build + register a Lab against its already-populated on-disk directory.
@@ -1378,6 +1397,8 @@ class KatharaService:
     def _publish_disk_event(self, lab_id: str, kind: str, files: list[str], detail: Optional[str] = None) -> None:
         self.events.publish({"lab_id": lab_id, "kind": kind, "files": files, "detail": detail})
 
+    # -- where a lab lives, its export and its lab.conf ------------------------
+
     def lab_place(self, lab: Lab) -> LabPlace:
         """Where ``lab`` lives, for the response schemas (``LabSummary.path``/``managed``)."""
         directory = self._lab_dir(lab.hash)
@@ -1451,6 +1472,8 @@ class KatharaService:
         """Delete the lab's ``lab.layout``; returns whether one existed."""
         return self.store.delete_layout(self._existing_lab_dir(lab_id))
 
+    # -- interface slots -------------------------------------------------------
+
     @staticmethod
     def _compact_interfaces(machine: Machine) -> None:
         """Drop the ``None`` slots Kathara's ``Machine.remove_interface`` leaves behind, keeping
@@ -1508,6 +1531,8 @@ class KatharaService:
             iface.num = new_num
             renumbered[new_num] = iface
         machine.interfaces = renumbered
+
+    # -- loading labs from disk, and the lab.conf text they load from ----------
 
     def _translate_lab_dir(self, lab_dir: Optional[Path]) -> Optional[lab_import.LabImportTranslation]:
         """Read a lab directory and parse it into a translation, or None if there is no directory
@@ -1704,14 +1729,16 @@ class KatharaService:
                 lab.get_or_new_link(name)
         return lab
 
+    # -- imports (upload, examples, gallery) and lab.conf saves ----------------
+
     def _adopt_populated_dir(self, clean_name: str) -> tuple[Lab, list[str]]:
         """Parse an already-populated, on-disk lab directory and register it.
 
-        Shared tail of ``upload_lab`` and ``install_example`` — they differ only in *how* the
-        directory got populated (zip extraction vs. a verbatim copy of a bundled example), never
-        in how the populated directory becomes a registered Lab. Rolls the directory back if
-        parsing or registration fails, so neither caller has to: a half-populated directory must
-        never outlive the request that created it.
+        Shared tail of ``upload_lab`` and ``_install_from`` (both install paths) — they differ
+        only in *how* the directory got populated (zip extraction, a gallery download, a verbatim
+        copy of a bundled example), never in how the populated directory becomes a registered Lab.
+        Rolls the directory back if parsing or registration fails, so no caller has to: a
+        half-populated directory must never outlive the request that created it.
         """
         lab_dir = self.store.lab_dir(clean_name)
         try:
@@ -1733,8 +1760,7 @@ class KatharaService:
         ``shared.shutdown``, binaries and all — then parsed the same way as a JSON-described
         import. Machine subfolders that already exist on disk after extraction are picked up
         automatically as ``machine.fs`` (see ``Machine.__init__``), so any binary files travel to
-        the deployed container via Kathara's native ``pack_data`` even though the pending-files
-        model (which only round-trips text) can't represent them.
+        the deployed container via Kathara's native ``pack_data``, straight off disk.
         """
         clean_name = lab_store.sanitize_lab_name(name)
         lab_dir = self.store.lab_dir(clean_name)
@@ -1804,10 +1830,10 @@ class KatharaService:
 
         Structurally identical to ``install_example`` — the only difference is *how* the lab
         directory gets populated (files downloaded over HTTP, instead of a local copy) — see
-        ``_adopt_populated_dir``, which both share. The download happens before anything touches
-        the labs directory and outside ``_mutate_lock``, so a slow or failing fetch never blocks
-        other lab operations; only the 409 pre-check and the final on-disk write are serialized by
-        going through ``store``/``registry`` the same way every other import does.
+        ``_install_from``, which both share. The download happens before anything touches the labs
+        directory and outside every lock, so a slow or failing fetch never blocks other lab
+        operations; only the re-checked 409 and the on-disk write run under the directory's
+        ``_claiming`` lock, inside ``_install_from``, like every other create.
         """
         entry = lab_gallery.get_entry(entry_id)  # raises GalleryLabNotFoundError (404) if unknown
         clean_name = lab_store.sanitize_lab_name(name or entry.name)
@@ -1823,9 +1849,10 @@ class KatharaService:
 
         Structurally identical to ``upload_lab`` — the only difference is *how* the lab
         directory gets populated (a verbatim copy of a bundled example, instead of a zip
-        extraction) — see ``_adopt_populated_dir``, which both share. Installing is a create, not
-        an upsert: an existing lab under the target name is a 409, exactly like upload_lab,
-        so retrying an install never silently overwrites something the user changed.
+        extraction) — both end in ``_adopt_populated_dir``, this one through ``_install_from``.
+        Installing is a create, not an upsert: an existing lab under the target name is a 409,
+        exactly like upload_lab, so retrying an install never silently overwrites something the
+        user changed.
         """
         clean_name = lab_store.sanitize_lab_name(name or example_id)
         self._assert_dir_free(self.store.lab_dir(clean_name))
@@ -1875,9 +1902,9 @@ class KatharaService:
     # -- offline lab filesystem (the Lab Configuration tab) --------------------
     #
     # Browses/edits the lab's own on-disk directory directly — lab.conf, every device's own
-    # subdirectory, its <name>.startup, and anything else queued at the lab root (no separate
-    # in-memory tracking of what's there; the filesystem itself is the only source of truth, so
-    # a redeploy/undeploy/rename can never lose track of something a cache failed to reconstruct).
+    # subdirectory, its <name>.startup, and anything else at the lab root (no separate in-memory
+    # tracking of what's there; the filesystem itself is the only source of truth, so a
+    # redeploy/undeploy/rename can never lose track of something a cache failed to reconstruct).
     # A write under a device's own path (or its <name>.startup) marks that device "dirty" — see
     # registry.mark_dirty — so a later redeploy of an already-running container knows to live-push
     # the change (deploy_lab's already-running branch, _live_push below).
@@ -2223,6 +2250,8 @@ class KatharaService:
             if dirty:
                 self.registry.mark_dirty(lab_id, dirty)
 
+    # -- resolving a lab and refreshing it from Docker -------------------------
+
     def get_lab_or_reconstruct(self, lab_id: str, *, refresh_in_transition: bool = False) -> Lab:
         """Return the registered Lab (refreshed from the backend) or reconstruct it.
 
@@ -2385,6 +2414,8 @@ class KatharaService:
         for name, link in list(lab.links.items()):
             if not link.machines and link.api_object is None and name not in declared_links and name not in drafts:
                 del lab.links[name]
+
+    # -- deploy, undeploy, rename, delete --------------------------------------
 
     @staticmethod
     def _resolve_targets(
@@ -2617,7 +2648,9 @@ class KatharaService:
                     selected_links=selected_links,
                 )
                 if lab is not None:
-                    machine_names = self._resolve_targets(set(lab.machines.keys()), selected_machines, excluded_machines)
+                    machine_names = self._resolve_targets(
+                        set(lab.machines.keys()), selected_machines, excluded_machines
+                    )
                     self._clear_undeployed_state(lab, machine_names, selected_links)
 
                 # A full undeploy brings the whole lab down, so restore the topology to the saved
@@ -2796,9 +2829,9 @@ class KatharaService:
         """Replace a stopped device's full option set (image/mem/.../volumes) from ``spec``.
 
         This is a configuration edit, not a runtime one — rejected with 409 while the lab is
-        deployed (mirroring ``update_lab_conf``'s gate exactly), unlike ``add_machine``, which is
-        allowed to also deploy live. There is no live-redeploy path here: editing options only
-        ever takes effect from the lab's next deploy.
+        deployed (mirroring ``update_lab_conf``'s gate exactly), unlike ``add_machine``, which adds
+        a stopped device to a running lab too. There is no live-redeploy path here: editing options
+        only ever takes effect from the lab's next deploy.
         """
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
@@ -2989,6 +3022,8 @@ class KatharaService:
         with self._mutate_lock:
             machine = self._get_running_machine(lab_id, machine_name)
             self._facade().copy_files(machine, guest_to_host)
+
+    # -- runtime filesystem (a running device's own files) ---------------------
 
     def normalize_guest_path(self, path: str) -> str:
         """Return a canonical absolute path for runtime filesystem operations."""
@@ -3245,8 +3280,8 @@ class KatharaService:
 
     def fs_copy(self, lab_id: str, machine_name: str, source_path: str, destination_path: str) -> None:
         # Like `mv` above, `cp -a` copies *into* an existing destination directory rather than
-        # replacing it — a pre-existing quirk shared with move, sidestepped by the frontend
-        # deleting a confirmed directory collision before calling this.
+        # replacing it — for both, the frontend deletes a confirmed directory collision before
+        # calling this.
         _, source = self._running_guest_path(lab_id, machine_name, source_path)
         destination = self.normalize_guest_path(destination_path)
         self._exec_checked(

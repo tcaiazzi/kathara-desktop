@@ -57,11 +57,6 @@ LAYOUT_FILENAME = "lab.layout"
 # generated or legitimately-imported file could ever approach.
 MAX_LAB_CONF_BYTES = 1 << 20
 
-# The scalar render order and the "already has a home" set both come from `lab_conf_options` —
-# see that module for why they are not spelled out here. Everything in `device.meta` that is *not*
-# in MODELED_META_KEYS is a pass-through option (see `lab_builder.apply_options`) and gets its own
-# `name[key]="value"` line, sorted for stability.
-
 
 def lab_id_for(directory: Union[str, Path]) -> str:
     """The id of the lab stored in ``directory``: Kathara's own hash of its absolute path.
@@ -136,6 +131,10 @@ def conf_value(value: Any) -> str:
     return text
 
 
+# The scalar render order and the "already has a home" set both come from `lab_conf_options` —
+# see that module for why they are not spelled out here. Everything in `device.meta` that is *not*
+# in MODELED_META_KEYS is a pass-through option (see `lab_builder.apply_options`) and gets its own
+# `name[key]="value"` line, sorted for stability.
 def gen_device_lines(device) -> list[str]:
     """Render one device's ``lab.conf`` body (interfaces, then options) — no leading/trailing
     blank line, so callers control block separation themselves.
@@ -207,9 +206,10 @@ def gen_lab_conf(lab: Lab) -> str:
     different identity than this app's (see ``lab_id_for``). The name lives in the directory name.
 
     Generating is only ever done where there is no user text to preserve, which is two callers:
-    ``LabStore.write_lab_conf`` for a JSON-described lab (``create_lab``), and
-    ``KatharaService._lab_conf_base_text`` for a folder-based import whose directory carries no
-    ``lab.conf`` — that lab gains a real one on its first edit. Every other path, structural edits
+    ``LabStore.write_lab_conf``, for a JSON-described lab (``create_lab``) and for a folder being
+    made a lab (``open_lab(init=True)``), and ``KatharaService._lab_conf_base_text`` for a
+    folder-based import whose directory carries no ``lab.conf`` — that lab gains a real one on its
+    first edit. Every other path, structural edits
     included, builds on the stored text and persists it verbatim; see
     ``LabStore.write_lab_conf_text``.
     """
@@ -313,12 +313,12 @@ class LabStore:
     def read_lab(self, path: Union[str, Path]) -> tuple[dict[str, str], list[str]]:
         """Read a lab directory back into a text path->content map plus empty-dir list.
 
-        Binary files are skipped (they can't be represented in the text-based pending model used
-        for queued-but-not-yet-deployed state); the native-fs deploy path reads binaries straight
-        off disk instead. So is a file symlinked to somewhere outside the lab: a folder opened
-        from anywhere may hold one, and following it would read a file that is not the lab's.
-        ``os.walk`` already declines to descend into symlinked directories. Anything that is not a
-        regular file (a FIFO would block the read forever) is skipped too.
+        Binary files are skipped: the map is text, for the parser (``lab_import``) and the other
+        text-only readers; the native-fs deploy path reads binaries straight off disk instead.
+        So is a file symlinked to somewhere outside the lab: a folder opened from anywhere may hold
+        one, and following it would read a file that is not the lab's. ``os.walk`` itself declines
+        to descend into symlinked directories. Anything that is not a regular file (a FIFO would
+        block the read forever) is skipped too.
         """
         base = Path(path)
         files: dict[str, str] = {}
@@ -443,8 +443,8 @@ class LabStore:
 
         Used by every path that must preserve the caller's exact bytes — an import/upload's
         source file, an editor save, a surgical structural edit — as opposed to ``write_lab_conf``,
-        which regenerates the file from a ``Lab`` model (lossy, and only still used by
-        ``create_lab`` for JSON-described labs that have no source file to preserve).
+        which regenerates the file from a ``Lab`` model (lossy, and used only where there is no
+        source file to preserve: ``create_lab`` and ``open_lab(init=True)``).
         """
         if not directory.is_dir():
             raise LabNotFoundError(f"Lab `{directory.name}` not found.")
@@ -771,7 +771,9 @@ class LabStore:
         return b"".join(chunks)
 
     @staticmethod
-    def _copy_with_cap(src: BinaryIO, dst: BinaryIO, rel: str, per_file_cap: int, written_so_far: int, total_cap: int) -> int:
+    def _copy_with_cap(
+        src: BinaryIO, dst: BinaryIO, rel: str, per_file_cap: int, written_so_far: int, total_cap: int
+    ) -> int:
         """Copy `src` into `dst` in chunks, returning the byte count actually written.
 
         Checked against bytes actually read off the stream, not `ZipInfo.file_size` (the archive's

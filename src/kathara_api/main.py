@@ -121,14 +121,14 @@ def create_app() -> FastAPI:
     # Cheap, early reject for the common case (a client that sends `Content-Length`, which every
     # request this app's own frontend makes does). Not the real enforcement — that counts actual
     # bytes lower down, per import (LabStore._read_bounded/_copy_with_cap), and still applies to a
-    # body sent without this header (chunked transfer), which this check cannot see at all.
-    # This only saves reading/parsing a request whose *declared* size
-    # alone already rules it out, e.g. before FastAPI buffers a multipart upload into memory.
+    # body sent without this header (chunked transfer), which this check cannot see at all. This
+    # only saves reading/parsing a request whose *declared* size alone already rules it out, e.g.
+    # before FastAPI buffers a multipart upload into memory.
     #
     # `max_bytes_per_lab` is read fresh on every request rather than computed once here: it is
     # editable at runtime from the Settings page (KatharaService.update_settings), so baking it
-    # into this closure at app-build time would let this middleware keep
-    # enforcing a stale cap for the rest of the process's life after a Settings save.
+    # into this closure at app-build time would let this middleware keep enforcing a stale cap for
+    # the rest of the process's life after a Settings save.
     @app.middleware("http")
     async def _enforce_body_size(request: Request, call_next):
         max_body_bytes = get_settings().max_bytes_per_lab + (1 << 20)  # headroom for JSON/multipart framing

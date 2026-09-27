@@ -1,4 +1,6 @@
-"""Shared test utilities: a zip-archive builder and a minimal no-op Kathara facade fake.
+"""Shared test utilities: a zip-archive builder (``zip_bytes``), lab addressing and creation
+(``lab_id``, ``register_lab``, ``make_lab``), a service with no Docker behind it
+(``make_service``) and the minimal no-op Kathara facade it uses (``FakeFacadeBase``).
 
 Not a conftest module — these are plain helpers imported directly by the tests that need them,
 not fixtures/hooks.

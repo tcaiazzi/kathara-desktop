@@ -1,14 +1,15 @@
-"""In-memory registry of network scenarios created through the API.
+"""In-memory registry of the labs this backend has loaded.
 
-Labs built from JSON keep their content (startup commands, in-memory filesystem, metadata)
-only in the ``Lab`` object; that state cannot be fully recovered from the backend. The registry
-retains those objects for their lifetime. Operations on labs that exist in the backend but not
-in the registry (e.g. after an API restart) fall back to reconstruction via the Kathara facade.
+Every lab lives in a directory on disk (``lab_store``); the registry holds the ``Lab`` model built
+from it, next to that directory, and is rebuilt from disk at startup
+(``KatharaService._reload_from_disk``). A lab running under an id no registered lab has — one
+started from the CLI in a folder this app never loaded — is reconstructed from the Kathara facade
+instead (``KatharaService.get_lab_or_reconstruct``).
 
 The registry also tracks, per lab, which devices have been written to (via the offline lab
 filesystem, ``services.kathara_service``'s ``fs_*_offline`` methods) since their last (re)deploy —
-just *which* machines changed, never their content. A machine's actual queued files/dirs/startup
-live only on the real on-disk filesystem (``lab.fs``/``machine.fs``): a second, in-memory copy would
+just *which* machines changed, never their content. A machine's actual files/dirs/startup live
+only on the real on-disk filesystem (``lab.fs``/``machine.fs``): a second, in-memory copy would
 have to be kept in sync with every write, and drifts silently the moment one is missed, so there
 deliberately is none. Reads resolve through ``KatharaService._offline_fs_owner`` and ``_fs_for``
 instead.

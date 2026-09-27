@@ -82,7 +82,7 @@ class Catalog:
 # Module-level cache, mirroring the `_IMAGES_CACHE_TTL` precedent in kathara_service.py and there
 # for the same reason: a slow, rate-limited remote listing must not run once per request. The lock
 # is held across the fetch so a burst of first requests produces one upstream call, not N. Used by
-# fetch_catalog (sync) — install_gallery_lab/get_entry and every existing test go through this one.
+# fetch_catalog (sync), which install_gallery_lab/get_entry go through.
 _cache: Optional[Catalog] = None
 _cache_lock = Lock()
 

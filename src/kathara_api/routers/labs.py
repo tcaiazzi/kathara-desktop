@@ -54,7 +54,8 @@ def _detail(lab, service: KatharaService) -> LabDetail:
 
 
 def _import_result(lab, warnings: list[str], service: KatharaService) -> LabImportResult:
-    """Build a LabImportResult (lab detail + non-fatal parse warnings) — shared by import + upload."""
+    """Build a LabImportResult (lab detail + non-fatal parse warnings) — shared by upload, open,
+    examples and gallery."""
     return LabImportResult(**_detail(lab, service).model_dump(), warnings=warnings)
 
 
@@ -237,8 +238,8 @@ def clear_lab_layout(lab_id: str, service: KatharaService = Depends(get_service)
 def list_lab_directory(
     lab_id: str, path: str = "/", service: KatharaService = Depends(get_service)
 ) -> FsListResponse:
-    """List a directory in the lab's own on-disk tree — ``lab.conf``, every device's folder (even
-    one with nothing in it yet), and anything queued at the lab root."""
+    """List a directory in the lab's own on-disk tree — ``lab.conf``, each device folder that
+    exists on disk, and anything else at the lab root."""
     entries = service.fs_list_offline(lab_id, path)
     return FsListResponse(path=service.normalize_guest_path(path), entries=entries)
 

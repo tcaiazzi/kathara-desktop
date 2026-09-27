@@ -20,9 +20,9 @@ Two deliberate departures from reusing Kathara's own code:
   ``KatharaService._mutate_lock`` is held.
 
 The digest comparison in ``_remote_digest``/``classify_images`` is a deliberate re-implementation
-of ``DockerImage.check_for_updates`` (Kathara/manager/docker/DockerImage.py:65-98). Keep the two
-in sync: if upstream changes how it decides "outdated" (multi-arch handling, say), this diverges
-silently. The table-driven tests in tests/unit/test_image_endpoints.py are what make that visible.
+of Kathara's ``DockerImage.check_for_updates``. Keep the two in sync: if upstream changes how it
+decides "outdated" (multi-arch handling, say), this diverges silently. The table-driven tests in
+tests/unit/test_image_endpoints.py are what make that visible.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ from ..errors import ImageNotAvailableError, ImagePullBusyError, ImagePullError
 logger = logging.getLogger("kathara_api")
 
 # Wall-clock budget for the whole "is anything outdated?" phase. Kathara builds its Docker client
-# with `timeout=None` (DockerManager.py:66), so a registry that accepts the connection but never
-# answers would otherwise hang this check — which sits directly in front of the Deploy button.
+# with `timeout=None` (`DockerManager.__init__`), so a registry that accepts the connection but
+# never answers would otherwise hang this check — which sits directly in front of the Deploy button.
 UPDATE_CHECK_BUDGET_SECONDS = 5.0
 
 # Docker pull stream statuses that mean "this layer needs no more bytes". `Download complete`
@@ -87,7 +87,9 @@ def registry_says_not_found(exc: Exception) -> bool:
 
 
 def _remote_digest(docker_image: Any, name: str) -> Optional[str]:
-    """The manifest digest the registry currently serves for ``name``, or None if unknowable."""
+    """The manifest digest the registry currently serves for ``name``. Raises whatever the lookup
+    raises, and ``KeyError`` for an answer that carries no digest: the caller treats any failure
+    as "unknown"."""
     return docker_image.get_remote(name).attrs["Descriptor"]["digest"]
 
 

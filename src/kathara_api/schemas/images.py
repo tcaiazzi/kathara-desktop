@@ -16,8 +16,9 @@ class LabImageStatus(BaseModel):
 
     Only ``missing`` (mandatory) and ``outdated`` (optional) are actionable. ``not-found`` is a
     missing image the registry says it doesn't have (or won't serve without a login): no download
-    can fix that, only the image name. ``unknown`` means the registry couldn't be consulted — offline, or slower than the check's time budget — and is
-    reported separately from ``ok`` purely so the response doesn't assert what it doesn't know.
+    can fix that, only the image name. ``unknown`` means the registry couldn't be consulted —
+    offline, or slower than the check's time budget — and is reported separately from ``ok``
+    purely so the response doesn't assert what it doesn't know.
     """
 
     name: str
