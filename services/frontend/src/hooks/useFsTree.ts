@@ -782,10 +782,23 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     });
   }, []);
 
+  // A selection holding a path the source refuses is refused whole, saying why: the context menu
+  // and the toolbar disable the action for such a selection, so the keyboard must not quietly act
+  // on the rest of it.
+  const refuseLocked = useCallback(
+    (verb: string, targets: string[]) => {
+      const locked = targets.find((p) => !canModify(p));
+      if (locked === undefined) return false;
+      toast.show(`Can't ${verb} ${locked}: ${cannotModifyReason(locked) ?? "it can't be changed."}`, "danger");
+      return true;
+    },
+    [canModify, cannotModifyReason, toast],
+  );
+
   const handleDelete = useCallback(
     async (paths?: string[]) => {
-      const targets = (paths ?? scoped.current.selectedPaths).filter(canModify);
-      if (targets.length === 0) return;
+      const targets = paths ?? scoped.current.selectedPaths;
+      if (targets.length === 0 || refuseLocked("delete", targets)) return;
       const multiple = targets.length > 1;
       const { title, message } = multiple
         ? sourceRef.current.labels.deleteConfirmMultiple(targets.length)
@@ -823,7 +836,7 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
         toast.show(multiple ? `Deleted ${targets.length} items.` : `Deleted ${targets[0]}.`, "success");
       });
     },
-    [canModify, clearBuffer, confirm, pruneClipboard, refreshDir, runBusy, toast],
+    [clearBuffer, confirm, pruneClipboard, refreshDir, refuseLocked, runBusy, toast],
   );
 
   const handleDownload = useCallback(
@@ -901,11 +914,11 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   const handleCut = useCallback(
     (paths?: string[]) => {
-      const targets = (paths ?? scoped.current.selectedPaths).filter(canModify);
-      if (targets.length === 0) return;
+      const targets = paths ?? scoped.current.selectedPaths;
+      if (targets.length === 0 || refuseLocked("cut", targets)) return;
       setClipboard({ paths: targets, mode: "cut" });
     },
-    [canModify],
+    [refuseLocked],
   );
 
   const isCutPending = useCallback(

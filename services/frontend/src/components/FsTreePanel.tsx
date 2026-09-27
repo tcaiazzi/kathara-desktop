@@ -86,6 +86,9 @@ export function FsTreePanel({
   // file's, enabled and ready to overwrite it on the next save.
   const disabled =
     !selected || selected !== bufferPath || selectedIsDir || isBinary || editorReadOnly || selectedPaths.length > 1;
+  // Why Delete is disabled, when a selected path is what disables it — as the context menu says.
+  const lockedSelected = selectedPaths.find((p) => !tree.rowActions.canModify(p));
+  const deleteTitle = (lockedSelected !== undefined && tree.rowActions.cannotModifyReason(lockedSelected)) || "Delete";
 
   useSaveShortcut(rootRef, () => {
     if (!busy && !disabled && tree.dirty) void tree.handleSave();
@@ -163,7 +166,7 @@ export function FsTreePanel({
                 size="sm"
                 variant="outline-danger"
                 className="kt-icon-btn"
-                title="Delete"
+                title={deleteTitle}
                 aria-label="Delete"
                 disabled={!tree.canDelete || busy}
                 onClick={() => void tree.handleDelete()}
