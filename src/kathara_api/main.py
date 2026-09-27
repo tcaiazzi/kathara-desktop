@@ -32,7 +32,11 @@ async def _lifespan(app: FastAPI):
     # script — gets a polling thread with it.
     interval = get_settings().lab_watch_interval
     service = get_service()
-    watcher = LabWatcher(service.watched_labs, service.handle_disk_change, interval) if interval > 0 else None
+    watcher = (
+        LabWatcher(service.watched_labs, service.handle_disk_change, interval, on_poll=service.rescan_labs_root)
+        if interval > 0
+        else None
+    )
     if watcher is not None:
         watcher.start()
     yield

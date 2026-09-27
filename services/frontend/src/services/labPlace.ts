@@ -13,6 +13,13 @@ export function labNamed(labs: LabSummary[], name: string): LabSummary | undefin
   return named.find((lab) => lab.managed) ?? named[0];
 }
 
+/** The rail's order: by name, ignoring case and accents, numbers in numeric order ("lab2" before
+ *  "lab10"); labs of the same name by folder, so the order never depends on how they were listed. */
+export function compareLabsByName(a: LabSummary, b: LabSummary): number {
+  const byName = (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base", numeric: true });
+  return byName || (a.path ?? "").localeCompare(b.path ?? "");
+}
+
 /**
  * The folder a lab sits in: its parent directory, whole, with the user's `home` shown as "~"
  * ("/home/u/work/ospf" → "~/work"). Two lab folders with the same name are told apart by exactly

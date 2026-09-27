@@ -189,6 +189,23 @@ def test_a_folder_that_cannot_be_listed_for_a_moment_is_skipped_not_taken_for_em
     assert recorder.calls == []
 
 
+def test_the_poll_hook_runs_on_every_poll_and_a_failure_in_it_stops_nothing(lab_dir):
+    recorder = _Recorder()
+    calls = []
+
+    def hook():
+        calls.append(1)
+        raise RuntimeError("boom")
+
+    watcher = LabWatcher(lambda: {"L": lab_dir}, recorder, on_poll=hook)
+    watcher.poll_once()
+    _bump(lab_dir / "lab.conf", LAB_CONF + "# edited\n")
+    watcher.poll_once()
+
+    assert len(calls) == 2
+    assert recorder.calls == [("L", {"lab.conf"})]
+
+
 def test_the_thread_polls_until_stopped(lab_dir):
     changed = threading.Event()
     watcher = LabWatcher(lambda: {"L": lab_dir}, lambda *_: changed.set() or set(), interval=0.01)
@@ -410,6 +427,62 @@ def test_a_lab_gone_since_the_poll_is_nothing_to_do(service):
     assert service.handle_disk_change("gone", {"lab.conf"}) == set()
 
 
+# -- folders appearing under the labs root ---------------------------------------------------------
+
+
+def _drop_lab(service, name, conf=LAB_CONF):
+    """A lab folder put under the labs root by hand, the way a copy or an unzip would."""
+    directory = service.store.lab_dir(name)
+    directory.mkdir(parents=True)
+    if conf is not None:
+        (directory / "lab.conf").write_text(conf)
+    return directory
+
+
+def test_a_lab_folder_copied_into_the_labs_root_is_adopted_and_announced(service):
+    events = _collecting(service)
+    _drop_lab(service, "copied")
+
+    adopted = service.rescan_labs_root()
+
+    copied = lab_id(service, "copied")
+    assert adopted == [copied]
+    assert service.registry.get(copied) is not None
+    assert events == [{"lab_id": copied, "kind": "adopted", "files": [], "detail": None}]
+    assert service.rescan_labs_root() == []  # once only
+
+
+def test_listing_the_labs_picks_up_a_new_folder_too(service):
+    _drop_lab(service, "copied")
+
+    assert lab_id(service, "copied") in {lab.hash for lab in service.list_labs()}
+
+
+def test_a_folder_that_does_not_load_is_retried_only_once_it_changes(service, monkeypatch):
+    directory = _drop_lab(service, "broken", conf="!!not a lab.conf\n")
+    tries = []
+    translate = service._translate_lab_dir
+    monkeypatch.setattr(service, "_translate_lab_dir", lambda d: tries.append(d) or translate(d))
+
+    assert service.rescan_labs_root() == []
+    assert service.rescan_labs_root() == []
+    assert tries == [directory]
+
+    _bump(directory / "lab.conf", LAB_CONF)
+    assert service.rescan_labs_root() == [lab_id(service, "broken")]
+
+
+def test_a_folder_being_created_by_a_request_is_left_to_that_request(service):
+    directory = _drop_lab(service, "busy")
+
+    with service._claiming(lab_id(service, "busy")):
+        assert service.rescan_labs_root() == []
+    assert service.registry.get(lab_id(service, "busy")) is None
+
+    assert service.rescan_labs_root() == [lab_id(service, "busy")]
+    assert directory.exists()
+
+
 def test_the_watcher_polls_every_loaded_lab(service):
     assert service.watched_labs() == {lab_id(service, "demo"): service.store.lab_dir("demo")}
 
@@ -422,8 +495,8 @@ class _WatcherStub:
 
     built: list["_WatcherStub"] = []
 
-    def __init__(self, labs, on_change, interval):
-        self.labs, self.on_change, self.interval = labs, on_change, interval
+    def __init__(self, labs, on_change, interval, on_poll=None):
+        self.labs, self.on_change, self.interval, self.on_poll = labs, on_change, interval, on_poll
         self.running = False
         _WatcherStub.built.append(self)
 
@@ -451,6 +524,7 @@ def test_the_app_watches_the_service_s_labs_for_as_long_as_it_is_up(watcher_stub
         assert watcher.interval == 2.5
         assert watcher.labs == service.watched_labs
         assert watcher.on_change == service.handle_disk_change
+        assert watcher.on_poll == service.rescan_labs_root
 
     assert not watcher.running
 

@@ -122,8 +122,9 @@ export interface LabSummary {
 // `conf-invalid` — not applied because it doesn't load (`detail` says why); `startup` — the listed
 // `<device>.startup` / `shared.startup` files changed; `missing` — the lab's folder is gone. A
 // stopped lab is then listed as missing (an opened folder) or not at all (a lab in the labs
-// folder); a deployed one stays as it is until it stops, which `detail` says.
-export type LabEventKind = "conf-reloaded" | "conf-pending" | "conf-invalid" | "startup" | "missing";
+// folder); a deployed one stays as it is until it stops, which `detail` says. `adopted` — a lab
+// folder that appeared in the labs folder was loaded (KatharaService.rescan_labs_root).
+export type LabEventKind = "conf-reloaded" | "conf-pending" | "conf-invalid" | "startup" | "missing" | "adopted";
 
 export interface LabEvent {
   lab_id: string;

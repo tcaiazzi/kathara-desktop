@@ -75,6 +75,9 @@ class LabWatcher:
     mid-deploy, or deployed and its lab.conf has to wait): their baseline stays where it was, so
     the same change is offered again next poll instead of being lost, while every other name
     moves on and is not reported twice.
+
+    ``on_poll``, if given, runs at the start of every poll — for work on the same beat that isn't
+    about one lab's files (``KatharaService.rescan_labs_root``, which picks up new lab folders).
     """
 
     def __init__(
@@ -82,15 +85,24 @@ class LabWatcher:
         labs: Callable[[], dict[str, Path]],
         on_change: Callable[[str, set[str]], set[str]],
         interval: float = 1.0,
+        on_poll: Optional[Callable[[], object]] = None,
     ) -> None:
         self._labs = labs
         self._on_change = on_change
+        self._on_poll = on_poll
         self._interval = interval
         self._seen: dict[str, dict[str, _Signature]] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def poll_once(self) -> None:
+        if self._on_poll is not None:
+            try:
+                self._on_poll()
+            except Exception:
+                # Same reasoning as for on_change below: one failing pass must not stop the
+                # watcher from checking the labs themselves.
+                logger.warning("Lab watcher poll hook failed", exc_info=True)
         labs = self._labs()
         for lab_id in set(self._seen) - set(labs):
             del self._seen[lab_id]

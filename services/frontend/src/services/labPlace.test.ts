@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labFolder, labNamed } from "./labPlace";
+import { compareLabsByName, labFolder, labNamed } from "./labPlace";
 import type { LabSummary } from "./types";
 
 function lab(id: string, name: string, managed: boolean, problem: string | null = null): LabSummary {
@@ -52,5 +52,24 @@ describe("labFolder", () => {
     ["C:\\labs\\ospf", "C:\\", "C:\\labs"],
   ])("shows %s under home %s as %s", (path, home, folder) => {
     expect(labFolder(path, home)).toBe(folder);
+  });
+});
+
+describe("compareLabsByName", () => {
+  const names = (labs: LabSummary[]) => [...labs].sort(compareLabsByName).map((l) => l.name);
+
+  it("orders by name, ignoring case, with numbers in numeric order", () => {
+    expect(names([lab("1", "lab10", true), lab("2", "Beta", true), lab("3", "lab2", true), lab("4", "alpha", true)])).toEqual([
+      "alpha",
+      "Beta",
+      "lab2",
+      "lab10",
+    ]);
+  });
+
+  it("orders labs of the same name by folder", () => {
+    const opened = { ...lab("1", "ospf", false), path: "/z/ospf" };
+    const managed = { ...lab("2", "ospf", true), path: "/a/ospf" };
+    expect([opened, managed].sort(compareLabsByName).map((l) => l.path)).toEqual(["/a/ospf", "/z/ospf"]);
   });
 });

@@ -1,12 +1,19 @@
-// Lab events: changes to a lab's lab.conf or startup scripts made outside this app, streamed by
-// the backend (GET /api/events — src/kathara_api/services/kathara_service.py's
-// handle_disk_change). Pure, so it can be tested without a DOM; hooks/useLabEvents.ts does the
+// Lab events: changes to a lab's lab.conf or startup scripts made outside this app, and lab folders
+// that appear in the labs folder, streamed by the backend (GET /api/events —
+// src/kathara_api/services/kathara_service.py's handle_disk_change and rescan_labs_root). Pure, so it can be tested without a DOM; hooks/useLabEvents.ts does the
 // EventSource.
 
 import type { ToastVariant } from "./notificationHistory";
 import type { LabEvent, LabEventKind } from "./types";
 
-const KINDS: ReadonlySet<LabEventKind> = new Set(["conf-reloaded", "conf-pending", "conf-invalid", "startup", "missing"]);
+const KINDS: ReadonlySet<LabEventKind> = new Set([
+  "conf-reloaded",
+  "conf-pending",
+  "conf-invalid",
+  "startup",
+  "missing",
+  "adopted",
+]);
 
 /** An event from the stream, or null for anything that isn't one. The data is JSON from the
  *  network, typed `unknown` until every field has been checked. */
@@ -45,6 +52,7 @@ export function labEventNotice(event: LabEvent): { message: string; variant: Toa
         variant: "danger",
       };
     case "startup":
+    case "adopted":
       return null;
     case "missing":
       return {

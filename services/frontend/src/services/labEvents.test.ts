@@ -39,6 +39,12 @@ describe("labEventNotice", () => {
     expect(labEventNotice(missing)).toMatchObject({ variant: "info", message: expect.stringMatching(/listed as missing/) });
     expect(labEventNotice({ ...missing, detail: "Undeploy it first." })?.message).toMatch(/no longer there\. Undeploy it first\.$/);
   });
+
+  it("accepts a lab adopted from the labs folder, which needs no notice: it just shows up in the list", () => {
+    const adopted: LabEvent = { lab_id: "L", kind: "adopted", files: [], detail: null };
+    expect(parseLabEvent(JSON.stringify(adopted))).toEqual(adopted);
+    expect(labEventNotice(adopted)).toBeNull();
+  });
 });
 
 describe("changedStartupPaths", () => {

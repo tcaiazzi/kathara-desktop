@@ -260,6 +260,10 @@ class KatharaService:
         # write that claims it — see _claiming.
         self._claim_locks: dict[str, threading.Lock] = {}
         self._claim_locks_guard = threading.Lock()
+        # Folders under the labs root that rescan_labs_root could not load, with what they looked
+        # like then (_folder_signature): retried only once that changes, not on every poll.
+        self._unadoptable: dict[Path, tuple[int, Optional[int]]] = {}
+        self._unadoptable_lock = threading.Lock()
         self.registry = LabRegistry()
         self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
         # Lab directories opened from outside the store's root (open_lab) — see known_labs.py.
@@ -371,6 +375,20 @@ class KatharaService:
             lock = self._claim_locks.setdefault(lab_id, threading.Lock())
         with lock:
             yield
+
+    @contextmanager
+    def _claiming_if_free(self, lab_id: str) -> Generator[bool, None, None]:
+        """``_claiming`` without the wait: yields False, holding nothing, while another operation
+        holds the directory — for a background pass that simply tries again later."""
+        with self._claim_locks_guard:
+            lock = self._claim_locks.setdefault(lab_id, threading.Lock())
+        if not lock.acquire(blocking=False):
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            lock.release()
 
     def _check_not_transitioning(self, lab_id: str) -> None:
         """Fail fast — without ever touching `_mutate_lock` — if `lab_id` is mid deploy/undeploy.
@@ -1444,21 +1462,82 @@ class KatharaService:
             if not lab_dir.is_dir():
                 logger.info("Not loading lab `%s`: the folder is missing", lab_dir)
                 continue
-            try:
-                t = self._translate_lab_dir(lab_dir)
-                if t is None:
+            self._adopt_dir(lab_dir)
+
+    def _adopt_dir(self, lab_dir: Path) -> Optional[Lab]:
+        """Load ``lab_dir`` and register it, unless a lab with its id is already registered.
+        Returns the registered lab, or None when the folder doesn't load (logged)."""
+        try:
+            t = self._translate_lab_dir(lab_dir)
+            if t is None:
+                return None
+            # Re-associate the lab with its real, already-populated directory (machines whose
+            # subfolder already exists on disk automatically pick up machine.fs — see Kathara's
+            # Machine.__init__), so a redeployed/reloaded lab stays OS-backed.
+            lab = lab_builder.build_lab(t.payload, path=str(lab_dir))
+            if not self.registry.add_if_absent(lab, lab_dir):
+                logger.warning(
+                    "Not loading `%s`: it has the same Kathara identity as `%s`",
+                    lab_dir, self.registry.directory(lab.hash),
+                )
+                return None
+            return lab
+        except Exception:
+            logger.warning("Failed to reload lab `%s` from disk", lab_dir, exc_info=True)
+            return None
+
+    @staticmethod
+    def _folder_signature(lab_dir: Path) -> Optional[tuple[int, Optional[int]]]:
+        """What decides whether a folder that didn't load is worth another try: its own mtime
+        (a device folder or a lab.conf added or removed) and its lab.conf's (edited). None if the
+        folder can't be read."""
+        try:
+            own = lab_dir.stat().st_mtime_ns
+        except OSError:
+            return None
+        try:
+            conf = (lab_dir / LAB_CONF_FILENAME).stat().st_mtime_ns
+        except OSError:
+            conf = None
+        return own, conf
+
+    def rescan_labs_root(self) -> list[str]:
+        """Adopt every folder under the labs root that isn't a registered lab yet — one copied or
+        extracted there while the backend runs — and return the ids of those adopted, each also
+        announced as a lab event of kind ``adopted``.
+
+        Called on every listing and by the disk watcher on each poll, so it has to be cheap when
+        nothing changed: one directory listing, and a folder that didn't load is only retried
+        once it changes (``_folder_signature``). A folder some request is creating, renaming or
+        deleting right now is skipped (``_claiming_if_free``) and seen again on the next pass.
+        """
+        # By id, not by path: the id is what registration is keyed on (lab_store.lab_id_for).
+        registered = set(self.registry.ids())
+        candidates = [d for d in self.store.lab_dirs() if lab_id_for(d) not in registered]
+        with self._unadoptable_lock:
+            # Forget folders that are gone or got registered some other way.
+            for gone in set(self._unadoptable) - set(candidates):
+                del self._unadoptable[gone]
+        adopted: list[str] = []
+        for lab_dir in candidates:
+            signature = self._folder_signature(lab_dir)
+            if signature is None:
+                continue
+            with self._unadoptable_lock:
+                if self._unadoptable.get(lab_dir) == signature:
                     continue
-                # Re-associate the lab with its real, already-populated directory (machines whose
-                # subfolder already exists on disk automatically pick up machine.fs — see
-                # Kathara's Machine.__init__), so a redeployed/reloaded lab stays OS-backed.
-                lab = lab_builder.build_lab(t.payload, path=str(lab_dir))
-                if not self.registry.add_if_absent(lab, lab_dir):
-                    logger.warning(
-                        "Not loading `%s`: it has the same Kathara identity as `%s`",
-                        lab_dir, self.registry.directory(lab.hash),
-                    )
-            except Exception:
-                logger.warning("Failed to reload lab `%s` from disk", lab_dir, exc_info=True)
+            with self._claiming_if_free(lab_id_for(lab_dir)) as claimed:
+                if not claimed or self.registry.get(lab_id_for(lab_dir)) is not None:
+                    continue
+                lab = self._adopt_dir(lab_dir)
+            if lab is None:
+                with self._unadoptable_lock:
+                    self._unadoptable[lab_dir] = signature
+                continue
+            logger.info("Loaded lab `%s`, found in the labs folder", lab_dir)
+            adopted.append(lab.hash)
+            self._publish_disk_event(lab.hash, "adopted", [])
+        return adopted
 
     def _reload_lab_from_disk(self, lab_dir: Optional[Path]) -> Optional[Lab]:
         """Rebuild a single lab's model from its on-disk lab.conf, *replacing* the registry entry,
@@ -2016,6 +2095,7 @@ class KatharaService:
         return reconstructed
 
     def list_labs(self) -> list[Lab]:
+        self.rescan_labs_root()
         labs = self.registry.all()
         facade = self._facade_or_offline()
         if facade is None:

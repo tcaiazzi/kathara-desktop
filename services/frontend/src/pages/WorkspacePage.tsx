@@ -93,7 +93,7 @@ import { visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import { deployButtonLabel } from "../services/imagePull";
 import { changedStartupPaths, labEventNotice } from "../services/labEvents";
-import { labFolder } from "../services/labPlace";
+import { compareLabsByName, labFolder } from "../services/labPlace";
 import { hasDeployFailure, labDotState, labRunLabel, labRunState, labRunSummary } from "../services/labRunState";
 import type { LabDetail, LabRef, LabSummary } from "../services/types";
 import "./WorkspacePage.css";
@@ -754,6 +754,12 @@ export function WorkspacePage() {
     }
   }, [labId, toast]);
 
+  // After a change to the open lab's devices or files: its detail and the rail's list both show
+  // what changed (how many devices, how many run), so both reload.
+  const refreshLab = useCallback(async () => {
+    await Promise.all([load(), reloadLabs()]);
+  }, [load, reloadLabs]);
+
   useEffect(() => () => loadAbortRef.current?.abort(), []);
 
   useEffect(() => {
@@ -987,7 +993,7 @@ export function WorkspacePage() {
   const deviceActions = useDeviceActions({
     labId,
     detail,
-    onRefresh: load,
+    onRefresh: refreshLab,
     onEditFiles: openFilesPanel,
     onOpenTerminal: openTerminal,
     onOpenRuntimeFs: openRuntimeFsPanel,
@@ -997,17 +1003,18 @@ export function WorkspacePage() {
   const { deviceContextItems, findDeviceNode, domainContextItems, findDomainNode, actionConfig, setActionConfig } =
     deviceActions;
 
-  // A lab's lab.conf or startup scripts changed on disk outside the app, or its folder went away
-  // (hooks/useLabEvents; the backend has already reloaded the lab, or says why it didn't). The
-  // list refreshes for any lab whose topology was reloaded — its device count may have changed —
-  // or whose folder is gone, which moves it to "missing" or off the list; the open lab also
+  // A lab's lab.conf or startup scripts changed on disk outside the app, its folder went away, or
+  // a new lab folder appeared in the labs folder (hooks/useLabEvents; the backend has already
+  // reloaded or loaded the lab, or says why it didn't). The list refreshes for any lab whose
+  // topology was reloaded — its device count may have changed — whose folder is gone, which moves
+  // it to "missing" or off the list, or that was just loaded; the open lab also
   // reloads its detail (LabExplorer then follows lab.conf, with its own conflict check; a lab no
   // longer loaded lands on the not-found screen) or hands the changed startup scripts to the
   // device preview and the file editor.
   const [startupChange, setStartupChange] = useState<StartupChange | null>(null);
   useEffect(() => setStartupChange(null), [labId]);
   useLabEvents((event) => {
-    const listChanged = event.kind === "conf-reloaded" || event.kind === "missing";
+    const listChanged = event.kind === "conf-reloaded" || event.kind === "missing" || event.kind === "adopted";
     if (listChanged) void reloadLabs();
     if (event.lab_id !== labId) return;
     const notice = labEventNotice(event);
@@ -1067,11 +1074,13 @@ export function WorkspacePage() {
     }
   }, []);
 
+  // By name, so a lab keeps its place in the rail whatever order the backend happens to list them
+  // in (a rename, or a lab adopted from the labs folder, would otherwise land at the end).
   const filteredLabs = useMemo(() => {
     if (!labs) return labs;
     const q = labFilter.trim().toLowerCase();
-    if (!q) return labs;
-    return labs.filter((l) => (l.name ?? "").toLowerCase().includes(q));
+    const shown = q ? labs.filter((l) => (l.name ?? "").toLowerCase().includes(q)) : labs;
+    return [...shown].sort(compareLabsByName);
   }, [labs, labFilter]);
 
   const currentLab = useMemo(() => labs?.find((l) => l.id === labId) ?? null, [labs, labId]);
@@ -1292,7 +1301,7 @@ export function WorkspacePage() {
         ? {
             labId,
             detail: currentDetail,
-            onRefresh: load,
+            onRefresh: refreshLab,
             refreshStartups: deviceActions.refreshStartups,
             startupChange,
             runtimeFsPreferredMachine,
@@ -1300,7 +1309,7 @@ export function WorkspacePage() {
             setContextMenu: setCtxMenu,
           }
         : null,
-    [labId, currentDetail, load, deviceActions.refreshStartups, startupChange, runtimeFsPreferredMachine],
+    [labId, currentDetail, refreshLab, deviceActions.refreshStartups, startupChange, runtimeFsPreferredMachine],
   );
 
   const runningMachines = deviceMachines.filter((m) => m.running);
@@ -1860,7 +1869,7 @@ export function WorkspacePage() {
           machine={optionsEditorMachine ? detail.machines.find((m) => m.name === optionsEditorMachine) ?? null : null}
           deployed={detail.deployed}
           onClose={closeOptionsEditor}
-          onSaved={load}
+          onSaved={refreshLab}
         />
       )}
       {detail && (
@@ -1869,7 +1878,7 @@ export function WorkspacePage() {
           labId={labId}
           prefillLink={addDeviceLink.prefillLink}
           onClose={closeAddDeviceModal}
-          onAdded={load}
+          onAdded={refreshLab}
         />
       )}
 
