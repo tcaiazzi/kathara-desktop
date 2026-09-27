@@ -267,6 +267,7 @@ export function DeviceInfoTabs({
               onDirtyChange={onStartupDirty}
               editRequest={editRequest}
             />
+            {startupLog}
             <DeviceScriptSection
               labId={labId}
               device={device}
@@ -275,7 +276,6 @@ export function DeviceInfoTabs({
               onSaved={onShutdownSaved}
               onDirtyChange={onShutdownDirty}
             />
-            {startupLog}
           </Tab>
           <Tab eventKey="files" title={<TabTitle icon={Folder} label="Files" dirty={!!dirty.files} />}>
             <div className="kt-devinfo-files">
