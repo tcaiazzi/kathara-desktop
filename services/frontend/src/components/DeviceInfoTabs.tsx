@@ -294,7 +294,8 @@ export function DeviceInfoTabs({
               )}
               {onDisk?.folder === false && (
                 <div className="hint mb-2">
-                  No files yet. Create or upload one here: it is copied into {device} when it starts.
+                  {device} has no files of its own yet. Create or upload one here: it is copied into {device} when it
+                  starts.
                 </div>
               )}
               <div ref={filesRef} className="kt-devinfo-files-tree">

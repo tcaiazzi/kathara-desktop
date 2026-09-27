@@ -9,7 +9,8 @@ interface DeviceFilesSectionProps {
   device: string;
   /** Reports the tree's unsaved buffer (its label) or null — see DeviceInfoTabs. */
   onDirtyChange: (label: string | null) => void;
-  /** After a change that can create the device's folder, so the caller can tell it exists now. */
+  /** After every change on disk: any of them can create or remove the device's folder, so the
+   *  caller can tell whether it exists. */
   onChanged: () => void;
   /** Forwarded to FsTreePanel: the caller picks it from the width it has. */
   layout: "side" | "stacked";
@@ -51,9 +52,18 @@ export function DeviceFilesSection({ labId, device, onDirtyChange, onChanged, la
         await api.fsMkdirOffline(labId, lab(path));
         onChanged();
       },
-      move: async (from, to) => void (await api.fsMoveOffline(labId, lab(from), lab(to))),
-      copy: async (from, to) => void (await api.fsCopyOffline(labId, lab(from), lab(to))),
-      remove: async (path) => void (await api.fsDeleteOffline(labId, lab(path), true)),
+      move: async (from, to) => {
+        await api.fsMoveOffline(labId, lab(from), lab(to));
+        onChanged();
+      },
+      copy: async (from, to) => {
+        await api.fsCopyOffline(labId, lab(from), lab(to));
+        onChanged();
+      },
+      remove: async (path) => {
+        await api.fsDeleteOffline(labId, lab(path), true);
+        onChanged();
+      },
       upload: async (path, file) => {
         await api.fsUploadOffline(labId, lab(path), file);
         onChanged();
