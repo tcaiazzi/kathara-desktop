@@ -76,6 +76,16 @@ export function freshScopeState(): FsTreeScopeState {
   };
 }
 
+/**
+ * The state a new scope starts from after `prev`: empty like `freshScopeState`, except that the
+ * two generation counters carry on from `prev`. A read or search still in flight from the previous
+ * scope holds a generation number; were the counters to restart at 0, the new scope's first
+ * request would reach that same number and the stale answer would pass its check.
+ */
+export function nextScopeState(prev: FsTreeScopeState): FsTreeScopeState {
+  return { ...freshScopeState(), selectGen: prev.selectGen + 1, searchGen: prev.searchGen + 1 };
+}
+
 export function findNode(nodes: FsNode[], path: string): FsNode | null {
   for (const n of nodes) {
     if (n.path === path) return n;

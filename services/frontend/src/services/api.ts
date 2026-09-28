@@ -47,15 +47,26 @@ const authTokenReady: Promise<void> = (async () => {
   }
 })();
 
+const authTokenListeners = new Set<() => void>();
+
+/** Calls `listener` whenever `refreshAuthToken` finds a new token; returns the unsubscribe. For a
+ *  stream opened with `?token=` (useLabEvents), which keeps retrying with the URL it was opened on. */
+export function onAuthTokenChange(listener: () => void): () => void {
+  authTokenListeners.add(listener);
+  return () => authTokenListeners.delete(listener);
+}
+
 /** Re-read the pairing token: a backend restarted by the shell while this page stayed on screen
  *  (desktop/BackendStateContext.tsx) has a new one, and the old one is refused. */
 export async function refreshAuthToken(): Promise<void> {
   await authTokenReady;
+  const previous = cachedAuthToken;
   try {
     cachedAuthToken = (await desktop()?.getAuthToken()) ?? null;
   } catch {
     // keep the one we have: failing here only means the next request says why
   }
+  if (cachedAuthToken !== previous) authTokenListeners.forEach((listener) => listener());
 }
 
 function authHeaders(): Record<string, string> {

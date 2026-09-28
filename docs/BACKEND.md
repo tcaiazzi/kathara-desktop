@@ -175,7 +175,7 @@ that `None` up instead of falling back to a sensible default.
 |---|---|---|---|---|
 | GET | `/api/health` | Liveness probe | — | `{status}` |
 | GET | `/api/pairing/proof` | Proof that this process holds the auth token; **no auth** (see Authentication) | `nonce` (32–128 hex chars) | `{proof}` (null when no token is configured) |
-| GET | `/api/system` | Manager name/version + available managers | — | `SystemInfo` |
+| GET | `/api/system` | Manager name, Docker daemon version, available managers, whether the backend runs as admin | — | `SystemInfo` |
 | GET | `/api/settings` | Current Kathara settings | — | `SettingsView` |
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |
 | POST | `/api/system/wipe` | Undeploy every lab this backend deployed, best-effort (a lab whose undeploy fails is reported in `failed`, not fatal to the rest; scenarios started by other tools are left alone) | — | `WipeResult` |

@@ -5,6 +5,7 @@ import {
   findNode,
   freshScopeState,
   mergeNodeList,
+  nextScopeState,
   toAbsolutePath,
   withMergedChildrenAt,
   type FsNode,
@@ -40,6 +41,18 @@ describe("freshScopeState", () => {
     a.selectedPaths.push("/x");
     expect(b.tree).toEqual([]);
     expect(b.selectedPaths).toEqual([]);
+  });
+});
+
+describe("nextScopeState", () => {
+  it("empties the scope but never reuses a generation number of the previous one", () => {
+    const prev = { ...freshScopeState(), selected: "/etc/hosts", bufferPath: "/etc/hosts", selectGen: 3, searchGen: 7 };
+    const next = nextScopeState(prev);
+
+    expect(next).toEqual({ ...freshScopeState(), selectGen: 4, searchGen: 8 });
+    // The new scope's first request bumps past every number the old scope handed out.
+    expect(++next.selectGen).toBeGreaterThan(prev.selectGen);
+    expect(++next.searchGen).toBeGreaterThan(prev.searchGen);
   });
 });
 

@@ -48,8 +48,8 @@ Source = "https://github.com/KatharaFramework/kathara-desktop"
 license-files = ["LICENSE"]
 
 # Single source of truth for the version: src/kathara_api/__init__.py's __version__, which is
-# also what `GET /api/system` and the OpenAPI docs report (main.py imports it). Restated here as
-# a literal, it would silently drift from the shipped app's version.
+# also what the OpenAPI docs report (main.py imports it). Restated here as a literal, it would
+# silently drift from the shipped app's version.
 [tool.setuptools.dynamic]
 version = { attr = "kathara_api.__version__" }
 

@@ -12,6 +12,7 @@ import {
   entryToNode,
   findNode,
   freshScopeState,
+  nextScopeState,
   mergeNodeList,
   toAbsolutePath,
   withMergedChildrenAt,
@@ -308,12 +309,13 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
 
   // A change of scope is a different filesystem: drop the tree and everything derived from it
   // rather than merging one device's listing into another's (both may have an `/etc`). `scoped` is
-  // replaced wholesale during render, ahead of the effect below, so nothing in flight — including
-  // a read issued against the *previous* scope — can write stale state against the new one.
+  // replaced wholesale during render, ahead of the effect below. A request issued against the
+  // *previous* scope then fails its check on return: a read or search by generation number (see
+  // nextScopeState), a listing or save by `scoped.current` no longer being the object it captured.
   const scopeRef = useRef(scopeKey);
   if (scopeRef.current !== scopeKey) {
     scopeRef.current = scopeKey;
-    scoped.current = freshScopeState();
+    scoped.current = nextScopeState(scoped.current);
   }
   useEffect(() => {
     setTree([]);
@@ -366,9 +368,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   const toggleSearchMode = useCallback(() => setSearchMode((prev) => !prev), []);
 
   // Debounced search-as-you-type: waits for a short pause in typing (rather than firing on every
-  // keystroke) before hitting the search endpoint. Guarded by `searchGen` (in `scoped`, so it
-  // resets on scope change like `selectGen`) against an earlier, slower response landing after a
-  // faster later one.
+  // keystroke) before hitting the search endpoint. Guarded by `searchGen` (in `scoped`, and
+  // carried across a scope change like `selectGen` — see nextScopeState) against an earlier,
+  // slower response landing after a faster later one.
   useEffect(() => {
     if (!searchMode || !sourceRef.current.search) return;
     const query = searchQuery.trim();
@@ -441,7 +443,9 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   }, [selected, tree, revealAndSelect]);
 
   const loadAndMerge = useCallback(async (path: string): Promise<void> => {
+    const scope = scoped.current;
     const entries = await sourceRef.current.list(path);
+    if (scoped.current !== scope) return;
     const children = entries.map(entryToNode);
     setTree((prev) => (path === "/" ? mergeNodeList(prev, children) : withMergedChildrenAt(prev, path, children)));
   }, []);
@@ -496,8 +500,10 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
     // Wrapped, unlike the callers' bare `void reload()`: unwrapped, a failure here surfaces as
     // nothing at all (an unhandled rejection), while every sibling operation reports via a toast.
     try {
-      const merged = mergeNodeList(scoped.current.tree, (await list("/")).map(entryToNode));
-      setTree(await reloadLevel(merged));
+      const scope = scoped.current;
+      const merged = mergeNodeList(scope.tree, (await list("/")).map(entryToNode));
+      const reloaded = await reloadLevel(merged);
+      if (scoped.current === scope) setTree(reloaded);
     } catch (e) {
       toast.reportError(sourceRef.current.labels.openFile, e);
     }
@@ -608,7 +614,8 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
   );
 
   const handleSave = useCallback(async () => {
-    const path = scoped.current.bufferPath;
+    const scope = scoped.current;
+    const path = scope.bufferPath;
     if (!path) return;
     const confirmWrite = sourceRef.current.confirmWrite;
     if (confirmWrite && !(await confirmWrite(path))) return;
@@ -618,9 +625,10 @@ export function useFsTree({ source, scopeKey, enabled = true, refreshKey }: UseF
       toast.show(sourceRef.current.labels.saved(path), "success");
       await refreshDir(parentOf(path));
       // The buffer may now belong to a different file — the user switched away while this save
-      // was in flight. Only *this* file's own baseline gets marked clean; installing `content` as
-      // the saved baseline of whatever is loaded now would make it look saved when it isn't.
-      if (scoped.current.bufferPath === path) setLoadedText(content);
+      // was in flight, maybe to another device with a file at the same path. Only *this* file's
+      // own baseline gets marked clean; installing `content` as the saved baseline of whatever is
+      // loaded now would make it look saved when it isn't.
+      if (scoped.current === scope && scope.bufferPath === path) setLoadedText(content);
     });
   }, [refreshDir, runBusy, toast]);
 

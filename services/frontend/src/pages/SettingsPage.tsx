@@ -459,7 +459,7 @@ export function SettingsPage() {
                 <strong>Active manager:</strong> {system.manager}
               </div>
               <div className="mb-1">
-                <strong>Kathara version:</strong> {system.version}
+                <strong>Docker version:</strong> {system.version ?? "unknown (Docker isn't reachable)"}
               </div>
               <div className="mb-0">
                 <strong>Available managers:</strong>{" "}

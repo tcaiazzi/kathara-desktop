@@ -386,8 +386,15 @@ async function restartInPlace(target: BrowserWindow, cause: string): Promise<voi
     return;
   }
   setStatus({ state: "ready", advisories: lastPreflight?.advisories ?? [] });
-  if (new URL(baseUrl).origin === new URL(pageUrl).origin) {
-    tellRenderer(target, { state: "restarted" });
+  const origin = new URL(baseUrl).origin;
+  if (origin === new URL(pageUrl).origin) {
+    // Every window on that origin, not just the main one: a popped-out terminal holds the old
+    // token too, and would otherwise fail every reconnect until it is closed and reopened.
+    for (const other of BrowserWindow.getAllWindows()) {
+      if (other.isDestroyed()) continue;
+      const url = other.webContents.getURL();
+      if (url.startsWith("http") && new URL(url).origin === origin) tellRenderer(other, { state: "restarted" });
+    }
     return;
   }
   if (await askRendererBeforeLeave(target)) {
