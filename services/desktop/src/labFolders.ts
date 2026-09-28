@@ -85,6 +85,13 @@ export interface ReclaimTargets {
  * only the files root owns are touched (`find -uid 0`), never a file some other account owns
  * there. `-h`/`-P` so a symbolic link is changed itself and never followed out of the folder.
  *
+ * `-execdir`, not `-exec`: a running device can rewrite `shared/` while this runs as root, and
+ * swap a directory for a symbolic link between `find` listing a file and `chown` reaching it.
+ * `-exec` hands `chown` the full path, whose middle components `-h` does not protect, so the link
+ * would be followed — to `/etc`, say. `-execdir` runs `chown` inside the directory `find` itself
+ * descended into and names the file as `./<name>`, leaving only the last component, which `-h`
+ * covers. `chown -R` needs no such care: it walks by directory handle, never by path.
+ *
  * Every path must be plain (safety.ts's isPlainAbsolutePath): it lands in a script run as root.
  * One that isn't is refused here rather than quoted and hoped for.
  */
@@ -98,7 +105,7 @@ export function reclaimScript(targets: ReclaimTargets, uid: number, gid: number)
   if (targets.labsDir) steps.push(`chown -R ${owner} ${quoteForShellString(targets.labsDir, "linux")}`);
   if (targets.openedDirs.length > 0) {
     const roots = targets.openedDirs.map((dir) => quoteForShellString(dir, "linux")).join(" ");
-    steps.push(`find -P ${roots} -uid 0 -exec chown -h ${owner} {} +`);
+    steps.push(`find -P ${roots} -uid 0 -execdir chown -h ${owner} {} +`);
   }
   return steps.length > 0 ? steps.join(" && ") : null;
 }

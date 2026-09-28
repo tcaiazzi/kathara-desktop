@@ -228,8 +228,10 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   labs folder has *Delete*.
 - After an elevated session, files it left root-owned are reclaimed from the labs directory
   (`chown -R`) **and** from every opened lab folder — there only root's own files
-  (`find -uid 0 -exec chown -h`), since a folder the user opened may legitimately hold other
-  accounts' files (`labFolders.ts`'s `reclaimScript`). An opened folder only counts if it is a
+  (`find -uid 0 -execdir chown -h`), since a folder the user opened may legitimately hold other
+  accounts' files (`labFolders.ts`'s `reclaimScript`). `-execdir` because a running device can
+  swap a directory under `shared/` for a symbolic link while this runs as root, and a full path
+  handed to `chown` would follow it. An opened folder only counts if it is a
   real directory the user owns (`main.ts`'s `reclaimTargets`): the list comes from a file in the
   user's own data directory, not trusted to name `/usr/local`. The prompt lists every path.
 - The same reclaim is offered when the backend refuses to change a lab file another account owns

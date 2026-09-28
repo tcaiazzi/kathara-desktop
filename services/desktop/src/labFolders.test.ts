@@ -73,14 +73,14 @@ describe("knownLabDirs", () => {
 describe("reclaimScript", () => {
   it("chowns the labs directory wholesale and only root's files in opened folders", () => {
     expect(reclaimScript({ labsDir: "/home/u/labs", openedDirs: ["/work/a", "/work/b c"] }, 1000, 1000)).toBe(
-      "chown -R 1000:1000 '/home/u/labs' && find -P '/work/a' '/work/b c' -uid 0 -exec chown -h 1000:1000 {} +",
+      "chown -R 1000:1000 '/home/u/labs' && find -P '/work/a' '/work/b c' -uid 0 -execdir chown -h 1000:1000 {} +",
     );
   });
 
   it("covers just what needs it", () => {
     expect(reclaimScript({ labsDir: "/labs", openedDirs: [] }, 1, 2)).toBe("chown -R 1:2 '/labs'");
     expect(reclaimScript({ labsDir: null, openedDirs: ["/w"] }, 1, 2)).toBe(
-      "find -P '/w' -uid 0 -exec chown -h 1:2 {} +",
+      "find -P '/w' -uid 0 -execdir chown -h 1:2 {} +",
     );
     expect(reclaimScript({ labsDir: null, openedDirs: [] }, 1, 2)).toBeNull();
   });

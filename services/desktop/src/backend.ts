@@ -564,21 +564,21 @@ interface BackendCommand {
  * path.delimiter, not ":" — on Windows the separator is ";", so joining with ":" on a machine
  * that already has a PYTHONPATH set yields one unparseable entry and drops the repo's src/.
  *
- * `overrides` exists for the elevated start paths, which differ on both counts. They must not
+ * `overrides` exists for the elevated start paths, which differ on three counts. They must not
  * write bytecode into the ordinary cache — those files would come out root-owned and every later
  * unprivileged launch would silently fail to update them — and on an AppImage they additionally
  * cannot use the shipped site-packages at all, because root cannot read the FUSE mount they live
- * in (see paths.ts's appImagePythonCache()).
+ * in (see paths.ts's appImagePythonCache()). And they never inherit this process's own
+ * `PYTHONPATH`: whatever it names would be imported as root.
  */
 export function pythonEnv(overrides?: { sitePackages?: string; pycache?: string }): Record<string, string> {
   const roots = [overrides?.sitePackages ?? bundledSitePackages(), backendSrcDir()].filter(
     (dir): dir is string => Boolean(dir),
   );
+  const inherited = overrides ? undefined : process.env.PYTHONPATH;
   return {
     PYTHONPYCACHEPREFIX: overrides?.pycache ?? pycacheDir(),
-    ...(roots.length
-      ? { PYTHONPATH: [...roots, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) }
-      : {}),
+    ...(roots.length ? { PYTHONPATH: [...roots, inherited].filter(Boolean).join(path.delimiter) } : {}),
   };
 }
 
@@ -787,7 +787,8 @@ async function verifySudoPassword(password: string): Promise<PrivilegedActionRes
 
 /**
  * Shared gate for *every* "test a password against sudo" entry point — `verifySudoPassword`,
- * `reclaimOwnershipWithPassword` and `verifyCanElevate`'s macOS/Windows branch — so adding
+ * `reclaimOwnershipWithPassword`, `verifyCanElevate`'s macOS/Windows branch and
+ * `startBackendElevatedNative` — so adding
  * a new one never opens a second password oracle alongside the one this already closes: they all
  * count against, and are locked out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
  */
@@ -1063,12 +1064,25 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
  * app can later stop a backend started this way.
  */
 export async function startBackendElevatedNative(python: string, staticDir: string): Promise<ElevateResult> {
-  elevating = true;
-  try {
-    return await runElevatedNative(python, staticDir);
-  } finally {
-    elevating = false;
-  }
+  // Through the shared rate limiter, counting "cancelled" as verifyCanElevate does: without it a
+  // renderer could raise the OS admin dialog again and again until the user gives in.
+  let result: ElevateResult | undefined;
+  const gate = await withSudoRateLimit(
+    async () => {
+      elevating = true;
+      try {
+        result = await runElevatedNative(python, staticDir);
+      } finally {
+        elevating = false;
+      }
+      return result.ok ? { ok: true } : { ok: false, reason: result.reason, message: result.message };
+    },
+    (reason) => reason === "cancelled",
+  );
+  if (result) return result;
+  return gate.ok
+    ? { ok: false, reason: "error", message: "elevation did not run", restarted: false }
+    : { ...gate, restarted: false };
 }
 
 async function runElevatedNative(python: string, staticDir: string): Promise<ElevateResult> {
