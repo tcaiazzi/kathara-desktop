@@ -75,7 +75,7 @@ def register_lab(service, lab):
     return lab
 
 
-def make_lab(service, name: str, files: dict[str, str], dirs=None, deploy: bool = False):
+def make_lab(service, name: str, files: dict[str, str], dirs=None):
     """Create a lab on disk from a ``{path: text}`` mapping, through the .zip upload path.
 
     Most tests only need *a lab that exists* before exercising deploy, lab.conf edits or device
@@ -86,7 +86,7 @@ def make_lab(service, name: str, files: dict[str, str], dirs=None, deploy: bool 
     entries: dict[str, bytes] = {path: text.encode() for path, text in files.items()}
     for d in dirs or []:
         entries[d.rstrip("/") + "/"] = b""
-    return service.upload_lab(name, zip_bytes(entries), deploy=deploy)
+    return service.upload_lab(name, zip_bytes(entries))
 
 
 def make_service(store=None, facade=None, known=None):

@@ -3,6 +3,9 @@
 restart because they're kept in the on-disk store and the process-scoped registry.
 """
 
+import os
+import shutil
+
 import pytest
 
 from kathara_api.errors import ApiError, LabAlreadyRegisteredError, LabConfLockedError
@@ -580,11 +583,49 @@ def test_bridged_is_parsed_built_serialized_and_persisted(tmp_path):
     assert "ws[bridged]" in (service.store.lab_dir("brlab") / "lab.conf").read_text()
 
 
-def test_upload_lab_can_deploy_immediately(tmp_path):
+def test_upload_lab_never_deploys(tmp_path):
+    """An archive's volumes and privileged devices are the user's to review before anything starts."""
     service = _service(tmp_path)
-    archive = zip_bytes({"lab.conf": b'pc1[image]="kathara/base"\npc1[0]="A"\n'})
+    archive = zip_bytes({"lab.conf": b'pc1[image]="kathara/base"\npc1[0]="A"\npc1[privileged]=true\n'})
 
-    lab, _ = service.upload_lab("uploaded2", archive, deploy=True)
+    service.upload_lab("uploaded2", archive)
 
     facade = service._instance
-    assert facade.deployed == [("uploaded2", {"pc1"}, None)]
+    assert getattr(facade, "deployed", []) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows")
+@pytest.mark.parametrize(
+    "link, target_is_dir",
+    [("pc1/root/keys", True), ("pc1/etc/motd", False), ("pc1.startup", False), ("pc1", True)],
+)
+def test_deploy_refuses_a_link_that_copies_host_files_into_the_container(tmp_path, link, target_is_dir):
+    """Kathara packs a device's folder and scripts following links, so one leading outside the lab
+    would copy the host's files into a container the lab's own scripts control."""
+    service = _service(tmp_path)
+    make_lab(service, "linked", {"lab.conf": 'pc1[image]="kathara/base"\npc1[0]="A"\n'}, ["pc1/etc"])
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret").write_text("host\n")
+    lab_dir = service.store.lab_dir("linked")
+    path = lab_dir / link
+    if path.is_dir():
+        shutil.rmtree(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to(outside if target_is_dir else outside / "secret")
+
+    with pytest.raises(ApiError, match="outside the lab"):
+        service.deploy_lab(lab_id(service, "linked"))
+
+    assert getattr(service._instance, "deployed", []) == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows")
+def test_deploy_allows_a_link_that_stays_inside_the_lab(tmp_path):
+    service = _service(tmp_path)
+    make_lab(service, "inside", {"lab.conf": 'pc1[image]="kathara/base"\npc1[0]="A"\n', "pc1/etc/real": "x\n"})
+    (service.store.lab_dir("inside") / "pc1" / "etc" / "alias").symlink_to("real")
+
+    service.deploy_lab(lab_id(service, "inside"))
+
+    assert [name for name, *_ in service._instance.deployed] == ["inside"]

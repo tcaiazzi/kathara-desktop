@@ -42,8 +42,10 @@ services:
       # Vite's proxy rewrites Host to this service's name (changeOrigin), which the backend's
       # loopback-only Host check would otherwise refuse. See dependencies.is_host_allowed.
       - KATHARA_API_ALLOWED_HOSTS=backend
+    # Loopback only: this backend is unauthenticated and holds the Docker socket, and a published
+    # port otherwise listens on every interface (bypassing a host firewall like ufw, too).
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
 
   frontend:
     image: node:24-alpine # keep in step with .nvmrc, the Makefile's NODE_VERSION and the workflows' node-version
@@ -58,8 +60,9 @@ services:
     # can leave behind. `--no-audit`/`--no-fund` drop two registry round-trips that have nothing
     # to do with starting the dev server and would be most of the wait.
     command: sh -c "npm ci --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+    # Loopback only, for the same reason: Vite proxies /api to the backend.
     ports:
-      - "5173:5173"
+      - "127.0.0.1:5173:5173"
     depends_on:
       - backend
 

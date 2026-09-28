@@ -371,19 +371,19 @@ def test_create_lab_returns_201_and_the_lab_detail(api):
 
 
 @pytest.mark.parametrize(
-    "form, expected_name, expected_deploy",
+    "form, expected_name",
     [
-        ({}, "mylab", False),  # name taken from the archive's filename
-        ({"name": "   "}, "mylab", False),  # a blank name falls back to it too
-        ({"name": " custom ", "deploy": "true"}, "custom", True),
+        ({}, "mylab"),  # name taken from the archive's filename
+        ({"name": "   "}, "mylab"),  # a blank name falls back to it too
+        ({"name": " custom ", "deploy": "true"}, "custom"),  # an extra field deploys nothing
     ],
 )
-def test_upload_lab_resolves_the_name_and_forwards_the_archive(api, form, expected_name, expected_deploy):
+def test_upload_lab_resolves_the_name_and_forwards_the_archive(api, form, expected_name):
     client, service = api
     received = {}
 
-    def upload_lab(name, zip_data, deploy):
-        received.update(name=name, data=zip_data.read(), deploy=deploy)
+    def upload_lab(name, zip_data):
+        received.update(name=name, data=zip_data.read())
         return _lab(), ["unknown option `foo`"]
 
     service.returns["upload_lab"] = upload_lab
@@ -395,7 +395,7 @@ def test_upload_lab_resolves_the_name_and_forwards_the_archive(api, form, expect
     assert res.status_code == 201
     assert res.json()["name"] == "l"
     assert res.json()["warnings"] == ["unknown option `foo`"]
-    assert received == {"name": expected_name, "data": b"PK\x03\x04zip", "deploy": expected_deploy}
+    assert received == {"name": expected_name, "data": b"PK\x03\x04zip"}
 
 
 def test_download_lab_streams_the_zip_as_an_attachment_named_after_the_lab_directory(api):

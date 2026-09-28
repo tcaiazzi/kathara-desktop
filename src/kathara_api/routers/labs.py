@@ -72,15 +72,16 @@ def create_lab(payload: LabCreate, service: KatharaService = Depends(get_service
 def upload_lab(
     file: UploadFile = File(...),
     name: str | None = Form(None),
-    deploy: bool = Form(False),
     service: KatharaService = Depends(get_service),
 ) -> LabImportResult:
-    """Create (and optionally deploy) a lab from an uploaded .zip archive of a lab directory.
+    """Create a lab from an uploaded .zip archive of a lab directory, not yet deployed.
 
-    The archive is extracted verbatim to disk, then parsed into a registered lab.
+    The archive is extracted verbatim to disk, then parsed into a registered lab. Deploying is a
+    separate call on purpose: an archive's `[volume]` and `[privileged]` lines are the user's to
+    review first (the frontend's deploy gate asks before any such lab starts).
     """
     lab_name = (name or "").strip() or Path(file.filename or "lab").stem
-    lab, warnings = service.upload_lab(lab_name, file.file, deploy=deploy)
+    lab, warnings = service.upload_lab(lab_name, file.file)
     return _import_result(lab, warnings, service)
 
 

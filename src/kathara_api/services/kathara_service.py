@@ -1854,8 +1854,8 @@ class KatharaService:
             raise
         return lab, t.warnings
 
-    def upload_lab(self, name: str, zip_data: BinaryIO, deploy: bool = False) -> tuple[Lab, list[str]]:
-        """Create (and optionally deploy) a lab from an uploaded .zip archive, verbatim.
+    def upload_lab(self, name: str, zip_data: BinaryIO) -> tuple[Lab, list[str]]:
+        """Create a lab from an uploaded .zip archive, verbatim, without deploying it.
 
         The archive is extracted to disk exactly as uploaded — comments, quoting, ``shared.startup``/
         ``shared.shutdown``, binaries and all — then parsed the same way as a JSON-described
@@ -1869,8 +1869,6 @@ class KatharaService:
             self._assert_dir_free(lab_dir)
             self.store.extract_zip(clean_name, zip_data)
             lab, warnings = self._adopt_populated_dir(clean_name)
-        if deploy:
-            lab = self.deploy_lab(lab.hash)
         return lab, warnings
 
     def list_example_labs(self) -> list[ExampleSummary]:
@@ -2623,6 +2621,7 @@ class KatharaService:
 
                 if fresh_names:
                     self._check_deployable(lab, fresh_names)
+                    self._check_packed_files_stay_in_lab(lab, fresh_names)
                     try:
                         self._facade().deploy_lab(lab, selected_machines=fresh_names)
                     except Exception as exc:
@@ -2675,6 +2674,44 @@ class KatharaService:
                     problems.append(str(exc))
         if problems:
             raise MachineOptionError(f"Can't deploy: {' '.join(problems)}")
+
+    @staticmethod
+    def _check_packed_files_stay_in_lab(lab: Lab, names: set[str]) -> None:
+        """Refuse the deploy when a file Kathara copies into a new container leads out of the lab
+        through a symbolic link.
+
+        ``Machine.pack_data`` copies each device's folder, its ``.startup``/``.shutdown`` and the
+        shared ones with pyfilesystem, which follows links: ``pc1/root/k -> ~/.ssh`` in a folder
+        opened from anywhere would put the user's keys in a container the lab's own scripts run in.
+        The lab filesystem API already refuses such a path (``_confine``); this applies the same
+        rule to deploy. ``shared/`` itself is exempt: it is bind-mounted, not copied, so a link in
+        it resolves inside the container.
+        """
+        try:
+            root = Path(lab.fs.getsyspath("/"))
+        except fs.errors.NoSysPath:
+            return
+
+        def escapes(path: Path) -> bool:
+            return os.path.lexists(path) and not is_within(path, root)
+
+        escaping: list[str] = []
+        top_level = ["shared.startup", "shared.shutdown"]
+        for name in sorted(names):
+            top_level += [f"{name}.startup", f"{name}.shutdown"]
+            device_dir = root / name
+            if escapes(device_dir):
+                escaping.append(name)
+                continue
+            for current, dirnames, filenames in os.walk(device_dir):
+                for entry in (*dirnames, *filenames):
+                    path = Path(current) / entry
+                    if path.is_symlink() and escapes(path):
+                        escaping.append(path.relative_to(root).as_posix())
+        escaping += [entry for entry in top_level if escapes(root / entry)]
+        if escaping:
+            shown = ", ".join(escaping[:5]) + ("…" if len(escaping) > 5 else "")
+            raise ApiError(f"Can't deploy: {shown} lead(s) outside the lab through a symbolic link.")
 
     @staticmethod
     def _boot_script(lab: Lab, machine: Machine) -> str:

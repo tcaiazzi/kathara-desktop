@@ -90,8 +90,9 @@ class SettingsUpdate(BaseModel):
 
     - ``hosthome_mount`` bind-mounts this process's real ``$HOME`` into every device this backend
       deploys from then on (``DockerMachine.py``: ``volumes[get_current_user_home()] = {'bind':
-      '/hosthome', ...}``) — kept here, but gated by the frontend exactly like a lab's own host
-      volumes are before a deploy (see ``SettingsPage.tsx``'s submit handler).
+      '/hosthome', ...}``) — kept here, and confirmed by the frontend exactly like a lab's own host
+      volumes are before a deploy (see ``SettingsPage.tsx``'s submit handler). A confirmation in
+      the UI, not a check this API makes.
     - ``remote_url`` repoints this process's *entire* Docker client at an arbitrary daemon
       (``DockerManager.py``: ``docker.DockerClient(base_url=remote_url, ...)``) — every deploy,
       exec and wipe this backend performs afterward targets whatever host is named. There is no

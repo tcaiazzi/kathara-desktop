@@ -739,9 +739,11 @@ function registerIpc(): void {
   );
 
   // Driven from the same elevation prompt, but for a deploy that only mounts a host volume — a
-  // volume doesn't need this *process* to be root (unlike a privileged device), only proof the
-  // user could authorize it. Unlike elevation:elevate above, this never touches the backend: no
-  // restart, no new port, no reload — the caller just gets ok/not-ok back synchronously.
+  // volume doesn't need this *process* to be root (unlike a privileged device), only the user's
+  // confirmation, backed by their password. A confirmation, not a boundary: the backend applies a
+  // volume without asking, as Docker does for anyone in the `docker` group. Unlike
+  // elevation:elevate above, this never touches the backend: no restart, no new port, no reload —
+  // the caller just gets ok/not-ok back synchronously.
   handleIpc("elevation:verify", (_e, passwordArg: unknown): ReturnType<typeof verifyCanElevate> =>
     verifyCanElevate(optionalString(passwordArg, "elevation password", MAX_PASSWORD_LENGTH)),
   );

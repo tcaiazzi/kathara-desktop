@@ -235,10 +235,11 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
         machine.args = value
     elif opt == "volume":
         # Applied like any other structured option (see _parse_volume), with no special case for
-        # import even though a shared lab.conf is untrusted content: mounting a host directory
-        # always needs the user's own confirmation at deploy time regardless of where the volume
-        # came from (the frontend's deploy-authorization prompt), so import and the JSON path have
-        # no reason to disagree about whether the directive itself is honored.
+        # import even though a shared lab.conf is untrusted content: the frontend asks the user
+        # before deploying any lab with a volume, wherever it came from, so import and the JSON
+        # path have no reason to disagree about whether the directive itself is honored. That
+        # prompt is the app's confirmation, not a boundary this API enforces — a caller holding
+        # the pairing token can deploy a volume directly, as anyone in the `docker` group can.
         v = _parse_volume(value)
         if v:
             machine.volumes.append(v)

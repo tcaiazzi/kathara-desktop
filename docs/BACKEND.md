@@ -190,7 +190,7 @@ that `None` up instead of falling back to a sensible default.
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
 | POST | `/api/labs` | Create a lab from a JSON description (not deployed) | `LabCreate` | `LabDetail` (201) |
-| POST | `/api/labs/upload` | Create (and optionally deploy) from an uploaded `.zip` (binary-safe) | multipart: `file`, `name?`, `deploy?` | `LabImportResult` (201) |
+| POST | `/api/labs/upload` | Create from an uploaded `.zip` (binary-safe), never deployed — its volumes and privileged devices are reviewed at deploy | multipart: `file`, `name?` | `LabImportResult` (201) |
 | GET | `/api/labs/examples` | Bundled example network scenarios (package data), each flagged `installed` | — | `ExampleSummary[]` |
 | POST | `/api/labs/examples` | Install a bundled example as a real lab (409 if the name exists) | `ExampleCreate {id, name?}` | `LabImportResult` (201) |
 | GET | `/api/labs/gallery` | Upstream Kathara-Labs catalog (cached; `refresh=true` bypasses the cache), each entry flagged `installed` | `?refresh=false` | `GalleryCatalog` |
@@ -198,7 +198,7 @@ that `None` up instead of falling back to a sensible default.
 | POST | `/api/labs/open` | Open a host folder as a lab, in place (desktop shell only: `X-Kathara-Shell-Token`; 422 `NotALabError` for a folder that is not a lab unless `init`) | `LabOpen {path, init?}` | `LabImportResult` |
 | GET | `/api/labs` | List known scenarios | — | `LabSummary[]` |
 | GET | `/api/labs/{lab}` | Lab detail (devices + collision domains) | — | `LabDetail` |
-| GET | `/api/labs/{lab}/location` | Host path of the lab directory (desktop shell only) | — | `LabLocation {path}` |
+| GET | `/api/labs/{lab}/location` | Host path of the lab directory, for the desktop shell's reveal-in-file-manager and open-terminal (the same path `LabSummary.path` carries) | — | `LabLocation {path}` |
 | GET | `/api/labs/{lab}/download` | Download the lab directory as `.zip` | — | `application/zip` |
 | GET | `/api/labs/{lab}/lab-conf` | The lab's on-disk `lab.conf`, verbatim (`exists: false` if none yet) | — | `LabConfView {content, exists}` |
 | PUT | `/api/labs/{lab}/lab-conf` | Apply an edited `lab.conf`, stored verbatim (rebuilds topology; 409 if deployed) | `{content}` | `LabDetail` |
