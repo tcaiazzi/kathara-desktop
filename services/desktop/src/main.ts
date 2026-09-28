@@ -116,6 +116,10 @@ log(`crash dumps (if any) go to ${crashDumpsDir()}`);
 // able to hang app quit, or leave a renderer click (Reveal in file manager, Open in terminal)
 // spinning forever with nothing to show for it.
 const BACKEND_QUERY_TIMEOUT_MS = 5_000;
+// Per lab, for the "undeploy all" choice before quitting or switching labs folder. Stopping and
+// removing a lab's containers takes Docker seconds per device, so the query bound above would
+// abandon a large lab halfway — and the backend is stopped right after.
+const UNDEPLOY_TIMEOUT_MS = 120_000;
 
 /** Every ad-hoc fetch this file makes to its own backend must carry the pairing token
  * (backend.ts generates one per launch — see require_auth_token in src/kathara_api/
@@ -237,9 +241,9 @@ let labsDirPromptResolve: (() => void) | null = null;
  * some other way (e.g. a hand-edited preferences.json) — nothing left to ask.
  *
  * Choosing a different folder goes through the existing `labs:pick-dir` → `labs:set-dir` (same
- * IPC Settings' "Change…" uses), which itself calls `startup()` again once it writes the new
- * path — so this function's own `await` below only ever needs to resolve for the "keep the
- * default" case; the picker path replaces this whole boot attempt with a fresh one instead.
+ * IPC Settings' "Change…" uses). `setLabsDir` saves the new path and then resolves this wait
+ * itself, so this same boot attempt carries on with the saved folder — it must not call
+ * `startup()` here, which would only join this attempt and wait on the prompt forever.
  */
 async function promptForLabsDir(): Promise<void> {
   if (!isFirstRun() || readPrefs().labsDir !== undefined) return;
@@ -997,8 +1001,8 @@ function registerIpc(): void {
   handleIpc("labs:set-dir", (_e, dir: unknown) => setLabsDir(dir));
   handleIpc("labs:reset-dir", () => setLabsDir(defaultLabsDir()));
 
-  // Dismisses promptForLabsDir()'s wait — the "keep the default" path only, since choosing a
-  // different folder goes through labs:set-dir instead, which restarts startup() on its own. A
+  // Dismisses promptForLabsDir()'s wait on the "keep the default" path. Choosing a different
+  // folder goes through labs:set-dir instead, which dismisses it too once the folder is saved. A
   // stray call with nothing waiting (the prompt already resolved, or was never shown) is a no-op.
   handleIpc("labs:confirm-dir", () => {
     labsDirPromptResolve?.();
@@ -1068,6 +1072,15 @@ async function setLabsDir(dir: unknown): Promise<boolean> {
   // dir right before spawning uvicorn regardless.
   writePrefs({ labsDir: isDefault ? undefined : dir });
   log(`labs directory set to ${dir}`);
+  // The first-run prompt: its boot attempt is still waiting, and no backend has started yet. Let
+  // that attempt carry on with the folder just saved (see promptForLabsDir), and resolve once it
+  // is done, as a restart below would.
+  if (labsDirPromptResolve) {
+    labsDirPromptResolve();
+    labsDirPromptResolve = null;
+    await startupInFlight;
+    return true;
+  }
   await stopBackend();
   await startup();
   return true;
@@ -1247,7 +1260,7 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
   const base = backendUrl();
   if (!base) return true;
 
-  let deployed: string[] = [];
+  let deployed: { id: string; name: string }[] = [];
   try {
     // Bounded: an unresponsive-but-alive backend must not be able to block quit (or a labs-dir
     // change) forever — the `catch` below already fails toward "proceed", which is exactly the
@@ -1257,8 +1270,9 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
       signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
     });
     if (!res.ok) return true;
-    const labs = (await res.json()) as { name: string | null; deployed: boolean }[];
-    deployed = labs.filter((l) => l.deployed).map((l) => l.name ?? "(unnamed)");
+    // The id is what the undeploy route takes; the name is only for the dialog.
+    const labs = (await res.json()) as { id: string; name: string | null; deployed: boolean }[];
+    deployed = labs.filter((l) => l.deployed).map((l) => ({ id: l.id, name: l.name ?? "(unnamed)" }));
   } catch {
     // If we can't tell, don't stand in the way.
     return true;
@@ -1271,23 +1285,24 @@ async function confirmProceedWithDeployedLabs(opts: DeployedLabsPromptOptions): 
     defaultId: 0,
     cancelId: 2,
     message: `${deployed.length} lab${deployed.length > 1 ? "s are" : " is"} still deployed`,
-    detail: `${deployed.join(", ")}\n\n${opts.detail}`,
+    detail: `${deployed.map((l) => l.name).join(", ")}\n\n${opts.detail}`,
   });
 
   if (response === 2) return false;
   if (response === 0) {
-    for (const name of deployed) {
+    for (const { id, name } of deployed) {
       try {
         log(`undeploying ${name}`);
-        // Bounded for the same reason as the GET above: an unresponsive-but-alive backend (or a
-        // wedged Docker daemon behind it) must not be able to block quit forever. The catch below
-        // already treats a failed undeploy as best-effort, not fatal — a timeout is just another
-        // way for this to fail.
-        await fetch(`${base}/api/labs/${encodeURIComponent(name)}/undeploy`, {
+        // Bounded for the same reason as the GET above, if more loosely (see
+        // UNDEPLOY_TIMEOUT_MS): an unresponsive-but-alive backend (or a wedged Docker daemon
+        // behind it) must not be able to block quit forever. The catch below already treats a
+        // failed undeploy as best-effort, not fatal — a timeout is just another way for this to fail.
+        const res = await fetch(`${base}/api/labs/${encodeURIComponent(id)}/undeploy`, {
           method: "POST",
           headers: authHeaders(),
-          signal: AbortSignal.timeout(BACKEND_QUERY_TIMEOUT_MS),
+          signal: AbortSignal.timeout(UNDEPLOY_TIMEOUT_MS),
         });
+        if (!res.ok) log(`undeploy of ${name} failed: HTTP ${res.status}`);
       } catch (err) {
         log(`undeploy of ${name} failed: ${errorText(err)}`);
       }
