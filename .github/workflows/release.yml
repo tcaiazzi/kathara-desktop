@@ -175,7 +175,9 @@ jobs:
       - run: |
           git tag "v${{ needs.check-version.outputs.version }}"
           git push origin "v${{ needs.check-version.outputs.version }}"
-      - uses: softprops/action-gh-release@v2
+      # Pinned to a commit, not a tag: a third-party action runs with this workflow's token, and a
+      # tag can be moved to other code at any time. 3bb1273 is v2.6.2, what `v2` pointed to.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true

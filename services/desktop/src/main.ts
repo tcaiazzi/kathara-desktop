@@ -76,6 +76,7 @@ import {
   createMainWindow,
   installEditContextMenu,
   installNavigationPolicy,
+  installPermissionPolicy,
   loadIgnoringAbort,
   showSetupPage,
   showSplashPage,
@@ -1380,6 +1381,7 @@ if (!app.requestSingleInstanceLock()) {
     void checkForUpdate();
     // Before any window exists, so no WebContents is ever created unguarded.
     installNavigationPolicy(backendUrl);
+    installPermissionPolicy();
     installEditContextMenu();
     // Binds the keyboard accelerators the window is about to use.
     buildMenu({ openLabFolder: () => void pickAndOpenLabFolder() });

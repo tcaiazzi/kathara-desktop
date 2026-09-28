@@ -256,6 +256,9 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
 - The backend is bound to `127.0.0.1` only and paired with this one launch via the token
   described above; the renderer runs sandboxed and context-isolated with no Node access,
   reaching the shell only through an explicit bridge (`preload.ts`).
+- Web permissions are refused for every page (`windows.ts`'s `installPermissionPolicy`) except
+  `clipboard-sanitized-write`, the one `navigator.clipboard.writeText` needs — Electron would
+  otherwise grant camera, microphone, notifications or clipboard reading without asking.
 - Every IPC channel is registered through `handleIpc` (`ipc.ts`), which answers only a **top**
   frame showing a page this shell could have loaded — the SPA on a loopback port a backend of this
   launch proved it owns, or `setup.html`

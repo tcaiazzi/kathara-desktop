@@ -1,5 +1,5 @@
 /** Window creation and the navigation policy that keeps the renderer pinned to the backend. */
-import { app, BrowserWindow, Menu, nativeTheme, shell } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, session, shell } from "electron";
 import path from "node:path";
 import { parseUiTheme } from "./crashRecovery";
 import { errorText } from "./errors";
@@ -124,6 +124,26 @@ function applyNavigationPolicy(contents: Electron.WebContents, origin: () => str
   };
   contents.on("will-navigate", blockForeignNavigation);
   contents.on("will-redirect", blockForeignNavigation);
+}
+
+/** The one web permission the app uses: `navigator.clipboard.writeText`
+ * (services/frontend/src/services/clipboard.ts). Pasting goes through the native edit menu and
+ * keyboard, never a web permission. */
+const ALLOWED_PERMISSIONS: ReadonlySet<string> = new Set(["clipboard-sanitized-write"]);
+
+/**
+ * Refuses every other web permission — camera, microphone, notifications, geolocation, reading the
+ * clipboard — for every page, since Electron's own default grants them all without asking. A script
+ * injected into the SPA (from a lab name that slipped past escaping, say) then gets nothing a
+ * permission would have handed it.
+ */
+export function installPermissionPolicy(): void {
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+    const allowed = ALLOWED_PERMISSIONS.has(permission);
+    if (!allowed) log(`refused web permission request: ${permission}`);
+    callback(allowed);
+  });
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => ALLOWED_PERMISSIONS.has(permission));
 }
 
 /**
