@@ -42,6 +42,12 @@ else
   RUN_NODE :=
 endif
 
+# The Python that builds the wheel: the repo's .venv when there is one (the same order the dev app
+# uses), else python3 from PATH. A distro python3 refuses `pip install` outright (PEP 668), so an
+# un-activated shell would otherwise fail at `wheel`. On CI there is no .venv and python3 is
+# actions/setup-python's.
+PYTHON ?= $(or $(wildcard .venv/bin/python),$(wildcard .venv/Scripts/python.exe),python3)
+
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
         wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell dev-build \
@@ -151,10 +157,10 @@ mutation-backend:
 #   - vendor/*.whl: vendor-python-deps.mjs installs *the* wheel it finds here, so a leftover from
 #     before a version bump would be the one vendored into the installer.
 wheel:
-	python3 -m pip install --upgrade pip build
+	$(PYTHON) -m pip install --upgrade pip build
 	rm -rf build *.egg-info
 	rm -f $(DESKTOP_DIR)/vendor/*.whl
-	python3 -m build --wheel --outdir $(DESKTOP_DIR)/vendor .
+	$(PYTHON) -m build --wheel --outdir $(DESKTOP_DIR)/vendor .
 
 fetch-python:
 	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM)
