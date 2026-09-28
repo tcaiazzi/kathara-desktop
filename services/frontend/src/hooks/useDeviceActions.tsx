@@ -417,8 +417,8 @@ export function useDeviceActions({
   }
 
   // No running-gate here (unlike openRuntimeFs/openTerminalPopup) — editing options requires the
-  // lab to be *stopped*, the opposite condition, and the modal itself already shows a clear
-  // undeploy-first message and a read-only view when the lab is deployed.
+  // device to be *stopped*, the opposite condition, and the modal itself already shows a clear
+  // undeploy-first message and a read-only view when the device is deployed.
   function openOptions(deviceNode: DeviceNode) {
     onOpenOptions(deviceNode.name);
   }
@@ -437,7 +437,7 @@ export function useDeviceActions({
     const pending = !!pendingDevices[nd.name];
     const items: ContextMenuItem[] = [
       { label: "Configure Device", action: () => onConfigureDevice(nd.name) },
-      { label: detail?.deployed ? "View Options" : "Edit Options", action: () => openOptions(nd) },
+      { label: nd.running ? "View Options" : "Edit Options", action: () => openOptions(nd) },
     ];
     if (!nd.running) {
       items.push({ label: "Deploy Device", success: true, disabled: pending, action: () => deployDevice(nd) });

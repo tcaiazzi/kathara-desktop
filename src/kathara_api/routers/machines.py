@@ -52,8 +52,8 @@ def update_machine(
     payload: MachineUpdate,
     service: KatharaService = Depends(get_service),
 ) -> MachineDetail:
-    """Replace a stopped device's full option set (lab.conf metadata). Rejected with 409 while
-    the lab is deployed — undeploy it first."""
+    """Replace a stopped device's full option set (lab.conf metadata), even in a running lab.
+    Rejected with 409 while the device itself is deployed — undeploy it first."""
     machine = service.update_machine(lab_id, machine_name, payload)
     return serializers.machine_to_detail(machine)
 

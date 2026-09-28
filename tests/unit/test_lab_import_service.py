@@ -423,7 +423,7 @@ def test_update_machine_unchanged_round_trip_keeps_an_imported_volume(tmp_path):
     assert 'pc1[volume]="/host|/mnt|rw"' in conf
 
 
-def test_update_machine_rejects_when_deployed(tmp_path):
+def test_update_machine_rejects_when_the_device_is_deployed(tmp_path):
     service = _service(tmp_path)
     make_lab(service, "lab1", {"lab.conf": "pc1[image]=kathara/base\npc1[0]=A\n"}, [])
     service.deploy_lab(lab_id(service, "lab1"))  # fake facade sets api_object on machines
@@ -435,6 +435,18 @@ def test_update_machine_rejects_when_deployed(tmp_path):
     conf = (service.store.lab_dir("lab1") / "lab.conf").read_text()
     assert "pc1[mem]" not in conf
     assert "mem" not in service.registry.get(lab_id(service, "lab1")).machines["pc1"].meta
+
+
+def test_update_machine_edits_a_stopped_device_in_a_running_lab(tmp_path):
+    service = _service(tmp_path)
+    make_lab(service, "lab1", {"lab.conf": LAB_CONF}, [])
+    service.deploy_lab(lab_id(service, "lab1"), selected_machines={"r1"})  # r1 running, pc1 not
+
+    machine = service.update_machine(lab_id(service, "lab1"), "pc1", MachineUpdate(mem="256m"))
+
+    assert machine.meta["mem"] == "256m"
+    assert "pc1[mem]=256m" in (service.store.lab_dir("lab1") / "lab.conf").read_text()
+    assert service.registry.get(lab_id(service, "lab1")).machines["r1"].api_object is not None
 
 
 def test_update_machine_clears_options_not_resubmitted(tmp_path):

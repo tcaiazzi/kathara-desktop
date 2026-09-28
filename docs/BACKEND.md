@@ -230,7 +230,7 @@ that `None` up instead of falling back to a sensible default.
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
 | POST | `…/machines` | Add a device to `lab.conf` and the model, stopped, whether or not the lab is running (starting it is a deploy) | `MachineCreate` | `MachineDetail` (201) |
-| PUT | `…/machines/{m}` | Replace a **stopped** device's full option set (lab.conf metadata); 409 while the lab is deployed. A full replacement, not a patch — see the note below | `MachineUpdate` | `MachineDetail` |
+| PUT | `…/machines/{m}` | Replace a **stopped** device's full option set (lab.conf metadata), even in a running lab; 409 while that device is deployed. A full replacement, not a patch — see the note below | `MachineUpdate` | `MachineDetail` |
 | DELETE | `…/machines/{m}` | Undeploy + remove a device | `?keep_links=false` | `Message` |
 | POST | `…/machines/{m}/connect` | Attach to a collision domain (running → runtime; stopped → lab.conf) | `?link=` `&interface_number=` `&mac_address=` | `MachineDetail` |
 | POST | `…/machines/{m}/disconnect` | Detach from a collision domain | `?link=` `&keep_link=false` | `Message` |

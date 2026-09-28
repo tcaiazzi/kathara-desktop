@@ -18,16 +18,16 @@ interface MachineOptionsEditorProps {
   show: boolean;
   labId: string;
   machine: MachineDetail | null;
-  deployed: boolean;
   onClose: () => void;
   onSaved: () => Promise<void>;
 }
 
 // Structured editor for a device's Kathara "options"/meta (image, mem, bridged, envs, sysctls,
 // ulimits, exec commands, ports, volumes, and any other pass-through option) — the full-fidelity
-// alternative to hand-editing lab.conf text. Only usable while the lab is undeployed (`deployed`
-// gates every control read-only) since options only ever take effect on the lab's next deploy.
-export function MachineOptionsEditor({ show, labId, machine, deployed, onClose, onSaved }: MachineOptionsEditorProps) {
+// alternative to hand-editing lab.conf text. Only usable while the device is undeployed (a running
+// device gates every control read-only), even with the rest of the lab running, since options only
+// ever take effect on the device's next deploy.
+export function MachineOptionsEditor({ show, labId, machine, onClose, onSaved }: MachineOptionsEditorProps) {
   const [form, setForm] = useState<OptionsFormState | null>(null);
   const [initial, setInitial] = useState<OptionsFormState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -57,7 +57,8 @@ export function MachineOptionsEditor({ show, labId, machine, deployed, onClose, 
   }, [show, machine, onClose]);
 
   const dirty = !!form && !!initial && JSON.stringify(form) !== JSON.stringify(initial);
-  const disabled = deployed || busy;
+  const running = !!machine?.running;
+  const disabled = running || busy;
 
   function set<K extends keyof OptionsFormState>(key: K, value: OptionsFormState[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
@@ -93,14 +94,14 @@ export function MachineOptionsEditor({ show, labId, machine, deployed, onClose, 
             <Modal.Title>Options — {machine.name}</Modal.Title>
           </Modal.Header>
           <Modal.Body>
-            {deployed && (
+            {running && (
               <Alert variant="warning" className="py-2">
-                Undeploy this lab to edit its options. Showing the current configuration read-only.
+                Undeploy this device to edit its options. Showing the current configuration read-only.
               </Alert>
             )}
             <MachineOptionsFields form={form} disabled={disabled} onChange={set} />
           </Modal.Body>
-          {!deployed && (
+          {!running && (
             <ModalSubmitFooter
               onCancel={handleRequestClose}
               busy={busy}

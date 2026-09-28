@@ -2971,19 +2971,19 @@ class KatharaService:
     def update_machine(self, lab_id: str, machine_name: str, spec: MachineUpdate) -> Machine:
         """Replace a stopped device's full option set (image/mem/.../volumes) from ``spec``.
 
-        This is a configuration edit, not a runtime one — rejected with 409 while the lab is
-        deployed (mirroring ``update_lab_conf``'s gate exactly), unlike ``add_machine``, which adds
-        a stopped device to a running lab too. There is no live-redeploy path here: editing options
-        only ever takes effect from the lab's next deploy.
+        This is a configuration edit, not a runtime one: allowed while the device has no container,
+        even with the rest of the lab running (like ``add_machine``), and rejected with 409 while
+        the device itself is deployed. There is no live-redeploy path here: editing options only
+        ever takes effect from the device's next deploy.
         """
         self._check_not_transitioning(lab_id)
         with self._mutate_lock:
             lab = self.get_lab_or_reconstruct(lab_id)
-            if self._has_running_device(lab):
-                raise LabConfLockedError(
-                    f"Cannot edit device options while `{lab.name}` is deployed. Undeploy it first."
-                )
             machine = lab.get_machine(machine_name)  # raises MachineNotFoundError
+            if machine.api_object is not None:
+                raise LabConfLockedError(
+                    f"Cannot edit `{machine_name}`'s options while it is deployed. Undeploy it first."
+                )
             # Render + validate the lab.conf edit *before* mutating the live model, so a spec that
             # can't be represented fails with no side effects (mirrors add_machine's ordering).
             lab_dir = self._lab_dir(lab_id)

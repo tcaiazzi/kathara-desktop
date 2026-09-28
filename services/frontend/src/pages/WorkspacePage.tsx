@@ -2044,7 +2044,6 @@ export function WorkspacePage() {
           show={!!optionsEditorMachine}
           labId={labId}
           machine={optionsEditorMachine ? detail.machines.find((m) => m.name === optionsEditorMachine) ?? null : null}
-          deployed={detail.deployed}
           onClose={closeOptionsEditor}
           onSaved={refreshLab}
         />

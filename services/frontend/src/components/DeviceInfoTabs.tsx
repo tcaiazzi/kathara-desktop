@@ -244,7 +244,7 @@ export function DeviceInfoTabs({
             )}
             <Button size="sm" variant="outline-secondary" onClick={() => actions.openOptions(node)}>
               <SlidersHorizontal size={13} className="me-1" />
-              {detail.deployed ? "View Options" : "Edit Options"}
+              {node.running ? "View Options" : "Edit Options"}
             </Button>
             <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.removeDevice(node)}>
               <Trash2 size={13} className="me-1" />
