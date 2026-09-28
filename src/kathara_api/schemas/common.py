@@ -1,5 +1,7 @@
 """Shared response schemas."""
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -13,6 +15,13 @@ class HealthStatus(BaseModel):
     """Liveness answer: fixed payload, so `status` is the whole contract."""
 
     status: str
+
+
+class PairingProof(BaseModel):
+    """``HMAC-SHA256(auth token, nonce)`` in hex, or None when no auth token is configured and there
+    is no pairing to prove (see routers/pairing.py)."""
+
+    proof: Optional[str] = None
 
 
 class WipeResult(Message):

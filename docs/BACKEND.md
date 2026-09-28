@@ -63,7 +63,10 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
   purpose — a query string ends up in proxy logs, browser history and `Referer`, where a header
   does not. The desktop app is the only caller that sets it — a random value generated per launch
   (`services/desktop/src/backend.ts`) pairs one backend process with its own Electron instance;
-  Docker Compose and plain dev runs leave it unset, and so unauthenticated.
+  Docker Compose and plain dev runs leave it unset, and so unauthenticated. One route needs no
+  token by design: `GET /pairing/proof?nonce=` (`routers/pairing.py`) answers
+  `HMAC-SHA256(token, nonce)`, so the shell can check that the process on its port holds the
+  token before sending it anything secret.
 - **Changes made on disk outside the app** — a lab is a folder the user may be editing elsewhere
   (an editor, `git pull`), so `services/lab_watch.py` polls every loaded lab's top-level
   `lab.conf` and `*.startup` (mtime + size, `ApiSettings.lab_watch_interval`, env
@@ -171,6 +174,7 @@ that `None` up instead of falling back to a sensible default.
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
 | GET | `/api/health` | Liveness probe | — | `{status}` |
+| GET | `/api/pairing/proof` | Proof that this process holds the auth token; **no auth** (see Authentication) | `nonce` (32–128 hex chars) | `{proof}` (null when no token is configured) |
 | GET | `/api/system` | Manager name/version + available managers | — | `SystemInfo` |
 | GET | `/api/settings` | Current Kathara settings | — | `SettingsView` |
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |

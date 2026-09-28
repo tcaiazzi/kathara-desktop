@@ -11,7 +11,7 @@ from . import __version__
 from .config import format_mb, get_settings
 from .dependencies import get_service, is_host_allowed, is_origin_allowed, require_auth_token
 from .errors import ForbiddenHostError, ForbiddenOriginError, error_response, register_exception_handlers
-from .routers import events, labs, links, machines, stats, system
+from .routers import events, labs, links, machines, pairing, stats, system
 from .routers import exec as exec_router
 from .services.docker_tty import shutdown_tty_executor
 from .services.lab_watch import LabWatcher
@@ -186,6 +186,9 @@ def create_app() -> FastAPI:
     app.include_router(stats.router, prefix=API_PREFIX)
     # Same reason as stats: `/events` is a native EventSource too.
     app.include_router(events.router, prefix=API_PREFIX)
+    # Deliberately without auth: proving this process holds the token is its whole job, and asking
+    # for the token first would hand it to whoever answers (see routers/pairing.py).
+    app.include_router(pairing.router, prefix=API_PREFIX)
 
     # Strictly last: mount_spa adds a catch-all route, and Starlette matches routes in
     # registration order, so anything registered after it would be unreachable.

@@ -2,9 +2,10 @@
 
 test_auth.py only unit-tests require_auth_token in isolation against a throwaway one-route app;
 nothing exercises the real create_app() to confirm the dependency is actually wired onto every
-route. The one known, deliberate exception is routers/exec.py's websocket route (`/tty/ws`),
-which can't take a Request-typed dependency at all — see main.py's own comment on why it's
-registered without `dependencies=auth` and instead checks the token by hand. A new endpoint added
+route. The deliberate exceptions are routers/exec.py's websocket route (`/tty/ws`), which can't
+take a Request-typed dependency at all — see main.py's own comment on why it's registered without
+`dependencies=auth` and instead checks the token by hand — and routers/pairing.py's proof, which
+exists to be answered without the token. A new endpoint added
 anywhere else without the dependency would otherwise ship silently unauthenticated.
 """
 
@@ -17,9 +18,13 @@ from kathara_api.main import API_PREFIX, create_app
 
 TOKEN = "secret"
 
-# The one deliberate exception (see module docstring and main.py's own comment on the exec_router
-# include). test_every_websocket_route_is_deliberately_excluded keeps this set honest.
-EXCLUDED_PATHS = {f"{API_PREFIX}/labs/{{lab_id}}/machines/{{machine_name}}/tty/ws"}
+# The deliberate exceptions (see module docstring and main.py's own comments on the exec_router and
+# pairing includes). test_every_websocket_route_is_deliberately_excluded keeps this set honest.
+EXCLUDED_PATHS = {
+    f"{API_PREFIX}/labs/{{lab_id}}/machines/{{machine_name}}/tty/ws",
+    # Proves the process holds the token without asking for it (see routers/pairing.py).
+    f"{API_PREFIX}/pairing/proof",
+}
 
 
 def _flatten_routes(routes):

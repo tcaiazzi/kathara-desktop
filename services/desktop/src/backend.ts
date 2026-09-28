@@ -406,8 +406,10 @@ async function retryOrphanShutdown(): Promise<void> {
 
 /**
  * Ask the OS for an unused port and hand it to the child. Listening on 0 and reading back the
- * assigned port leaves a tiny race before the child binds it, but it beats hardcoding 8000,
- * which collides with the very common case of a backend the user already has running.
+ * assigned port leaves a gap of seconds — uvicorn binds only once its imports are done — in which
+ * another local process can take the port. waitForHealth's pairing proof is what makes losing
+ * that race harmless. Still better than hardcoding 8000, which collides with the very common case
+ * of a backend the user already has running.
  */
 function findFreePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -464,7 +466,25 @@ function forgetPort(): void {
   if (readPrefs().backendPort !== undefined) writePrefs({ backendPort: undefined });
 }
 
+/** Origins of every backend that has passed `waitForHealth`'s pairing proof this session — the
+ * only loopback origins ipc.ts trusts (see safety.ts's isTrustedRendererUrl). Kept after a backend
+ * stops: a page still open on the previous origin during a restart is one this shell loaded. */
+const pairedOrigins = new Set<string>();
+
+export function pairedBackendOrigins(): ReadonlySet<string> {
+  return pairedOrigins;
+}
+
+/** Something other than the backend this shell started answered on its port (see waitForHealth). */
+class PortTakenError extends Error {}
+
 /**
+ * Poll until the backend at `baseUrl` answers and proves it is the one this shell started: it must
+ * return `HMAC-SHA256(token, nonce)` from `/api/pairing/proof` (src/kathara_api/routers/pairing.py).
+ * The request carries nothing secret, so a process that took the port before uvicorn bound it (see
+ * findFreePort) learns neither token, and its answer fails the check — the port is then abandoned
+ * rather than loaded into the window with the preload bridge attached.
+ *
  * `isAlive` defaults to checking the tracked `child` — the normal and Linux-elevated paths always
  * have one. The native (macOS/Windows) elevation path doesn't: `@vscode/sudo-prompt` returns no
  * process handle at all, so its caller passes a substitute liveness check instead.
@@ -475,6 +495,8 @@ async function waitForHealth(
   deadline: number,
   isAlive: () => boolean = () => !!child && child.exitCode === null,
 ): Promise<void> {
+  const nonce = crypto.randomBytes(16).toString("hex");
+  const expected = crypto.createHmac("sha256", token).update(nonce).digest("hex");
   let lastError = "no response";
   while (Date.now() < deadline) {
     // A crash during startup means health will never come up; fail immediately with the
@@ -483,13 +505,20 @@ async function waitForHealth(
       throw new Error(`backend exited during startup (code ${child?.exitCode ?? "unknown"})`);
     }
     try {
-      const res = await fetch(`${baseUrl}/api/health`, {
-        headers: authHeaders(token),
+      const res = await fetch(`${baseUrl}/api/pairing/proof?nonce=${nonce}`, {
         signal: AbortSignal.timeout(HEALTH_REQUEST_TIMEOUT_MS),
       });
-      if (res.ok) return;
+      if (res.ok) {
+        const { proof } = (await res.json()) as { proof?: unknown };
+        if (proof !== expected) {
+          throw new PortTakenError(`another process answered on ${baseUrl} without this launch's pairing token`);
+        }
+        pairedOrigins.add(new URL(baseUrl).origin);
+        return;
+      }
       lastError = `HTTP ${res.status}`;
     } catch (err) {
+      if (err instanceof PortTakenError) throw err;
       lastError = errorText(err);
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
@@ -683,10 +712,15 @@ export async function startBackend(python: string, staticDir: string): Promise<B
     // message rather than burning the full health timeout, and this costs a fraction of a second
     // rather than 45s. Any other failure (Docker down, a bad interpreter, …) would fail again on
     // a fresh port too, so it's simply rethrown.
-    if (remembered === null || !(err instanceof Error && err.message.startsWith("backend exited during startup"))) {
-      throw err;
-    }
-    log(`backend could not use remembered port ${remembered}; retrying on a fresh port`);
+    //
+    // A port another process answered on (PortTakenError) is retried the same way, remembered or
+    // not: that process is not going away, and a fresh port leaves it behind.
+    const portTaken = err instanceof PortTakenError;
+    const rememberedPortLost =
+      remembered !== null && err instanceof Error && err.message.startsWith("backend exited during startup");
+    if (!portTaken && !rememberedPortLost) throw err;
+    log(portTaken ? errorText(err) : `backend could not use remembered port ${remembered}`);
+    log("retrying on a fresh port");
     forgetPort();
     return await spawnBackend(python, staticDir, await findFreePort());
   }
@@ -957,18 +991,29 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
   // itself, not the `python` it execs as root, so the SPA mount and labs directory would silently
   // fall back to defaults. Force them through explicitly via a coreutils `env` prefix, which sets
   // them directly on the command `sudo` elevates, independent of the system's sudoers env policy.
-  const envArgs = Object.entries(appEnv).map(([k, v]) => `${k}=${v}`);
-  log(`starting elevated backend: sudo env ${redactEnvArgsForLog(envArgs).join(" ")} ${interpreter} ${args.join(" ")}`);
+  //
+  // Except the two secrets: that command line stays readable to every local user in
+  // /proc/<pid>/cmdline for as long as the backend runs, and sudo logs it. They follow the password
+  // on stdin instead — sudo reads only the password line — and kathara_api.stdin_secrets takes
+  // them from there before handing the rest of the arguments to uvicorn.
+  const { KATHARA_API_AUTH_TOKEN: _token, KATHARA_API_SHELL_TOKEN: _shellToken, ...publicEnv } = appEnv;
+  const envArgs = Object.entries(publicEnv).map(([k, v]) => `${k}=${v}`);
+  if (args[0] !== "-m" || args[1] !== "uvicorn") throw new Error(`unexpected backend command: ${args.join(" ")}`);
+  const elevatedArgs = ["-m", "kathara_api.stdin_secrets", ...args.slice(2)];
+  log(`starting elevated backend: sudo env ${redactEnvArgsForLog(envArgs).join(" ")} ${interpreter} ${elevatedArgs.join(" ")}`);
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
-  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, interpreter, ...args], { env: sudoEnv(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, interpreter, ...elevatedArgs], { env: sudoEnv(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
   let stderrBuf = "";
   proc.stderr?.on("data", (c: Buffer) => {
     stderrBuf += c.toString();
   });
   trackChild(proc);
-  proc.stdin?.write(`${password}\n`);
+  proc.stdin?.on("error", () => {
+    /* sudo can exit before the write lands (e.g. not in sudoers) — the exit status is what reports it. */
+  });
+  proc.stdin?.write(`${password}\nKATHARA_API_AUTH_TOKEN=${token}\nKATHARA_API_SHELL_TOKEN=${shellToken}\n`);
   proc.stdin?.end();
 
   try {
@@ -1113,8 +1158,9 @@ async function runElevatedNative(python: string, staticDir: string): Promise<Ele
 
     // Emphatically not `stopBackend()`, which would stop the healthy backend that is still
     // serving the renderer. Only the candidate needs cleaning up, and only if it got as far as
-    // listening at all — addressed by URL, since there's no handle for it.
-    if (!failedToLaunch && !(await shutdownAt(baseUrl, token))) {
+    // listening at all — addressed by URL, since there's no handle for it. Never when another
+    // process holds the port: the shutdown request carries the token.
+    if (!failedToLaunch && !(err instanceof PortTakenError) && !(await shutdownAt(baseUrl, token))) {
       log(`elevated backend at ${baseUrl} did not go down after a failed elevation`);
       markOrphaned(await resolvePidForPort(Number(new URL(baseUrl).port)), baseUrl, token);
     }

@@ -92,27 +92,25 @@ export function isUsablePort(port: unknown): port is number {
 }
 
 /**
- * The origin the backend is ever reachable on: loopback, any port.
+ * The shape of an origin the backend is ever reachable on: loopback, some port.
  *
  * `127.0.0.1` literally and not `localhost`, because that is what backend.ts builds its baseUrl
  * from — a page served from `http://localhost:<port>` is a different origin to Chromium and is
  * not one this shell ever loads.
- *
- * Any port rather than the current one on purpose: the backend restarts on a fresh port for every
- * elevate/drop/labs-dir change, and between `stopBackend()` and the `win.loadURL` that follows it
- * there are seconds of preflight during which the live page is still on the *previous* origin.
- * Pinning to the current origin would reject that page's own legitimate calls — the notification
- * history it saves to survive the very reload in flight, the Docker poll — in exactly the window
- * where they happen. The top-frame check in ipc.ts is the half that carries the weight here: a
- * sender has to be the main frame of a window this shell created, and where that frame may
- * navigate is pinned by the navigation policy in windows.ts.
  */
 const LOOPBACK_ORIGIN = /^http:\/\/127\.0\.0\.1:\d{1,5}$/;
 
 /**
  * Whether `url` is a page this shell could actually have loaded into one of its own windows —
- * the SPA the backend serves, or one of the local `appPages` (setup.html, splash.html), which are
- * passed in rather than imported so this file stays free of any `electron` import.
+ * the SPA a backend it started serves, or one of the local `appPages` (setup.html, splash.html),
+ * which are passed in rather than imported so this file stays free of any `electron` import.
+ *
+ * An http page must be on one of `backendOrigins`: the origins of the backends that proved they
+ * hold this launch's pairing token (backend.ts's pairedBackendOrigins). Not just the current one:
+ * the backend restarts on a fresh port for every elevate/drop/labs-dir change, and between
+ * `stopBackend()` and the `win.loadURL` that follows there are seconds during which the live page
+ * is still on the *previous* origin, making its own legitimate calls. Not any loopback port
+ * either: a port this shell never verified may belong to another local user's process.
  *
  * `file:` URLs are compared by *path*, not by URL string: Chromium's percent-encoding of a path
  * with a space or a non-ASCII character need not match what `pathToFileURL` would produce, and a
@@ -122,6 +120,7 @@ const LOOPBACK_ORIGIN = /^http:\/\/127\.0\.0\.1:\d{1,5}$/;
 export function isTrustedRendererUrl(
   url: string | undefined,
   appPages: readonly string[],
+  backendOrigins: ReadonlySet<string>,
   platform: NodeJS.Platform = process.platform,
 ): boolean {
   if (!url) return false;
@@ -131,7 +130,7 @@ export function isTrustedRendererUrl(
   } catch {
     return false;
   }
-  if (parsed.protocol !== "file:") return LOOPBACK_ORIGIN.test(parsed.origin);
+  if (parsed.protocol !== "file:") return LOOPBACK_ORIGIN.test(parsed.origin) && backendOrigins.has(parsed.origin);
 
   let filePath: string;
   try {

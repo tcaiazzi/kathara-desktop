@@ -14,13 +14,18 @@ falls back to `findFreePort()`. On first run the labs-directory prompt sits betw
 the backend start. `startBackend` then:
 
 - Generates a random per-launch pairing token (`crypto.randomBytes(32)`), passed to the child
-  process as `KATHARA_API_AUTH_TOKEN`. Every later request this process makes to that exact
-  backend instance — `waitForHealth`, `shutdownAt`, the `/api/system` admin check — carries it
-  as `Authorization: Bearer <token>` (see [BACKEND.md](BACKEND.md)'s "Authentication" for the
-  server side). The token is never persisted (unlike the port, in `prefs.ts`): it exists only
-  to pair this one backend process with this one Electron instance, so another local
-  process/tab that finds the port still can't call it without also reading the token from the
-  renderer's own context-isolated preload bridge.
+  process as `KATHARA_API_AUTH_TOKEN`. The token is never persisted (unlike the port, in
+  `prefs.ts`): it exists only to pair this one backend process with this one Electron instance,
+  so another local process/tab that finds the port still can't call it without also reading the
+  token from the renderer's own context-isolated preload bridge.
+- Waits for the backend with `waitForHealth`, which sends **no** token: it asks
+  `GET /api/pairing/proof?nonce=<random>` and accepts the port only if the answer is
+  `HMAC-SHA256(token, nonce)`. `findFreePort` closes its probe socket before uvicorn binds, so
+  another local user can take the port in between; this way that process learns nothing and its
+  page is never loaded. Only after the proof does anything carry the token as
+  `Authorization: Bearer <token>` — `shutdownAt`, the `/api/system` admin check (see
+  [BACKEND.md](BACKEND.md)'s "Authentication" for the server side). The origins that passed are
+  also the only loopback origins `ipc.ts` answers.
 - Generates a second per-launch secret, `KATHARA_API_SHELL_TOKEN`, which — unlike the pairing
   token — never leaves `backend.ts`: not to `main.ts`, not over IPC. It is what `POST /labs/open`
   requires (see BACKEND.md's "Labs outside the labs root"), and `backend.ts`'s `openLabFolder`
@@ -48,7 +53,7 @@ and there a candidate is only accepted if it actually satisfies the checks: an i
 imports `kathara_api` but not `kathara_api.main` (an environment installed before a dependency was
 declared) loses to one that imports both.
 
-`backend.ts`'s `startBackend` then spawns `uvicorn` with that command, waits for `/api/health`, and loads
+`backend.ts`'s `startBackend` then spawns `uvicorn` with that command, waits for the pairing proof, and loads
 `http://127.0.0.1:<port>/`. Because the UI is served over HTTP from the same origin as the
 API, relative `/api` calls, the terminal WebSocket, the stats `EventSource` and
 `BrowserRouter` deep links all work exactly as they do in a browser. The one Electron-specific
@@ -62,7 +67,10 @@ check); everywhere else `require_auth_token` accepts the header alone.
 
 Elevated (root) backend starts and orphan-backend recovery go through the same
 `buildBackendCommand` and carry the same token; see the `runElevatedLinux`/
-`runElevatedNative`/`markOrphaned` functions in `backend.ts` for the retry/cleanup paths.
+`runElevatedNative`/`markOrphaned` functions in `backend.ts` for the retry/cleanup paths. On
+Linux the two secrets do not travel on `sudo env …`'s command line with the other settings — any
+local user can read it in `/proc`, and sudo logs it — but on stdin after the password, where
+`python -m kathara_api.stdin_secrets` reads them before starting uvicorn.
 
 ### What is validated on the way into a privileged context
 
@@ -244,7 +252,8 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   described above; the renderer runs sandboxed and context-isolated with no Node access,
   reaching the shell only through an explicit bridge (`preload.ts`).
 - Every IPC channel is registered through `handleIpc` (`ipc.ts`), which answers only a **top**
-  frame showing a page this shell could have loaded — the SPA on a loopback port, or `setup.html`
+  frame showing a page this shell could have loaded — the SPA on a loopback port a backend of this
+  launch proved it owns, or `setup.html`
   / `splash.html`. Navigation is pinned to the app's own origin on both `will-navigate` and
   `will-redirect` (`windows.ts`), the second because a server-side redirect never reaches the
   first; anything else opens in the user's browser instead.

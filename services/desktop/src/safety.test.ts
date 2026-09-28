@@ -134,12 +134,22 @@ describe("quoteForShellString", () => {
 describe("isTrustedRendererUrl", () => {
   const posixPages = ["/opt/kathara/build/setup.html", "/home/u/My Apps/kathara/build/splash.html", "/opt/é/setup.html"];
 
+  const paired = new Set(["http://127.0.0.1:41234", "http://127.0.0.1:1", "http://127.0.0.1:65535"]);
+
   it.each(["http://127.0.0.1:41234/workspace", "http://127.0.0.1:1/", "http://127.0.0.1:65535/api?x=1#y"])(
-    "trusts the backend's loopback origin on any port: %s",
+    "trusts a paired backend's loopback origin: %s",
     (url) => {
-      expect(isTrustedRendererUrl(url, [], "linux")).toBe(true);
+      expect(isTrustedRendererUrl(url, [], paired, "linux")).toBe(true);
     },
   );
+
+  it("does not trust a loopback port no backend of this shell has paired on", () => {
+    expect(isTrustedRendererUrl("http://127.0.0.1:41235/", [], paired, "linux")).toBe(false);
+  });
+
+  it("does not trust a paired-looking origin that isn't loopback", () => {
+    expect(isTrustedRendererUrl("http://localhost:41234/", [], new Set(["http://localhost:41234"]), "linux")).toBe(false);
+  });
 
   it.each([
     ["localhost, a different origin to Chromium", "http://localhost:41234/"],
@@ -154,15 +164,15 @@ describe("isTrustedRendererUrl", () => {
     ["no URL at all", undefined],
     ["another scheme", "data:text/html,<script>1</script>"],
   ])("does not trust %s", (_label, url) => {
-    expect(isTrustedRendererUrl(url, posixPages, "linux")).toBe(false);
+    expect(isTrustedRendererUrl(url, posixPages, paired, "linux")).toBe(false);
   });
 
   it("trusts a local app page by its path, including percent-encoded spaces and non-ASCII", () => {
     for (const page of posixPages) {
-      expect(isTrustedRendererUrl(pathToFileURL(page).href, posixPages, "linux")).toBe(true);
+      expect(isTrustedRendererUrl(pathToFileURL(page).href, posixPages, paired, "linux")).toBe(true);
     }
-    expect(isTrustedRendererUrl("file:///home/u/My%20Apps/kathara/build/splash.html", posixPages, "linux")).toBe(true);
-    expect(isTrustedRendererUrl("file:///opt/%C3%A9/setup.html", posixPages, "linux")).toBe(true);
+    expect(isTrustedRendererUrl("file:///home/u/My%20Apps/kathara/build/splash.html", posixPages, paired, "linux")).toBe(true);
+    expect(isTrustedRendererUrl("file:///opt/%C3%A9/setup.html", posixPages, paired, "linux")).toBe(true);
   });
 
   it.each([
@@ -171,16 +181,16 @@ describe("isTrustedRendererUrl", () => {
     ["a file URL with a remote host", "file://evil.example/opt/kathara/build/setup.html"],
     ["a file URL encoding a slash", "file:///opt/kathara/build%2Fsetup.html"],
   ])("does not trust %s", (_label, url) => {
-    expect(isTrustedRendererUrl(url, posixPages, "linux")).toBe(false);
+    expect(isTrustedRendererUrl(url, posixPages, paired, "linux")).toBe(false);
   });
 
   it("matches Windows app pages case-insensitively, and only on Windows", () => {
     const winPages = ["C:\\Program Files\\Kathara Desktop\\resources\\app\\build\\setup.html"];
     const url = "file:///c:/program%20files/kathara%20desktop/RESOURCES/app/build/Setup.html";
 
-    expect(isTrustedRendererUrl(url, winPages, "win32")).toBe(true);
-    expect(isTrustedRendererUrl("file:///C:/Windows/System32/drivers/etc/hosts", winPages, "win32")).toBe(false);
-    expect(isTrustedRendererUrl("file://evil.example/share/setup.html", winPages, "win32")).toBe(false);
+    expect(isTrustedRendererUrl(url, winPages, paired, "win32")).toBe(true);
+    expect(isTrustedRendererUrl("file:///C:/Windows/System32/drivers/etc/hosts", winPages, paired, "win32")).toBe(false);
+    expect(isTrustedRendererUrl("file://evil.example/share/setup.html", winPages, paired, "win32")).toBe(false);
   });
 
   it.each([
@@ -190,6 +200,6 @@ describe("isTrustedRendererUrl", () => {
   ])("does not trust, and does not throw on, a Windows file URL with %s", (_label, url) => {
     const winPages = ["C:\\Program Files\\Kathara Desktop\\setup.html"];
 
-    expect(isTrustedRendererUrl(url, winPages, "win32")).toBe(false);
+    expect(isTrustedRendererUrl(url, winPages, paired, "win32")).toBe(false);
   });
 });

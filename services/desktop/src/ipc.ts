@@ -5,12 +5,12 @@
  * Nothing about `ipcMain.handle` says who sent the message. Every handler in main.ts hands out
  * something the renderer could not do for itself: restart the backend as root, move the lab
  * storage root, open a native dialog, reach the shell. The navigation policy in windows.ts keeps
- * the main frame pinned to the app's own origin, but it watches `will-navigate`, which does not
- * fire for a server-side redirect: a navigation that starts on the app's origin and gets 302'd
- * elsewhere lands the top frame on a foreign origin with this preload still attached. This check
- * is what makes that landing harmless, and it is the reason the door exists at all.
+ * the main frame pinned to the app's own origin (on `will-navigate` and `will-redirect`), and this
+ * check is the second line behind it: whatever the top frame ends up showing, only a page this
+ * shell loaded from a backend it verified — or one of its own local pages — gets an answer.
  */
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
+import { pairedBackendOrigins } from "./backend";
 import { log } from "./logger";
 import { setupPage, splashPage } from "./paths";
 import { isTrustedRendererUrl } from "./safety";
@@ -39,7 +39,7 @@ function isTrustedSender(event: IpcMainInvokeEvent): boolean {
     // `invoke` and this handler — a page being torn down by a reload. Refusing is right either
     // way: there is no longer anyone to answer.
     if (!frame || frame !== frame.top) return false;
-    return isTrustedRendererUrl(frame.url, appPages());
+    return isTrustedRendererUrl(frame.url, appPages(), pairedBackendOrigins());
   } catch {
     return false;
   }
