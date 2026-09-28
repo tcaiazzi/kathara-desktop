@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { changedStartupPaths, labEventNotice, parseLabEvent } from "./labEvents";
+import { changedStartupPaths, labEventNotice, parseLabEvent, refreshesLab } from "./labEvents";
 import type { LabEvent } from "./types";
 
 const startup = { lab_id: "L", kind: "startup", files: ["pc1.startup"], detail: null };
@@ -44,6 +44,26 @@ describe("labEventNotice", () => {
     const adopted: LabEvent = { lab_id: "L", kind: "adopted", files: [], detail: null };
     expect(parseLabEvent(JSON.stringify(adopted))).toEqual(adopted);
     expect(labEventNotice(adopted)).toBeNull();
+  });
+
+  it("accepts a lab started or stopped outside the app, which needs no notice: its devices just show it", () => {
+    const runtime: LabEvent = { lab_id: "L", kind: "runtime", files: [], detail: null };
+    expect(parseLabEvent(JSON.stringify(runtime))).toEqual(runtime);
+    expect(labEventNotice(runtime)).toBeNull();
+  });
+});
+
+describe("refreshesLab", () => {
+  it.each([
+    ["conf-reloaded", true],
+    ["missing", true],
+    ["adopted", true],
+    ["runtime", true],
+    ["conf-pending", false],
+    ["conf-invalid", false],
+    ["startup", false],
+  ] as const)("re-reads the lab on %s: %s", (kind, expected) => {
+    expect(refreshesLab({ lab_id: "L", kind, files: [], detail: null })).toBe(expected);
   });
 });
 

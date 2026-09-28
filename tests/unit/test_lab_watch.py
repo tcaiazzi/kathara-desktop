@@ -1,8 +1,9 @@
-"""Changes to a lab's lab.conf and startup scripts made outside this app (no Docker required).
+"""Changes to a lab made outside this app — its lab.conf and startup scripts on disk, its devices
+in Docker — (no Docker required).
 
 Three layers: the poller that notices a file changed (``LabWatcher``), what the service does about
-it (``KatharaService.handle_disk_change``), and the event stream that tells the frontend
-(``LabEvents``, ``GET /api/events``).
+it (``KatharaService.handle_disk_change``, ``KatharaService.check_running_labs``), and the event
+stream that tells the frontend (``LabEvents``, ``GET /api/events``).
 """
 
 import asyncio
@@ -10,9 +11,13 @@ import json
 import os
 import shutil
 import threading
+from types import SimpleNamespace
 
 import pytest
+from docker.errors import DockerException
 from fastapi.testclient import TestClient
+from Kathara.exceptions import DockerDaemonConnectionError
+from Kathara.utils import get_current_user_name
 
 from kathara_api import main as main_module
 from kathara_api.config import get_settings
@@ -487,6 +492,184 @@ def test_the_watcher_polls_every_loaded_lab(service):
     assert service.watched_labs() == {lab_id(service, "demo"): service.store.lab_dir("demo")}
 
 
+# -- labs started or stopped outside the app ----------------------------------------------------
+
+
+class _FakeDocker:
+    """The Docker manager ``check_running_labs`` lists containers through: ``containers`` holds
+    what Docker has, as the low-level listing returns it, and ``failure`` what listing raises."""
+
+    def __init__(self):
+        self.containers: list[dict] = []
+        self.failure = None
+        self.filters = []
+        self.client = SimpleNamespace(api=SimpleNamespace(containers=self._list))
+
+    def _list(self, all=False, filters=None):
+        self.filters.append((all, filters))
+        if self.failure is not None:
+            raise self.failure
+        return list(self.containers)
+
+    def run(self, lab_hash, name, state="running", container_id=None):
+        self.containers.append(
+            {"Id": container_id or f"{lab_hash}-{name}", "State": state, "Labels": {"lab_hash": lab_hash, "name": name}}
+        )
+
+
+@pytest.fixture
+def docker(service):
+    fake = _FakeDocker()
+    service._docker_manager = lambda: fake
+    return fake
+
+
+def _runtime(lab_id):
+    return {"lab_id": lab_id, "kind": "runtime", "files": [], "detail": None}
+
+
+def test_the_first_look_at_docker_announces_every_lab_already_running(service, docker):
+    make_lab(service, "stopped", {"lab.conf": LAB_CONF})
+    events = _collecting(service)
+    demo = lab_id(service, "demo")
+    docker.run(demo, "pc1")
+
+    assert service.check_running_labs() == [demo]
+    assert service.check_running_labs() == []
+    assert events == [_runtime(demo)]
+
+
+def test_a_lab_started_and_stopped_outside_the_app_is_announced_once_each_time(service, docker):
+    events = _collecting(service)
+    demo = lab_id(service, "demo")
+    service.check_running_labs()
+
+    docker.run(demo, "pc1")
+    assert service.check_running_labs() == [demo]
+    assert service.check_running_labs() == []
+    docker.containers.clear()
+    assert service.check_running_labs() == [demo]
+    assert service.check_running_labs() == []
+
+    assert events == [_runtime(demo), _runtime(demo)]
+
+
+def test_a_device_that_stops_on_its_own_is_announced(service, docker):
+    demo = lab_id(service, "demo")
+    docker.run(demo, "pc1")
+    service.check_running_labs()
+
+    docker.containers[0]["State"] = "exited"
+
+    assert service.check_running_labs() == [demo]
+
+
+def test_a_lab_restarted_between_two_looks_is_announced(service, docker):
+    demo = lab_id(service, "demo")
+    docker.run(demo, "pc1", container_id="first")
+    service.check_running_labs()
+
+    docker.containers.clear()
+    docker.run(demo, "pc1", container_id="second")
+
+    assert service.check_running_labs() == [demo]
+
+
+def test_only_the_labs_that_changed_are_announced(service, docker):
+    make_lab(service, "other", {"lab.conf": LAB_CONF})
+    demo, other = lab_id(service, "demo"), lab_id(service, "other")
+    docker.run(other, "pc1")
+    service.check_running_labs()
+
+    docker.run(demo, "pc1")
+
+    assert service.check_running_labs() == [demo]
+
+
+def test_only_this_users_kathara_containers_are_listed_in_one_call(service, docker):
+    service.check_running_labs()
+
+    assert docker.filters == [(True, {"label": ["app=kathara", f"user={get_current_user_name()}"]})]
+
+
+def test_containers_of_a_lab_this_app_has_not_loaded_are_ignored(service, docker):
+    service.check_running_labs()
+    docker.run("some-other-lab", "pc1")
+    docker.containers.append({"Id": "unlabelled", "State": "running", "Labels": {}})
+
+    assert service.check_running_labs() == []
+
+
+def test_a_lab_loaded_while_it_is_already_running_is_not_announced(service, docker):
+    later = lab_id(service, "later")
+    docker.run(later, "pc1")
+    service.check_running_labs()
+
+    make_lab(service, "later", {"lab.conf": LAB_CONF})
+
+    assert service.check_running_labs() == []
+
+
+def test_a_lab_mid_deploy_moves_its_baseline_on_without_an_event_and_is_watched_again_after(service, docker):
+    events = _collecting(service)
+    demo = lab_id(service, "demo")
+    service.check_running_labs()
+
+    service._begin_transition(demo)
+    docker.run(demo, "pc1")
+    assert service.check_running_labs() == []
+    service._end_transition(demo)
+    assert service.check_running_labs() == []
+    assert events == []
+
+    docker.containers.clear()
+    assert service.check_running_labs() == [demo]
+
+
+@pytest.mark.parametrize("failure", [DockerException("API error"), ConnectionError("socket gone")])
+def test_what_changed_while_listing_failed_is_announced_once_it_works(service, docker, failure):
+    demo = lab_id(service, "demo")
+    docker.run(demo, "pc1")
+    service.check_running_labs()
+    events = _collecting(service)
+
+    docker.failure = failure
+    docker.containers.clear()
+    assert service.check_running_labs() == []
+    docker.failure = None
+
+    assert service.check_running_labs() == [demo]
+    assert events == [_runtime(demo)]
+
+
+def test_what_changed_while_the_daemon_was_unreachable_is_announced_once_it_is_back(service, docker):
+    demo = lab_id(service, "demo")
+    docker.run(demo, "pc1")
+    service.check_running_labs()
+
+    def unreachable():
+        raise DockerDaemonConnectionError("down")
+
+    service._docker_manager = unreachable
+    docker.containers.clear()
+    assert service.check_running_labs() == []
+    service._docker_manager = lambda: docker
+
+    assert service.check_running_labs() == [demo]
+
+
+def test_a_lab_started_while_the_daemon_was_not_up_yet_is_announced_once_it_is(service, docker):
+    def unreachable():
+        raise DockerDaemonConnectionError("down")
+
+    service._docker_manager = unreachable
+    assert service.check_running_labs() == []
+    service._docker_manager = lambda: docker
+    docker.run(lab_id(service, "demo"), "pc1")
+
+    assert service.check_running_labs() == [lab_id(service, "demo")]
+
+
 # -- started with the app ----------------------------------------------------------------------
 
 
@@ -507,10 +690,29 @@ class _WatcherStub:
         self.running = False
 
 
+class _PeriodicStub:
+    """Stands in for Periodic in the app's lifespan: records how it was built and run."""
+
+    built: list["_PeriodicStub"] = []
+
+    def __init__(self, tick, interval, name):
+        self.tick, self.interval, self.name = tick, interval, name
+        self.running = False
+        _PeriodicStub.built.append(self)
+
+    def start(self):
+        self.running = True
+
+    def stop(self):
+        self.running = False
+
+
 @pytest.fixture
 def watcher_stub(monkeypatch):
     _WatcherStub.built = []
+    _PeriodicStub.built = []
     monkeypatch.setattr(main_module, "LabWatcher", _WatcherStub)
+    monkeypatch.setattr(main_module, "Periodic", _PeriodicStub)
     return _WatcherStub
 
 
@@ -529,6 +731,19 @@ def test_the_app_watches_the_service_s_labs_for_as_long_as_it_is_up(watcher_stub
     assert not watcher.running
 
 
+def test_the_app_checks_docker_on_a_thread_of_its_own_for_as_long_as_it_is_up(watcher_stub, monkeypatch):
+    monkeypatch.setattr(get_settings(), "lab_watch_interval", 2.5)
+    service = get_service()
+
+    with TestClient(main_module.create_app()):
+        [runtime] = _PeriodicStub.built
+        assert runtime.running
+        assert runtime.tick == service.check_running_labs
+        assert runtime.interval == 2.5
+
+    assert not runtime.running
+
+
 def test_an_interval_of_zero_starts_no_watcher(watcher_stub, monkeypatch):
     monkeypatch.setattr(get_settings(), "lab_watch_interval", 0)
 
@@ -536,6 +751,7 @@ def test_an_interval_of_zero_starts_no_watcher(watcher_stub, monkeypatch):
         pass
 
     assert watcher_stub.built == []
+    assert _PeriodicStub.built == []
 
 
 # -- the event stream --------------------------------------------------------------------------

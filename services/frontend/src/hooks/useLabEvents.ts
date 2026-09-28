@@ -4,7 +4,8 @@ import { parseLabEvent } from "../services/labEvents";
 import type { LabEvent } from "../services/types";
 
 /** Calls `onEvent` for every lab event the backend streams (GET /api/events — a lab's lab.conf or
- *  startup scripts changed on disk outside this app), for as long as the caller is mounted.
+ *  startup scripts changed on disk outside this app, or its devices were started or stopped outside
+ *  it), for as long as the caller is mounted.
  *
  *  One stream for every lab rather than one per open lab: the list needs to hear about labs that
  *  aren't open too. Nothing here retries. EventSource reconnects on its own when the connection

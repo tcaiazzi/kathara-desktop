@@ -60,7 +60,7 @@ from Kathara.model.Lab import Lab
 from Kathara.model.Link import Link
 from Kathara.model.Machine import Machine
 from Kathara.setting.Setting import Setting
-from Kathara.utils import is_admin
+from Kathara.utils import get_current_user_name, is_admin
 from pydantic import ValidationError
 
 from ..config import get_settings
@@ -374,6 +374,8 @@ class KatharaService:
         self.events = LabEvents()
         self._conf_pending: set[str] = set()
         self._missing_pending: set[str] = set()
+        # What check_running_labs last saw in Docker, by lab id: nothing, until its first look.
+        self._containers_seen: dict[str, frozenset[tuple[str, str]]] = {}
         # kathara.conf bookkeeping — see load_persisted_settings and update_settings. `_pinned`
         # holds the Kathara settings whose value this session did not take from the file (an
         # environment override, the forced Docker manager): a save leaves the file's own value for
@@ -1747,6 +1749,59 @@ class KatharaService:
             adopted.append(lab.hash)
             self._publish_disk_event(lab.hash, "adopted", [])
         return adopted
+
+    def check_running_labs(self) -> list[str]:
+        """Announce every registered lab whose devices started, stopped or changed state since the
+        previous call, as a lab event of kind ``runtime``, and return their ids.
+
+        A lab's id is the hash ``kathara lstart``/``lclean`` compute in its folder
+        (``lab_store.lab_id_for``), so the CLI starts and stops the very containers this app shows,
+        and nothing else would tell the frontend: it only learns what is running when it reads a
+        lab again. Called every ``lab_watch_interval`` on a thread of its own (``main._lifespan``),
+        so it costs one Docker call: a single listing of this user's Kathara containers — the same ones
+        ``update_lab_from_api`` looks at — rather than one inspect per container, as
+        ``containers.list`` would do.
+
+        The first call announces every registered lab already running: the frontend may have read
+        its labs before it — before the daemon answered, or before an ``lstart`` just after startup
+        — and the cost is one re-read. A lab registered while it is already running (opened after
+        ``kathara lstart``) is not announced: whoever registered it has just read it.
+
+        A lab mid deploy/undeploy moves its baseline on without an event: the transition is this
+        app's own and its caller re-reads the lab when it ends. A change the app makes outside one
+        (a device removed from a running lab, ``remove_machine``) is announced too, which only
+        costs the frontend a re-read. While Docker can't be asked, the baseline stays as it is, so
+        whatever changed meanwhile — every container gone, after a daemon restart — is announced
+        once it can.
+
+        Runs on that one thread only, which is what lets ``_containers_seen`` go unlocked.
+        """
+        try:
+            client = self._docker_manager().client
+            listed = client.api.containers(
+                all=True, filters={"label": ["app=kathara", f"user={get_current_user_name()}"]}
+            )
+        except (DockerDaemonConnectionError, DockerException, OSError) as exc:
+            # OSError covers the daemon's socket going away under a client already built:
+            # docker-py surfaces that as a `requests` ConnectionError, an OSError subclass.
+            logger.debug("Couldn't list Kathara containers: %s", exc)
+            return []
+        current: dict[str, set[tuple[str, str]]] = {}
+        for container in listed:
+            lab_hash = (container.get("Labels") or {}).get("lab_hash")
+            if lab_hash:
+                current.setdefault(lab_hash, set()).add((container["Id"], container.get("State", "")))
+        seen = {lab_hash: frozenset(pairs) for lab_hash, pairs in current.items()}
+        previous, self._containers_seen = self._containers_seen, seen
+        changed = [
+            lab_id
+            for lab_id in self.registry.ids()
+            if previous.get(lab_id, frozenset()) != seen.get(lab_id, frozenset())
+            and not self._is_transitioning(lab_id)
+        ]
+        for lab_id in changed:
+            self._publish_disk_event(lab_id, "runtime", [])
+        return changed
 
     def _reload_lab_from_disk(self, lab_dir: Optional[Path]) -> Optional[Lab]:
         """Rebuild a single lab's model from its on-disk lab.conf, *replacing* the registry entry,

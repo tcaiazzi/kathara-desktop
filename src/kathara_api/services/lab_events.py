@@ -1,6 +1,6 @@
 """Fan-out of lab events — changes to labs made outside this app — to every open event stream.
 
-Events are published from a plain thread (the disk watcher, ``services/lab_watch.py``) and
+Events are published from plain threads (the pollers ``main._lifespan`` starts) and
 consumed on the event loop (``GET /api/events``, ``routers/events.py``), so each subscriber is an
 ``asyncio.Queue`` bound to the loop that created it, fed with ``call_soon_threadsafe``: publishing
 never blocks, and no worker thread is parked per open stream.

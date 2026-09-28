@@ -1,7 +1,8 @@
-// Lab events: changes to a lab's lab.conf or startup scripts made outside this app, and lab folders
-// that appear in the labs folder, streamed by the backend (GET /api/events —
-// src/kathara_api/services/kathara_service.py's handle_disk_change and rescan_labs_root). Pure, so it can be tested without a DOM; hooks/useLabEvents.ts does the
-// EventSource.
+// Lab events: changes to a lab's lab.conf or startup scripts made outside this app, lab folders
+// that appear in the labs folder, and labs whose devices were started or stopped outside it (the
+// CLI), streamed by the backend (GET /api/events — src/kathara_api/services/kathara_service.py's
+// handle_disk_change, rescan_labs_root and check_running_labs). Pure, so it can be tested without a
+// DOM; hooks/useLabEvents.ts does the EventSource.
 
 import type { ToastVariant } from "./notificationHistory";
 import type { LabEvent, LabEventKind } from "./types";
@@ -13,6 +14,7 @@ const KINDS: ReadonlySet<LabEventKind> = new Set([
   "startup",
   "missing",
   "adopted",
+  "runtime",
 ]);
 
 /** An event from the stream, or null for anything that isn't one. The data is JSON from the
@@ -53,12 +55,30 @@ export function labEventNotice(event: LabEvent): { message: string; variant: Toa
       };
     case "startup":
     case "adopted":
+    case "runtime":
       return null;
     case "missing":
       return {
         message: `The lab's folder is no longer there. ${event.detail ?? "It is listed as missing until it comes back."}`,
         variant: "info",
       };
+  }
+}
+
+/** Whether an event changes what the lab list shows, so the list is read again: a topology
+ *  reloaded (its device count), a folder gone (listed as missing, or not at all), a lab just
+ *  loaded, or devices started or stopped. The open lab re-reads its detail for the same events. */
+export function refreshesLab(event: LabEvent): boolean {
+  switch (event.kind) {
+    case "conf-reloaded":
+    case "missing":
+    case "adopted":
+    case "runtime":
+      return true;
+    case "conf-pending":
+    case "conf-invalid":
+    case "startup":
+      return false;
   }
 }
 

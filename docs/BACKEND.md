@@ -84,6 +84,15 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
   `GET /api/events` (`services/lab_events.py`), one SSE stream for all labs, `?token=` accepted
   like the stats stream. The watcher's thread is started by the app's lifespan (`main.py`), so
   building a `KatharaService` alone — a test — starts none.
+- **Labs started or stopped outside the app** — a lab's id is the hash `kathara lstart`/`lclean`
+  compute in its folder, so the CLI drives the very containers the app shows.
+  `KatharaService.check_running_labs` lists this user's Kathara containers in one Docker call and
+  publishes `runtime` for each registered lab whose containers (id + state) changed; the frontend
+  then re-reads the list and the open lab. The first look announces every lab already running, a
+  lab mid deploy/undeploy moves its baseline on silently, and nothing is compared while Docker
+  can't be reached. It runs every `lab_watch_interval` like the disk watcher, but on a thread of its
+  own (`services/periodic.py`): a Docker call has no timeout, and a daemon that never answers must
+  not hold up the disk watcher.
 - **Labs outside the labs root** — `POST /labs/open` opens a host folder as a lab where it is (no
   copy); its id is the hash of that folder's path, like every lab's. It is remembered across
   restarts in `known_labs.json` under `ApiSettings.state_dir` (env `KATHARA_API_STATE_DIR`;
@@ -214,7 +223,7 @@ that `None` up instead of falling back to a sensible default.
 
 | Method | Path | Purpose | Body / params | Response |
 |---|---|---|---|---|
-| GET | `/api/events` | Lab events for every lab as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`/`missing`/`adopted`. Accepts `?token=` | — | SSE stream |
+| GET | `/api/events` | Lab events for every lab as Server-Sent Events (`lab`): `{lab_id, kind, files, detail}`, `kind` one of `conf-reloaded`/`conf-pending`/`conf-invalid`/`startup`/`missing`/`adopted`/`runtime` (devices started or stopped outside the app). Accepts `?token=` | — | SSE stream |
 
 ## Machines — `/api/labs/{lab}/machines`
 

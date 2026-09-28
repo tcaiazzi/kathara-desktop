@@ -15,6 +15,7 @@ from .routers import events, labs, links, machines, stats, system
 from .routers import exec as exec_router
 from .services.docker_tty import shutdown_tty_executor
 from .services.lab_watch import LabWatcher
+from .services.periodic import Periodic
 from .spa import mount_spa
 
 logging.basicConfig(level=logging.INFO)
@@ -27,19 +28,23 @@ API_PREFIX = "/api"
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # Started here rather than with the service, so nothing that merely builds one — a test, a
-    # script — gets a polling thread with it.
+    # script — gets a polling thread with it. The Docker check runs on a thread of its own, so a
+    # daemon that stops answering never holds up the disk watcher (see services/periodic.py).
     interval = get_settings().lab_watch_interval
     service = get_service()
-    watcher = (
-        LabWatcher(service.watched_labs, service.handle_disk_change, interval, on_poll=service.rescan_labs_root)
+    pollers = (
+        [
+            LabWatcher(service.watched_labs, service.handle_disk_change, interval, on_poll=service.rescan_labs_root),
+            Periodic(service.check_running_labs, interval, "lab-runtime"),
+        ]
         if interval > 0
-        else None
+        else []
     )
-    if watcher is not None:
-        watcher.start()
+    for poller in pollers:
+        poller.start()
     yield
-    if watcher is not None:
-        watcher.stop()
+    for poller in pollers:
+        poller.stop()
     # Stop accepting new live-TTY work on shutdown instead of relying on ThreadPoolExecutor's own
     # atexit, which waits for every worker thread to return — a TTY read can stay blocked for as
     # long as its terminal is open (see docs/DESIGN-NOTES.md).

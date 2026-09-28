@@ -116,14 +116,24 @@ export interface LabSummary {
 }
 
 // Mirrors the backend's lab events (GET /api/events; KatharaService.handle_disk_change): a lab's
-// lab.conf or startup scripts changed on disk outside this app. `conf-reloaded` — the topology was
+// lab.conf or startup scripts changed on disk outside this app, or its devices in Docker.
+// `conf-reloaded` — the topology was
 // rebuilt from the new lab.conf; `conf-pending` — not applied because the lab is deployed;
 // `conf-invalid` — not applied because it doesn't load (`detail` says why); `startup` — the listed
 // `<device>.startup` / `shared.startup` files changed; `missing` — the lab's folder is gone. A
 // stopped lab is then listed as missing (an opened folder) or not at all (a lab in the labs
 // folder); a deployed one stays as it is until it stops, which `detail` says. `adopted` — a lab
-// folder that appeared in the labs folder was loaded (KatharaService.rescan_labs_root).
-export type LabEventKind = "conf-reloaded" | "conf-pending" | "conf-invalid" | "startup" | "missing" | "adopted";
+// folder that appeared in the labs folder was loaded (KatharaService.rescan_labs_root). `runtime` —
+// the lab's devices were started, stopped or changed state outside the app, e.g. from the CLI
+// (KatharaService.check_running_labs).
+export type LabEventKind =
+  | "conf-reloaded"
+  | "conf-pending"
+  | "conf-invalid"
+  | "startup"
+  | "missing"
+  | "adopted"
+  | "runtime";
 
 export interface LabEvent {
   lab_id: string;

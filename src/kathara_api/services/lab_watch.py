@@ -17,11 +17,11 @@ listing per lab, of its top level only — ``lab.conf``, ``<device>.startup`` an
 
 import logging
 import os
-import threading
 from pathlib import Path
 from typing import Callable, Optional
 
 from ..lab_conf_options import LAB_CONF_FILENAME
+from .periodic import Periodic
 
 logger = logging.getLogger("kathara_api")
 
@@ -91,10 +91,8 @@ class LabWatcher:
         self._labs = labs
         self._on_change = on_change
         self._on_poll = on_poll
-        self._interval = interval
         self._seen: dict[str, dict[str, _Signature]] = {}
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._poller = Periodic(self.poll_once, interval, "lab-watch")
 
     def poll_once(self) -> None:
         """One pass over every lab: run ``on_poll``, then report each lab's changed names to
@@ -136,21 +134,7 @@ class LabWatcher:
             self._seen[lab_id] = baseline
 
     def start(self) -> None:
-        if self._thread is not None:
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="lab-watch", daemon=True)
-        self._thread.start()
+        self._poller.start()
 
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=self._interval + 5)
-            self._thread = None
-
-    def _run(self) -> None:
-        while not self._stop.wait(self._interval):
-            try:
-                self.poll_once()
-            except Exception:
-                logger.warning("Lab watcher poll failed", exc_info=True)
+        self._poller.stop()

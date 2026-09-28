@@ -1,4 +1,4 @@
-"""Lab events: changes to labs made outside this app, as Server-Sent Events."""
+"""Lab events: changes to labs made outside this app — on disk or in Docker — as Server-Sent Events."""
 
 import asyncio
 import json
@@ -24,7 +24,8 @@ _DISCONNECT_POLL_S = 1.0
 @router.get("/events", dependencies=[Depends(require_auth_token_or_query)])
 async def lab_events(request: Request, service: KatharaService = Depends(get_service)):
     """Stream lab events as `lab` Server-Sent Events, each a JSON object
-    `{lab_id, kind, files, detail}` — see KatharaService.handle_disk_change for the kinds."""
+    `{lab_id, kind, files, detail}` — see KatharaService.handle_disk_change, rescan_labs_root and
+    check_running_labs for the kinds."""
     queue = service.events.subscribe(asyncio.get_running_loop())
 
     async def stream():
