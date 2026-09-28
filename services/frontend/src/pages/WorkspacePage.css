@@ -70,6 +70,19 @@
   color: var(--bs-secondary-color);
   margin-bottom: 6px;
 }
+/* The rail's "Add Lab" menu is as wide as the rail, so its labels wrap instead of spilling out. */
+.kt-ws-add-menu {
+  min-width: 0;
+}
+.kt-ws-add-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  white-space: normal;
+  padding-inline: 0.75rem;
+}
+.kt-ws-add-menu .dropdown-item svg {
+  flex-shrink: 0;
+}
 .kt-ws-list {
   display: flex;
   flex-direction: column;

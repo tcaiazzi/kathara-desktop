@@ -1566,7 +1566,7 @@ export function WorkspacePage() {
                         Add Lab
                       </span>
                     </Dropdown.Toggle>
-                    <Dropdown.Menu className="w-100">
+                    <Dropdown.Menu className="w-100 kt-ws-add-menu">
                       <Dropdown.Item onClick={() => setShowNew(true)}>
                         <Plus size={14} className="me-2" />
                         New lab
