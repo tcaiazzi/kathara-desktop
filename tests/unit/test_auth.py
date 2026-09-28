@@ -43,6 +43,15 @@ def test_wrong_bearer_token_is_rejected(monkeypatch):
     assert resp.status_code == 401
 
 
+def test_a_non_ascii_token_is_refused_like_any_wrong_one(monkeypatch):
+    """Not a 500: the comparison runs on bytes, which `hmac.compare_digest` accepts whatever
+    characters the caller sent."""
+    client = _client(monkeypatch, auth_token="secret", allow_query=True)
+    resp = client.get("/protected?token=s%C3%A9cret")
+    assert resp.status_code == 401
+    assert resp.json()["error_type"] == "UnauthorizedError"
+
+
 def test_correct_bearer_token_is_accepted(monkeypatch):
     client = _client(monkeypatch, auth_token="secret")
     resp = client.get("/protected", headers={"Authorization": "Bearer secret"})

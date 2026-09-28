@@ -9,14 +9,13 @@ Both are exceptions to the rules the other routers follow, and neither belongs a
 
 import asyncio
 import base64
-import hmac
 import json
 
 import anyio
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from ..config import get_settings
-from ..dependencies import get_service, is_host_allowed, is_origin_allowed
+from ..dependencies import get_service, is_host_allowed, is_origin_allowed, tokens_match
 from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
 
@@ -88,8 +87,7 @@ async def tty_live_ws(
     # caller gets no socket at all. A no-op when auth_token is unset, same as require_auth_token.
     expected_token = get_settings().auth_token
     if expected_token:
-        supplied_token = websocket.query_params.get("token")
-        if not supplied_token or not hmac.compare_digest(supplied_token, expected_token):
+        if not tokens_match(websocket.query_params.get("token"), expected_token):
             await websocket.close(code=4401)
             return
 

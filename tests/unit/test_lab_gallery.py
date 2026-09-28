@@ -70,6 +70,18 @@ class _FakeResponse:
             raise ValueError("no json body")
         return self._json
 
+    # `client.stream(...)` hands back the response as a context manager.
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def iter_bytes(self):
+        # A few chunks, as a real body arrives, so a size cap can trip partway through.
+        for start in range(0, len(self.content), 1024):
+            yield self.content[start : start + 1024]
+
 
 def _blob(path, content):
     size = len(content) if isinstance(content, bytes) else len(content.encode())
@@ -99,6 +111,10 @@ def _install_fake_repo(monkeypatch, tree, files, settings=None):
 
         def __exit__(self, *a):
             return False
+
+        def stream(self, method, url, timeout=None, follow_redirects=None):
+            assert method == "GET"
+            return self.get(url, timeout, follow_redirects)
 
         def get(self, url, timeout=None, follow_redirects=None):
             path = url_to_path.get(url)
@@ -688,7 +704,8 @@ def _client_answering(monkeypatch, get):
         def __exit__(self, *a):
             return False
 
-        def get(self, url, timeout=None, follow_redirects=None):
+        def stream(self, method, url, timeout=None, follow_redirects=None):
+            assert method == "GET"
             return get(url)
 
     monkeypatch.setattr(lab_gallery.httpx, "Client", _Client)

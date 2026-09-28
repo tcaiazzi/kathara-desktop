@@ -38,12 +38,18 @@ def _request_token(request: Request, *, allow_query: bool) -> str | None:
     return None
 
 
+def tokens_match(supplied: str | None, expected: str) -> bool:
+    """Constant-time comparison of a caller's token with the configured one. On bytes, because
+    ``hmac.compare_digest`` raises for a ``str`` with a non-ASCII character — a 500 instead of the
+    401 any other wrong token gets."""
+    return bool(supplied) and hmac.compare_digest(supplied.encode(), expected.encode())
+
+
 def _check_token(request: Request, *, allow_query: bool) -> None:
     expected = get_settings().auth_token
     if not expected:
         return
-    supplied = _request_token(request, allow_query=allow_query)
-    if not supplied or not hmac.compare_digest(supplied, expected):
+    if not tokens_match(_request_token(request, allow_query=allow_query), expected):
         raise UnauthorizedError("Invalid or missing auth token.")
 
 
@@ -83,8 +89,7 @@ def require_shell_token(request: Request) -> None:
     configured nothing trusted can supply a host path, so the route is closed to everyone.
     """
     expected = get_settings().shell_token
-    supplied = request.headers.get(SHELL_TOKEN_HEADER)
-    if not expected or not supplied or not hmac.compare_digest(supplied, expected):
+    if not expected or not tokens_match(request.headers.get(SHELL_TOKEN_HEADER), expected):
         raise ShellOnlyError("Only the desktop app can open a folder as a lab.")
 
 

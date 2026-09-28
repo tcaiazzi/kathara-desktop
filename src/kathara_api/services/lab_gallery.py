@@ -407,20 +407,24 @@ def download_lab_files(entry: GalleryEntry) -> dict[str, bytes]:
     base = entry.id + "/"
 
     def fetch(client: httpx.Client, path: str) -> tuple[str, bytes]:
+        # Streamed and counted as it arrives, not read whole and measured after: the tree's sizes
+        # are the upstream's claim, and a file bigger than it said must not fill memory first.
+        content = bytearray()
         try:
-            response = client.get(_raw_url(path), timeout=FILE_TIMEOUT, follow_redirects=True)
+            with client.stream("GET", _raw_url(path), timeout=FILE_TIMEOUT, follow_redirects=True) as response:
+                if response.status_code != 200:
+                    raise GalleryUnavailableError(
+                        f"Could not download `{path}`: HTTP {response.status_code}."
+                    )
+                for chunk in response.iter_bytes():
+                    content += chunk
+                    if len(content) > settings.max_bytes_per_file:
+                        raise GalleryUnavailableError(
+                            f"`{path}` is larger than the {format_mb(settings.max_bytes_per_file)} this import allows."
+                        )
         except httpx.HTTPError as exc:
             raise GalleryUnavailableError(f"Could not download `{path}`: {exc}") from exc
-        if response.status_code != 200:
-            raise GalleryUnavailableError(
-                f"Could not download `{path}`: HTTP {response.status_code}."
-            )
-        content = response.content
-        if len(content) > settings.max_bytes_per_file:
-            raise GalleryUnavailableError(
-                f"`{path}` is larger than the {format_mb(settings.max_bytes_per_file)} this import allows."
-            )
-        return path[len(base):], content
+        return path[len(base):], bytes(content)
 
     with httpx.Client(headers={"User-Agent": "kathara-desktop"}) as client:
         with ThreadPoolExecutor(max_workers=DOWNLOAD_CONCURRENCY) as pool:
