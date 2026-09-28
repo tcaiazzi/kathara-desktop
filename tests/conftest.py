@@ -12,6 +12,9 @@ os.environ["KATHARA_API_LAB_WATCH_INTERVAL"] = "0"
 # the Kathara CLI. The suite gets a throwaway directory instead; tests about the file itself point
 # `kathara_conf_dir` at their own `tmp_path`.
 os.environ["KATHARA_API_KATHARA_CONF_DIR"] = tempfile.mkdtemp(prefix="kathara-conf-")
+# TestClient addresses every request to `Host: testserver`, which the loopback-only Host check
+# (dependencies.is_host_allowed) would refuse; test_host_policy.py covers that check itself.
+os.environ["KATHARA_API_ALLOWED_HOSTS"] = "testserver"
 
 import pytest
 from fastapi.testclient import TestClient

@@ -138,6 +138,7 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
 | `LabNotFoundError`, `MachineNotFoundError`, `LinkNotFoundError`, `DockerImageNotFoundError`, `InterfaceNotFoundError` | 404 |
 | `*AlreadyExistsError`, `MachineNotRunningError`, `MachineNotReadyError`, `EmptyLabError`, `ImagePullBusyError`, `LinkInUseError`, settings/lab.conf locked | 409 |
 | `InvocationError`, `MachineOptionError`, `MachineCollisionDomainError`, `NotSupportedError`, … | 400 |
+| `ForbiddenHostError` (request addressed to a Host this backend doesn't answer to — loopback plus `KATHARA_API_ALLOWED_HOSTS`; raised by `main.py`'s Host middleware, not `errors.py`) | 400 |
 | `SyntaxError` (invalid device name / lab.conf value) | 422 |
 | `DockerDaemonConnectionError`, builtin `ConnectionError` (registry unreachable) | 503 |
 | `HTTPConnectionError`, `DockerPluginError`, `ImagePullError` (a pull stream reported a failure) | 502 |

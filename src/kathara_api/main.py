@@ -9,8 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .config import format_mb, get_settings
-from .dependencies import get_service, is_origin_allowed, require_auth_token
-from .errors import ForbiddenOriginError, error_response, register_exception_handlers
+from .dependencies import get_service, is_host_allowed, is_origin_allowed, require_auth_token
+from .errors import ForbiddenHostError, ForbiddenOriginError, error_response, register_exception_handlers
 from .routers import events, labs, links, machines, stats, system
 from .routers import exec as exec_router
 from .services.docker_tty import shutdown_tty_executor
@@ -114,6 +114,21 @@ def create_app() -> FastAPI:
             exc = ForbiddenOriginError(
                 f"Origin {request.headers.get('origin')!r} is not allowed to make state-changing "
                 "requests to this backend."
+            )
+            return error_response(exc.status_code, str(exc), type(exc).__name__)
+        return await call_next(request)
+
+    # Every method, GET included, and the SPA and SSE routes too: after a DNS rebinding the page
+    # counts as same-origin, so reads are exactly what it is after (see is_host_allowed). Added
+    # after the Origin check so it runs first — Starlette puts the last-added middleware outermost.
+    # The websocket handshake doesn't pass through here and repeats the check (routers/exec.py).
+    @app.middleware("http")
+    async def _enforce_host(request: Request, call_next):
+        host = request.headers.get("host")
+        if not is_host_allowed(host):
+            exc = ForbiddenHostError(
+                f"Host {host!r} is not one this backend answers to. "
+                "List it in KATHARA_API_ALLOWED_HOSTS if it should be."
             )
             return error_response(exc.status_code, str(exc), type(exc).__name__)
         return await call_next(request)

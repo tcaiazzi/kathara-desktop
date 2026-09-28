@@ -37,6 +37,14 @@ class ApiSettings(BaseSettings):
     # Empty by default: same-origin only, until a separate frontend is actually deployed.
     cors_origins: str = ""
 
+    # Comma-separated host names this backend answers to besides loopback (see
+    # dependencies.is_host_allowed), e.g. "backend" for the Compose stack, where Vite's proxy
+    # rewrites Host to the service name. "*" accepts any Host, for a deployment behind a reverse
+    # proxy that already pins it. Empty by default: loopback only, which is what defeats DNS
+    # rebinding — a page on evil.example that re-points its name at 127.0.0.1 still sends
+    # `Host: evil.example`.
+    allowed_hosts: str = ""
+
     # Directory under which every lab is persisted as a real Kathara lab directory, so labs
     # survive a server restart (the in-memory registry alone does not). A plain named volume is
     # sufficient in Docker Compose: machine files/startup always travel to containers over the
@@ -129,6 +137,9 @@ class ApiSettings(BaseSettings):
 
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    def allowed_hosts_list(self) -> list[str]:
+        return [host.strip().lower() for host in self.allowed_hosts.split(",") if host.strip()]
 
     def labs_dir_path(self) -> Path:
         """Absolute path to the lab storage root."""

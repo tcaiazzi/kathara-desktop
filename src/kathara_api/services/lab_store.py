@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import zipfile
@@ -118,6 +119,45 @@ def sanitize_lab_name(name: str) -> str:
             f"Invalid lab name `{name}`. Use letters, digits, dot, dash or underscore (max 64 chars)."
         )
     return candidate
+
+
+# O_EXCL is what makes the temporary name safe inside a folder someone else wrote: it refuses a
+# path that already exists, a symlink (dangling or not) included, so a planted `.lab.conf.<x>.tmp`
+# can't redirect the write onto a file outside the lab. O_NOFOLLOW is belt and braces where it
+# exists; O_BINARY stops Windows' C runtime from translating newlines under `newline=""`.
+_EXCL_CREATE_FLAGS = (
+    os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via a freshly created sibling + ``os.replace``, so a crash or a
+    full disk never leaves a truncated file in its place. The single way ``LabStore`` replaces a
+    file inside a lab folder.
+
+    The sibling gets a random name and is created exclusively (see ``_EXCL_CREATE_FLAGS``): a
+    fixed name would follow a symlink planted in an opened or imported folder, and a leftover from
+    a crash — root-owned, after an elevated backend — would block every later save. Mode 0o666
+    under the process umask, as a plain ``open()`` gives, not ``mkstemp``'s 0o600: a lab.conf an
+    elevated backend writes must stay readable to the user. ``newline=""`` disables Python's own
+    newline translation, so the caller's exact line endings (LF, CRLF, or a mix) survive untouched.
+    """
+    for _ in range(8):
+        tmp = path.parent / f".{path.name}.{secrets.token_hex(6)}.tmp"
+        try:
+            fd = os.open(tmp, _EXCL_CREATE_FLAGS, 0o666)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError(f"No free temporary name next to {path}")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def conf_value(value: Any) -> str:
@@ -423,7 +463,7 @@ class LabStore:
 
     def _write_conf(self, directory: Path, text: str) -> Path:
         final = self.lab_conf_path(directory)
-        self._atomic_write_text(final, text)
+        _atomic_write_text(final, text)
         self._written_conf[directory.resolve()] = self._digest(text)
         return final
 
@@ -473,16 +513,6 @@ class LabStore:
         _require_dir(directory)
         return self._write_conf(directory, text)
 
-    @staticmethod
-    def _atomic_write_text(path: Path, text: str) -> None:
-        """Write ``text`` to ``path`` via a tmp sibling + ``os.replace``, so a crash or a full disk
-        never leaves a truncated file in its place. ``newline=""`` disables Python's own newline
-        translation, so the caller's exact line endings (LF, CRLF, or a mix) survive untouched."""
-        tmp = path.parent / f".{path.name}.tmp"
-        with open(tmp, "w", encoding="utf-8", newline="") as f:
-            f.write(text)
-        os.replace(tmp, path)
-
     # -- fixed topology layout (lab.layout) -----------------------------------
 
     @staticmethod
@@ -515,9 +545,7 @@ class LabStore:
         """Write ``lab.layout`` atomically (tmp file + ``os.replace``), or raise ``LabNotFoundError``."""
         _require_dir(directory)
         final = self.layout_path(directory)
-        tmp = directory / f".{LAYOUT_FILENAME}.tmp"
-        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, final)
+        _atomic_write_text(final, json.dumps(data, indent=2) + "\n")
         return final
 
     def delete_layout(self, directory: Path) -> bool:

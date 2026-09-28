@@ -70,6 +70,14 @@ class ForbiddenOriginError(ApiError):
     status_code = status.HTTP_403_FORBIDDEN
 
 
+class ForbiddenHostError(ApiError):
+    """Raised for a request addressed to a Host this backend doesn't answer to
+    (dependencies.is_host_allowed) — the signature of a DNS-rebinding page. A 400 rather than a
+    403, as for any request naming a server that isn't this one."""
+
+    status_code = status.HTTP_400_BAD_REQUEST
+
+
 class SettingsLockedError(ApiError):
     """Raised when settings are updated after the manager has been initialized."""
 

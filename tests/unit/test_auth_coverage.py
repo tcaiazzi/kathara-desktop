@@ -8,12 +8,11 @@ registered without `dependencies=auth` and instead checks the token by hand. A n
 anywhere else without the dependency would otherwise ship silently unauthenticated.
 """
 
-from types import SimpleNamespace
-
 import pytest
 from fastapi.routing import APIRoute, APIWebSocketRoute
 from fastapi.testclient import TestClient
 
+from kathara_api.config import get_settings
 from kathara_api.main import API_PREFIX, create_app
 
 TOKEN = "secret"
@@ -48,12 +47,15 @@ def _full_path(route: APIRoute | APIWebSocketRoute) -> str:
     return API_PREFIX + route.path
 
 
+def _settings_with(**update):
+    """The real settings with ``update`` applied: the Host check reads more than the token from
+    the same object (dependencies.is_host_allowed)."""
+    return get_settings().model_copy(update=update)
+
+
 @pytest.fixture
 def auth_client(monkeypatch):
-    monkeypatch.setattr(
-        "kathara_api.dependencies.get_settings",
-        lambda: SimpleNamespace(auth_token=TOKEN),
-    )
+    monkeypatch.setattr("kathara_api.dependencies.get_settings", lambda: _settings_with(auth_token=TOKEN))
     return TestClient(create_app(), raise_server_exceptions=False)
 
 
@@ -113,7 +115,7 @@ def test_no_token_configured_leaves_every_route_reachable(monkeypatch):
     """Sanity check for the enumeration itself: with no auth_token configured (the default for
     every deployment except the desktop app), the same routes must NOT 401 — otherwise the 401s
     above would just mean "auth_token happened to be set", not "the dependency works"."""
-    monkeypatch.setattr("kathara_api.dependencies.get_settings", lambda: SimpleNamespace(auth_token=None))
+    monkeypatch.setattr("kathara_api.dependencies.get_settings", lambda: _settings_with(auth_token=None))
     client = TestClient(create_app(), raise_server_exceptions=False)
     app = create_app()
     # A representative sample rather than the whole surface: this is only guarding against the

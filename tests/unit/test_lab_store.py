@@ -291,7 +291,41 @@ def test_write_lab_conf_text_is_atomic_and_requires_existing_dir(tmp_path):
     store.write_lab_conf_text(store.lab_dir("atomiclab"), "pc1[image]=kathara/base\n")
     lab_dir = store.lab_dir("atomiclab")
     assert (lab_dir / "lab.conf").read_text() == "pc1[image]=kathara/base\n"
-    assert not (lab_dir / ".lab.conf.tmp").exists()
+    assert not list(lab_dir.glob(".lab.conf.*tmp"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlinks need privileges on Windows")
+def test_lab_conf_write_never_follows_a_planted_temporary_symlink(tmp_path, monkeypatch):
+    """A folder opened from anywhere may carry a symlink where the temporary file will be
+    created; the write must land in lab.conf and leave the link's target alone."""
+    import kathara_api.services.lab_store as lab_store_module
+
+    store = LabStore(tmp_path / "labs")
+    lab_dir = store.ensure_lab_dir("planted")
+    victim = tmp_path / "victim"
+    victim.write_text("untouched\n")
+    names = iter(["aaaa", "aaaa", "bbbb"])
+    monkeypatch.setattr(lab_store_module.secrets, "token_hex", lambda _n: next(names))
+    (lab_dir / ".lab.conf.aaaa.tmp").symlink_to(victim)
+
+    store.write_lab_conf_text(lab_dir, "pc1[image]=kathara/base\n")
+
+    assert victim.read_text() == "untouched\n"
+    assert (lab_dir / "lab.conf").read_text() == "pc1[image]=kathara/base\n"
+    assert not (lab_dir / "lab.conf").is_symlink()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_lab_conf_write_keeps_the_umask_mode(tmp_path):
+    """Not mkstemp's 0o600: a lab.conf an elevated backend writes must stay readable to the user."""
+    store = LabStore(tmp_path / "labs")
+    lab_dir = store.ensure_lab_dir("modes")
+    old_umask = os.umask(0o022)
+    try:
+        store.write_lab_conf_text(lab_dir, "pc1[image]=kathara/base\n")
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE((lab_dir / "lab.conf").stat().st_mode) == 0o644
 
 # --- generated lab.conf byte-for-byte ------------------------------------------------------------
 

@@ -41,7 +41,7 @@ def test_write_read_layout_round_trip(tmp_path):
     assert path.name == LAYOUT_FILENAME
     assert store.read_layout(store.lab_dir("mylab")) == LAYOUT
     # No staging file left behind by the atomic write.
-    assert not (store.lab_dir("mylab") / f".{LAYOUT_FILENAME}.tmp").exists()
+    assert not list(store.lab_dir("mylab").glob(f".{LAYOUT_FILENAME}.*tmp"))
 
 
 def test_write_layout_overwrites_previous(tmp_path):

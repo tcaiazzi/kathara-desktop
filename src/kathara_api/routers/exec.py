@@ -16,7 +16,7 @@ import anyio
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from ..config import get_settings
-from ..dependencies import get_service, is_origin_allowed
+from ..dependencies import get_service, is_host_allowed, is_origin_allowed
 from ..services.docker_tty import DockerTtySession
 from ..services.kathara_service import KatharaService
 
@@ -97,8 +97,10 @@ async def tty_live_ws(
     # CORSMiddleware returns immediately for a non-HTTP scope, so a page on any origin can open
     # this socket. A browser always sends Origin on a WebSocket handshake — same-origin included
     # — so checking it here is what closes that. Same close-before-accept() shape as the token
-    # check above, with a distinct code so the two failures are told apart client-side.
-    if not is_origin_allowed(websocket.headers.get("origin"), websocket.headers.get("host")):
+    # check above, with a distinct code so the two failures are told apart client-side. The Host
+    # check is main.py's HTTP middleware one, repeated because a handshake never reaches it.
+    host = websocket.headers.get("host")
+    if not is_host_allowed(host) or not is_origin_allowed(websocket.headers.get("origin"), host):
         await websocket.close(code=4403)
         return
 

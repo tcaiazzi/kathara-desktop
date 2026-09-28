@@ -122,6 +122,7 @@ desktop app sets the ones it needs itself; these matter when running the backend
 | `KATHARA_API_MAX_BYTES_PER_LAB` | `20971520` (20 MB) | Largest total size of one gallery install or upload |
 | `KATHARA_API_TTY_MAX_SESSIONS` | `32` | Live terminal WebSockets open at once; one more is refused (close code 1013) rather than queued |
 | `KATHARA_API_CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins (only needed when the frontend is served from a different origin). `*` is accepted but disables credentialed cross-origin requests — the spec forbids combining the two, and allowing both would let any website call this API |
+| `KATHARA_API_ALLOWED_HOSTS` | *(empty)* | Comma-separated host names the backend answers to besides loopback (`localhost`, `127.0.0.1`, `[::1]`) and a concrete `KATHARA_API_HOST`; any other `Host` header gets a 400, which is what stops DNS rebinding. Compose sets `backend`. `*` turns the check off |
 | `KATHARA_API_MANAGER_TYPE` | *(Kathara default)* | Kathara manager override. Only `docker` is supported |
 | `KATHARA_API_DEFAULT_IMAGE` | *(Kathara default)* | Default device image |
 

@@ -39,6 +39,9 @@ services:
       # terminal's handshake — and every state-changing request — would be refused as
       # cross-origin. See dependencies.is_origin_allowed.
       - KATHARA_API_CORS_ORIGINS=http://localhost:5173
+      # Vite's proxy rewrites Host to this service's name (changeOrigin), which the backend's
+      # loopback-only Host check would otherwise refuse. See dependencies.is_host_allowed.
+      - KATHARA_API_ALLOWED_HOSTS=backend
     ports:
       - "8000:8000"
 

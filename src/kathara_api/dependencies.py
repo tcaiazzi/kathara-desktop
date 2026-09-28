@@ -88,6 +88,41 @@ def require_shell_token(request: Request) -> None:
         raise ShellOnlyError("Only the desktop app can open a folder as a lab.")
 
 
+# Names that can only ever mean this machine. `urlsplit(...).hostname` drops IPv6 brackets, hence
+# the bare "::1".
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+# Wildcard binds: they say which interfaces listen, not which name a client uses to get here.
+_WILDCARD_BINDS = frozenset({"", "0.0.0.0", "::"})
+
+
+def is_host_allowed(host_header: str | None) -> bool:
+    """Whether this backend should answer a request addressed to ``host_header``.
+
+    The only defense against DNS rebinding, which :func:`is_origin_allowed` cannot stop on its
+    own: a page on ``http://evil.example:8000`` that re-points its name at 127.0.0.1 sends
+    ``Origin: http://evil.example:8000`` *and* ``Host: evil.example:8000``, so it passes the
+    same-origin comparison, and every GET response becomes readable to it. The Host header is the
+    one thing that still names the attacker's domain.
+
+    Allowed: loopback names, the address this process was told to bind when it is a concrete one,
+    and whatever ``KATHARA_API_ALLOWED_HOSTS`` lists (``*`` disables the check). A request with no
+    Host at all is allowed: a browser always sends one, so its absence can't be a rebinding page.
+    """
+    if not host_header:
+        return True
+    settings = get_settings()
+    extra = settings.allowed_hosts_list()
+    if "*" in extra:
+        return True
+    hostname = urlsplit(f"//{host_header}").hostname
+    if hostname is None:
+        return False
+    if hostname in _LOOPBACK_HOSTS or hostname in extra:
+        return True
+    bind = settings.host.strip().strip("[]").lower()
+    return bind not in _WILDCARD_BINDS and hostname == bind
+
+
 def is_origin_allowed(origin: str | None, host_header: str | None) -> bool:
     """Whether a request carrying ``origin`` may act on this backend.
 
@@ -111,7 +146,9 @@ def is_origin_allowed(origin: str | None, host_header: str | None) -> bool:
     * **An origin listed in KATHARA_API_CORS_ORIGINS.** Same knob that already governs
       cross-origin HTTP, so a separately-served frontend is configured in exactly one place.
     * **Same origin as this request's Host** — the page was served by this very backend, which is
-      the desktop app (and any standalone run serving the built SPA via spa.py).
+      the desktop app (and any standalone run serving the built SPA via spa.py). Sound only
+      because :func:`is_host_allowed` has already vetted that Host: both headers come from the
+      browser, and a rebinding page controls them together.
 
     The last check compares ``netloc`` only, so it ignores the scheme: behind a TLS terminator an
     ``https://`` origin with the same host:port would pass. That is acceptable while every
