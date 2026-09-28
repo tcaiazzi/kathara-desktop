@@ -61,7 +61,7 @@ step is on the frontend side: `services/frontend/src/services/api.ts` calls
 `desktop().getAuthToken()` once per page load (a preload-bridge IPC round-trip to `main.ts`'s
 `"auth:get-token"` handler, which reads `backend.ts`'s `backendToken()`) and caches the result,
 attaching it to every request afterwards. A native `WebSocket`/`EventSource` can't set a
-custom header, so `ttyWsUrl`/`statsStreamUrl` append `?token=` instead. The server takes the token
+custom header, so `ttyWsUrl`/`statsStreamUrl`/`labEventsUrl` append `?token=` instead. The server takes the token
 from the URL only on those routes (`require_auth_token_or_query` and the TTY WebSocket's own
 check); everywhere else `require_auth_token` accepts the header alone.
 
@@ -77,8 +77,11 @@ local user can read it in `/proc`, and sudo logs it — but on stdin after the p
 `@vscode/sudo-prompt` takes a single command **string** — it exposes no argv API — and writes it
 verbatim into a `/bin/sh` script on macOS and a `.bat` line on Windows, so on those platforms the
 elevated command line is shell-interpreted. (Linux never uses it for the backend: `runElevatedLinux`
-passes argv to `spawn("sudo", …)`, with no shell.) Two values could otherwise reach that string, or
-the env sudo-prompt writes alongside it as `export KEY="value"`, from outside this process:
+passes argv to `spawn("sudo", …)`, with no shell.) The environment reaches the same script, written
+as `export KEY="value"` on macOS and `set KEY=value` on Windows. Most of what goes there is derived
+from the app's own install and data directories; the state directory is checked with
+`isPlainAbsolutePath` in `buildBackendCommand` and left out when it fails. Two values could
+otherwise reach that string from outside this process:
 
 - **the labs directory**, which the renderer proposes over `labs:set-dir` and which becomes
   `KATHARA_API_LABS_DIR`. `main.ts`'s `setLabsDir` applies it only if it is a plain absolute path

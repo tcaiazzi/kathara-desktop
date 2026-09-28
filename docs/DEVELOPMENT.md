@@ -92,8 +92,13 @@ npm install
 npm run dev                 # http://localhost:5173, proxies /api to the backend
 ```
 
+Vite forwards `/api` to `VITE_BACKEND_URL` (default `http://localhost:8000`, see
+`services/frontend/vite.config.ts`); Compose points it at `http://backend:8000`.
+
 Run this way (or through Compose), the backend has no authentication at all, and it drives the
-host Docker socket — so run it only in a local or trusted environment.
+host Docker socket — so run it only in a local or trusted environment. Compose publishes both ports
+on `127.0.0.1` only, and the backend answers only to loopback host names (plus
+`KATHARA_API_ALLOWED_HOSTS`), which keeps a web page from reaching it through DNS rebinding.
 
 ## Configuration
 
@@ -118,8 +123,8 @@ desktop app sets the ones it needs itself; these matter when running the backend
 | `KATHARA_API_GALLERY_CACHE_TTL` | `900` | Seconds a fetched gallery catalog is reused |
 | `KATHARA_API_GALLERY_TOKEN` | *(unset)* | GitHub token sent on gallery API calls, to lift the unauthenticated rate limit (60 calls/hour per IP). Needs no scopes |
 | `KATHARA_API_MAX_FILES_PER_LAB` | `200` | Most files one gallery install or `.zip` upload may create |
-| `KATHARA_API_MAX_BYTES_PER_FILE` | `5242880` (5 MB) | Largest single file in a gallery install or upload, and the largest request body |
-| `KATHARA_API_MAX_BYTES_PER_LAB` | `20971520` (20 MB) | Largest total size of one gallery install or upload |
+| `KATHARA_API_MAX_BYTES_PER_FILE` | `5242880` (5 MB) | Largest single file in a gallery install or upload |
+| `KATHARA_API_MAX_BYTES_PER_LAB` | `20971520` (20 MB) | Largest total size of one gallery install or upload; plus 1 MiB, the largest request body |
 | `KATHARA_API_TTY_MAX_SESSIONS` | `32` | Live terminal WebSockets open at once; one more is refused (close code 1013) rather than queued |
 | `KATHARA_API_CORS_ORIGINS` | *(empty)* | Comma-separated allowed origins (only needed when the frontend is served from a different origin). `*` is accepted but disables credentialed cross-origin requests — the spec forbids combining the two, and allowing both would let any website call this API |
 | `KATHARA_API_ALLOWED_HOSTS` | *(empty)* | Comma-separated host names the backend answers to besides loopback (`localhost`, `127.0.0.1`, `[::1]`) and a concrete `KATHARA_API_HOST`; any other `Host` header gets a 400, which is what stops DNS rebinding. Compose sets `backend`. `*` turns the check off |

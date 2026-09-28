@@ -363,7 +363,7 @@ export const api = {
       `/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/fs/download?path=${encodeURIComponent(path)}`,
     ),
   // Live boot-time startup log + finished flag for a running device — poll while a node's info
-  // panel is open and startup hasn't finished yet (see TopologyGraph's node-info block).
+  // panel is open and startup hasn't finished yet (see hooks/useStartupStatus.ts).
   getStartupStatus: (labId: string, machineName: string, signal?: AbortSignal) =>
     request<StartupStatus>(
       "GET",
@@ -402,8 +402,6 @@ export const api = {
     return `${proto}//${window.location.host}${API_BASE}/labs/${encodeURIComponent(labId)}/machines/${encodeURIComponent(machineName)}/tty/ws?shell=${encodeURIComponent(shell)}${tokenParam}`;
   },
 
-  // stats/stream is a GET endpoint, so the browser's native EventSource can be used directly
-  // against this URL — no manual SSE body-parsing needed.
   // The lab events stream (GET /api/events). Async, unlike statsStreamUrl below: it is opened as
   // soon as the Workspace mounts, which can be before the pairing token has been fetched.
   labEventsUrl: async () => {
@@ -411,6 +409,8 @@ export const api = {
     const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
     return `${API_BASE}/events${tokenParam}`;
   },
+  // stats/stream is a GET endpoint, so the browser's native EventSource can be used directly
+  // against this URL — no manual SSE body-parsing needed.
   statsStreamUrl: (labId: string) => {
     const tokenParam = cachedAuthToken ? `?token=${encodeURIComponent(cachedAuthToken)}` : "";
     return `${API_BASE}/labs/${encodeURIComponent(labId)}/stats/stream${tokenParam}`;

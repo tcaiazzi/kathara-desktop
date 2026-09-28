@@ -95,8 +95,10 @@ async def tty_live_ws(
     # CORSMiddleware returns immediately for a non-HTTP scope, so a page on any origin can open
     # this socket. A browser always sends Origin on a WebSocket handshake — same-origin included
     # — so checking it here is what closes that. Same close-before-accept() shape as the token
-    # check above, with a distinct code so the two failures are told apart client-side. The Host
-    # check is main.py's HTTP middleware one, repeated because a handshake never reaches it.
+    # check above, and so the same outcome for a browser: an HTTP 403 on the handshake. The two
+    # close codes only reach a client that sees the close frame itself (Starlette's TestClient),
+    # which is how the tests tell the two refusals apart. The Host check is main.py's HTTP
+    # middleware one, repeated because a handshake never reaches it.
     host = websocket.headers.get("host")
     if not is_host_allowed(host) or not is_origin_allowed(websocket.headers.get("origin"), host):
         await websocket.close(code=4403)

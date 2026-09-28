@@ -70,7 +70,7 @@ const SUDO_VERIFY_TIMEOUT_MS = 15_000;
 const RECLAIM_TIMEOUT_MS = 120_000;
 /** Below this many *consecutive* failed sudo checks, a cooldown never engages — a person mistyping
  * their own password a couple of times pays nothing extra. Past it, `sudo -S -k -v` stops being a
- * free oracle a compromised renderer (e.g. content a lab loaded into the webview) could otherwise
+ * free oracle a compromised renderer (e.g. a script injected into the SPA) could otherwise
  * hammer in the background to brute-force the account's real password from the ok/wrong-password
  * split alone. */
 const SUDO_RATE_LIMIT_FREE_ATTEMPTS = 5;

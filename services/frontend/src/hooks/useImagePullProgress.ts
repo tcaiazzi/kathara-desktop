@@ -9,8 +9,8 @@ const POLL_MS = 800;
 /**
  * Poll the backend's single image-download slot while `active`.
  *
- * Mirrors the startup-status poll in TopologyGraph: a recursive setTimeout, a `cancelled` flag in
- * the cleanup, and dependencies on primitives only. Deliberately no backoff and no cap — a slow
+ * Mirrors the startup-status poll in useStartupStatus: a recursive setTimeout, an AbortController
+ * aborted in the cleanup, and dependencies on primitives only. Deliberately no backoff and no cap — a slow
  * first pull is exactly when the live numbers matter most — and errors reschedule silently rather
  * than surfacing, since a transient failure mid-download must never become a toast.
  */

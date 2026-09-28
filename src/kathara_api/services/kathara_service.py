@@ -2083,7 +2083,8 @@ class KatharaService:
                 display_path = (
                     file_path if owner == ROOT_MACHINE else fs.path.join(f"/{owner}", file_path.lstrip("/"))
                 )
-                # The walk follows a symlinked directory, so a file under one may lie outside.
+                # `_walk` never descends into a linked directory, but a file it lists may itself be a
+                # symbolic link leading outside the lab.
                 if self._escapes_lab(lab, display_path):
                     continue
                 try:

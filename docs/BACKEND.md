@@ -153,7 +153,7 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
 | `docker.errors.APIError` (any other daemon-side failure) | 502 |
 | `UnauthorizedError` (auth token configured, request has none or the wrong one) | 401 |
 | `ForbiddenOriginError` (cross-origin state-changing request), `PrivilegeError`, `LabFilePermissionError` (a lab file another account owns — in practice one a running device wrote as root into `shared/`) | 403 |
-| `PayloadTooLargeError` (body over `max_bytes_per_file`; raised by `main.py`'s size middleware, not `errors.py`) | 413 |
+| `PayloadTooLargeError` (a declared `Content-Length` over `max_bytes_per_lab` + 1 MiB of framing headroom; raised by `main.py`'s size middleware, not `errors.py`), `FileTooLargeError` (a running device's file over 64 MiB) | 413 |
 | `RequestValidationError` (FastAPI body/query validation) | 422 |
 | `pydantic.ValidationError` (a schema validated by service code — e.g. a device derived from lab content) | 422 |
 | anything else | 500 |
@@ -219,7 +219,7 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/labs/{lab}/live-addresses` | The addresses on each running device's `ethN` interfaces, for devices whose startup has finished (one `ip -o addr show` each; IPv6 link-local dropped). A device that is stopped, still booting or unreachable is left out. Backs the topology's "running address differs from the startup" warning | — | `{machine: {iface_num: string[]}}` |
 | GET | `/api/labs/{lab}/images` | Which of this lab's device images are missing locally and which have a newer version upstream — call it immediately before a deploy so the download is its own consented step instead of a silent pull inside `POST .../deploy`. Callers must treat *any* failure as "deploy anyway". Costs one registry round-trip per present image (bounded, parallel) unless `image_update_policy` is `Never` | — | `LabImagesStatus` |
 | POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
-| POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?}` | `Message` |
+| POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?, selected_links?}` | `Message` |
 | POST | `/api/labs/{lab}/rename` | Rename the lab directory; the lab gets a new id (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` (with the new `id`) |
 | POST | `/api/labs/{lab}/close` | Close a lab opened from outside the labs root: undeploy it and forget it, folder untouched (409 for a lab under the root) | — | `Message` |
 | DELETE | `/api/labs/{lab}` | Delete the lab (undeploy + remove on disk — a lab that is a symlink in the labs root loses the link, never what it points to; 409 for a folder opened from outside the labs root) | — | `Message` |

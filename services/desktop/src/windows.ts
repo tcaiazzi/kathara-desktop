@@ -51,7 +51,7 @@ function sameOrigin(url: string, origin: string | null): boolean {
 /**
  * Anything that isn't the app's own origin is handed to the user's browser rather than opened
  * in a Chromium window with no address bar. That covers the published-port links the topology
- * view builds (services/frontend/src/components/TopologyGraph.tsx), which point at arbitrary
+ * panel builds (services/frontend/src/components/DeviceInfoTabs.tsx), which point at arbitrary
  * host ports and are not part of the app.
  */
 function openExternally(url: string): void {

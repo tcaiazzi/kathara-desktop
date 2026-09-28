@@ -339,9 +339,10 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     SettingsError: status.HTTP_400_BAD_REQUEST,
     # Raised by pyfilesystem2 for an offline-lab-filesystem path that tries to climb above its own
     # root (e.g. `path=../../etc`, or one that normalizes to that) — a real but non-malicious input
-    # error (see `errors.py`'s own catch-all below for why this needs a mapping at all: `OSFS`
-    # already refuses to read/write outside its root regardless, so this is purely about giving the
-    # caller a clean 400 instead of a 500 logged as an unhandled server bug).
+    # error. Being raised at all is the protection against `..`; this mapping only gives the caller
+    # a clean 400 instead of a 500 logged as an unhandled server bug (see the catch-all below). A
+    # symbolic link out of the lab is a separate way out, which `OSFS` follows —
+    # `KatharaService._confine` refuses that one.
     fs.errors.IllegalBackReference: status.HTTP_400_BAD_REQUEST,
     # pyfilesystem2 offline-fs errors reachable from fs_write_text_offline/_write_lab_root_files,
     # fs_mkdir_offline and fs_upload_bytes_offline: a write/mkdir whose target path collides with

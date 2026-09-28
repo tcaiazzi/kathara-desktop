@@ -134,11 +134,11 @@ def create_app() -> FastAPI:
         return await call_next(request)
 
     # Cheap, early reject for the common case (a client that sends `Content-Length`, which every
-    # request this app's own frontend makes does). Not the real enforcement — that counts actual
-    # bytes lower down, per import (LabStore._read_bounded/_copy_with_cap), and still applies to a
-    # body sent without this header (chunked transfer), which this check cannot see at all. This
-    # only saves reading/parsing a request whose *declared* size alone already rules it out, e.g.
-    # before FastAPI buffers a multipart upload into memory.
+    # request this app's own frontend makes does). A body sent without the header (chunked
+    # transfer) passes it unseen. For a .zip import that is covered lower down, where the actual
+    # bytes are counted (LabStore._read_bounded/_copy_with_cap); other uploads and text writes have
+    # no such second check. This saves reading/parsing a request whose *declared* size alone already
+    # rules it out, e.g. before FastAPI buffers a multipart upload into memory.
     #
     # `max_bytes_per_lab` is read fresh on every request rather than computed once here: it is
     # editable at runtime from the Settings page (KatharaService.update_settings), so baking it
