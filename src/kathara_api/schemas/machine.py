@@ -38,6 +38,15 @@ _META_KEY_RE = IDENTIFIER_RE
 _RESERVED_META_KEYS = MODELED_META_KEYS
 
 
+def _reject_lab_conf_key(value: str) -> str:
+    """The left-hand side of a ``key=value`` lab.conf value (an env, a sysctl, a ulimit): anything
+    ``reject_lab_conf_quotes`` refuses, an empty key, and an ``=`` that would move the split."""
+    reject_lab_conf_quotes(value)
+    if not value or "=" in value:
+        raise ValueError(f"invalid key {value!r}: must be non-empty and contain no '='")
+    return value
+
+
 class PortMapping(BaseModel):
     """A published port mapping (host <-> guest)."""
 
@@ -100,6 +109,13 @@ class Ulimit(BaseModel):
     soft: int
     hard: Optional[int] = None
 
+    @field_validator("name")
+    @classmethod
+    def _renderable_name(cls, value: str) -> str:
+        # Written raw into a `pc[ulimit]="name=soft:hard"` line (lab_builder._format_ulimit), so a
+        # newline would start a directive of its own and an `=` would shift the soft limit.
+        return _reject_lab_conf_key(value)
+
 
 class InterfaceAttach(BaseModel):
     """Request-side description of a device interface on a collision domain."""
@@ -153,6 +169,25 @@ class MachineOptionsBase(BaseModel):
         for value in values.values():
             if isinstance(value, str):
                 reject_lab_conf_quotes(value)
+        return values
+
+    @field_validator("envs", "sysctls")
+    @classmethod
+    def _renderable_keys(cls, values: dict) -> dict:
+        # Rendered as `key=value` inside one lab.conf line (lab_conf_edit.replace_device_options),
+        # so the key needs the same care as the value, plus no `=` of its own.
+        for key in values:
+            _reject_lab_conf_key(key)
+        return values
+
+    @field_validator("exec_commands")
+    @classmethod
+    def _no_quotes_in_commands(cls, values: list[str]) -> list[str]:
+        # One `pc[exec]="..."` line per command, written without going through
+        # `lab_store.conf_value`: a newline here would inject a directive of its own — a
+        # `pc[volume]=...` included — that the next reload of lab.conf then applies.
+        for value in values:
+            reject_lab_conf_quotes(value)
         return values
 
     @field_validator("metas")

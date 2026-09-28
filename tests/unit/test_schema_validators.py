@@ -28,6 +28,39 @@ def test_machine_create_rejects_a_quote_in_env_sysctl_and_meta_values():
         MachineCreate.model_validate({"name": "pc1", "metas": {"frobnicate": "ha'x"}})
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"exec_commands": ['ls"\npc1[volume]="/home/u|/h|rw"\npc1[exec]="true']},
+        {"exec_commands": ["echo 'hi'"]},
+        {"envs": {"A\npc1[privileged]": "true"}},
+        {"envs": {"A=B": "c"}},
+        {"envs": {"": "c"}},
+        {"sysctls": {"net.x\npc1[privileged]": "1"}},
+        {"ulimits": [{"name": "nofile\npc1[privileged]", "soft": 1}]},
+        {"ulimits": [{"name": "no=file", "soft": 1}]},
+    ],
+)
+def test_machine_create_rejects_lab_conf_injection_outside_scalar_values(options):
+    """Commands, env/sysctl keys and ulimit names reach a lab.conf line too, so a newline in one
+    would add a directive of its own — a volume or privileged mode included."""
+    with pytest.raises(ValidationError):
+        MachineCreate.model_validate({"name": "pc1", **options})
+
+
+def test_machine_create_accepts_ordinary_commands_keys_and_ulimits():
+    spec = MachineCreate.model_validate(
+        {
+            "name": "pc1",
+            "exec_commands": ["ip link set eth0 up", "sysctl -w net.ipv4.ip_forward=1"],
+            "envs": {"PATH_EXTRA": "a=b"},
+            "sysctls": {"net.ipv4.ip_forward": 1},
+            "ulimits": [{"name": "nofile", "soft": 1024, "hard": 2048}],
+        }
+    )
+    assert spec.envs == {"PATH_EXTRA": "a=b"}
+
+
 def test_machine_create_accepts_ordinary_values():
     spec = MachineCreate.model_validate(
         {"name": "pc1", "image": "kathara/base", "shell": "/bin/bash", "metas": {"frobnicate": "yes"}}

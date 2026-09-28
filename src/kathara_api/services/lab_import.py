@@ -25,6 +25,7 @@ from ..lab_conf_options import (
     IMAGE_KEY,
     INTERPRETED_OPTIONS,
     LAB_CONF_FILENAME,
+    MAC_ADDRESS_PATTERN,
     MEM_PATTERN,
     OPTION_ALIASES,
 )
@@ -215,11 +216,18 @@ def _apply_conf_option(machine: _ConfMachine, opt: str, value: str, line_no: int
     elif opt == "bridged":
         machine.bridged = _parse_bool(value) is True
     elif opt == "num_terms":
+        # A negative count is handled like a non-integer: kept, not applied. `MachineCreate` would
+        # otherwise refuse it (ge=0) with an exception instead of a warning.
         try:
-            machine.num_terms = int(value)
+            num_terms = int(value)
         except ValueError:
+            num_terms = -1
+        if num_terms >= 0:
+            machine.num_terms = num_terms
+        else:
             machine.unsupported.append(
-                f"{machine.name}[num_terms] (line {line_no}) — not an integer, kept in lab.conf but not applied"
+                f"{machine.name}[num_terms] (line {line_no}) — not a non-negative integer, "
+                "kept in lab.conf but not applied"
             )
     elif opt == "entrypoint":
         machine.entrypoint = value
@@ -281,6 +289,12 @@ def parse_lab_conf(text: str) -> _ParsedConf:
                     cd, mac = parts
                 if not re.match(COLLISION_DOMAIN_PATTERN, cd):
                     errors.append(f'line {line_no}: invalid collision domain "{cd}"')
+                    continue
+                # Checked here rather than left to InterfaceAttach, which would raise: this function
+                # reports a bad line in `errors`, and the disk watcher relies on that to tell the
+                # frontend lab.conf is invalid (KatharaService._lab_conf_changed_on_disk).
+                if mac is not None and not re.match(MAC_ADDRESS_PATTERN, mac):
+                    errors.append(f'line {line_no}: invalid MAC address "{mac}"')
                     continue
                 machine.interfaces.append(InterfaceAttach(link=cd, number=int(arg), mac_address=mac))
             else:

@@ -63,10 +63,11 @@ from Kathara.setting.Setting import Setting
 from Kathara.utils import get_current_user_name, is_admin
 from pydantic import ValidationError
 
-from ..config import get_settings
+from ..config import format_mb, get_settings
 from ..errors import (
     ApiError,
     BinaryFileError,
+    FileTooLargeError,
     InvalidSettingsError,
     LabAlreadyRegisteredError,
     LabCloseRefusedError,
@@ -2298,6 +2299,13 @@ class KatharaService:
         if self._is_lab_root(source_owner, source_guest) or self._is_lab_root(dest_owner, dest_guest):
             raise ApiError("The lab root can't be moved or copied.")
 
+        # A folder moved or copied into itself (or onto itself) would copy into the tree being walked,
+        # and a move then removes the source — the copy with it.
+        if source_owner == dest_owner and (
+            dest_guest == source_guest or dest_guest.startswith(source_guest.rstrip("/") + "/")
+        ):
+            raise ApiError("A file or folder can't be moved or copied into itself.")
+
         src_fs = self._fs_for(lab, source_owner)
         if src_fs is None or not src_fs.exists(source_guest):
             raise PathNotFoundError(f"Path `{source_path}` not found.")
@@ -3306,21 +3314,35 @@ class KatharaService:
     # Exit code used to signal "path is a directory" from the combined test+cat below — distinct
     # from `cat`'s own exit codes (1 on error) and from a shell's own low-numbered exit codes.
     _FS_READ_IS_DIR_EXIT = 90
+    # The most one read of a running device's file returns. The exec's whole output is held in
+    # memory (the facade's `stream=False`), and a device's filesystem has files with no end —
+    # `/dev/zero`, `/dev/urandom` — that would otherwise grow this single process until it dies.
+    # Generous rather than tied to the import caps: a capture or a log downloaded from a device is
+    # the user's own data.
+    _FS_READ_MAX_BYTES = 64 * 1024 * 1024
 
     def fs_read_bytes(self, lab_id: str, machine_name: str, path: str) -> bytes:
-        """A file of a running device, read in one exec. ``ApiError`` for a directory or a failed read."""
+        """A file of a running device, read in one exec. ``ApiError`` for a directory or a failed read,
+        ``FileTooLargeError`` beyond ``_FS_READ_MAX_BYTES``."""
         normalized = self._running_guest_path(lab_id, machine_name, path)
         quoted = shlex.quote(normalized)
-        # A single exec instead of a `test -d` probe followed by a separate `cat` — halves the
-        # docker-exec round trips for every Runtime FS file open.
-        cmd = f"[ -d {quoted} ] && exit {self._FS_READ_IS_DIR_EXIT}; cat {quoted}"
+        # A single exec instead of a `test -d` probe followed by a separate read — halves the
+        # docker-exec round trips for every Runtime FS file open. One byte past the cap is read so
+        # a file of exactly the cap is told apart from a longer one.
+        limit = self._FS_READ_MAX_BYTES
+        cmd = f"[ -d {quoted} ] && exit {self._FS_READ_IS_DIR_EXIT}; head -c {limit + 1} {quoted}"
         stdout, stderr, exit_code = self.exec_command(lab_id, machine_name, ["sh", "-lc", cmd], wait=False)
         if exit_code == self._FS_READ_IS_DIR_EXIT:
             raise ApiError(f"Path `{normalized}` is a directory. Use list to navigate it.")
         if exit_code != 0:
             err = _decode(stderr).strip()
             raise ApiError(f"Read file `{normalized}` failed: {err or f'exit code {exit_code}'}")
-        return stdout or b""
+        data = stdout or b""
+        if len(data) > limit:
+            raise FileTooLargeError(
+                f"`{normalized}` is larger than the {format_mb(limit)} a file can be read from a running device."
+            )
+        return data
 
     def fs_read_text(self, lab_id: str, machine_name: str, path: str) -> str:
         """``fs_read_bytes`` as UTF-8 text, or ``BinaryFileError`` for a file that isn't."""

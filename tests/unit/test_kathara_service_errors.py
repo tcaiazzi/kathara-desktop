@@ -101,7 +101,7 @@ def test_available_shells_requires_running_machine():
         service.available_shells(lab_id(service, "lab1"), "pc1")
 
 
-def test_fs_read_bytes_rejects_directory_paths_before_cat(tmp_path):
+def test_fs_read_bytes_rejects_directory_paths_before_reading(tmp_path):
     service = _service_with_running_machine(tmp_path)
 
     def _fake_exec(lab_name, machine_name, command, wait=False):

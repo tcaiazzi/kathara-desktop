@@ -239,6 +239,8 @@ describe("interface lines", () => {
     ["A/", `invalid interface "A/"`], // an empty part after the slash does not count
     ["A-B", `invalid collision domain "A-B"`],
     ["A-B/02:42:ac:11:00:02", `invalid collision domain "A-B"`],
+    ["A/zz", `invalid MAC address "zz"`],
+    ["A/02:42:ac:11:00", `invalid MAC address "02:42:ac:11:00"`],
   ])("rejects %s", (value, message) => {
     expect(diagnostics(`pc1[0]=${value}`)).toEqual([["error", message]]);
   });

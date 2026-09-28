@@ -398,8 +398,27 @@ def test_a_non_integer_num_terms_is_reported_as_unsupported_with_its_line():
 
     assert parsed.errors == []
     assert parsed.machines["pc1"].unsupported == [
-        "pc1[num_terms] (line 2) — not an integer, kept in lab.conf but not applied"
+        "pc1[num_terms] (line 2) — not a non-negative integer, kept in lab.conf but not applied"
     ]
+
+
+def test_a_negative_num_terms_is_reported_as_unsupported_not_raised():
+    """`MachineCreate` refuses num_terms < 0, so the parser must keep it out rather than let the
+    translation raise."""
+    t = lab_import.translate_lab_files({"lab.conf": "pc1[image]=kathara/base\npc1[num_terms]=-1\n"}, "demo")
+
+    assert t.errors == []
+    assert t.payload.machines[0].num_terms is None
+    assert any("pc1[num_terms] (line 2)" in w for w in t.warnings)
+
+
+def test_an_invalid_mac_address_is_an_error_not_an_exception():
+    """The disk watcher only learns lab.conf is invalid from `errors`; an exception would be
+    logged and the frontend never told."""
+    parsed = lab_import.parse_lab_conf("pc1[0]=lan/02:42:ac:11:00:02\npc1[1]=wan/zz\n")
+
+    assert parsed.errors == ['line 2: invalid MAC address "zz"']
+    assert [i.link for i in parsed.machines["pc1"].interfaces] == ["lan"]
 
 
 def test_an_unrecognized_option_is_reported_as_unsupported_with_its_line():

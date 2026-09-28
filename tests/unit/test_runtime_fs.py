@@ -13,7 +13,7 @@ import re
 import pytest
 from Kathara.exceptions import MachineNotRunningError
 
-from kathara_api.errors import ApiError, UnsupportedOperationError
+from kathara_api.errors import ApiError, FileTooLargeError, UnsupportedOperationError
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.schemas.machine import MachineCreate
 from kathara_api.services import lab_builder, serializers
@@ -299,7 +299,23 @@ def test_read_bytes_returns_the_file_content(service, facade):
 
     assert service.fs_read_bytes(lab_id(service, "l"), "pc1", "bin/blob") == b"\x00\x01"
     [(_, [_, _, cmd], _, _)] = facade.execs
-    assert cmd == f"[ -d /bin/blob ] && exit {KatharaService._FS_READ_IS_DIR_EXIT}; cat /bin/blob"
+    assert cmd == (
+        f"[ -d /bin/blob ] && exit {KatharaService._FS_READ_IS_DIR_EXIT}; "
+        f"head -c {KatharaService._FS_READ_MAX_BYTES + 1} /bin/blob"
+    )
+
+
+def test_read_bytes_refuses_a_file_past_the_cap(service, facade, monkeypatch):
+    """`/dev/zero` never ends: the read is bounded, and one byte past the cap means "too large",
+    not a truncated file."""
+    monkeypatch.setattr(KatharaService, "_FS_READ_MAX_BYTES", 4)
+    facade.result = (b"12345", b"", 0)
+
+    with pytest.raises(FileTooLargeError):
+        service.fs_read_bytes(lab_id(service, "l"), "pc1", "/dev/zero")
+
+    facade.result = (b"1234", b"", 0)
+    assert service.fs_read_bytes(lab_id(service, "l"), "pc1", "/exact") == b"1234"
 
 
 def test_read_bytes_of_an_empty_file_returns_empty_bytes(service, facade):
@@ -526,7 +542,8 @@ _SHELL_PROBE = "".join(f"[ -x {path} ] && echo {name}\n" for name, path in SHELL
     "call, command",
     [
         (lambda s: s.fs_read_bytes(lab_id(s, "l"), "pc1", "/etc/hosts"),
-         ["sh", "-lc", f"[ -d /etc/hosts ] && exit {KatharaService._FS_READ_IS_DIR_EXIT}; cat /etc/hosts"]),
+         ["sh", "-lc", f"[ -d /etc/hosts ] && exit {KatharaService._FS_READ_IS_DIR_EXIT}; "
+                       f"head -c {KatharaService._FS_READ_MAX_BYTES + 1} /etc/hosts"]),
         (lambda s: s.fs_mkdir(lab_id(s, "l"), "pc1", "/d"), ["mkdir", "-p", "/d"]),
         (lambda s: s.fs_move(lab_id(s, "l"), "pc1", "/a", "/b"), ["mv", "--", "/a", "/b"]),
         (lambda s: s.fs_copy(lab_id(s, "l"), "pc1", "/a", "/b"), ["cp", "-a", "--", "/a", "/b"]),

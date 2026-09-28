@@ -612,6 +612,42 @@ def test_fs_move_and_copy_offline_reject_the_lab_root(tmp_path, path):
     assert (store.lab_dir("testlab") / "notes.txt").read_text() == "hi\n"
 
 
+@pytest.mark.parametrize(
+    ("source", "destination"),
+    [
+        ("/shared", "/shared/bak"),
+        ("/shared", "/shared/a/b"),
+        ("/shared", "/shared"),
+        ("/pc1", "/pc1/etc/copy"),  # a device's whole folder
+        ("/pc1/etc", "/pc1/etc/inner"),
+    ],
+)
+def test_a_folder_cannot_be_moved_or_copied_into_itself(tmp_path, source, destination):
+    """A move copies then removes the source, so a destination inside it would be removed too."""
+    service, store = _two_machine_lab(tmp_path)
+    lab = lab_id(service, "testlab")
+    service.fs_write_text_offline(lab, "/shared/keep.txt", "shared\n")
+    service.fs_write_text_offline(lab, "/pc1/etc/keep.txt", "pc1\n")
+
+    with pytest.raises(ApiError):
+        service.fs_move_offline(lab, source, destination)
+    with pytest.raises(ApiError):
+        service.fs_copy_offline(lab, source, destination)
+
+    assert (store.lab_dir("testlab") / "shared" / "keep.txt").read_text() == "shared\n"
+    assert (store.lab_dir("testlab") / "pc1" / "etc" / "keep.txt").read_text() == "pc1\n"
+
+
+def test_a_sibling_whose_name_extends_the_source_is_not_inside_it(tmp_path):
+    service, store = _two_machine_lab(tmp_path)
+    lab = lab_id(service, "testlab")
+    service.fs_write_text_offline(lab, "/shared/keep.txt", "shared\n")
+
+    service.fs_copy_offline(lab, "/shared", "/shared2")
+
+    assert (store.lab_dir("testlab") / "shared2" / "keep.txt").read_text() == "shared\n"
+
+
 def test_a_non_canonical_device_path_still_marks_the_device_dirty(tmp_path):
     """`_dirty_target_for` splits on "/" too, so an unnormalized "./pc1/etc/motd" marks nothing
     dirty and the write is never live-pushed on the next deploy."""

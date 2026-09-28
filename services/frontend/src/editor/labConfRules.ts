@@ -86,16 +86,22 @@ export function lintLabConfLines(lines: string[]): LabConfDiagnostic[] {
       }
       if (/^\d+$/.test(arg)) {
         let cd = value;
+        let mac: string | null = null;
         if (value.includes("/")) {
           const parts = value.split("/").filter(Boolean);
           if (parts.length !== 2) {
             push(`invalid interface "${value}"`);
             return;
           }
-          cd = parts[0];
+          [cd, mac] = parts;
         }
         if (!/^\w+$/.test(cd)) {
           push(`invalid collision domain "${cd}"`);
+          return;
+        }
+        // `MAC_ADDRESS_PATTERN` in lab_conf_options.py; the backend appends to `errors` here.
+        if (mac !== null && !/^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/.test(mac)) {
+          push(`invalid MAC address "${mac}"`);
           return;
         }
         (ifaces[name] ??= []).push({ num: Number(arg), line: index });

@@ -70,6 +70,13 @@ class ForbiddenOriginError(ApiError):
     status_code = status.HTTP_403_FORBIDDEN
 
 
+class FileTooLargeError(ApiError):
+    """Raised when a file is larger than this API will hold in memory to return it (see
+    ``KatharaService.fs_read_bytes``)."""
+
+    status_code = status.HTTP_413_CONTENT_TOO_LARGE
+
+
 class ForbiddenHostError(ApiError):
     """Raised for a request addressed to a Host this backend doesn't answer to
     (dependencies.is_host_allowed) — the signature of a DNS-rebinding page. A 400 rather than a
