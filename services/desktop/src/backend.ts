@@ -1005,7 +1005,15 @@ async function runElevatedLinux(python: string, staticDir: string, password: str
   log(`  labs dir: ${labs}`);
   log(`  static dir: ${staticDir}`);
 
-  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, interpreter, ...elevatedArgs], { env: sudoEnv(env), stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  // `detached`: sudo in a process group of its own. When the command it runs is stopped, sudo
+  // suspends its whole process group in turn — sharing this app's group, that froze the main
+  // process and every renderer along with the backend.
+  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, interpreter, ...elevatedArgs], {
+    env: sudoEnv(env),
+    stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
+    detached: true,
+  });
   let stderrBuf = "";
   proc.stderr?.on("data", (c: Buffer) => {
     stderrBuf += c.toString();
@@ -1309,6 +1317,9 @@ export async function stopBackend(): Promise<void> {
   ]);
   if (timedOut) {
     log("backend did not exit on SIGTERM; sending SIGKILL");
+    // For the Linux elevated backend `proc` is sudo, which cannot pass a SIGKILL on; the root
+    // backend dies with it only because kathara_api.stdin_secrets asked the kernel for exactly
+    // that (PR_SET_PDEATHSIG).
     proc.kill("SIGKILL");
     // Bounded, not `await exited` unconditionally: a backend this SIGTERM somehow reached but
     // that still won't die shouldn't hang app quit indefinitely waiting for an "exit" that may

@@ -3,8 +3,12 @@
 
 import hashlib
 import hmac
+import os
+import signal
 import subprocess
 import sys
+import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -93,3 +97,41 @@ def test_the_launcher_hands_the_remaining_arguments_to_uvicorn():
 
     assert result.returncode == 0, result.stderr
     assert "uvicorn" in result.stdout.lower()
+
+
+def _is_gone(pid: int) -> bool:
+    """Exited: no process, or a zombie nobody has reaped yet."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] == "Z"
+    except FileNotFoundError:
+        return True
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="PR_SET_PDEATHSIG is Linux-only")
+def test_the_launcher_dies_with_its_parent_even_when_stopped():
+    """The shell's last resort against a hung elevated backend is SIGKILL to sudo, which sudo cannot
+    pass on; the backend must go with it — stopped or not — instead of staying up as root."""
+    child_code = (
+        "import sys, time; from kathara_api.stdin_secrets import die_with_parent; "
+        "die_with_parent(); print('ready', flush=True); time.sleep(60)"
+    )
+    parent_code = (
+        "import subprocess, sys, time; "
+        f"p = subprocess.Popen([sys.executable, '-c', {child_code!r}]); "
+        "print(p.pid, flush=True); time.sleep(60)"
+    )
+    parent = subprocess.Popen([sys.executable, "-c", parent_code], stdout=subprocess.PIPE, text=True)
+    try:
+        child_pid = int(parent.stdout.readline())
+        assert parent.stdout.readline().strip() == "ready"
+        os.kill(child_pid, signal.SIGSTOP)
+
+        parent.kill()
+        parent.wait(timeout=10)
+
+        deadline = time.monotonic() + 10
+        while not _is_gone(child_pid) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert _is_gone(child_pid)
+    finally:
+        parent.kill()

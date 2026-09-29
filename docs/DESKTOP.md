@@ -70,7 +70,10 @@ Elevated (root) backend starts and orphan-backend recovery go through the same
 `runElevatedNative`/`markOrphaned` functions in `backend.ts` for the retry/cleanup paths. On
 Linux the two secrets do not travel on `sudo env …`'s command line with the other settings — any
 local user can read it in `/proc`, and sudo logs it — but on stdin after the password, where
-`python -m kathara_api.stdin_secrets` reads them before starting uvicorn.
+`python -m kathara_api.stdin_secrets` reads them before starting uvicorn. That launcher also asks
+the kernel to kill it when its parent dies (`PR_SET_PDEATHSIG`): sudo runs in a process group of its
+own and is the only process the shell can signal, and a SIGKILL to sudo — the last resort for a
+backend that ignores SIGTERM — would otherwise leave the root backend running, unnoticed.
 
 ### What is validated on the way into a privileged context
 
