@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeLiveMessage } from "./liveTty";
+import { decodeLiveMessage, terminalClipboardShortcut } from "./liveTty";
 
 // What the backend sends for terminal output: the raw bytes the device wrote, base64-encoded.
 function outputFrame(bytes: Uint8Array): string {
@@ -40,5 +40,33 @@ describe("decodeLiveMessage", () => {
     ["a frame without an event", '{"data":"aGk="}'],
   ])("ignores %s", (_label, raw) => {
     expect(decodeLiveMessage(raw)).toBeNull();
+  });
+});
+
+describe("terminalClipboardShortcut", () => {
+  const press = (code: string, mods: Partial<Record<"ctrlKey" | "shiftKey" | "altKey" | "metaKey", boolean>>, type = "keydown") => ({
+    type,
+    code,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    ...mods,
+  });
+
+  it("maps Ctrl+Shift+C and Ctrl+Shift+V to copy and paste", () => {
+    expect(terminalClipboardShortcut(press("KeyC", { ctrlKey: true, shiftKey: true }))).toBe("copy");
+    expect(terminalClipboardShortcut(press("KeyV", { ctrlKey: true, shiftKey: true }))).toBe("paste");
+  });
+
+  it.each([
+    ["plain Ctrl+C, the shell's interrupt", press("KeyC", { ctrlKey: true })],
+    ["plain Ctrl+V", press("KeyV", { ctrlKey: true })],
+    ["Ctrl+Shift+Alt+C", press("KeyC", { ctrlKey: true, shiftKey: true, altKey: true })],
+    ["Cmd+C, left to the terminal's own copy", press("KeyC", { metaKey: true })],
+    ["another letter", press("KeyX", { ctrlKey: true, shiftKey: true })],
+    ["a key release", press("KeyC", { ctrlKey: true, shiftKey: true }, "keyup")],
+  ])("leaves %s alone", (_label, event) => {
+    expect(terminalClipboardShortcut(event)).toBeNull();
   });
 });

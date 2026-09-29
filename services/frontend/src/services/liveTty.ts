@@ -38,3 +38,23 @@ export function decodeLiveMessage(raw: string): LiveTtyEvent | null {
       return null;
   }
 }
+
+/** What a key press asks of a live terminal's clipboard: the ones a Linux/Windows terminal uses,
+ *  Ctrl+Shift+C/V. Plain Ctrl+C/V stay the shell's (an interrupt, a literal next character). On
+ *  macOS Cmd+C/V already reach the terminal's own copy and paste, so nothing here claims them. */
+export type TerminalClipboardShortcut = "copy" | "paste";
+
+export function terminalClipboardShortcut(event: {
+  type: string;
+  code: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+}): TerminalClipboardShortcut | null {
+  if (event.type !== "keydown" || !event.ctrlKey || !event.shiftKey || event.altKey || event.metaKey) return null;
+  // `code`, not `key`: with Shift held `key` is "C", and on a non-Latin layout a different letter.
+  if (event.code === "KeyC") return "copy";
+  if (event.code === "KeyV") return "paste";
+  return null;
+}

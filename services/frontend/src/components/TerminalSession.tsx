@@ -1,8 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import type { TerminalStatus } from "../context/TerminalSessionsContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { useTerminalSession } from "../hooks/useTerminalSession";
+import { copyText } from "../services/clipboard";
 import { TerminalToolbar } from "./TerminalToolbar";
 import "./TerminalPanel.css";
 
@@ -73,6 +74,31 @@ export function TerminalSession({ id, machine, host, toolbarHost, inSplit, focus
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // With text selected, a right click offers to copy it: xterm draws its own selection, which the
+  // browser's native menu cannot see. Without one the native menu stays, pasting included.
+  const openSelectionMenu = (e: MouseEvent) => {
+    const term = terminalRef.current;
+    if (!term?.hasSelection()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const selection = term.getSelection();
+    ws.setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          label: "Copy",
+          title: "Ctrl+Shift+C",
+          action: () => {
+            void copyText(selection).catch(() => undefined);
+            term.focus();
+          },
+        },
+        { label: "Select All", action: () => term.selectAll() },
+      ],
+    });
+  };
+
   const toolbar = (
     <TerminalToolbar
       variant={inSplit ? "pane" : "panel"}
@@ -86,7 +112,12 @@ export function TerminalSession({ id, machine, host, toolbarHost, inSplit, focus
   return (
     <>
       {inSplit ? createPortal(toolbar, toolbarHost) : toolbar}
-      <div ref={containerRef} className="kt-term-screen" onClick={() => terminalRef.current?.focus()} />
+      <div
+        ref={containerRef}
+        className="kt-term-screen"
+        onClick={() => terminalRef.current?.focus()}
+        onContextMenu={openSelectionMenu}
+      />
     </>
   );
 }

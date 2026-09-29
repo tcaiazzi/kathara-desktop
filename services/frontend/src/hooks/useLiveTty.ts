@@ -3,7 +3,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import "../styles/xterm.css";
-import { decodeLiveMessage, type LiveTtyEvent } from "../services/liveTty";
+import { copyText } from "../services/clipboard";
+import { decodeLiveMessage, terminalClipboardShortcut, type LiveTtyEvent } from "../services/liveTty";
 
 const MIN_TERMINAL_FONT_SIZE = 8;
 const MAX_TERMINAL_FONT_SIZE = 28;
@@ -74,6 +75,17 @@ export function useLiveTty(enabled: boolean, options: UseLiveTtyOptions): UseLiv
     // open terminal since each has its own Terminal instance. preventDefault stops the browser
     // from also zooming the whole page on the same shortcut.
     term.attachCustomKeyEventHandler((event) => {
+      // Ctrl+Shift+C/V, claimed before xterm turns them into control characters. Copy writes the
+      // selection itself (through the shell's clipboard in the desktop app, see copyText). Paste
+      // returns false without preventDefault, which leaves the browser's own paste to run on
+      // xterm's input, whose paste handler sends the text on — no clipboard read from here.
+      const clipboardShortcut = terminalClipboardShortcut(event);
+      if (clipboardShortcut === "copy") {
+        event.preventDefault();
+        if (term.hasSelection()) void copyText(term.getSelection()).catch(() => undefined);
+        return false;
+      }
+      if (clipboardShortcut === "paste") return false;
       if (event.type !== "keydown" || !(event.ctrlKey || event.metaKey)) return true;
       const zoomIn = event.key === "+" || event.key === "=" || event.code === "NumpadAdd";
       const zoomOut = event.key === "-" || event.code === "NumpadSubtract";
