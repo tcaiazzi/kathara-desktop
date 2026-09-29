@@ -364,14 +364,13 @@ export function useDeviceActions({
 
   async function deployDevice(deviceNode: DeviceNode) {
     if (pendingDevices[deviceNode.name]) return;
-    // Only ever requests the "volumes" case — never "both", even if this device happens to also
-    // be privileged: that would need the same resume-after-reload machinery the full-lab deploy
-    // has (see useLabLifecycleActions.ts), which a single device deploy has no way to resume into.
-    // A privileged device deployed from here without administrator privileges is refused by the
-    // backend with a message saying to deploy the whole lab (KatharaService.deploy_lab).
     const machine = detail?.machines.find((m) => m.name === deviceNode.name);
     // hosthome_mount applies to this device too, same as a full-lab deploy; the gate checks it.
-    const outcome = await ensureDeployAuthorized({ volumeMachines: machine ? [machine] : [] });
+    const outcome = await ensureDeployAuthorized({
+      labId,
+      privileged: !!machine?.privileged,
+      volumeMachines: machine ? [machine] : [],
+    });
     if (outcome !== "proceed") return;
     await runPending(deviceNode.name, "deploy", () =>
       withRefresh("Deploy device", () => api.deployDevice(labId, deviceNode.name), `Device ${deviceNode.name} deployed.`),

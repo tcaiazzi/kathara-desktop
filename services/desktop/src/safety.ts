@@ -1,5 +1,5 @@
 /**
- * Validation for the few values that reach a privileged context — an elevated command line, the
+ * Validation for the few values that reach a privileged context — a command run as root, the
  * backend's own filesystem root, or the IPC surface itself — from somewhere this process doesn't
  * control: the renderer (over IPC, including *which page* is calling) and `preferences.json` (a
  * plain JSON file `readPrefs` parses without validating).
@@ -23,19 +23,17 @@ import { fileURLToPath } from "node:url";
 const SHELL_METACHARACTERS = /["'$`%!^&|<>();{}*?~[\]#\r\n\t\0]/;
 
 /**
- * Whether `value` is an absolute path safe to interpolate into a command string and to hand to an
- * elevated process.
+ * Whether `value` is an absolute path safe to interpolate into a command string run as root.
  *
  * The type predicate matters at the IPC boundary: TypeScript's `(path: string)` on an
  * `ipcMain.handle` argument is erased at runtime, so a renderer can send a number, an object, or
  * nothing at all.
  *
  * Rejecting metacharacters outright rather than trying to escape them is the deliberate choice:
- * `@vscode/sudo-prompt` takes a single command *string* (it exposes no argv API) and writes it
- * verbatim into a `/bin/sh` script on macOS and a `.bat` line on Windows, and quoting a `.bat`
- * line correctly — `%` doubling, `^` escaping, how those interact with quotes — is notoriously
- * hard to get right. A path with no metacharacters is safe by construction; `quoteForShellString`
- * below is then the second line of defence, not the only one.
+ * the reclaim script (labFolders.ts's reclaimScript) is one `sh -c` string run as root, and
+ * quoting correctly for every shell a string may meet — a `.bat` line's `%` doubling and `^`
+ * escaping included — is notoriously hard to get right. A path with no metacharacters is safe by
+ * construction; `quoteForShellString` below is then the second line of defence, not the only one.
  *
  * `platform` exists so both branches can be exercised from either OS.
  */
@@ -70,7 +68,7 @@ export function isBoundedString(value: unknown, maxLength: number): value is str
 }
 
 /**
- * Quote one argument for the single command string `sudo-prompt` requires.
+ * Quote one argument for a single command string (a shell script, or a `.bat` line).
  *
  * POSIX: single quotes, which suppress every expansion, with the standard `'\''` dance for an
  * embedded quote. Windows: double quotes with `""` doubling, the convention `cmd.exe` follows.
@@ -109,10 +107,10 @@ const LOOPBACK_ORIGIN = /^http:\/\/127\.0\.0\.1:\d{1,5}$/;
  *
  * An http page must be on one of `backendOrigins`: the origins of the backends that proved they
  * hold this launch's pairing token (backend.ts's pairedBackendOrigins). Not just the current one:
- * the backend restarts on a fresh port for every elevate/drop/labs-dir change, and between
- * `stopBackend()` and the `win.loadURL` that follows there are seconds during which the live page
- * is still on the *previous* origin, making its own legitimate calls. Not any loopback port
- * either: a port this shell never verified may belong to another local user's process.
+ * a restarted backend can come back on a different port (when its remembered one is taken), and
+ * between `stopBackend()` and the `win.loadURL` that follows there are seconds during which the
+ * live page is still on the *previous* origin, making its own legitimate calls. Not any loopback
+ * port either: a port this shell never verified may belong to another local user's process.
  *
  * `file:` URLs are compared by *path*, not by URL string: Chromium's percent-encoding of a path
  * with a space or a non-ASCII character need not match what `pathToFileURL` would produce, and a

@@ -34,10 +34,9 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
   host path comes from the desktop shell's native folder dialog) or parsed from an imported
   `lab.conf` — both go through `schemas/machine.py`'s
   `VolumeMount`, which validates both halves precisely because they get written back into
-  `lab.conf`. Host bind-mounts are gated in the frontend instead, at deploy time: the desktop
-  shell requires the user's own password before a deploy that would mount one goes ahead (see
-  `services/frontend/src/desktop/ElevationContext.tsx`), and the `lab.conf` editor flags a
-  `[volume]` line with a security warning as soon as it's typed.
+  `lab.conf`. Host bind-mounts are gated at deploy time instead (see "Deploys that reach the host"
+  below), and the `lab.conf` editor flags a `[volume]` line with a security warning as soon as
+  it's typed.
 - **`services/lab_conf_edit.py`** — surgical, line-level `lab.conf` text edits (add/remove a device,
   add/remove an interface, set/unset a meta or `LAB_*` directive). Every offline structural change
   (`add_machine`, `remove_machine`, `connect_machine`/`disconnect_machine` on a stopped device) goes
@@ -117,6 +116,22 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
   that doesn't parse — is still listed (`LabSummary.problem`), so it can be closed, and loads by
   itself once it is back or fixed. Two paths differing only in non-ASCII characters get the same
   Kathara hash (Kathara strips them), so opening the second is refused.
+- **Deploys that reach the host** — a privileged device, a device's `[volume]` or the
+  `hosthome_mount` setting gives a container a hold on the host, so `KatharaService.deploy_lab`
+  refuses to create such a device (`_authorize_host_access`, before any network or container
+  exists) unless a grant covers it. The desktop shell issues one with
+  `POST /labs/{lab}/deploy-grant` (shell token only, like `/labs/open`) after checking the user's
+  own OS password, and `services/deploy_grants.py` is the single place that says what it covers:
+  what the lab's devices asked for at that moment (`HostAccess`), for one deploy attempt, for 60
+  seconds — so a `lab.conf` edited after the password, or a second deploy, needs a new one
+  (`DeployNotAuthorizedError`, which names what is missing). Devices already running are never
+  recreated, so they need nothing. With no shell token configured (a browser or server
+  deployment) no grant can exist: a privileged device then starts only when the process really is
+  root, with Kathara's own wording (`PrivilegeError`), and a host mount relies on the page's own
+  confirmation. The backend itself never needs root for any of it — Kathara's CLI refuses a
+  privileged device to a non-root user, but Docker doesn't, and `kathara_compat.py` removes that one
+  check from `DockerMachine` (and only there: external collision domains, which create host
+  interfaces, still need a root backend).
 - **Config vs runtime** — interface edits on a **stopped** device modify `lab.conf` (persisted config,
   via `lab_conf_edit` — never by serializing the live model, so a running sibling's runtime
   interfaces can't leak in); edits on a **running** device use Kathara's runtime manager APIs (live
@@ -152,7 +167,7 @@ glance. Maintained by hand from `src/kathara_api/routers/*.py`: a route added th
 | `docker.errors.NotFound` (incl. `ImageNotFound`) | 404 |
 | `docker.errors.APIError` (any other daemon-side failure) | 502 |
 | `UnauthorizedError` (auth token configured, request has none or the wrong one) | 401 |
-| `ForbiddenOriginError` (cross-origin state-changing request), `PrivilegeError`, `LabFilePermissionError` (a lab file another account owns — in practice one a running device wrote as root into `shared/`) | 403 |
+| `ForbiddenOriginError` (cross-origin state-changing request), `ShellOnlyError` (a shell-only route without the shell token), `DeployNotAuthorizedError` (a deploy that reaches the host with no grant covering it), `PrivilegeError`, `LabFilePermissionError` (a lab file another account owns — in practice one a running device wrote as root into `shared/`) | 403 |
 | `PayloadTooLargeError` (a declared `Content-Length` over `max_bytes_per_lab` + 1 MiB of framing headroom; raised by `main.py`'s size middleware, not `errors.py`), `FileTooLargeError` (a running device's file over 64 MiB) | 413 |
 | `RequestValidationError` (FastAPI body/query validation) | 422 |
 | `pydantic.ValidationError` (a schema validated by service code — e.g. a device derived from lab content) | 422 |
@@ -179,7 +194,7 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/settings` | Current Kathara settings | — | `SettingsView` |
 | PUT | `/api/settings` | Update settings (`manager_type` only before first use → 409; others runtime-updatable) | `SettingsUpdate` | `SettingsView` |
 | POST | `/api/system/wipe` | Undeploy every lab this backend deployed, best-effort (a lab whose undeploy fails is reported in `failed`, not fatal to the rest; scenarios started by other tools are left alone) | — | `WipeResult` |
-| POST | `/api/system/shutdown` | Gracefully stop this process (SIGTERM, with a forced exit after 3s if that hasn't ended it). The desktop shell's only way to stop a `sudo`-elevated backend, which it can no longer signal across the privilege boundary | — | `Message` |
+| POST | `/api/system/shutdown` | Gracefully stop this process (SIGTERM, with a forced exit after 3s if that hasn't ended it). What the desktop shell tries before a signal — on Windows the only graceful route | — | `Message` |
 | GET | `/api/system/sysctls` | Every `net.*` sysctl key this host's kernel exposes (the only namespace Kathara accepts) | — | `string[]` |
 | GET | `/api/system/images` | Image suggestions in two lists: the official Kathara images on Docker Hub, and the images on this machine's daemon that aren't among them. The Docker Hub list is cached for 5 minutes in memory and for a day in `official_images.json` under `state_dir`, and an older copy is served while Docker Hub can't be reached; each list is empty when its source fails, never an error | — | `AvailableImages {official, local}` |
 | POST | `/api/images/pull` | Download the given images, then return (409 if a download is already running). Synchronous by design: clients fire it *without* awaiting and poll the progress endpoint below, using this request's own completion as the authoritative "done" | `ImagePullRequest {images}` | `ImagePullResult {pulled}` |
@@ -218,7 +233,8 @@ that `None` up instead of falling back to a sensible default.
 | GET | `/api/labs/{lab}/fs/startups` | Each device's real `<name>.startup` content (`""` if absent) — backs the topology node-info preview | — | `{machine: string}` |
 | GET | `/api/labs/{lab}/live-addresses` | The addresses on each running device's `ethN` interfaces, for devices whose startup has finished (one `ip -o addr show` each; IPv6 link-local dropped). A device that is stopped, still booting or unreachable is left out. Backs the topology's "running address differs from the startup" warning | — | `{machine: {iface_num: string[]}}` |
 | GET | `/api/labs/{lab}/images` | Which of this lab's device images are missing locally and which have a newer version upstream — call it immediately before a deploy so the download is its own consented step instead of a silent pull inside `POST .../deploy`. Callers must treat *any* failure as "deploy anyway". Costs one registry round-trip per present image (bounded, parallel) unless `image_update_policy` is `Never` | — | `LabImagesStatus` |
-| POST | `/api/labs/{lab}/deploy` | Deploy all / a subset | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
+| POST | `/api/labs/{lab}/deploy` | Deploy all / a subset. 403 `DeployNotAuthorizedError` when a device to start is privileged or mounts the host and no grant covers it (see "Deploys that reach the host") | `DeployOptions {selected_machines?, excluded_machines?}` | `LabDetail` |
+| POST | `/api/labs/{lab}/deploy-grant` | Let the next deploy of this lab, within 60 s, start what its devices ask for right now (desktop shell only: `X-Kathara-Shell-Token`) | — | `Message` |
 | POST | `/api/labs/{lab}/undeploy` | Undeploy all / a subset (full undeploy restores config topology) | `UndeployOptions {selected_machines?, excluded_machines?, selected_links?}` | `Message` |
 | POST | `/api/labs/{lab}/rename` | Rename the lab directory; the lab gets a new id (409 if deployed or name taken) | `LabRename {name}` | `LabDetail` (with the new `id`) |
 | POST | `/api/labs/{lab}/close` | Close a lab opened from outside the labs root: undeploy it and forget it, folder untouched (409 for a lab under the root) | — | `Message` |

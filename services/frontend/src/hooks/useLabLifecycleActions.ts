@@ -4,9 +4,7 @@ import { useImageDownload } from "../context/ImageDownloadContext";
 import { usePrompt } from "../context/PromptContext";
 import { useToast } from "../context/ToastContext";
 import { desktop, type DesktopApi } from "../desktop/bridge";
-import { useDeployAuthorization } from "../desktop/ElevationContext";
 import { useDeployGate } from "./useDeployGate";
-import { useReclaimLabsDirAuth } from "../desktop/ReclaimLabsDirContext";
 import { api, ApiError } from "../services/api";
 import { notFoundMessage, type DeployPhase } from "../services/imagePull";
 import { validateLabName } from "../services/names";
@@ -14,7 +12,7 @@ import type { LabDetail, LabImagesStatus, LabRef, VolumeMount } from "../service
 import { useBusyAction } from "./useBusyAction";
 
 const PRIVILEGE_CANCELLED_MESSAGE =
-  "Deploy cancelled — this lab has privileged devices and needs administrator privileges.";
+  "Deploy cancelled — this lab has privileged devices and needs your password.";
 const VOLUME_CANCELLED_MESSAGE =
   "Deploy cancelled — this lab mounts host directories and needs confirmation.";
 
@@ -51,33 +49,6 @@ async function waitForDockerReady(shell: DesktopApi, timeoutMs = 15_000, interva
   }
 }
 
-// Best-effort, never lets a failure here read as the undeploy/wipe itself having failed (which
-// already succeeded by the time this runs) — see ElevationContext.tsx and backend.ts's
-// stopBackend/startBackend for why an elevated backend can't just have its privileges "turned
-// off" in place. `openLab`, if given, is the id of the lab the reload (if the backend was actually
-// elevated and this triggers one) should land back on, instead of losing the current lab selection.
-//
-// `requestReclaimAuth`, from ReclaimLabsDirContext.tsx, is only ever invoked on Linux (dropElevation
-// only ever asks for it there — macOS/Windows resolve any reclaim themselves via their own native
-// prompt): a first call can come back with `needsReclaimPassword`, meaning the backend hasn't
-// actually been stopped yet and files an elevated session left root-owned still need a password
-// to fix — that modal is awaited here, then a second call (`skipReclaimCheck: true`) actually
-// drops the elevation regardless of what the user chose in it.
-async function dropElevationIfAny(
-  openLab: string | undefined,
-  requestReclaimAuth: (paths: string[]) => Promise<"reclaimed" | "skipped">,
-): Promise<void> {
-  try {
-    const result = await desktop()?.dropElevation(openLab);
-    if (result?.needsReclaimPassword) {
-      await requestReclaimAuth(result.reclaimPaths ?? []);
-      await desktop()?.dropElevation(openLab, true);
-    }
-  } catch {
-    /* best-effort */
-  }
-}
-
 // A lab's name when it has one — a lab reconstructed from running containers alone may not.
 function labLabel(lab: LabRef): string {
   return lab.name || lab.id;
@@ -92,11 +63,7 @@ export function useLabLifecycleActions() {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const { run: runBusy } = useBusyAction();
-  // `requestDeployAuth` is kept alongside the gate for the reactive PrivilegeError fallback
-  // below: that is a bare privileged re-ask after a failed attempt, not a precheck.
-  const requestDeployAuth = useDeployAuthorization();
   const ensureDeployAuthorized = useDeployGate();
-  const requestReclaimAuth = useReclaimLabsDirAuth();
   const requestImageDownload = useImageDownload();
 
   const deployToggle = useCallback(
@@ -111,13 +78,6 @@ export function useLabLifecycleActions() {
       // multi-second) image pre-check and into the deploy proper — without it, a slow registry
       // looks like a frozen "Deploying…".
       onPhase?: (phase: DeployPhase) => void,
-      // `skipImageCheck` is set only when resuming a deploy right after an elevation reload
-      // (see WorkspacePage.tsx's `resumeDeploy` effect): the image pre-check below already ran,
-      // and was satisfied or explicitly skipped, earlier in the same deploy attempt, before
-      // elevation was requested. Re-running it here would ask about the same images a second
-      // time — after the user already granted privileges, which is exactly what putting this
-      // check before the elevation prompt was meant to avoid.
-      opts?: { skipImageCheck?: boolean },
     ) => {
       await runBusy(setBusy, lab.deployed ? "Undeploy" : "Deploy", async () => {
         if (lab.deployed) {
@@ -130,9 +90,6 @@ export function useLabLifecycleActions() {
             throw e;
           }
           toast.show(`Lab "${labLabel(lab)}" undeployed.`, "success");
-          // Least-privilege: don't leave the backend running as root once nothing it's doing
-          // needs that. A no-op if it wasn't elevated (the common case) or outside the desktop app.
-          await dropElevationIfAny(lab.id, requestReclaimAuth);
           await onDone();
           return;
         }
@@ -144,70 +101,60 @@ export function useLabLifecycleActions() {
         // offered the same way Kathara's CLI offers it (see ImageDownloadContext), honouring the
         // `image_update_policy` setting, which nothing else in this app acts on.
         //
-        // Before the elevation prompt below on purpose: there is no point asking for
-        // administrator privileges and then spending three minutes downloading.
-        if (!opts?.skipImageCheck) {
-          onPhase?.("checking");
-          const shell = desktop();
-          if (shell) await waitForDockerReady(shell);
-          const images = await labImagesOrNull(lab.id);
-          // An image the registry doesn't have can't be fixed by downloading, and the deploy would
-          // fail on it: stop here, before any download or prompt, naming it.
-          if (images?.not_found?.length) throw new Error(notFoundMessage(images.not_found));
-          if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
-            onPhase?.("images");
-            const outcome = await requestImageDownload(images);
-            // "cancelled" — a required image was declined, or the download failed: don't deploy.
-            // "downloaded" / "skipped" — everything needed is on disk (a declined optional update
-            // leaves the current image), so carry straight on into the deploy.
-            if (outcome === "cancelled") return;
-          }
-          onPhase?.("deploy");
+        // Before the password prompt below on purpose: there is no point asking for a password
+        // and then spending three minutes downloading.
+        onPhase?.("checking");
+        const shell = desktop();
+        if (shell) await waitForDockerReady(shell);
+        const images = await labImagesOrNull(lab.id);
+        // An image the registry doesn't have can't be fixed by downloading, and the deploy would
+        // fail on it: stop here, before any download or prompt, naming it.
+        if (images?.not_found?.length) throw new Error(notFoundMessage(images.not_found));
+        if (images && (images.missing.length > 0 || images.outdated.length > 0)) {
+          onPhase?.("images");
+          const outcome = await requestImageDownload(images);
+          // "cancelled" — a required image was declined, or the download failed: don't deploy.
+          // "downloaded" / "skipped" — everything needed is on disk (a declined optional update
+          // leaves the current image), so carry straight on into the deploy.
+          if (outcome === "cancelled") return;
         }
+        onPhase?.("deploy");
 
-        // Kathara's own privileged-device gate needs the whole backend process's real UID to be
-        // 0 — on the desktop app, that means relaunching the backend as root first. A volume
-        // mount doesn't need that, but still needs the user's own password before it happens.
-        // Precheck client-side (we already know each device's `privileged`/`volumes`) so the
-        // prompt appears before the attempt, not after — and as a single combined check, so a
-        // lab that is both never shows two separate prompts in sequence (see
-        // ElevationContext.tsx's "both" mode for why that matters).
+        // A privileged device or a host mount needs the user's password before the backend lets
+        // the deploy through. Precheck client-side (we already know each device's
+        // `privileged`/`volumes`) so the prompt appears before the attempt, not after — and as a
+        // single combined check, so a lab that is both never shows two separate prompts in
+        // sequence (see ElevationContext.tsx's "both" mode for why that matters).
         //
         // The global `hosthome_mount` setting is the same kind of host exposure but is not a
         // per-device volume, and it applies whether or not this lab declares any: `useDeployGate`
         // reads it for every caller, so it cannot be checked on one deploy path and forgotten on
         // another.
-        const needsElevation = lab.machines.some((m) => m.privileged);
-        {
-          const outcome = await ensureDeployAuthorized({
-            privileged: needsElevation,
-            volumeMachines: lab.machines,
-            resumeLab: lab.id,
-          });
-          if (outcome === "elevating") return; // a reload is already coming
+        const authorize = async (machines: { privileged: boolean; name: string; volumes: VolumeMount[] }[]) => {
+          const privileged = machines.some((m) => m.privileged);
+          const outcome = await ensureDeployAuthorized({ labId: lab.id, privileged, volumeMachines: machines });
           if (outcome === "cancelled") {
-            toast.show(needsElevation ? PRIVILEGE_CANCELLED_MESSAGE : VOLUME_CANCELLED_MESSAGE, "danger");
-            return;
+            toast.show(privileged ? PRIVILEGE_CANCELLED_MESSAGE : VOLUME_CANCELLED_MESSAGE, "danger");
+            return false;
           }
-          // "proceed": nothing needed asking, or the user agreed — deploy normally.
-        }
+          return true;
+        };
+        if (!(await authorize(lab.machines))) return;
 
         try {
-          await api.deployLab(lab.id);
-        } catch (e) {
-          // Reactive fallback for the precheck above: a device can be made privileged via a raw
-          // lab.conf edit that bypasses the UI's `privileged` field entirely. No equivalent
-          // exists for volumes — `MachineDetail.volumes` read from the last `detail` is already
-          // accurate, there is no "discovered only on failure" case for it.
-          if (e instanceof ApiError && e.errorType === "PrivilegeError") {
-            const outcome = await requestDeployAuth({ privileged: true, volumeMachines: [], resumeLab: lab.id });
-            if (outcome === "elevating") return;
-            if (outcome === "cancelled") {
-              toast.show(PRIVILEGE_CANCELLED_MESSAGE, "danger");
-              return;
-            }
-            // Already elevated yet still refused — elevation won't fix this one, surface it as-is.
+          try {
+            await api.deployLab(lab.id);
+          } catch (e) {
+            // Reactive fallback for the precheck above: the backend judges the lab as it is on
+            // disk, and a lab.conf edited outside the app can make a device privileged or mount a
+            // host directory the `detail` this page last fetched doesn't show yet. Asked once
+            // more with the lab re-read, then retried once; a second refusal is reported as is.
+            if (!(e instanceof ApiError && e.errorType === "DeployNotAuthorizedError")) throw e;
+            const fresh = await api.getLab(lab.id);
+            if (!(await authorize(fresh.machines))) return;
+            await api.deployLab(lab.id);
           }
+        } catch (e) {
           // Deploy isn't atomic: it can fail with some devices already up. Refresh before
           // letting the error propagate, or the UI goes on showing the lab as undeployed —
           // and offering a Deploy button — until something unrelated happens to refetch.
@@ -215,13 +162,11 @@ export function useLabLifecycleActions() {
           await onDone().catch(() => {});
           throw e;
         }
-        // The elevation `return`s above deliberately skip this: nothing was deployed, and on
-        // the "elevating" path a full reload is already in flight.
         toast.show(`Lab "${labLabel(lab)}" deployed.`, "success");
         await onDone();
       });
     },
-    [ensureDeployAuthorized, requestDeployAuth, requestImageDownload, requestReclaimAuth, runBusy, toast],
+    [ensureDeployAuthorized, requestImageDownload, runBusy, toast],
   );
 
   // Names the folder that goes: deleting a managed lab removes its whole directory for good.
@@ -292,8 +237,7 @@ export function useLabLifecycleActions() {
   );
 
   // Force-undeploys every lab kathara-desktop has deployed — but unlike the Kathara CLI's own
-  // `kathara wipe`, it leaves scenarios started by other tools alone. Offered from Settings, where
-  // no lab is open: a privilege-drop reload lands on the default route.
+  // `kathara wipe`, it leaves scenarios started by other tools alone. Offered from Settings.
   const wipeAll = useCallback(
     async (setBusy: (busy: boolean) => void) => {
       const ok = await confirm({
@@ -309,10 +253,9 @@ export function useLabLifecycleActions() {
         } else {
           toast.show("All labs wiped.", "success");
         }
-        await dropElevationIfAny(undefined, requestReclaimAuth);
       });
     },
-    [confirm, requestReclaimAuth, runBusy, toast],
+    [confirm, runBusy, toast],
   );
 
   return { deployToggle, deleteLab, closeLab, renameLab, wipeAll };

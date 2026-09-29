@@ -55,6 +55,7 @@ CASES: list[tuple[str, tuple]] = [
     ("fs_copy_offline", (".", "b")),
     ("get_lab_or_reconstruct", ()),
     ("deploy_lab", ()),
+    ("grant_deploy", ()),
     ("undeploy_lab", ()),
     ("rename_lab", ("new-name",)),
     ("delete_lab", ()),

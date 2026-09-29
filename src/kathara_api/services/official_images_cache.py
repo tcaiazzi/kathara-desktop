@@ -67,7 +67,7 @@ class OfficialImagesFile:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             # A fresh temporary name every time, not a fixed one: a leftover from a crash —
-            # possibly root-owned, written by an elevated backend — must not block every later save.
+            # possibly root-owned, written by a backend run as root — must not block every later save.
             fd, tmp = tempfile.mkstemp(dir=self._path.parent, prefix=f".{self._path.name}.", suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(json.dumps(body, indent=2) + "\n")

@@ -3,7 +3,7 @@
 // getting there — main.ts's Preflight.canStart boots the app anyway in that case (a check with
 // severity: "advisory") and hands the initial reading over on the "ready" status, but nothing
 // exposes that status to the renderer, so this provider's own first probe is what actually seeds
-// the badge/banner; a restart-triggering reload (elevation, retry, labs-dir change) just
+// the badge/banner; a restart-triggering reload (retry, labs-dir change) just
 // remounts this provider and gets a fresh one immediately.
 //
 // A no-op in the browser build: desktop() is null there, so `status` stays null forever and

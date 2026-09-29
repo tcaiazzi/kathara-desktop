@@ -14,14 +14,13 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import sudoPrompt from "@vscode/sudo-prompt";
-import { appImagePythonCache, backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir, stateDir } from "./paths";
+import { backendSrcDir, bundledSitePackages, labsDir, logFile, pycacheDir, stateDir } from "./paths";
 import { log, logRaw } from "./logger";
 import { readPrefs, writePrefs } from "./prefs";
-import type { ElevateFailureReason, ElevateResult, PrivilegedActionResult } from "./elevateOutcome";
+import { authorizeDeployWith, type PrivilegedActionResult, type SudoFailureReason } from "./privilegedAction";
 import { errorText } from "./errors";
 import { reclaimScript, type ReclaimTargets } from "./labFolders";
-import { redactEnvArgsForLog } from "./logRedaction";
-import { isPlainAbsolutePath, isUsablePort, quoteForShellString } from "./safety";
+import { isPlainAbsolutePath, isUsablePort } from "./safety";
 import { uploadLimitsEnv } from "./uploadLimits";
 
 export interface BackendHandle {
@@ -29,13 +28,15 @@ export interface BackendHandle {
   baseUrl: string;
   /** Pairing token for this one backend instance — see buildBackendCommand. Sent as
    * `Authorization: Bearer <token>` on every request this module makes to its own backend
-   * (waitForHealth, shutdownAt, the /api/system admin check), and handed to the renderer over
+   * (stopBackend's shutdown request, openLabFolder, grantDeploy), and handed to the renderer over
    * IPC (main.ts's "auth:get-token") so it can do the same. */
   token: string;
   /** The second per-launch secret, KATHARA_API_SHELL_TOKEN: the only thing `POST /api/labs/open`
-   * accepts (src/kathara_api/dependencies.py's require_shell_token). Unlike `token`, it never
-   * leaves this module — not to main.ts, not over IPC — so nothing the renderer runs can open an
-   * arbitrary host folder as a lab; `openLabFolder` below is its one use. */
+   * and `POST /api/labs/{id}/deploy-grant` accept (src/kathara_api/dependencies.py's
+   * require_shell_token). Unlike `token`, it never leaves this module — not to main.ts, not over
+   * IPC — so nothing the renderer runs can open an arbitrary host folder as a lab, or let a deploy
+   * start a privileged device or mount a host directory without the user's password;
+   * `openLabFolder` and `grantDeploy` below are its only uses. */
   shellToken: string;
 }
 
@@ -56,15 +57,9 @@ const SHUTDOWN_HTTP_TIMEOUT_MS = 2_000;
  * stats SSE stream or exec WebSocket) before it force-exits. Without this, uvicorn's default is
  * to wait indefinitely, which lets a backend outlive `stopBackend()`'s poll entirely. */
 const GRACEFUL_SHUTDOWN_TIMEOUT_S = 5;
-/** How long `waitForDeath` polls `/api/health` after a shutdown request before giving up on a
- * backend with no process handle to confirm exit against. Kept comfortably above
- * `GRACEFUL_SHUTDOWN_TIMEOUT_S` (plus HTTP/poll-interval slack) so this doesn't time out just
- * before uvicorn's own bounded shutdown would have finished. Must also stay above
- * SHUTDOWN_HARD_EXIT_S in src/kathara_api/routers/system.py. */
-const SHUTDOWN_DEATH_POLL_MS = 8_000;
 /** Bounds the credentials-only `sudo -v` probe below. Generous — it's a local PAM call that
  * normally answers instantly — but finite, so a wedged PAM module can't hang the IPC call
- * that's holding the elevation prompt open. */
+ * that's holding the password prompt open. */
 const SUDO_VERIFY_TIMEOUT_MS = 15_000;
 /** Bounds the ownership reclaim, which does real work under sudo — see reclaimOwnershipWithPassword. */
 const RECLAIM_TIMEOUT_MS = 120_000;
@@ -84,74 +79,27 @@ let child: ChildProcess | null = null;
 let handle: BackendHandle | null = null;
 /** Set during an intentional stop, so an exit then isn't reported as a crash. */
 let stopping = false;
-/** Set while an elevated (re)start is in flight. An exit during that window is the *attempt*
- * failing — whose own catch block restarts a plain backend — not the crash of a backend that
- * was up and running, so it must not reach `exitListener` and be reported to the user as one.
- * Read at exit time, not captured, so a genuine crash of a successfully elevated backend
- * later on still reports normally. */
-let elevating = false;
 let exitListener: ((info: { code: number | null; signal: string | null }) => void) | null = null;
-
-/**
- * A backend `stopBackend()` gave up on — still running (root-owned, from a failed elevated
- * stop), but neither signalable (EPERM across the privilege boundary) nor, for the native-prompt
- * path, ever having had a process handle to signal in the first place. Kept so the next backend
- * start retries shutting it down first, instead of silently leaving it running forever while a
- * second backend starts on a different port right alongside it.
- */
-let orphanedBackend: { pid: number | null; baseUrl: string; token: string } | null = null;
-/** Notified once, at the moment a backend is first determined to be such an orphan — not again
- * on every later retry failure, so the caller can surface it to the user without spamming. */
-let orphanListener: ((info: { pid: number | null; baseUrl: string }) => void) | null = null;
 
 /** Consecutive failed sudo checks since the last correct password, and how long from now further
  * checks are refused without even running `sudo` — see SUDO_RATE_LIMIT_* above. Shared across the
- * three IPC channels that can trigger a check (elevation:elevate, elevation:verify,
+ * three IPC channels that can trigger a check (elevation:authorize-deploy, elevation:verify,
  * elevation:reclaim-labs-dir): they all funnel through `withSudoRateLimit`, so switching between
  * them doesn't reset the count either. */
 let failedSudoAttempts = 0;
 let sudoLockedUntil = 0;
 
-export function onOrphanedBackend(cb: (info: { pid: number | null; baseUrl: string }) => void): void {
-  orphanListener = cb;
-}
-
-/** Last resort for an orphan whose PID is known (either tracked all along on Linux, or
- * recovered after the fact by `resolvePidForPort` on macOS): ask the OS to authorize a root-level
- * `kill -9`, via the same sudo-prompt dialog already used to elevate a backend in the first
- * place. A second explicit admin prompt, so this is never invoked automatically — only in
- * response to an explicit user action (the orphan dialog's "Force Stop Now"). */
-export async function forceKillOrphan(): Promise<{ ok: boolean; message?: string }> {
-  const orphan = orphanedBackend;
-  if (!orphan?.pid) return { ok: false, message: "no known process id for the orphaned backend" };
-  // The pid is interpolated into a shell string below. It is already numeric by construction
-  // (a real ChildProcess.pid, or resolvePidForPort's Number.isFinite filter), but this keeps that
-  // guarantee readable on the line that depends on it rather than three call sites upstream.
-  if (!Number.isInteger(orphan.pid) || orphan.pid <= 0) {
-    return { ok: false, message: `refusing to kill a suspicious process id: ${String(orphan.pid)}` };
-  }
-  return new Promise((resolve) => {
-    sudoPrompt.exec(`kill -9 ${orphan.pid}`, SUDO_PROMPT_OPTIONS, (error) => {
-      if (error) {
-        resolve({ ok: false, message: error.message });
-        return;
-      }
-      orphanedBackend = null;
-      resolve({ ok: true });
-    });
-  });
-}
-
 /**
  * Whether anything under `dirPath` is owned by someone other than the current user — the signal
- * that an elevated session left root-owned files behind in the labs directory. Recurses, but
- * stops at the first mismatch: this only ever needs a yes/no answer, never a full listing.
+ * that running devices left root-owned files behind in the labs directory (Kathara bind-mounts
+ * each lab's `shared/` folder, and a container writes there as root). Recurses, but stops at the
+ * first mismatch: this only ever needs a yes/no answer, never a full listing.
  *
  * Best-effort in the safe direction: a subtree this user can't even list (typically because a
  * root-owned *directory* blocks read access to its own contents) counts as "yes" rather than
  * being silently skipped — the whole reason to check in the first place is exactly that failure
- * mode. Windows always answers "no": there is no ownership concept to fix up there, where an
- * elevated process runs as the same account, just with a different token.
+ * mode. Windows always answers "no": Docker Desktop's bind mounts there leave no foreign owner
+ * to fix up.
  */
 export async function hasForeignOwnedFiles(dirPath: string): Promise<boolean> {
   const uid = process.getuid?.();
@@ -163,8 +111,8 @@ export async function hasForeignOwnedFiles(dirPath: string): Promise<boolean> {
  * Whether anything under `dirPath` is owned by root — the narrower question asked of a lab folder
  * the user opened from elsewhere, which may legitimately hold other accounts' files (see
  * labFolders.ts's reclaimScript, which only ever touches root's). A subtree that can't be listed
- * is not counted: its own owner was already checked on the way in, and a folder the elevated
- * backend created would be root's and so found there.
+ * is not counted: its own owner was already checked on the way in, and a folder a device created
+ * would be root's and so found there.
  */
 export async function hasRootOwnedFiles(dirPath: string): Promise<boolean> {
   if (process.platform === "win32") return false;
@@ -221,43 +169,14 @@ function reclaimCommand(targets: ReclaimTargets): { ok: true; script: string | n
 }
 
 /**
- * macOS: an explicit admin prompt via `sudo-prompt`'s native dialog — the same one already used to
- * elevate the backend in the first place, and by `forceKillOrphan` above. Reliable there (a native
- * OS-level dialog, not dependent on anything like Linux's polkit agent), so it's the only
- * mechanism this platform needs — see main.ts's `elevation:drop`, which asks the user first via a
- * plain confirm dialog, then calls this. A no-op on Windows: see `hasForeignOwnedFiles` on why
- * nothing there needs it. Linux uses `reclaimOwnershipWithPassword` below instead — tried and
- * found unreliable here: `sudo-prompt` shells out to `pkexec`, which needs a running polkit
+ * Linux only, the one platform where a bind mount shows a container's files as root's. Runs the
+ * reclaim script under `sudo -S -k sh -c` directly, feeding `password` on stdin — authenticating
+ * and running the command in the exact same invocation, so unlike a `sudo -n`/cached-ticket
+ * approach it doesn't depend on this headless spawn sharing any session/tty state with a previous
+ * one. Not `sudo-prompt`: on Linux it shells out to `pkexec`, which needs a running polkit
  * authentication agent that plenty of real setups (headless, minimal window managers, WSL) don't
- * have, where it fails outright instead of prompting.
- */
-export async function reclaimOwnershipWithPrompt(targets: ReclaimTargets): Promise<{ ok: boolean; message?: string }> {
-  if (process.platform === "win32") return { ok: true };
-  const command = reclaimCommand(targets);
-  if (!command.ok) return command;
-  const { script } = command;
-  if (script === null) return { ok: true };
-
-  return new Promise((resolve) => {
-    sudoPrompt.exec(script, SUDO_PROMPT_OPTIONS, (error) => {
-      if (error) {
-        log(`failed to reclaim ownership of lab files: ${error.message}`);
-        resolve({ ok: false, message: error.message });
-        return;
-      }
-      resolve({ ok: true });
-    });
-  });
-}
-
-/**
- * Linux: the only mechanism this platform needs (see `reclaimOwnershipWithPrompt`'s doc comment on
- * why `sudo-prompt` isn't it here). Runs the reclaim script under `sudo -S -k sh -c` directly,
- * feeding `password` on stdin — authenticating and running the command in the exact same
- * invocation, so unlike a `sudo -n`/cached-ticket approach it doesn't depend on this headless
- * spawn sharing any session/tty state with a previous one. Shares `runSudoWithPassword` and the
- * rate limiter with `verifySudoPassword`, so this doesn't open a second password oracle alongside
- * the one SUDO_RATE_LIMIT_FREE_ATTEMPTS closes.
+ * have. Shares `runSudoWithPassword` and the rate limiter with `verifySudoPassword`, so this
+ * doesn't open a second password oracle alongside the one SUDO_RATE_LIMIT_FREE_ATTEMPTS closes.
  */
 export async function reclaimOwnershipWithPassword(
   password: string,
@@ -316,92 +235,33 @@ export async function openLabFolder(folder: string, init: boolean): Promise<Open
   };
 }
 
-/** Records a backend `stopBackend()` couldn't stop, if there's a URL to retry shutting it down
- * against later (an unsignalable process we never even confirmed a URL for isn't worth tracking —
- * there's nothing left to do with it). Always notifies, since even an unrecoverable orphan is
- * worth telling the user about. */
-function markOrphaned(pid: number | null | undefined, baseUrl: string | undefined, token: string | undefined): void {
-  const normalizedPid = pid ?? null;
-  if (baseUrl && token) orphanedBackend = { pid: normalizedPid, baseUrl, token };
-  orphanListener?.({ pid: normalizedPid, baseUrl: baseUrl ?? "" });
-}
+/** What `grantDeploy` got back. */
+type GrantDeployResult = { ok: true } | { ok: false; message: string };
 
-/** macOS only: `runElevatedNative` never gets a process handle back from sudo-prompt, so a
- * backend orphaned on that path has no PID at all — `markOrphaned` there can only pass `null`.
- * `lsof` can still resolve one from the outside: reading which process owns a listening socket
- * doesn't require matching its UID, unlike signaling it. Best-effort — any failure (lsof
- * missing, port already freed, ambiguous output) just leaves the PID unresolved; callers already
- * treat a `null` pid as "unknown". */
-async function resolvePidForPort(port: number): Promise<number | null> {
-  if (process.platform !== "darwin" || !Number.isFinite(port)) return null;
-  return new Promise((resolve) => {
-    execFile("lsof", ["-i", `:${port}`, "-sTCP:LISTEN", "-t"], (error, stdout) => {
-      if (error) {
-        resolve(null);
-        return;
-      }
-      const pid = parseInt(stdout.trim().split("\n")[0], 10);
-      resolve(Number.isFinite(pid) ? pid : null);
-    });
-  });
-}
+const GRANT_DEPLOY_TIMEOUT_MS = 15_000;
 
 /**
- * Poll `/api/health` until it stops responding (the backend has actually exited) or `deadline`
- * passes. Needed wherever a shutdown is confirmed with no process handle to check `exitCode`
- * against: an HTTP 200 from `/api/system/shutdown` only proves the process *received* the
- * request (it calls `os.kill(os.getpid(), SIGTERM)` and returns immediately) — SIGTERM handling
- * and process teardown still happen asynchronously afterward, so a prompt response is not itself
- * proof the process is actually gone.
+ * Let the next deploy of `labId` start its privileged devices and mount its host directories
+ * (`POST /api/labs/{id}/deploy-grant`, see src/kathara_api/services/deploy_grants.py) — the
+ * other request that carries the shell token. Only ever called after the user's own password was
+ * checked (`authorizeDeploy` below): the backend refuses such a deploy without it.
  */
-async function waitForDeath(baseUrl: string, token: string, deadline: number): Promise<boolean> {
-  while (Date.now() < deadline) {
-    try {
-      await fetch(`${baseUrl}/api/health`, { headers: authHeaders(token), signal: AbortSignal.timeout(500) });
-    } catch {
-      return true; // connection refused/reset, or timed out talking to it — it's down.
-    }
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  return false;
-}
-
-/**
- * Ask whatever is listening at `baseUrl` to shut itself down, and confirm it actually did.
- * Purely address-based — no process handle, no module state — which is what makes it usable
- * both for a previously orphaned backend and for a *candidate* backend that failed its
- * elevation checks while the real one is still running (where `stopBackend()` would stop
- * precisely the wrong process). Returns whether it's confirmed gone.
- */
-async function shutdownAt(baseUrl: string, token: string): Promise<boolean> {
+async function grantDeploy(labId: string): Promise<GrantDeployResult> {
+  const current = handle;
+  if (!current) return { ok: false, message: "the backend is not running" };
+  let res: Response;
   try {
-    await fetch(`${baseUrl}/api/system/shutdown`, {
+    res = await fetch(`${current.baseUrl}/api/labs/${encodeURIComponent(labId)}/deploy-grant`, {
       method: "POST",
-      headers: authHeaders(token),
-      signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS),
+      headers: { ...authHeaders(current.token), "X-Kathara-Shell-Token": current.shellToken },
+      signal: AbortSignal.timeout(GRANT_DEPLOY_TIMEOUT_MS),
     });
-    return await waitForDeath(baseUrl, token, Date.now() + SHUTDOWN_DEATH_POLL_MS);
   } catch (err) {
-    log(`shutdown request to ${baseUrl} failed: ${errorText(err)}`);
-    return false;
+    return { ok: false, message: errorText(err) };
   }
-}
-
-/** Retries shutting down a previously orphaned backend before a new one starts on top of it —
- * whatever kept it unsignalable/unresponsive (a stuck operation, elevation still settling) may
- * have resolved since. Never blocks starting the new backend either way: this is best-effort, not
- * a precondition, since the app must not be left without a working backend over an old one that
- * may in fact never come back. */
-async function retryOrphanShutdown(): Promise<void> {
-  const orphan = orphanedBackend;
-  if (!orphan) return;
-  log(`retrying shutdown of previously orphaned backend at ${orphan.baseUrl}`);
-  if (await shutdownAt(orphan.baseUrl, orphan.token)) {
-    log(`orphaned backend at ${orphan.baseUrl} is now stopped`);
-    orphanedBackend = null;
-    return;
-  }
-  log(`orphaned backend at ${orphan.baseUrl} is still running — a new backend will start on a different port`);
+  if (res.ok) return { ok: true };
+  const body = (await res.json().catch(() => null)) as { detail?: unknown } | null;
+  return { ok: false, message: typeof body?.detail === "string" ? body.detail : `HTTP ${res.status}` };
 }
 
 /**
@@ -484,24 +344,15 @@ class PortTakenError extends Error {}
  * The request carries nothing secret, so a process that took the port before uvicorn bound it (see
  * findFreePort) learns neither token, and its answer fails the check — the port is then abandoned
  * rather than loaded into the window with the preload bridge attached.
- *
- * `isAlive` defaults to checking the tracked `child` — the normal and Linux-elevated paths always
- * have one. The native (macOS/Windows) elevation path doesn't: `@vscode/sudo-prompt` returns no
- * process handle at all, so its caller passes a substitute liveness check instead.
  */
-async function waitForHealth(
-  baseUrl: string,
-  token: string,
-  deadline: number,
-  isAlive: () => boolean = () => !!child && child.exitCode === null,
-): Promise<void> {
+async function waitForHealth(baseUrl: string, token: string, deadline: number): Promise<void> {
   const nonce = crypto.randomBytes(16).toString("hex");
   const expected = crypto.createHmac("sha256", token).update(nonce).digest("hex");
   let lastError = "no response";
   while (Date.now() < deadline) {
     // A crash during startup means health will never come up; fail immediately with the
     // traceback rather than burning the full timeout on a dead process.
-    if (!isAlive()) {
+    if (!child || child.exitCode !== null) {
       throw new Error(`backend exited during startup (code ${child?.exitCode ?? "unknown"})`);
     }
     try {
@@ -536,16 +387,8 @@ interface BackendCommand {
   /** See BackendHandle.shellToken. */
   shellToken: string;
   labs: string;
-  /** Full environment (inherited `process.env` plus `appEnv`) — what a plain, non-elevated
-   * `spawn()` gets via its own `options.env`, which Node passes straight to the child. */
+  /** The inherited `process.env` plus this app's own settings for the backend. */
   env: NodeJS.ProcessEnv;
-  /** Just this app's own overrides, without the inherited spread. `sudo` resets the environment
-   * for the command it elevates by default (the near-universal `env_reset` sudoers setting) —
-   * setting these on the *sudo* process's own env (via `env` above) does not make them reach the
-   * elevated child at all, so the elevated start paths must force them through some other way
-   * (an `env VAR=val ...` prefix on Linux, `sudo-prompt`'s own `options.env` on macOS/Windows)
-   * using exactly this smaller set, not the full inherited environment. */
-  appEnv: Record<string, string>;
   args: string[];
 }
 
@@ -563,45 +406,17 @@ interface BackendCommand {
  *
  * path.delimiter, not ":" — on Windows the separator is ";", so joining with ":" on a machine
  * that already has a PYTHONPATH set yields one unparseable entry and drops the repo's src/.
- *
- * `overrides` exists for the elevated start paths, which differ on three counts. They must not
- * write bytecode into the ordinary cache — those files would come out root-owned and every later
- * unprivileged launch would silently fail to update them — and on an AppImage they additionally
- * cannot use the shipped site-packages at all, because root cannot read the FUSE mount they live
- * in (see paths.ts's appImagePythonCache()). And they never inherit this process's own
- * `PYTHONPATH`: whatever it names would be imported as root.
  */
-export function pythonEnv(overrides?: { sitePackages?: string; pycache?: string }): Record<string, string> {
-  const roots = [overrides?.sitePackages ?? bundledSitePackages(), backendSrcDir()].filter(
-    (dir): dir is string => Boolean(dir),
-  );
-  const inherited = overrides ? undefined : process.env.PYTHONPATH;
+export function pythonEnv(): Record<string, string> {
+  const roots = [bundledSitePackages(), backendSrcDir()].filter((dir): dir is string => Boolean(dir));
   return {
-    PYTHONPYCACHEPREFIX: overrides?.pycache ?? pycacheDir(),
-    ...(roots.length ? { PYTHONPATH: [...roots, inherited].filter(Boolean).join(path.delimiter) } : {}),
+    PYTHONPYCACHEPREFIX: pycacheDir(),
+    ...(roots.length ? { PYTHONPATH: [...roots, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter) } : {}),
   };
 }
 
-/** Bytecode cache for a root-run backend, kept apart from the unprivileged one: __pycache__
- * entries written by root would be root-owned, and every later ordinary launch would then fail to
- * refresh them — silently, since Python treats an unwritable cache as merely absent. */
-function elevatedPycacheDir(): string {
-  return path.join(pycacheDir(), "elevated");
-}
-
-/** Everything about *what* to run is shared between the normal and elevated start paths — only
- * *how* it's spawned (plain vs. wrapped in `sudo`) differs. Also the one chokepoint all three
- * spawn paths (startBackend, startBackendElevatedLinux, startBackendElevatedNative) share, so
- * it's where a previously orphaned backend gets one more chance to shut down before a fresh one
- * starts alongside it. */
-async function buildBackendCommand(
-  staticDir: string,
-  preferredPort?: number,
-  pythonOverrides?: { sitePackages?: string; pycache?: string },
-): Promise<BackendCommand> {
-  if (orphanedBackend) await retryOrphanShutdown();
-
-  const port = preferredPort ?? (await findFreePort());
+/** Everything about *what* to run: the port, the two per-launch secrets and the environment. */
+async function buildBackendCommand(staticDir: string, port: number): Promise<BackendCommand> {
   const baseUrl = `http://127.0.0.1:${port}`;
   // Random per launch, never persisted (unlike the port in prefs.ts): pairs this one backend
   // instance with this one Electron process, so any other local process/browser tab that finds
@@ -611,9 +426,9 @@ async function buildBackendCommand(
   const shellToken = crypto.randomBytes(32).toString("hex");
   const labs = labsDir();
   fs.mkdirSync(labs, { recursive: true });
-  // Checked like the labs dir is (paths.ts's labsDir): on the elevated macOS/Windows paths every
-  // env value is written into a script run as root, escaping only `"`. Without a usable one the
-  // backend keeps its list of opened folders in memory only.
+  // Checked like the labs dir is (paths.ts's labsDir): a path with shell metacharacters has no
+  // business in this app's settings. Without a usable one the backend keeps its list of opened
+  // folders in memory only.
   const state = stateDir();
   const stateEnv: Record<string, string> = isPlainAbsolutePath(state) ? { KATHARA_API_STATE_DIR: state } : {};
   if (!stateEnv.KATHARA_API_STATE_DIR) log(`not passing the state directory to the backend: ${JSON.stringify(state)}`);
@@ -637,7 +452,7 @@ async function buildBackendCommand(
     // The limits the user saved in Settings, which the backend would otherwise forget on restart.
     ...limitsEnv,
     PYTHONUNBUFFERED: "1",
-    ...pythonEnv(pythonOverrides),
+    ...pythonEnv(),
   };
   const env: NodeJS.ProcessEnv = { ...process.env, ...appEnv };
 
@@ -650,7 +465,7 @@ async function buildBackendCommand(
     "--port", String(port),
     // Bounds SIGTERM's graceful-shutdown wait (see GRACEFUL_SHUTDOWN_TIMEOUT_S) so a lingering
     // SSE/WebSocket connection from another open lab can't keep this process alive past
-    // stopBackend()'s poll window and leave it (im)possible to reap, especially once elevated.
+    // stopBackend()'s poll window.
     "--timeout-graceful-shutdown", String(GRACEFUL_SHUTDOWN_TIMEOUT_S),
     // The pairing token (see `token` above) travels as `?token=...` on the TTY WebSocket and the
     // stats EventSource URLs (services/api.ts) — neither can set an Authorization header. With
@@ -663,11 +478,11 @@ async function buildBackendCommand(
     "--no-access-log",
   ];
 
-  return { port, baseUrl, token, shellToken, labs, env, appEnv, args };
+  return { port, baseUrl, token, shellToken, labs, env, args };
 }
 
-/** Wires the same stdout/stderr logging and exit bookkeeping onto any freshly spawned backend
- * child, elevated or not, and installs it as the tracked `child`. */
+/** Wires stdout/stderr logging and exit bookkeeping onto a freshly spawned backend child, and
+ * installs it as the tracked `child`. */
 function trackChild(proc: ChildProcess): void {
   stopping = false;
   child = proc;
@@ -682,7 +497,7 @@ function trackChild(proc: ChildProcess): void {
       child = null;
       handle = null;
     }
-    if (!stopping && !elevating) exitListener?.({ code, signal });
+    if (!stopping) exitListener?.({ code, signal });
   };
   proc.stdout?.on("data", (c: Buffer) => logRaw(c.toString()));
   proc.stderr?.on("data", (c: Buffer) => logRaw(c.toString()));
@@ -767,13 +582,6 @@ function sudoEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
 /**
  * Check `password` against sudo *without* running anything: `-v` only validates credentials.
  *
- * This exists so a mistyped password can be settled while the current backend is still running
- * and healthy. Elevating means stopping the backend and starting a new one on a new port — do
- * that first and a wrong password costs the user their whole session (the page ends up on a
- * dead origin, and the failed `sudo` child's exit looks exactly like a backend crash). Checking
- * first makes the overwhelmingly common failure a no-op: nothing is stopped, nothing moves, and
- * the prompt can just say the password was wrong.
- *
  * Deliberately not registered with `trackChild` — it is not a backend, and treating it as one
  * makes a mistyped password present itself as "The Kathara API stopped unexpectedly".
  *
@@ -787,8 +595,7 @@ async function verifySudoPassword(password: string): Promise<PrivilegedActionRes
 
 /**
  * Shared gate for *every* "test a password against sudo" entry point — `verifySudoPassword`,
- * `reclaimOwnershipWithPassword`, `verifyCanElevate`'s macOS/Windows branch and
- * `startBackendElevatedNative` — so adding
+ * `reclaimOwnershipWithPassword` and `verifyCanElevate`'s macOS/Windows branch — so adding
  * a new one never opens a second password oracle alongside the one this already closes: they all
  * count against, and are locked out by, the same `failedSudoAttempts`/`sudoLockedUntil`.
  */
@@ -799,7 +606,7 @@ async function withSudoRateLimit(
   // sudo-prompt dialog can't tell a dismissed dialog from a wrong password apart (see
   // `verifyCanElevate` below), so its caller passes a predicate that counts "cancelled" instead —
   // otherwise a renderer could trigger the native admin-password dialog without limit.
-  countsAsAttempt: (reason: ElevateFailureReason) => boolean = (reason) => reason === "wrong-password",
+  countsAsAttempt: (reason: SudoFailureReason) => boolean = (reason) => reason === "wrong-password",
 ): Promise<PrivilegedActionResult> {
   const now = Date.now();
   if (now < sudoLockedUntil) {
@@ -915,16 +722,15 @@ function runSudoWithPassword(
 }
 
 /**
- * Verify the user could elevate, without touching the backend at all — used when the only reason
- * to ask is a volume mount, which (unlike a privileged device) doesn't need this *process*'s real
- * UID to be root, only proof the user could authorize it if asked.
+ * Verify the user could act as an administrator, running nothing that matters — the proof a
+ * privileged device, a host volume or the host home mount asks for before a deploy (see
+ * `authorizeDeploy`), and Settings' host home toggle asks for on its own.
  *
  * Linux reuses `verifySudoPassword` unchanged — it already validates without running anything.
  * macOS/Windows have no password field of their own: the only credential-collection UI either
  * has is sudo-prompt's native dialog, which is inherently tied to *running* something elevated —
- * so this runs a throwaway no-op through it instead of the real backend command. Failures collapse
- * the same way `runElevatedNative` collapses them: sudo-prompt can't tell "dialog dismissed" from
- * "wrong password" apart in any stable cross-platform way, so both land on "cancelled" here too.
+ * so this runs a throwaway no-op through it. sudo-prompt can't tell "dialog dismissed" from
+ * "wrong password" apart in any stable cross-platform way, so both land on "cancelled".
  */
 export async function verifyCanElevate(password?: string): Promise<PrivilegedActionResult> {
   if (process.platform !== "darwin" && process.platform !== "win32") {
@@ -947,267 +753,50 @@ export async function verifyCanElevate(password?: string): Promise<PrivilegedAct
 }
 
 /**
- * Linux only: kill the current backend and relaunch it under `sudo`, feeding `password` on
- * stdin. Kathara's own privileged-device gate (`Kathara.utils.is_admin()`) checks the process's
- * *real* UID, so this is the only way to satisfy it — there is no in-place elevation of an
- * already-running process.
- *
- * The password is checked with `verifySudoPassword` *before* anything is stopped, so the
- * common failure — a mistyped password — costs nothing: no restart, no port change, and the
- * caller's page stays live to offer a retry. Only a failure past that point restarts the
- * plain unprivileged backend, so the app is never left without one.
+ * Linux: whether sudo asks this account for a password at all. `-n` fails instead of prompting,
+ * and `-k` ignores a cached credential for this one invocation, so `sudo -k -n true` succeeds only
+ * where the sudoers policy grants NOPASSWD — where any "password" would pass `sudo -v`, and the
+ * prompt has nothing to check. Always true elsewhere: the OS's own dialog asks there.
  */
-export async function startBackendElevatedLinux(python: string, staticDir: string, password: string): Promise<ElevateResult> {
-  // Before stopBackend(), never after: a rejected password must leave the running backend
-  // exactly where it was, so the prompt can offer a retry against a still-live origin.
-  const check = await verifySudoPassword(password);
-  if (!check.ok) return { ...check, restarted: false };
-
-  elevating = true;
-  try {
-    return await runElevatedLinux(python, staticDir, password);
-  } finally {
-    // Only after the catch below has restarted a plain backend, so neither the failed attempt
-    // nor its recovery is reported to the user as a backend crash.
-    elevating = false;
-  }
+export async function sudoNeedsPassword(): Promise<boolean> {
+  if (process.platform !== "linux") return true;
+  return !(await sudoRunsWithoutPassword());
 }
 
-async function runElevatedLinux(python: string, staticDir: string, password: string): Promise<ElevateResult> {
-  // Before stopBackend(), deliberately: on an AppImage this copies ~200 MB out of the FUSE mount
-  // the first time, and if that fails the current backend is still running and still serving the
-  // renderer. Returns null (and costs nothing) on every other kind of Linux installation.
-  const rootReadable = appImagePythonCache();
-  const interpreter = rootReadable?.python ?? python;
-
-  await stopBackend();
-
-  const { port, baseUrl, token, shellToken, labs, env, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
-    sitePackages: rootReadable?.sitePackages,
-    pycache: elevatedPycacheDir(),
-  });
-
-  // `sudo` resets the environment for the command it elevates by default (env_reset) — setting
-  // KATHARA_API_STATIC_DIR/LABS_DIR etc. via `options.env` above only reaches the `sudo` process
-  // itself, not the `python` it execs as root, so the SPA mount and labs directory would silently
-  // fall back to defaults. Force them through explicitly via a coreutils `env` prefix, which sets
-  // them directly on the command `sudo` elevates, independent of the system's sudoers env policy.
-  //
-  // Except the two secrets: that command line stays readable to every local user in
-  // /proc/<pid>/cmdline for as long as the backend runs, and sudo logs it. They follow the password
-  // on stdin instead — sudo reads only the password line — and kathara_api.stdin_secrets takes
-  // them from there before handing the rest of the arguments to uvicorn.
-  const { KATHARA_API_AUTH_TOKEN: _token, KATHARA_API_SHELL_TOKEN: _shellToken, ...publicEnv } = appEnv;
-  const envArgs = Object.entries(publicEnv).map(([k, v]) => `${k}=${v}`);
-  if (args[0] !== "-m" || args[1] !== "uvicorn") throw new Error(`unexpected backend command: ${args.join(" ")}`);
-  const elevatedArgs = ["-m", "kathara_api.stdin_secrets", ...args.slice(2)];
-  log(`starting elevated backend: sudo env ${redactEnvArgsForLog(envArgs).join(" ")} ${interpreter} ${elevatedArgs.join(" ")}`);
-  log(`  labs dir: ${labs}`);
-  log(`  static dir: ${staticDir}`);
-
-  // `detached`: sudo in a process group of its own. When the command it runs is stopped, sudo
-  // suspends its whole process group in turn — sharing this app's group, that froze the main
-  // process and every renderer along with the backend.
-  const proc = spawn("sudo", ["-S", "-k", "env", ...envArgs, interpreter, ...elevatedArgs], {
-    env: sudoEnv(env),
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-    detached: true,
-  });
-  let stderrBuf = "";
-  proc.stderr?.on("data", (c: Buffer) => {
-    stderrBuf += c.toString();
-  });
-  trackChild(proc);
-  proc.stdin?.on("error", () => {
-    /* sudo can exit before the write lands (e.g. not in sudoers) — the exit status is what reports it. */
-  });
-  proc.stdin?.write(`${password}\nKATHARA_API_AUTH_TOKEN=${token}\nKATHARA_API_SHELL_TOKEN=${shellToken}\n`);
-  proc.stdin?.end();
-
-  try {
-    await waitForHealth(baseUrl, token, Date.now() + HEALTH_TIMEOUT_MS);
-
-    // Health-ok only proves *some* process is listening — confirm it's actually the elevated one.
-    const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders(token) }).then((r) => r.json());
-    if (!info.is_admin) {
-      throw new Error("backend started but is not running as root");
+function sudoRunsWithoutPassword(): Promise<boolean> {
+  return new Promise((resolve) => {
+    let proc: ChildProcess;
+    try {
+      proc = spawn("sudo", ["-k", "-n", "true"], { env: sudoEnv(), stdio: "ignore", windowsHide: true });
+    } catch {
+      resolve(false);
+      return;
     }
-
-    log(`elevated backend healthy at ${baseUrl}`);
-    handle = { port, baseUrl, token, shellToken };
-    return { ok: true, handle };
-  } catch (err) {
-    await stopBackend();
-    const message = errorText(err);
-    // The password already passed `verifySudoPassword`, so this is the backend itself failing to
-    // come up as root, not an auth problem — except for the sudoers case, which `-v` does not
-    // cover: `-v` only asks "may this user sudo *at all*", while running a command additionally
-    // consults the per-command rules, so a user allowed to sudo but not to run this one is only
-    // discovered here.
-    let reason: ElevateFailureReason = "error";
-    if (SUDO_NOT_PERMITTED_MARKERS.some((m) => stderrBuf.includes(m))) reason = "not-permitted";
-    else if (message.includes("did not become healthy")) reason = "timeout";
-    log(`elevated backend start failed (${reason}): ${message}${stderrBuf ? ` — stderr: ${stderrBuf.trim()}` : ""}`);
-
-    // Never leave the app without a running backend just because elevation failed. This binds a
-    // *new* port, so the caller has to send the renderer there — hence `restarted: true`.
-    await startBackend(python, staticDir);
-    return { ok: false, reason, message, restarted: true };
-  }
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      resolve(false);
+    }, SUDO_VERIFY_TIMEOUT_MS);
+    proc.once("close", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0);
+    });
+    proc.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
 }
 
-/**
- * macOS/Windows: relaunch the backend elevated via the OS's own native admin-password dialog
- * (`@vscode/sudo-prompt`) — unlike Linux, these platforms won't let a custom-styled in-app
- * dialog collect an admin password itself, which also means there is no password here to check
- * up front. Instead the elevated backend is started *alongside* the current one and only
- * replaces it once it's proven healthy and root; see `runElevatedNative` for why.
- *
- * `sudo-prompt.exec()` returns no process handle (a documented limitation of the library, not
- * something this app can work around) and its callback only fires when the command *completes*
- * (i.e. the backend later exits) or fails to start at all — never on "started successfully" — so
- * success here is detected purely by polling `waitForHealth`, same as the other start paths.
- * Because there's no handle, `stopBackend()`'s HTTP-shutdown-first behavior is the only way this
- * app can later stop a backend started this way.
- */
-export async function startBackendElevatedNative(python: string, staticDir: string): Promise<ElevateResult> {
-  // Through the shared rate limiter, counting "cancelled" as verifyCanElevate does: without it a
-  // renderer could raise the OS admin dialog again and again until the user gives in.
-  let result: ElevateResult | undefined;
-  const gate = await withSudoRateLimit(
-    async () => {
-      elevating = true;
-      try {
-        result = await runElevatedNative(python, staticDir);
-      } finally {
-        elevating = false;
-      }
-      return result.ok ? { ok: true } : { ok: false, reason: result.reason, message: result.message };
-    },
-    (reason) => reason === "cancelled",
+/** Check the user's say-so, then let the next deploy of `labId` start its privileged devices and
+ * mount its host directories — privilegedAction.ts's authorizeDeployWith says in what order. */
+export async function authorizeDeploy(labId: string, password?: string): Promise<PrivilegedActionResult> {
+  const result = await authorizeDeployWith(
+    { platform: process.platform, sudoRunsWithoutPassword, verifyPassword: verifyCanElevate, grant: grantDeploy },
+    labId,
+    password,
   );
-  if (result) return result;
-  return gate.ok
-    ? { ok: false, reason: "error", message: "elevation did not run", restarted: false }
-    : { ...gate, restarted: false };
-}
-
-async function runElevatedNative(python: string, staticDir: string): Promise<ElevateResult> {
-  // Note the order, opposite to the Linux path: the current backend keeps running until the
-  // elevated one has proved itself. The password never passes through this process — the OS
-  // owns that dialog — so there is nothing to pre-check the way `verifySudoPassword` does, and
-  // testing the credentials with a throwaway elevated command would cost the user a *second*
-  // OS prompt for the real one. Starting first gets the same guarantee for free: a dismissed
-  // dialog, a rejected password or a backend that won't boot all leave the original backend
-  // untouched and still serving the renderer, so there is nothing to recover and no new port.
-  //
-  // Two backends therefore overlap for the duration of the health wait. They're both idle: the
-  // lab whose privileged devices prompted this hasn't been deployed yet — deploying it is what
-  // the elevation is *for* — so neither is touching Docker or the labs directory.
-  //
-  // This is only viable here because this path never calls `trackChild` (sudo-prompt hands back
-  // no process handle), so it isn't competing for the single `child` slot that still refers to
-  // the live backend. The Linux path does, which is why it pre-checks instead.
-
-  // Checked here, not only where the interpreter was chosen: this is the last point before a
-  // string is handed to sudo-prompt, which has no argv API and writes the command verbatim into a
-  // root-run `/bin/sh` script on macOS (and a `.bat` line on Windows). Every caller reaching here
-  // has validated already — this makes the elevated path safe regardless of who calls it next.
-  if (!isPlainAbsolutePath(python)) {
-    const message = `refusing to elevate with an unsafe interpreter path: ${JSON.stringify(python)}`;
-    log(message);
-    return { ok: false, reason: "error", message, restarted: false };
-  }
-
-  // No appImagePythonCache() here: an AppImage is a Linux packaging format, so on macOS and
-  // Windows the shipped paths are already readable by root. The bytecode cache still needs
-  // separating, for the same reason as on Linux.
-  const { port, baseUrl, token, shellToken, labs, appEnv, args } = await buildBackendCommand(staticDir, undefined, {
-    pycache: elevatedPycacheDir(),
-  });
-  log(`starting elevated backend (native prompt): ${python} ${args.join(" ")}`);
-  log(`  labs dir: ${labs}`);
-  log(`  static dir: ${staticDir}`);
-
-  // `args` is entirely hardcoded plus a numeric port (see buildBackendCommand), and `python` is
-  // validated above, so quoting here only has to survive spaces — it is the second line of
-  // defence, not the only one.
-  const cmd = [python, ...args].map((arg) => quoteForShellString(arg)).join(" ");
-  // Not `handle`: that still points at the backend this one is trying to replace, so it can't
-  // stand in for "the elevated one is up".
-  let started = false;
-  let execFailure: string | null = null;
-  // `appEnv`, not the full inherited environment: `options.env` here is validated against
-  // POSIX-only variable-name rules and rejects the whole call on the first violation (a single
-  // oddly-named inherited variable, e.g. Windows's `ProgramFiles(x86)`, would abort elevation
-  // outright) — `appEnv` is already just this app's own known-safe overrides.
-  sudoPrompt.exec(cmd, { ...SUDO_PROMPT_OPTIONS, env: appEnv }, (error) => {
-    if (!error) return;
-    if (!started) {
-      // Still starting (or the prompt was dismissed/auth failed) — record it for the catch
-      // block below to classify, rather than waiting out the full health timeout.
-      execFailure = error.message;
-    } else if (!stopping) {
-      log(`elevated backend (native) exited unexpectedly: ${error.message}`);
-      handle = null;
-      exitListener?.({ code: null, signal: null });
-    }
-  });
-
-  try {
-    await waitForHealth(baseUrl, token, Date.now() + HEALTH_TIMEOUT_MS, () => execFailure === null);
-
-    const info = await fetch(`${baseUrl}/api/system`, { headers: authHeaders(token) }).then((r) => r.json());
-    if (!info.is_admin) {
-      throw new Error("backend started but is not running as root");
-    }
-
-    log(`elevated backend healthy at ${baseUrl}`);
-    // Only now is the old backend expendable. `stopBackend()` clears `handle`/`stopping`, so
-    // the swap has to follow it, not precede it.
-    await stopBackend();
-    stopping = false;
-    started = true;
-    handle = { port, baseUrl, token, shellToken };
-    return { ok: true, handle };
-  } catch (err) {
-    // Both read *before* the cleanup below: shutting the candidate down makes its own exec
-    // callback fire and set `execFailure`, which would otherwise rewrite the diagnosis of why
-    // this attempt failed into "the elevated command failed to launch".
-    const failedToLaunch = execFailure !== null;
-    const message = execFailure ?? errorText(err);
-
-    // Emphatically not `stopBackend()`, which would stop the healthy backend that is still
-    // serving the renderer. Only the candidate needs cleaning up, and only if it got as far as
-    // listening at all — addressed by URL, since there's no handle for it. Never when another
-    // process holds the port: the shutdown request carries the token.
-    if (!failedToLaunch && !(err instanceof PortTakenError) && !(await shutdownAt(baseUrl, token))) {
-      log(`elevated backend at ${baseUrl} did not go down after a failed elevation`);
-      markOrphaned(await resolvePidForPort(Number(new URL(baseUrl).port)), baseUrl, token);
-    }
-
-    // Only a failure of the `sudoPrompt.exec` call itself is an auth outcome. sudo-prompt does
-    // not distinguish "user dismissed the dialog" from "password rejected" in its error text in
-    // any stable, cross-platform way, so both land on "cancelled" — but a backend that *did*
-    // start and then failed its checks is neither, and calling it "cancelled" would tell the
-    // user they clicked Cancel when they didn't.
-    let reason: ElevateFailureReason = "error";
-    if (failedToLaunch) reason = "cancelled";
-    else if (message.includes("did not become healthy")) reason = "timeout";
-    // On macOS, "Command failed:" means the prompt was authorized and the backend then crashed.
-    let userMessage = message;
-    if (process.platform === "darwin" && failedToLaunch && message.startsWith("Command failed:")) {
-      reason = "error";
-      const lines = message.split("\n").map((l) => l.trim()).filter(Boolean);
-      userMessage = lines.length > 1 ? `the elevated backend exited during startup — ${lines[lines.length - 1]}` : message;
-    }
-    log(`elevated backend start failed (${reason}): ${message}`);
-
-    // No recovery start: the backend that was running before this attempt still is, on the same
-    // port, so the renderer's origin is untouched.
-    return { ok: false, reason, message: userMessage, restarted: false };
-  }
+  if (!result.ok) log(`deploy of ${labId} not authorized: ${result.reason} — ${result.message}`);
+  return result;
 }
 
 /** Notified only on an *unexpected* exit, so the shell can show the log instead of a blank page. */
@@ -1226,27 +815,22 @@ export function backendToken(): string | null {
 }
 
 export async function stopBackend(): Promise<void> {
-  // Every way out of here drops both references, whether or not the process was confirmed gone.
-  const clearHandles = () => {
-    child = null;
-    handle = null;
-  };
   const proc = child;
   const current = handle;
-  if (!proc && !current) {
-    clearHandles();
-    return;
-  }
+  // Every way out of here drops both references, whether or not the process was confirmed gone.
+  child = null;
+  handle = null;
+  if (!proc || proc.exitCode !== null) return;
   stopping = true;
-  log(`stopping backend${proc ? ` (pid ${proc.pid})` : ""}${current ? ` at ${current.baseUrl}` : ""}`);
+  log(`stopping backend (pid ${proc.pid})${current ? ` at ${current.baseUrl}` : ""}`);
 
-  // Prefer asking the backend to shut itself down over HTTP: once a backend has been started
-  // elevated (startBackendElevatedLinux/Native), it runs as root and this unprivileged process
-  // can no longer deliver it a signal at all (kill() across that privilege boundary fails with
-  // EPERM, and the native-prompt path never even has a process handle to try) — but it can still
-  // reach the still-listening localhost port regardless of the backend's UID. Tried
-  // unconditionally (not just for the elevated case) so there's one shutdown path to maintain;
-  // it's effectively a no-op fallback-to-signal for the ordinary unprivileged backend.
+  const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+  const exitsWithin = (ms: number) =>
+    Promise.race([exited.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+
+  // Asked over HTTP first: the backend then stops the way it does on SIGTERM, closing its streams
+  // and TTY sessions — the one graceful route on Windows, which has no SIGTERM to deliver (see
+  // below). A signal remains the fallback for a backend that doesn't answer.
   if (current) {
     try {
       await fetch(`${current.baseUrl}/api/system/shutdown`, {
@@ -1254,87 +838,28 @@ export async function stopBackend(): Promise<void> {
         headers: authHeaders(current.token),
         signal: AbortSignal.timeout(SHUTDOWN_HTTP_TIMEOUT_MS),
       });
-      if (proc && proc.exitCode === null) {
-        const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
-        const exitedInTime = await Promise.race([
-          exited.then(() => true),
-          new Promise<boolean>((r) => setTimeout(() => r(false), SHUTDOWN_HTTP_TIMEOUT_MS)),
-        ]);
-        if (exitedInTime) {
-          clearHandles();
-          return;
-        }
-      } else {
-        // No local process to confirm exit against (native-elevated start, or already exited) —
-        // the HTTP request above was the only lever available. A 200 here only proves the process
-        // *received* it (it calls os.kill(getpid(), SIGTERM) and returns immediately), not that
-        // it's actually gone yet, so poll health instead of assuming success.
-        if (await waitForDeath(current.baseUrl, current.token, Date.now() + SHUTDOWN_DEATH_POLL_MS)) {
-          clearHandles();
-          return;
-        }
-        log(`backend at ${current.baseUrl} did not go down after a shutdown request`);
-        markOrphaned(await resolvePidForPort(Number(new URL(current.baseUrl).port)), current.baseUrl, current.token);
-        clearHandles();
-        return;
-      }
+      if (await exitsWithin(SHUTDOWN_HTTP_TIMEOUT_MS)) return;
     } catch (err) {
       log(`HTTP shutdown request failed, falling back to signal: ${errorText(err)}`);
     }
   }
 
-  if (!proc || proc.exitCode !== null) {
-    log("no local backend process to signal — giving up");
-    clearHandles();
-    return;
-  }
-
   const { pid } = proc;
-  const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
-  const knownBaseUrl = current?.baseUrl ?? handle?.baseUrl;
-  const knownToken = current?.token ?? handle?.token;
-
   if (process.platform === "win32" && pid) {
     // Windows has no SIGTERM to deliver: signals are emulated and are not delivered to the
     // process tree, so uvicorn (and any worker it spawned) would survive a kill() here.
     await new Promise<void>((resolve) => {
       execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }, () => resolve());
     });
-  } else if (!proc.kill("SIGTERM")) {
-    // A root-owned process can't be signaled by this unprivileged one at all — kill() returns
-    // false immediately (EPERM) rather than throwing, so check it instead of waiting out a full
-    // SIGTERM_GRACE_MS (and, below, another one after an equally doomed SIGKILL) on a signal that
-    // was never delivered in the first place.
-    log(`SIGTERM could not be delivered to backend (pid ${pid}) — likely running elevated`);
-    markOrphaned(pid, knownBaseUrl, knownToken);
-    clearHandles();
     return;
   }
-
-  const timedOut = await Promise.race([
-    exited.then(() => false),
-    new Promise<boolean>((r) => setTimeout(() => r(true), SIGTERM_GRACE_MS)),
-  ]);
-  if (timedOut) {
-    log("backend did not exit on SIGTERM; sending SIGKILL");
-    // For the Linux elevated backend `proc` is sudo, which cannot pass a SIGKILL on; the root
-    // backend dies with it only because kathara_api.stdin_secrets asked the kernel for exactly
-    // that (PR_SET_PDEATHSIG).
-    proc.kill("SIGKILL");
-    // Bounded, not `await exited` unconditionally: a backend this SIGTERM somehow reached but
-    // that still won't die shouldn't hang app quit indefinitely waiting for an "exit" that may
-    // never come.
-    const killed = await Promise.race([
-      exited.then(() => true),
-      new Promise<boolean>((r) => setTimeout(() => r(false), SIGTERM_GRACE_MS)),
-    ]);
-    if (!killed) {
-      log(`backend (pid ${pid}) did not exit after SIGKILL`);
-      markOrphaned(pid, knownBaseUrl, knownToken);
-    }
-  }
-
-  clearHandles();
+  proc.kill("SIGTERM");
+  if (await exitsWithin(SIGTERM_GRACE_MS)) return;
+  log("backend did not exit on SIGTERM; sending SIGKILL");
+  proc.kill("SIGKILL");
+  // Bounded, not `await exited` unconditionally: a backend that still won't die shouldn't hang
+  // app quit indefinitely waiting for an "exit" that may never come.
+  if (!(await exitsWithin(SIGTERM_GRACE_MS))) log(`backend (pid ${pid}) did not exit after SIGKILL`);
 }
 
 export function backendLogPath(): string {

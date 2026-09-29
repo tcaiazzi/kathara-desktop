@@ -392,6 +392,23 @@ def deploy_lab(
     return _detail(lab, service)
 
 
+@router.post(
+    "/{lab_id}/deploy-grant",
+    response_model=Message,
+    dependencies=[Depends(require_shell_token)],
+)
+def grant_deploy(lab_id: str, service: KatharaService = Depends(get_service)) -> Message:
+    """Allow the next deploy of this lab the host access its devices ask for right now.
+
+    Desktop shell only (the `X-Kathara-Shell-Token` header): the shell calls it after checking the
+    user's own OS password, and a privileged device, a host volume or the host home mount is
+    refused by `POST /deploy` without it (`DeployNotAuthorizedError`). One deploy, within 60
+    seconds, and only what the lab asked for at this moment — see services/deploy_grants.py.
+    """
+    service.grant_deploy(lab_id)
+    return Message(detail=f"Deploy of `{lab_id}` granted.")
+
+
 @router.post("/{lab_id}/undeploy", response_model=Message)
 def undeploy_lab(
     lab_id: str,

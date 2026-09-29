@@ -89,8 +89,8 @@ def invalid_settings(values: Mapping[str, Any]) -> dict[str, str]:
 def write_conf(path: Path, values: Mapping[str, Any]) -> None:
     """Write ``values`` to ``path`` in the CLI's own format, readable only by the real user.
 
-    Ownership goes to the user behind sudo, as ``Setting.save_to_disk`` does, so an elevated
-    backend does not leave a root-owned file the CLI can no longer read.
+    Ownership goes to the user behind sudo, as ``Setting.save_to_disk`` does, so a backend run
+    under sudo does not leave a root-owned file the CLI can no longer read.
     """
     created_dir = not path.parent.is_dir()
     path.parent.mkdir(parents=True, exist_ok=True)

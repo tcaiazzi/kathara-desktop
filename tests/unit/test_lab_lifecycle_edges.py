@@ -217,26 +217,6 @@ def test_the_failure_names_the_devices_it_was_meant_to_start(partial):
 _ROOT_REFUSAL = "You must be root in order to start device `pc2` in privileged mode."
 
 
-def test_a_single_privileged_device_deploy_says_to_deploy_the_whole_lab(partial):
-    """Getting root restarts the backend, and only a whole-lab deploy resumes after that restart:
-    the refusal says so, and what the lab keeps showing is the short form of it."""
-    service, facade = partial
-    facade.error = PrivilegeError(_ROOT_REFUSAL)
-
-    with pytest.raises(PrivilegeError) as refused:
-        service.deploy_lab(lab_id(service, "l"), selected_machines={"pc2"})
-
-    assert str(refused.value) == (
-        f"{_ROOT_REFUSAL} Deploying a single privileged device isn't supported yet: "
-        "deploy the whole lab to grant administrator privileges."
-    )
-    detail = _summary(service)
-    assert detail.deploy_error == (
-        "privileged devices start only with the whole lab (Deploy asks for administrator privileges)."
-    )
-    assert detail.deploy_failed_machines == ["pc2"]
-
-
 def test_a_whole_lab_deploy_keeps_katharas_own_root_refusal(partial):
     service, facade = partial
     facade.error = PrivilegeError(_ROOT_REFUSAL)
@@ -245,14 +225,6 @@ def test_a_whole_lab_deploy_keeps_katharas_own_root_refusal(partial):
         service.deploy_lab(lab_id(service, "l"))
 
     assert _summary(service).deploy_error == _ROOT_REFUSAL
-
-
-def test_a_root_refusal_that_is_not_about_privileged_mode_is_left_alone(partial):
-    service, facade = partial
-    facade.error = PrivilegeError("You must be root in order to use external collision domains.")
-
-    with pytest.raises(PrivilegeError, match=r"^You must be root in order to use external collision domains\.$"):
-        service.deploy_lab(lab_id(service, "l"), selected_machines={"pc2"})
 
 
 def test_a_refused_deploy_is_not_recorded_as_a_failure(service):

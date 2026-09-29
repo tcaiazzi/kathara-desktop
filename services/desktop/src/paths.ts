@@ -1,6 +1,5 @@
 /** Filesystem locations the shell needs, resolved differently in dev and when packaged. */
 import { app } from "electron";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -16,66 +15,16 @@ function repoRoot(): string {
 }
 
 /**
- * The built frontend that the backend will serve (see src/kathara_api/spa.py).
- * Packaged, it is copied in as an extraResource; in dev it is the frontend's own dist/.
- * Returns null when the frontend has not been built yet, so the caller can say so plainly
- * instead of starting a backend that would answer 404 at /.
+ * The built frontend that the backend will serve (`KATHARA_API_STATIC_DIR`, see
+ * src/kathara_api/spa.py). Packaged, it is copied in as an extraResource; in dev it is the
+ * frontend's own dist/. Returns null when the frontend has not been built yet, so the caller can
+ * say so plainly instead of starting a backend that would answer 404 at /.
  */
-function frontendDir(): string | null {
+export function resolveStaticDir(): string | null {
   const candidate = app.isPackaged
     ? path.join(process.resourcesPath, "frontend")
     : path.join(repoRoot(), "services", "frontend", "dist");
   return fs.existsSync(path.join(candidate, "index.html")) ? candidate : null;
-}
-
-/**
- * `frontendDir()`, but safe to hand to a backend that might run as a *different* user (i.e. a
- * `sudo`-elevated backend — see backend.ts's startBackendElevatedLinux/Native).
- *
- * An AppImage doesn't run its contents directly: its own runtime FUSE-mounts itself under
- * `/tmp/.mountXXXXXX/` as the launching user first, and `frontendDir()`'s packaged candidate
- * resolves inside that mount. FUSE mounts are only readable by the mounting user unless made
- * with `allow_other` — unlike a real filesystem, root does *not* automatically bypass this — so
- * an elevated backend gets `PermissionError` trying to read it. Detected via `$APPIMAGE`, which
- * the AppImage runtime sets to the AppImage's own path — the standard way an app tells it's
- * running from one. Not an issue for a dev checkout or a .deb/.rpm install: both resolve to a
- * real directory on disk that any UID can read.
- *
- * Copies the frontend out to a stable, real on-disk location once (cached across launches) and
- * returns that instead. Keyed on a hash of the files at the build's root, not `app.getVersion()`:
- * Vite fingerprints every file under `assets/` into the script/link tags `index.html` references,
- * so a change to any of them changes `index.html`'s bytes too, while the root's other files
- * (copied from the frontend's `public/`, such as `theme-init.js`) keep their names across builds
- * and so are hashed themselves. A version bump reliably changes the key anyway, but keying on
- * content also self-invalidates a rebuild that ships under the *same* version (e.g. a local
- * dev/test cycle) — the case a version-only key would go on serving a stale copy for. Recomputed
- * on every launch.
- */
-export function resolveStaticDir(): string | null {
-  const candidate = frontendDir();
-  if (!candidate || !process.env.APPIMAGE) return candidate;
-
-  const hash = crypto.createHash("sha256");
-  for (const name of fs.readdirSync(candidate).sort()) {
-    const file = path.join(candidate, name);
-    if (fs.statSync(file).isFile()) hash.update(name).update("\0").update(fs.readFileSync(file));
-  }
-  const key = hash.digest("hex").slice(0, 16);
-
-  const cacheRoot = path.join(app.getPath("userData"), "frontend-cache");
-  const cached = path.join(cacheRoot, key);
-  if (!fs.existsSync(path.join(cached, "index.html"))) {
-    fs.mkdirSync(cacheRoot, { recursive: true });
-    fs.rmSync(cached, { recursive: true, force: true });
-    fs.cpSync(candidate, cached, { recursive: true });
-
-    // Drop every other cached copy — there's normally at most one (the previous build's), never
-    // worth keeping once this launch has a fresh one of its own.
-    for (const entry of fs.readdirSync(cacheRoot)) {
-      if (entry !== key) fs.rmSync(path.join(cacheRoot, entry), { recursive: true, force: true });
-    }
-  }
-  return cached;
 }
 
 /**
@@ -109,11 +58,11 @@ export function defaultLabsDir(): string {
  * Lab storage root actually in effect. Prefers a user-chosen directory (Settings → "Change…",
  * services/frontend's SettingsPage) over the default, but only if it still exists — a configured
  * directory that vanished (an unplugged drive, a deleted folder) falls back silently instead of
- * failing backend startup, the same guard idiom as frontendDir() above and iconPath() below.
+ * failing backend startup, the same guard idiom as resolveStaticDir() above and iconPath() below.
  *
  * Validated as well as existence-checked, because this value is what becomes
- * KATHARA_API_LABS_DIR: on the elevated macOS path sudo-prompt writes every env value into
- * `export KEY="value"` in a script that runs as root, escaping only `"`. `preferences.json` is
+ * KATHARA_API_LABS_DIR, and a path in the labs directory can reach the root `chown` that gives
+ * back files devices left owned by root (labFolders.ts's reclaimScript). `preferences.json` is
  * parsed by readPrefs with no schema validation at all, so a hand-edited (or otherwise
  * attacker-written) file is the one way a value can reach here without passing main.ts's
  * `labs:set-dir` checks. Same shape as safety.ts's isUsablePort, which guards prefs.backendPort
@@ -201,11 +150,10 @@ export function bundledPythonPath(): string | null {
 }
 
 /**
- * The root of that bundled interpreter's tree. Separate from the interpreter path because the
- * whole tree is what appImagePythonCache() has to copy out, and because nothing may be written
- * into it: the app's Python environment is read-only by design, which is what makes it work
- * identically on an AppImage's squashfs, a root-owned /opt from the .deb/.rpm, a Program Files
- * directory chosen in the NSIS installer, and a signed .app on macOS.
+ * The root of that bundled interpreter's tree. Nothing may be written into it: the app's Python
+ * environment is read-only by design, which is what makes it work identically on an AppImage's
+ * squashfs, a root-owned /opt from the .deb/.rpm, a Program Files directory chosen in the NSIS
+ * installer, and a signed .app on macOS.
  */
 function bundledPythonDir(): string | null {
   if (!app.isPackaged) return null;
@@ -245,69 +193,4 @@ export function pycacheDir(): string {
  * diagnostic infrastructure for whoever investigates a crash report by hand. */
 export function crashDumpsDir(): string {
   return path.join(app.getPath("userData"), "crashDumps");
-}
-
-/**
- * The bundled Python environment as a *root-readable* pair of paths, for the elevated backend
- * (backend.ts's startBackendElevatedLinux/Native). Returns null when the ordinary paths already
- * work, which is every case except one.
- *
- * That case is the AppImage, and it is the same trap resolveStaticDir() documents above: the
- * AppImage runtime FUSE-mounts itself under `/tmp/.mountXXXXXX/` as the launching user, and root
- * does *not* bypass a FUSE mount's ownership the way it bypasses ordinary file permissions. An
- * elevated backend started from those paths cannot exec the interpreter or read a single module.
- *
- * So copy both halves out to a stable, real on-disk location under `userData` and hand those back
- * instead. Deliberately lazy — called only from the elevated start paths, never during a normal
- * launch: elevation is an explicit user action already behind a password prompt, where a one-off
- * copy is unnoticeable, while doing it on every launch would cost every user ~200 MB of disk for
- * a feature most never use.
- *
- * Keyed on the content of the vendored dependency manifest rather than app.getVersion(), for the
- * same reason resolveStaticDir() keys on index.html's bytes: it also self-invalidates a rebuild
- * shipping under a version that has not been bumped.
- */
-export function appImagePythonCache(): { python: string; sitePackages: string } | null {
-  if (!process.env.APPIMAGE) return null;
-  const pythonDir = bundledPythonDir();
-  const sitePackages = bundledSitePackages();
-  if (!pythonDir || !sitePackages) return null;
-
-  // The manifest is only cache-key material, never a correctness requirement — a build that
-  // somehow shipped without it must still be able to elevate, so fall back to the app version
-  // rather than throwing out of a path the user reached by typing their password.
-  let keyMaterial: Buffer | string;
-  try {
-    keyMaterial = fs.readFileSync(path.join(sitePackages, "vendor-manifest.json"));
-  } catch {
-    console.warn("no vendor-manifest.json beside the bundled site-packages — keying the AppImage python cache on the app version instead");
-    keyMaterial = app.getVersion();
-  }
-  const key = crypto.createHash("sha256").update(keyMaterial).digest("hex").slice(0, 16);
-
-  const cacheRoot = path.join(app.getPath("userData"), "python-cache");
-  const cached = path.join(cacheRoot, key);
-  // Written last, so a copy interrupted half-way (a crash, a kill) is never mistaken for a
-  // finished one on the next launch — unlike resolveStaticDir(), whose marker is the copied
-  // index.html itself, this tree has no single file that means "all of it arrived".
-  const complete = path.join(cached, ".complete");
-
-  if (!fs.existsSync(complete)) {
-    fs.mkdirSync(cacheRoot, { recursive: true });
-    fs.rmSync(cached, { recursive: true, force: true });
-    // verbatimSymlinks: python-build-standalone ships bin/python3 as a relative symlink to
-    // python3.12; dereferencing it would silently double the copy and break nothing visibly.
-    fs.cpSync(pythonDir, path.join(cached, "python"), { recursive: true, verbatimSymlinks: true });
-    fs.cpSync(sitePackages, path.join(cached, "site-packages"), { recursive: true, verbatimSymlinks: true });
-    fs.writeFileSync(complete, "");
-
-    for (const entry of fs.readdirSync(cacheRoot)) {
-      if (entry !== key) fs.rmSync(path.join(cacheRoot, entry), { recursive: true, force: true });
-    }
-  }
-
-  return {
-    python: path.join(cached, "python", process.platform === "win32" ? "python.exe" : "bin/python3"),
-    sitePackages: path.join(cached, "site-packages"),
-  };
 }

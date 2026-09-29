@@ -137,9 +137,9 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
     The sibling gets a random name and is created exclusively (see ``_EXCL_CREATE_FLAGS``): a
     fixed name would follow a symlink planted in an opened or imported folder, and a leftover from
-    a crash — root-owned, after an elevated backend — would block every later save. Mode 0o666
-    under the process umask, as a plain ``open()`` gives, not ``mkstemp``'s 0o600: a lab.conf an
-    elevated backend writes must stay readable to the user. ``newline=""`` disables Python's own
+    a crash — root-owned, after a backend run as root — would block every later save. Mode 0o666
+    under the process umask, as a plain ``open()`` gives, not ``mkstemp``'s 0o600: a lab.conf a
+    backend run as root writes must stay readable to the user. ``newline=""`` disables Python's own
     newline translation, so the caller's exact line endings (LF, CRLF, or a mix) survive untouched.
     """
     for _ in range(8):
@@ -687,11 +687,11 @@ class LabStore:
                     # `external_attr >> 16` is the archive's full st_mode, and S_ISUID/S_ISGID/
                     # S_ISVTX all fall inside the range chmod(2) honours, so an uploaded .zip could
                     # otherwise deposit a setuid file straight into the labs directory *on the
-                    # host*. That matters most when the backend was relaunched elevated to deploy a
-                    # privileged lab (see services/desktop): the extracted file is then root-owned
-                    # and setuid. (Measured: the bits do *not* reach a deployed container — Kathara
-                    # does not carry a packed device file's mode across, and makes the startup
-                    # script executable itself — so the host directory is the whole blast radius.)
+                    # host*. That matters most for a backend run as root (under sudo, say): the
+                    # extracted file is then root-owned and setuid. (Measured: the bits do *not*
+                    # reach a deployed container — Kathara does not carry a packed device file's
+                    # mode across, and makes the startup script executable itself — so the host
+                    # directory is the whole blast radius.)
                     # 0o777 keeps the execute bit, which is the only reason modes are preserved at
                     # all (see this docstring) and what the zip_lab -> extract_zip round-trip needs.
                     mode = (member.external_attr >> 16) & 0o777

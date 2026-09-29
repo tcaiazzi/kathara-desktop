@@ -141,9 +141,17 @@ class LabRenameLockedError(ApiError):
 
 
 class ShellOnlyError(ApiError):
-    """Raised by require_shell_token (dependencies.py): the route opens a caller-chosen host
-    directory as a lab, and only the desktop shell's main process — which holds the shell token
-    and picked the folder in a native dialog — may ask for that."""
+    """Raised by require_shell_token (dependencies.py): the route is one only the desktop shell's
+    main process, which holds the shell token, may call — opening a host directory it picked in a
+    native dialog as a lab, or granting a deploy after checking the user's password."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+
+
+class DeployNotAuthorizedError(ApiError):
+    """Raised when a deploy would start a privileged device, mount a host directory or mount the
+    user's home, and no grant covers it (services/deploy_grants.py). The desktop shell issues one
+    only after checking the user's password; the frontend asks for it and retries once."""
 
     status_code = status.HTTP_403_FORBIDDEN
 
@@ -360,9 +368,9 @@ KATHARA_STATUS_MAP: dict[type[Exception], int] = {
     fs.errors.DestinationExists: status.HTTP_409_CONFLICT,
     fs.errors.DirectoryNotEmpty: status.HTTP_409_CONFLICT,
     # 403 Forbidden
-    # Raised by Kathara itself (e.g. DockerMachine.create) when a privileged device is started
-    # without the whole process's real UID being 0 — distinct error_type so the frontend can
-    # offer to relaunch the backend elevated instead of just showing a generic error.
+    # Raised when a privileged device is started without the whole process's real UID being 0
+    # and no desktop shell to grant it (KatharaService._authorize_host_access), and by Kathara
+    # itself for what does need root, such as external collision domains.
     PrivilegeError: status.HTTP_403_FORBIDDEN,
     # 502 / 503 infrastructure
     DockerDaemonConnectionError: status.HTTP_503_SERVICE_UNAVAILABLE,

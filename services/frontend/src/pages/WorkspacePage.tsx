@@ -1273,7 +1273,7 @@ export function WorkspacePage() {
   const currentLab = useMemo(() => labs?.find((l) => l.id === labId) ?? null, [labs, labId]);
   const showLabList = !currentLab || labPickerOpen;
 
-  async function handleDeployToggle(opts?: { skipImageCheck?: boolean }) {
+  async function handleDeployToggle() {
     if (!detail) return;
     setDeployAction(detail.deployed ? "undeploy" : "deploy");
     try {
@@ -1285,41 +1285,11 @@ export function WorkspacePage() {
           await reloadLabs();
         },
         setDeployAction,
-        opts,
       );
     } finally {
       setDeployAction(null);
     }
   }
-
-  // After an elevation-triggered restart (see ElevationContext.tsx / services/desktop's
-  // main.ts), the shell reloads straight into /workspace/<id>?resumeDeploy=1 — continue the
-  // deploy the user was trying to do automatically instead of leaving them to notice the reload
-  // finished and click Deploy again. Guarded by a ref, not just stripping the query param, so
-  // this can only ever fire once per page load. `skipImageCheck: true` because the image
-  // pre-check already ran (and was satisfied or explicitly skipped) before elevation was
-  // requested — re-running it here would ask about the same images again, right after the user
-  // just granted privileges.
-  const resumedDeployRef = useRef(false);
-  useEffect(() => {
-    if (resumedDeployRef.current || !detail || searchParams.get("resumeDeploy") !== "1") return;
-    resumedDeployRef.current = true;
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("resumeDeploy");
-        return next;
-      },
-      { replace: true },
-    );
-    if (!detail.deployed) {
-      toast.show("Administrator privileges granted — deploying now.", "success");
-      void handleDeployToggle({ skipImageCheck: true }).catch(() => {});
-    }
-    // `handleDeployToggle` and `toast` are left out: the ref lets this run once per page load, and
-    // the render that runs it is the one that saw `detail` arrive, whose copies are current.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detail, searchParams, setSearchParams]);
 
   // The header buttons pass the open lab; the rail's context menu passes the right-clicked lab,
   // which may be a different one — in that case the open lab stays put. A managed lab is deleted
@@ -1864,7 +1834,7 @@ export function WorkspacePage() {
                   bg="warning"
                   text="dark"
                   className="d-flex align-items-center gap-1 flex-shrink-0"
-                  title="This lab has privileged devices — deploying it requires administrator privileges."
+                  title="This lab has privileged devices — deploying it asks for your password."
                 >
                   <ShieldAlert size={12} />
                   privileged

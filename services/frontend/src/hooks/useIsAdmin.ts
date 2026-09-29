@@ -12,9 +12,9 @@ import { api, isAbortError } from "../services/api";
  * default before the real answer arrives. `{isAdmin && ...}`-style display code (the TitleBar/
  * AppNavbar badges) already treats `undefined` the same as `false`, so this is a safe widening.
  *
- * A mount-time check is as current as this ever needs to be: whenever the Electron shell actually
- * changes this (elevation:elevate/elevation:drop in services/desktop/src/main.ts), it reloads the
- * whole renderer against the new backend, which re-mounts everything anyway. No polling needed.
+ * A mount-time check is as current as this ever needs to be: a process's UID never changes while
+ * it runs, and the desktop shell starts every backend as the user who launched the app. No
+ * polling needed.
  */
 export function useIsAdmin(): boolean | undefined {
   const [isAdmin, setIsAdmin] = useState<boolean | undefined>(undefined);

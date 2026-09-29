@@ -28,9 +28,10 @@ the backend start. `startBackend` then:
   also the only loopback origins `ipc.ts` answers.
 - Generates a second per-launch secret, `KATHARA_API_SHELL_TOKEN`, which — unlike the pairing
   token — never leaves `backend.ts`: not to `main.ts`, not over IPC. It is what `POST /labs/open`
-  requires (see BACKEND.md's "Labs outside the labs root"), and `backend.ts`'s `openLabFolder`
-  is its only use, so only the main process can turn a host path into a lab the API reads and
-  writes.
+  and `POST /labs/{id}/deploy-grant` require (see BACKEND.md's "Labs outside the labs root" and
+  "Deploys that reach the host"), and `backend.ts`'s `openLabFolder` and `grantDeploy` are its
+  only uses, so only the main process can turn a host path into a lab the API reads and writes,
+  or let a deploy start a privileged device or mount a host directory.
 - Sets `KATHARA_API_STATIC_DIR` to the built frontend, `KATHARA_API_LABS_DIR` to the per-user lab
   directory and `KATHARA_API_STATE_DIR` to the app's user-data directory, where the backend keeps
   its list of lab folders opened from elsewhere (`known_labs.json`) and the official image list
@@ -65,42 +66,44 @@ custom header, so `ttyWsUrl`/`statsStreamUrl`/`labEventsUrl` append `?token=` in
 from the URL only on those routes (`require_auth_token_or_query` and the TTY WebSocket's own
 check); everywhere else `require_auth_token` accepts the header alone.
 
-Elevated (root) backend starts and orphan-backend recovery go through the same
-`buildBackendCommand` and carry the same token; see the `runElevatedLinux`/
-`runElevatedNative`/`markOrphaned` functions in `backend.ts` for the retry/cleanup paths. On
-Linux the two secrets do not travel on `sudo env …`'s command line with the other settings — any
-local user can read it in `/proc`, and sudo logs it — but on stdin after the password, where
-`python -m kathara_api.stdin_secrets` reads them before starting uvicorn. That launcher also asks
-the kernel to kill it when its parent dies (`PR_SET_PDEATHSIG`): sudo runs in a process group of its
-own and is the only process the shell can signal, and a SIGKILL to sudo — the last resort for a
-backend that ignores SIGTERM — would otherwise leave the root backend running, unnoticed.
+### Deploys that reach the host
+
+The backend always runs as the user who launched the app, never as root. A privileged device, a
+host directory mounted into a device, or the host home mount (`hosthome_mount`) is still gated
+behind the user's own OS password, and it is the backend that enforces it: `deploy_lab` refuses
+such a deploy (`DeployNotAuthorizedError`) unless the shell granted it (BACKEND.md's "Deploys that
+reach the host"). The renderer's deploy prompt (`ElevationContext.tsx`) asks for the password and
+sends it over `elevation:authorize-deploy`; `backend.ts`'s `authorizeDeploy` checks it —
+`sudo -S -k -v` on Linux, a no-op command through `@vscode/sudo-prompt`'s native dialog on
+macOS/Windows — and only then calls `grantDeploy`, carrying the shell token. So a renderer that
+holds the pairing token still cannot start a privileged container without the password. Every
+password check shares one rate limiter (`withSudoRateLimit`), so the ok/wrong split is no free
+oracle for a compromised renderer.
+
+On Linux with a `NOPASSWD` sudoers rule, `sudo -v` would accept any "password", so the prompt
+asks for a confirmation instead (`elevation:password-required`, `sudo -k -n true`), and
+`authorizeDeploy` re-runs that check rather than taking the renderer's word for it.
 
 ### What is validated on the way into a privileged context
 
-`@vscode/sudo-prompt` takes a single command **string** — it exposes no argv API — and writes it
-verbatim into a `/bin/sh` script on macOS and a `.bat` line on Windows, so on those platforms the
-elevated command line is shell-interpreted. (Linux never uses it for the backend: `runElevatedLinux`
-passes argv to `spawn("sudo", …)`, with no shell.) The environment reaches the same script, written
-as `export KEY="value"` on macOS and `set KEY=value` on Windows. Most of what goes there is derived
-from the app's own install and data directories; the state directory is checked with
-`isPlainAbsolutePath` in `buildBackendCommand` and left out when it fails. Two values could
-otherwise reach that string from outside this process:
+Only two things run as root, both only after a password: the no-op command `verifyCanElevate`
+runs through `@vscode/sudo-prompt` on macOS/Windows, a fixed string; and on Linux the `chown`
+that gives back lab files running devices left owned by root (`labFolders.ts`'s `reclaimScript`,
+see "Desktop-only behaviour" below), one `sh -c` string built from the labs directory and the lab
+folders opened from elsewhere. Every path in that script goes through `safety.ts`'s
+`isPlainAbsolutePath`, which rejects shell metacharacters outright rather than trying to escape
+them — "safe by construction" is the better guarantee. `quoteForShellString` is the second line,
+not the only one.
 
-- **the labs directory**, which the renderer proposes over `labs:set-dir` and which becomes
-  `KATHARA_API_LABS_DIR`. `main.ts`'s `setLabsDir` applies it only if it is a plain absolute path
-  *and* the user actually chose it in the native folder dialog during this run (`labs:pick-dir`
-  records what it offered) or it is the app's own default. `paths.ts`'s `labsDir()` re-checks the
-  value it reads back, since `preferences.json` is parsed without schema validation and is the one
-  route that bypasses the handler.
-- **the interpreter path**, as resolved by `prereqs.ts`'s `pythonCandidates()`. There is no
-  user-chosen override: a packaged app has exactly one interpreter, the bundled one, and a dev
-  checkout tries the repo's `.venv` then `PATH` — so there is nothing for a preference to pick.
-  Re-checked in `runElevatedNative` before the command string is built.
-
-Both go through `safety.ts`'s `isPlainAbsolutePath`, which rejects shell metacharacters outright
-rather than trying to escape them — quoting a `.bat` line correctly is hard enough that "safe by
-construction" is the better guarantee. `quoteForShellString` (single quotes on POSIX, doubled `""`
-on Windows) is the second line, not the only one.
+- **The labs directory** is proposed by the renderer over `labs:set-dir`. `main.ts`'s
+  `setLabsDir` applies it only if it is a plain absolute path *and* the user actually chose it in
+  the native folder dialog during this run (`labs:pick-dir` records what it offered) or it is the
+  app's own default. `paths.ts`'s `labsDir()` re-checks the value it reads back, since
+  `preferences.json` is parsed without schema validation and is the one route that bypasses the
+  handler.
+- **The opened lab folders** come from the backend's `known_labs.json`, a file in the user's own
+  data directory: `main.ts`'s `reclaimTargets` also requires each to be a real directory the user
+  owns, so a system directory that ended up on the list is never handed a root `chown`.
 
 > Running `npm start` from a terminal **inside VS Code** works, but note that VS Code exports
 > `ELECTRON_RUN_AS_NODE=1`; `services/desktop/scripts/start.mjs` strips it before launching,
@@ -152,19 +155,7 @@ Two consequences worth knowing:
 - `--no-compile`, so `.pyc` files are built at runtime instead. A build-time `.pyc` is invalidated
   the moment electron-builder rewrites the source's mtime, and Python would then try to rewrite it
   in a read-only directory on every import. `PYTHONPYCACHEPREFIX` points at the user-data
-  directory instead (`paths.ts`'s `pycacheDir()`); the elevated backend gets a separate subtree, so
-  root-owned cache files can't stop later unprivileged launches from refreshing them.
-
-### The AppImage exception
-
-An AppImage FUSE-mounts itself under `/tmp/.mountXXXXXX/` **as the launching user**, and root does
-not bypass a FUSE mount's ownership the way it bypasses ordinary file permissions. So an *elevated*
-backend started from the shipped paths could neither exec the interpreter nor read a module.
-`paths.ts`'s `appImagePythonCache()` copies both trees out to the user-data directory and hands
-those paths back instead — lazily, from the elevated start paths only, since elevation is an
-explicit user action already behind a password prompt while every ordinary launch would otherwise
-pay ~200 MB of disk for a feature most users never touch. Same idiom as `resolveStaticDir()` uses
-for the frontend, and keyed on the vendored dependency manifest's content for the same reason.
+  directory instead (`paths.ts`'s `pycacheDir()`).
 
 ## Building installers
 
@@ -232,20 +223,19 @@ for the frontend, and keyed on the vendored dependency manifest's content for th
   *Open Lab Folder…* ask for the same dialog. In the rail, such a lab shows the folder it sits in
   under its name, and its removal is *Close* — forget it, folder untouched — where a lab in the
   labs folder has *Delete*.
-- After an elevated session, files it left root-owned are reclaimed from the labs directory
-  (`chown -R`) **and** from every opened lab folder — there only root's own files
-  (`find -uid 0 -execdir chown -h`), since a folder the user opened may legitimately hold other
-  accounts' files (`labFolders.ts`'s `reclaimScript`). `-execdir` because a running device can
+- Running devices write into their lab's `shared/` folder as root (Kathara bind-mounts it), so
+  the backend can meet a lab file it may not change (`LabFilePermissionError`). On Linux,
+  `hooks/useReportError.ts` then asks the shell which folders hold such files
+  (`lab-files:reclaim-paths`) and, if there are any, opens a password prompt after the error
+  toast; elsewhere it is only the toast. The reclaim covers the labs directory (`chown -R`)
+  **and** every opened lab folder — there only root's own files (`find -uid 0 -execdir chown -h`),
+  since a folder the user opened may legitimately hold other accounts' files (`labFolders.ts`'s
+  `reclaimScript`). `-execdir` because a running device can
   swap a directory under `shared/` for a symbolic link while this runs as root, and a full path
   handed to `chown` would follow it. An opened folder only counts if it is a
   real directory the user owns (`main.ts`'s `reclaimTargets`): the list comes from a file in the
   user's own data directory, not trusted to name `/usr/local`. The prompt lists every path.
-- The same reclaim is offered when the backend refuses to change a lab file another account owns
-  (`LabFilePermissionError`) — in practice one a running device wrote as root into the lab's
-  `shared/` folder. On Linux, `hooks/useReportError.ts` asks the shell which folders hold such files
-  (`lab-files:reclaim-paths`, the same `reclaimTargets` as above) and, if there are any, opens the
-  same password prompt after the error toast. Elsewhere it is only the toast.
-- A folder opened while the backend is (re)starting — a startup, an elevation — is parked and
+- A folder opened while the backend is (re)starting — a startup, a crash restart — is parked and
   opened once the new backend has loaded (`openFolderAsLab`, `replayPendingLabFolder`).
 - **`kathara://lab/<name>`** opens that lab, in the running instance if there is one. The link
   carries a name, the route an id (see [BACKEND.md](BACKEND.md)), so it arrives as `/workspace?lab=<name>`

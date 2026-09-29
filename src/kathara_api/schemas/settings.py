@@ -15,10 +15,9 @@ class SystemInfo(BaseModel):
     # `KatharaService.system_info`.
     version: Optional[str] = None
     available_managers: dict[str, str]
-    # Whether this process's real UID is 0 — Kathara's own gate for privileged devices
-    # (DockerMachine.create -> Kathara.utils.is_admin()) checks the process's real UID, not
-    # Docker socket access, so this is what the frontend needs to know before offering an
-    # elevation prompt for a lab with privileged devices.
+    # Whether this process's real UID is 0 (Kathara.utils.is_admin). Without a desktop shell to
+    # grant them, privileged devices start only when it is (KatharaService._authorize_host_access),
+    # so a browser build asks this before deploying one.
     is_admin: bool
 
 

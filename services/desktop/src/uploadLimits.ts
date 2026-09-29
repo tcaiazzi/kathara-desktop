@@ -5,8 +5,7 @@
  * src/kathara_api/config.py reads.
  *
  * Both ways in are untrusted: the renderer over IPC (settings:set-limits) and preferences.json,
- * which readPrefs parses without validating. On the elevated macOS/Windows start paths every env
- * value is written into a script run as root, so only a plain positive integer ever gets through.
+ * which readPrefs parses without validating, so only a plain positive integer ever gets through.
  * Free of any `electron` import, so it is unit-tested on its own.
  */
 

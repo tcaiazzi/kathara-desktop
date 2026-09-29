@@ -48,7 +48,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [history, setHistory] = useState<NotificationHistoryItem[]>([]);
 
   // Seeded once from whatever the shell carried over from before the last reload it triggered
-  // (elevation, retry, labs-dir change, a backend crash restart) — see main.ts's
+  // (retry, labs-dir change, a backend crash restart) — see main.ts's
   // carriedNotifications. A no-op in the browser build (desktop() is null there) or on a genuine
   // fresh app launch (nothing carried yet).
   //

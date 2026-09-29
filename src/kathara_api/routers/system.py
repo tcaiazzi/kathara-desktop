@@ -23,7 +23,8 @@ router = APIRouter(tags=["system"])
 
 logger = logging.getLogger("kathara_api")
 
-# Must stay below SHUTDOWN_DEATH_POLL_MS in services/desktop/src/backend.ts.
+# Must stay below the whole wait of stopBackend in services/desktop/src/backend.ts (the shutdown
+# request, then SIGTERM_GRACE_MS), so a backend stuck shutting down exits before a SIGKILL.
 SHUTDOWN_HARD_EXIT_S = 3.0
 
 
@@ -57,10 +58,9 @@ def system_info(service: KatharaService = Depends(get_service)) -> SystemInfo:
 def shutdown(background_tasks: BackgroundTasks) -> Message:
     """Gracefully stop this process (SIGTERM, same as an interactive Ctrl-C).
 
-    The desktop shell's only way to stop a `sudo`-elevated backend: once this process is running
-    as root, the shell (running unprivileged) can no longer deliver it a process signal directly
-    (`kill()` across that privilege boundary fails with EPERM) — but it can still reach this
-    still-listening localhost port over plain HTTP regardless of this process's UID.
+    How the desktop shell asks its backend to stop before it falls back to a signal
+    (services/desktop/src/backend.ts's stopBackend) — on Windows the only graceful route, since
+    there is no SIGTERM to deliver there.
 
     The signal is sent from a `BackgroundTask`, i.e. after the response body has been handed to
     ASGI for writing, not before: sending it inline here would race the response against the

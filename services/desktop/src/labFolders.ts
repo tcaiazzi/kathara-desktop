@@ -1,7 +1,7 @@
 /**
  * Lab folders opened from outside the labs directory, as far as the shell is concerned: which
- * folder a launch asks to open, which folders the backend remembers, and how files an elevated
- * backend left root-owned in them are handed back. Free of any `electron` import, like safety.ts,
+ * folder a launch asks to open, which folders the backend remembers, and how files running
+ * devices left root-owned in them are handed back. Free of any `electron` import, like safety.ts,
  * so it can be checked without an Electron runtime; main.ts does the dialogs and the calls.
  */
 import path from "node:path";
@@ -77,8 +77,9 @@ export interface ReclaimTargets {
 }
 
 /**
- * The one shell command that hands everything an elevated backend left root-owned back to
- * `uid:gid`, or null when there is nothing to do.
+ * The one shell command that hands everything running devices left root-owned back to `uid:gid`
+ * (Kathara bind-mounts each lab's `shared/` folder, and a container writes there as root), or null
+ * when there is nothing to do.
  *
  * The two kinds of folder are treated differently on purpose. The labs directory is this app's
  * own, so `chown -R` it wholesale. An opened folder is the user's, possibly shared with others, so

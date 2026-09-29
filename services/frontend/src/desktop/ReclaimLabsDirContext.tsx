@@ -1,9 +1,9 @@
-// One small modal for one Linux-only action: `elevation:drop` (see ElevationContext.tsx's
-// neighboring concern, deploy authorization) found files an elevated session left root-owned in
-// the labs directory or in a lab folder opened from elsewhere, and there is no native OS dialog
-// that can collect a password on Linux the way macOS/Windows's own admin prompt does — so this
-// collects it in-app instead, feeding it straight to `sudo -S` (backend.ts's
-// reclaimOwnershipWithPassword), never storing it.
+// One small modal for one Linux-only action: the backend refused to change a lab file another
+// account owns (hooks/useReportError.ts) — in practice one running devices wrote as root into a
+// lab's shared/ folder — and the shell found such files in the labs directory or in a lab folder
+// opened from elsewhere. There is no native OS dialog that can collect a password on Linux the way
+// macOS/Windows's own admin prompt does, so this collects it in-app instead, feeding it straight
+// to `sudo -S` (backend.ts's reclaimOwnershipWithPassword), never storing it.
 //
 // Deliberately a separate provider from ElevationContext rather than a new mode grafted onto it:
 // this isn't gating a deploy, it's an optional cleanup the user can always decline, with its own
@@ -16,15 +16,12 @@ import { Alert, Button, Form, Modal } from "react-bootstrap";
 import { desktop } from "./bridge";
 
 type ReclaimOutcome = "reclaimed" | "skipped";
-/** Who left the files root-owned: the privileged session that just ended, or running devices
- *  (they write a lab's shared/ folder as root) when the backend couldn't change one. */
-type ReclaimReason = "elevation" | "devices";
 /** `paths` are the folders the reclaim would touch — shown, so the user knows what they authorize. */
-type ReclaimAuthApi = (paths: string[], reason?: ReclaimReason) => Promise<ReclaimOutcome>;
+type ReclaimAuthApi = (paths: string[]) => Promise<ReclaimOutcome>;
 const ReclaimAuthCtx = createContext<ReclaimAuthApi | null>(null);
 
-// Every reason `reclaimLabsDirOwnership` can return has an entry, so unlike the elevation modal
-// this one never actually takes the "no retry message, close instead" path.
+// Every reason `reclaimLabsDirOwnership` can return has an entry, so unlike the deploy prompt
+// (ElevationContext.tsx) this one never actually takes the "no retry message, close instead" path.
 const RETRY_MESSAGES = sudoRetryMessages(
   "That took too long. Try again.",
   (message) => `Could not reclaim ownership: ${message}`,
@@ -36,17 +33,15 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paths, setPaths] = useState<string[]>([]);
-  const [reason, setReason] = useState<ReclaimReason>("elevation");
 
   const { open, settle } = usePromiseModal<ReclaimOutcome>("skipped");
 
   const requestReclaimAuth = useCallback<ReclaimAuthApi>(
-    (targetPaths, targetReason = "elevation") =>
+    (targetPaths) =>
       open(() => {
         setPassword("");
         setError(null);
         setPaths(targetPaths);
-        setReason(targetReason);
         setShow(true);
       }),
     [open],
@@ -94,11 +89,10 @@ export function ReclaimLabsDirProvider({ children }: { children: ReactNode }) {
           </Modal.Header>
           <Modal.Body>
             <p>
-              {reason === "devices"
-                ? "Running devices wrote some files in these folders as the administrator account (root), so the app can't change or delete them."
-                : "The privileged session that just ended left some files owned by the administrator account in these folders."}{" "}
-              Enter your password to reclaim them for your own account, or leave them as is and fix
-              it yourself later — either way the app continues normally.
+              Running devices wrote some files in these folders as the administrator account (root),
+              so the app can&apos;t change or delete them. Enter your password to reclaim them for
+              your own account, or leave them as is and fix it yourself later — either way the app
+              continues normally.
             </p>
             {paths.length > 0 && (
               <ul className="small text-break">

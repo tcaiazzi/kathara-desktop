@@ -28,7 +28,6 @@ import io
 import logging
 import os
 import posixpath
-import re
 import shlex
 import shutil
 import threading
@@ -67,6 +66,7 @@ from ..config import format_mb, get_settings
 from ..errors import (
     ApiError,
     BinaryFileError,
+    DeployNotAuthorizedError,
     FileTooLargeError,
     InvalidSettingsError,
     LabAlreadyRegisteredError,
@@ -104,6 +104,7 @@ from . import (
     live_addresses,
     settings_store,
 )
+from .deploy_grants import DeployGrants, HostAccess
 from .docker_tty import SHELL_PATHS
 from .known_labs import KNOWN_LABS_FILENAME, KnownLabs
 from .lab_events import LabEvents
@@ -124,21 +125,6 @@ ROOT_MACHINE = "ROOT"
 # (the active manager and the available-managers map) and they must not drift apart.
 _DOCKER_MANAGER_LABEL = "Docker (Kathara)"
 
-# A privileged device needs the backend itself running as root (Kathara's DockerMachine.create).
-# Getting root restarts the backend, and only a whole-lab deploy picks up again after that restart
-# (the desktop shell's `resumeDeploy`), so a single-device deploy that meets this refusal says so:
-# the hint for the error the request answers with, the short form for what the lab keeps showing
-# (LabSummary.deploy_error).
-_PRIVILEGED_REFUSAL_RE = re.compile(r"^You must be root in order to start device `[^`]+` in privileged mode\.$")
-PRIVILEGED_SINGLE_DEPLOY_HINT = (
-    "Deploying a single privileged device isn't supported yet: "
-    "deploy the whole lab to grant administrator privileges."
-)
-PRIVILEGED_ONLY_WITH_LAB = (
-    "privileged devices start only with the whole lab (Deploy asks for administrator privileges)."
-)
-
-
 def _lab_not_found(lab_id: str) -> LabNotFoundError:
     """The 404 for an unknown ``lab_id``, worded the same by every lookup that raises it."""
     return LabNotFoundError(f"Lab `{lab_id}` not found.")
@@ -148,13 +134,6 @@ def _decode(output: Optional[bytes]) -> str:
     """A command's output stream as text: None (some backends' empty stream) as "", bytes that
     aren't UTF-8 replaced rather than failing the read."""
     return (output or b"").decode("utf-8", "replace")
-
-
-def _privileged_device_refused(exc: Exception) -> bool:
-    """Whether ``exc`` is Kathara refusing a privileged device to a backend that isn't root — and
-    not one of its other PrivilegeErrors (external collision domains), which a whole-lab deploy
-    would not fix either."""
-    return isinstance(exc, PrivilegeError) and bool(_PRIVILEGED_REFUSAL_RE.match(str(exc)))
 
 
 # Caps for fs_search_offline — module-level (not class-level) so _search_lines_in_text, a bare
@@ -359,6 +338,8 @@ class KatharaService:
         self._unadoptable: dict[Path, tuple[int, Optional[int]]] = {}
         self._unadoptable_lock = threading.Lock()
         self.registry = LabRegistry()
+        # Deploys the desktop shell has allowed host access for — see _authorize_host_access.
+        self.grants = DeployGrants()
         self.store = store if store is not None else LabStore(get_settings().labs_dir_path())
         state_dir = get_settings().state_dir_path()
         # Lab directories opened from outside the store's root (open_lab) — see known_labs.py.
@@ -2623,23 +2604,18 @@ class KatharaService:
                 if fresh_names:
                     self._check_deployable(lab, fresh_names)
                     self._check_packed_files_stay_in_lab(lab, fresh_names)
+                    self._authorize_host_access(lab_id, lab, fresh_names)
                     try:
                         self._facade().deploy_lab(lab, selected_machines=fresh_names)
                     except Exception as exc:
                         # The devices that did start stay up (Kathara starts them side by side), so
                         # the reason is kept for the ones that didn't — see set_deploy_failure.
-                        whole_lab = selected_machines is None and excluded_machines is None
-                        if whole_lab or not _privileged_device_refused(exc):
-                            message = (
-                                known_error_detail(exc)
-                                or "An unexpected error stopped the deploy; the backend log has the details."
-                            )
-                            self.registry.set_deploy_failure(lab_id, DeployFailure(message, frozenset(fresh_names)))
-                            raise
-                        self.registry.set_deploy_failure(
-                            lab_id, DeployFailure(PRIVILEGED_ONLY_WITH_LAB, frozenset(fresh_names))
+                        message = (
+                            known_error_detail(exc)
+                            or "An unexpected error stopped the deploy; the backend log has the details."
                         )
-                        raise PrivilegeError(f"{exc} {PRIVILEGED_SINGLE_DEPLOY_HINT}") from exc
+                        self.registry.set_deploy_failure(lab_id, DeployFailure(message, frozenset(fresh_names)))
+                        raise
                     self.registry.clear_deploy_failure(lab_id)
                     # Native pack_data just packed each fresh machine's *current* on-disk state,
                     # so any dirty flag an offline edit set before this deploy is already
@@ -2653,6 +2629,57 @@ class KatharaService:
                 return lab
         finally:
             self._end_transition(lab_id)
+
+    def grant_deploy(self, lab_id: str) -> None:
+        """Allow the next deploy of ``lab_id`` the host access its devices ask for right now — all
+        of them, since a single-device deploy is covered by the same grant (see
+        ``services/deploy_grants.py``). Only the desktop shell calls it, after the user's password."""
+        lab = self.get_lab_or_reconstruct(lab_id)
+        self.grants.grant(lab_id, self._host_access(lab, set(lab.machines)))
+
+    @staticmethod
+    def _host_access(lab: Lab, names: set[str]) -> HostAccess:
+        """What creating the devices ``names`` would expose of the host. Read the way Kathara's
+        ``DockerMachine.create`` reads it: ``is_privileged()`` (which a lab-wide override also
+        sets), each device's ``[volume]`` entries, and ``/hosthome``, which Kathara mounts into
+        every device whenever the setting is on and the daemon is local."""
+        machines = [lab.machines[name] for name in sorted(names)]
+        setting = Setting.get_instance()
+        return HostAccess(
+            privileged=frozenset(m.name for m in machines if m.is_privileged()),
+            volumes=frozenset(
+                (m.name, host_path, v["guest_path"], v["mode"])
+                for m in machines
+                for host_path, v in m.meta.get("volumes", {}).items()
+            ),
+            hosthome=bool(machines) and bool(setting.hosthome_mount) and setting.remote_url is None,
+        )
+
+    def _authorize_host_access(self, lab_id: str, lab: Lab, names: set[str]) -> None:
+        """Refuse the deploy, before any network or container exists, when the devices ``names``
+        reach outside their containers without the user's say-so.
+
+        With the desktop shell (a shell token is configured) that say-so is a grant it issued after
+        checking the user's password; the grant is used up here whatever the outcome, and must
+        cover everything asked for now, so a device made privileged after the password is still
+        refused. Without one — a browser build — there is no password to check: a privileged
+        device needs a backend that really is root, the check Kathara's own CLI makes (bypassed
+        for this process in kathara_compat.py), and a host mount relies on the page's own
+        confirmation.
+        """
+        needed = self._host_access(lab, names)
+        if needed.is_empty():
+            return
+        if get_settings().shell_token:
+            missing = needed.beyond(self.grants.consume(lab_id))
+            if not missing.is_empty():
+                raise DeployNotAuthorizedError(
+                    f"This deploy needs your password first: {missing.describe()}."
+                )
+            return
+        if needed.privileged and not is_admin():
+            name = sorted(needed.privileged)[0]
+            raise PrivilegeError(f"You must be root in order to start device `{name}` in privileged mode.")
 
     @staticmethod
     def _check_deployable(lab: Lab, names: set[str]) -> None:
@@ -2940,7 +2967,7 @@ class KatharaService:
         #
         # Unregistered before the directory goes, never after: the disk watcher would otherwise
         # find a registered lab with no folder and report it missing (handle_disk_change). A
-        # removal that fails part-way — typically files an elevated session left owned by root —
+        # removal that fails part-way — typically files a running device left owned by root —
         # puts the same model back, so what is left stays listed and the delete can be retried;
         # reloading it from disk instead could fail on a lab.conf already removed.
         with self._claiming(lab_id):

@@ -12,8 +12,8 @@ import type { LabEvent } from "../services/types";
  *  stays where it was (a dev server's `--reload`). A backend the desktop shell restarts at the
  *  same address, while the page stays for its unsaved edits, has a new pairing token instead: the
  *  old `?token=` URL would be refused for good, so the stream is reopened on the new one
- *  (onAuthTokenChange). An elevation moves the backend to another port and reloads the page, which
- *  mounts this hook afresh. An event missed in between only means a refresh that happens on the
+ *  (onAuthTokenChange). A retry or a labs-dir change reloads the page, which mounts this hook
+ *  afresh. An event missed in between only means a refresh that happens on the
  *  next one. `onEvent` is read through a ref, so a caller can pass an inline callback without
  *  reopening the stream on every render. */
 export function useLabEvents(onEvent: (event: LabEvent) => void): void {

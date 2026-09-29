@@ -318,10 +318,9 @@ export function SettingsPage() {
     await runBusy(setBusy, "Save Kathara settings", async () => {
       // Mounting the operator's own $HOME into every future device is exactly the kind of thing a
       // lab's own host volumes already gate behind a password before a deploy — treated the same
-      // way here, reusing that same check (verify-only; hosthome_mount needs no backend restart,
-      // just like a plain volume mount doesn't). Only on the off→on transition: resubmitting the
-      // rest of the form while it's already on shouldn't ask again, the same way redeploying an
-      // already-mounted lab doesn't.
+      // way here, reusing that same check (verify-only: there is no deploy to grant, and every
+      // later deploy is gated on its own). Only on the off→on transition: resubmitting the rest
+      // of the form while it's already on shouldn't ask again.
       if (form.hosthome_mount && !loadedRef.current?.hosthome_mount) {
         const outcome = await requestDeployAuth({ privileged: false, volumeMachines: [], hosthomeMount: true });
         if (outcome !== "proceed") {

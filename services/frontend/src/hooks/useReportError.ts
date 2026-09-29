@@ -23,7 +23,7 @@ export function useReportError(): (label: string, error: unknown) => void {
       void (async () => {
         const paths = await shell.reclaimLabFilePaths().catch(() => []);
         if (paths.length === 0) return;
-        if ((await requestReclaimAuth(paths, "devices")) === "reclaimed") {
+        if ((await requestReclaimAuth(paths)) === "reclaimed") {
           toast.show("Reclaimed the lab's files: try again.", "success");
         }
       })();

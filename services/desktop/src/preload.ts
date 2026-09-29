@@ -6,7 +6,7 @@
  * entry is attack surface for a page that renders lab content.
  */
 import { contextBridge, ipcRenderer } from "electron";
-import type { ElevateOutcome, PrivilegedActionResult } from "./elevateOutcome";
+import type { PrivilegedActionResult } from "./privilegedAction";
 import type { MenuAction } from "./menu";
 import type { DockerStatus } from "./prereqs";
 
@@ -58,46 +58,25 @@ const api = {
 
   // -- notification history (ToastContext.tsx) --
   // Carries the notification panel's history across a reload this shell itself triggers
-  // (elevation, retry, labs-dir change, a backend crash restart) — see main.ts's
+  // (retry, labs-dir change, a backend crash restart) — see main.ts's
   // carriedNotifications. Opaque payload: the shell doesn't interpret it, just hands it back.
   saveNotificationHistory: (history: unknown): Promise<void> =>
     ipcRenderer.invoke("notifications:save", history),
   loadNotificationHistory: (): Promise<unknown> => ipcRenderer.invoke("notifications:load"),
 
-  // -- privileged-device elevation (see ElevationContext.tsx) --
-  /** `password` is required on Linux, ignored on macOS/Windows (native OS prompt instead).
-   * `resumeLab`, if given, is reflected into the post-reload URL so the SPA can continue that
-   * lab's deploy on its own once it's back up. On success the window reloads against the
-   * newly-elevated backend, tearing this page down before this call typically resolves — callers
-   * must not rely on a success response, only on a failure one. A failure with `restarted: false`
-   * (a wrong password, a dismissed OS dialog — the common ones) left the backend running
-   * untouched, so the page is still on a live origin and can show the error and offer a retry in
-   * place; `restarted: true` means the backend came back on a new port and the shell is already
-   * reloading the page onto it. */
-  elevateBackend: (
-    password?: string,
-    resumeLab?: string,
-  ): Promise<ElevateOutcome> =>
-    ipcRenderer.invoke("elevation:elevate", password, resumeLab),
-  /** Best-effort: if the backend is currently elevated, restart it unprivileged (reloading the
-   * window against the new instance) so it doesn't keep running with more privilege than
-   * whatever's deployed right now actually needs. A no-op (resolves `{ dropped: false }`,
-   * no reload) if it wasn't elevated to begin with — call freely after any undeploy, not just
-   * ones you know were privileged. `openLab`, if given, is reflected into the
-   * post-reload URL so the reload lands back on the lab that was open instead of the bare root.
-   * `needsReclaimPassword: true` (Linux only) means files the elevated session left root-owned
-   * need a password to reclaim, collected via ReclaimLabsDirContext.tsx's modal and sent through
-   * `reclaimLabsDirOwnership` below — the backend hasn't been touched yet in that case, so the
-   * caller must call this again with `skipReclaimCheck: true` once that's resolved one way or
-   * another, to actually drop the elevation. */
-  dropElevation: (
-    openLab?: string,
-    skipReclaimCheck?: boolean,
-  ): Promise<{ dropped: boolean; needsReclaimPassword?: boolean; reclaimPaths?: string[] }> =>
-    ipcRenderer.invoke("elevation:drop", openLab, skipReclaimCheck),
-  /** Linux companion to a `dropElevation` that came back with `needsReclaimPassword: true`: runs
-   * the actual `chown` with this password (fed straight to `sudo -S`, never stored). Shares its
-   * rate limit with elevateBackend/verifyCanElevate — see backend.ts's withSudoRateLimit. */
+  // -- deploy authorization and root-owned lab files (ElevationContext.tsx, ReclaimLabsDirContext.tsx) --
+  /** Checks the user's password, then lets the backend run the next deploy of `labId` with the
+   * privileged devices and host mounts its devices ask for right now — which it refuses without
+   * this. `password` is required on Linux unless `sudoPasswordRequired` said false, and ignored on
+   * macOS/Windows (native OS prompt instead). Never restarts anything. */
+  authorizeDeploy: (labId: string, password?: string): Promise<PrivilegedActionResult> =>
+    ipcRenderer.invoke("elevation:authorize-deploy", labId, password),
+  /** False only on Linux where sudo asks this account for no password (NOPASSWD): the prompt then
+   * asks for a confirmation instead of a password it couldn't check. */
+  sudoPasswordRequired: (): Promise<boolean> => ipcRenderer.invoke("elevation:password-required"),
+  /** Linux only: gives the user back the lab files running devices left owned by root, running the
+   * `chown` with this password (fed straight to `sudo -S`, never stored). Shares its rate limit
+   * with authorizeDeploy/verifyCanElevate — see backend.ts's withSudoRateLimit. */
   reclaimLabsDirOwnership: (
     password: string,
   ): Promise<PrivilegedActionResult> =>
@@ -106,10 +85,8 @@ const api = {
    * such as the ones running devices write as root into a lab's shared/ folder. Linux only; `[]`
    * elsewhere, or when there is nothing to reclaim. */
   reclaimLabFilePaths: (): Promise<string[]> => ipcRenderer.invoke("lab-files:reclaim-paths"),
-  /** Verifies the user could elevate, without touching the backend — used for a deploy that only
-   * mounts a host volume, which (unlike a privileged device) doesn't need this process itself to
-   * be root. `password` is required on Linux, ignored on macOS/Windows (native OS prompt
-   * instead). Never restarts anything and never reloads the window, unlike elevateBackend. */
+  /** Checks the user's password with no deploy to grant — Settings' host home toggle. `password`
+   * is required on Linux, ignored on macOS/Windows (native OS prompt instead). */
   verifyCanElevate: (
     password?: string,
   ): Promise<PrivilegedActionResult> =>

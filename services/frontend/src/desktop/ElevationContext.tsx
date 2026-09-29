@@ -1,9 +1,10 @@
-// One modal for every deploy that needs the user's own OS credentials before it can proceed —
-// either because it needs a privileged device's backend to actually restart as root (see
-// backend.ts's startBackendElevatedLinux/Native in services/desktop), or because it would mount a
-// host directory and — while that doesn't need this *process* to be root — still deserves the
-// same "prove you mean it" gate a password provides. A lab that is both asks for the same
-// password once, with an extra warning: that combination is more dangerous than either alone.
+// One modal for every deploy that needs the user's own OS credentials before it can proceed: a
+// privileged device, a host directory mounted into a device, or the host home mount. The backend
+// runs as the user, never as root, and refuses such a deploy unless the desktop shell has granted
+// it after checking the password (services/desktop's backend.ts authorizeDeploy, the backend's
+// services/deploy_grants.py) — so this modal is where the grant comes from, not just a courtesy
+// prompt. A lab that is both privileged and mounting host directories asks for the same password
+// once, with an extra warning: that combination is more dangerous than either alone.
 //
 // Electron-aware (talks to window.katharaDesktop through bridge.ts), unlike the pure-React
 // ConfirmContext/PromptContext this otherwise resembles — same family as DesktopCommandsProvider.
@@ -15,13 +16,10 @@ import { api } from "../services/api";
 import type { VolumeMount } from "../services/types";
 import { desktop } from "./bridge";
 
-/** "proceed": go ahead and deploy now, synchronously — covers four different situations the
- * caller doesn't need to tell apart: neither condition applied, the backend was already root, a
- * volume-only password was verified, or the no-desktop fallback was confirmed without one.
- * "elevating": the backend is restarting/the app is reloading — the caller should just stop, a
- * reload (and, for a full-lab deploy, an automatic resume) is already in flight. "cancelled": the
- * user declined, or the check failed and they gave up — the caller should abort. */
-export type DeployAuthOutcome = "proceed" | "elevating" | "cancelled";
+/** "proceed": go ahead and deploy now — nothing needed asking, the password was verified (and,
+ * for a deploy, the backend granted it), or the no-desktop fallback was confirmed. "cancelled":
+ * the user declined, or the check failed and they gave up — the caller should abort. */
+export type DeployAuthOutcome = "proceed" | "cancelled";
 
 interface DeployAuthRequest {
   privileged: boolean;
@@ -33,9 +31,9 @@ interface DeployAuthRequest {
    * (a deploy, or Settings' own save) is responsible for checking the current setting value and
    * passing it in; this module has no way to know it on its own. */
   hosthomeMount?: boolean;
-  /** Only meaningful when `privileged` needs a real elevation: where the post-reload URL should
-   * land so the SPA can resume that lab's deploy on its own. */
-  resumeLab?: string;
+  /** The lab about to be deployed, which the verified password grants the deploy of. Absent only
+   * for Settings' host home toggle, which deploys nothing: the password is then just checked. */
+  labId?: string;
 }
 
 type DeployAuthApi = (req: DeployAuthRequest) => Promise<DeployAuthOutcome>;
@@ -45,8 +43,8 @@ const DeployAuthCtx = createContext<DeployAuthApi | null>(null);
 type Mode = "privileged" | "volumes" | "volumes-no-shell" | "both";
 
 const RETRY_MESSAGES = sudoRetryMessages(
-  "The backend didn't start with administrator privileges in time. Try again.",
-  (message) => `Could not verify administrator privileges: ${message}`,
+  "Checking the password took too long. Try again.",
+  (message) => `Could not authorize the deploy: ${message}`,
 );
 
 const TITLES: Record<Mode, string> = {
@@ -54,15 +52,6 @@ const TITLES: Record<Mode, string> = {
   both: "Administrator privileges required",
   volumes: "Mount host directories?",
   "volumes-no-shell": "Mount host directories?",
-};
-
-const OK_LABELS: Record<Mode, string> = {
-  privileged: "Continue",
-  both: "Continue",
-  volumes: "Continue",
-  // Deliberately not "Deploy": SettingsPage's hosthome_mount gate reuses this same mode/modal
-  // from outside any lab-deploy flow, so the label cannot assume there is a deploy to name.
-  "volumes-no-shell": "Continue",
 };
 
 interface VolumeListProps {
@@ -88,20 +77,24 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
   const [mode, setMode] = useState<Mode>("privileged");
   const [volumeMachines, setVolumeMachines] = useState<{ name: string; volumes: VolumeMount[] }[]>([]);
   const [hosthomeMount, setHosthomeMount] = useState(false);
+  // False only on Linux where sudo asks this account for no password (NOPASSWD): a typed
+  // password would verify nothing there, so the modal asks for a confirmation instead.
+  const [passwordRequired, setPasswordRequired] = useState(true);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { open, settle } = usePromiseModal<DeployAuthOutcome>("cancelled");
-  const resumeLabRef = useRef("");
+  const labIdRef = useRef<string | undefined>(undefined);
 
   const isLinux = desktop()?.platform === "linux";
 
   const showModal = useCallback(
-    (m: Mode, machines: { name: string; volumes: VolumeMount[] }[], hosthome: boolean) => {
+    (m: Mode, machines: { name: string; volumes: VolumeMount[] }[], hosthome: boolean, needsPassword: boolean) => {
       return open(() => {
         setMode(m);
         setVolumeMachines(machines);
         setHosthomeMount(hosthome);
+        setPasswordRequired(needsPassword);
         setPassword("");
         setError(null);
         setShow(true);
@@ -111,37 +104,32 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
   );
 
   const requestDeployAuthorization = useCallback<DeployAuthApi>(
-    async ({ privileged, volumeMachines: machines, hosthomeMount: hosthome = false, resumeLab }) => {
+    async ({ privileged, volumeMachines: machines, hosthomeMount: hosthome = false, labId }) => {
       if (!privileged && machines.length === 0 && !hosthome) return "proceed";
-
-      if (privileged) {
-        // Checked regardless of desktop-ness, over the same same-origin REST call the rest of
-        // the app already uses: a backend can already be root for reasons that have nothing to
-        // do with this app's own elevation flow (e.g. a container that already runs as root),
-        // and there's nothing to prompt for in that case — including in a plain browser build,
-        // which otherwise has no way to elevate anything at all.
-        try {
-          const info = await api.systemInfo();
-          if (info.is_admin) return "proceed";
-        } catch {
-          // Fall through — if even this fails, the deploy attempt itself will surface the error.
-        }
-      }
 
       const shell = desktop();
       if (!shell) {
-        // Without a desktop shell there is no OS admin mechanism at all, on either path. A
-        // privileged device genuinely can't be deployed without elevation. A volume-only deploy
-        // has no OS identity to check outside the desktop app, so it degrades to a plain
-        // confirmation instead of being refused.
-        if (privileged) return "cancelled";
-        return showModal("volumes-no-shell", machines, hosthome);
+        // Without a desktop shell there is no OS identity to check and no one to grant the
+        // deploy: the backend then starts a privileged device only if it really is root, and a
+        // host mount after the page's own confirmation (KatharaService._authorize_host_access).
+        if (privileged) {
+          try {
+            const info = await api.systemInfo();
+            if (!info.is_admin) return "cancelled";
+          } catch {
+            return "cancelled";
+          }
+          if (machines.length === 0 && !hosthome) return "proceed";
+        }
+        return showModal("volumes-no-shell", machines, hosthome, false);
       }
 
-      resumeLabRef.current = resumeLab ?? "";
+      labIdRef.current = labId;
       const hasMount = machines.length > 0 || hosthome;
       const m: Mode = privileged && hasMount ? "both" : privileged ? "privileged" : "volumes";
-      return showModal(m, machines, hosthome);
+      // Asked on Linux only: elsewhere the OS's own dialog does the asking.
+      const needsPassword = shell.platform !== "linux" || (await shell.sudoPasswordRequired().catch(() => true));
+      return showModal(m, machines, hosthome, needsPassword);
     },
     [showModal],
   );
@@ -162,34 +150,24 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
       close("cancelled");
       return;
     }
+    const labId = labIdRef.current;
+    // Settings' toggle deploys nothing, and every deploy is gated on its own: with no password to
+    // check, the confirmation is all there is to ask for.
+    if (!labId && !passwordRequired) {
+      close("proceed");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      if (mode === "volumes") {
-        // Verify-only: the backend is never touched, so success just means "proceed" — there is
-        // no reload to wait for, unlike the privileged/both branch below.
-        const result = await shell.verifyCanElevate(isLinux ? password : undefined);
-        if (result.ok) {
-          close("proceed");
-          return;
-        }
-        if (showSudoRetry(RETRY_MESSAGES, result, { setPassword, setError, setBusy })) return;
-        close("cancelled");
-        return;
-      }
-
-      // mode === "privileged" | "both": the real elevation path.
-      const result = await shell.elevateBackend(isLinux ? password : undefined, resumeLabRef.current);
+      const typed = isLinux && passwordRequired ? password : undefined;
+      const result = labId ? await shell.authorizeDeploy(labId, typed) : await shell.verifyCanElevate(typed);
       if (result.ok) {
-        // A reload is already in flight (the main process just navigated the window to the
-        // newly-elevated backend) — nothing left for this renderer instance to do.
-        // Resolved without closing: the modal is about to go with the window.
-        settle("elevating");
+        close("proceed");
         return;
       }
       // Everything except a dismissed OS dialog is worth showing *in* the modal and retrying
-      // from: the backend is still running (see bridge.ts's `restarted`), and reporting a
-      // failed elevation to the caller as if the user had clicked Cancel — which is what
+      // from: reporting it to the caller as if the user had clicked Cancel — which is what
       // closing here does — hides the actual reason in the log where nobody looks.
       if (showSudoRetry(RETRY_MESSAGES, result, { setPassword, setError, setBusy })) return;
       close("cancelled");
@@ -198,7 +176,7 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const needsPasswordUi = mode !== "volumes-no-shell";
+  const askPassword = mode !== "volumes-no-shell" && isLinux && passwordRequired;
 
   return (
     <DeployAuthCtx.Provider value={requestDeployAuthorization}>
@@ -216,8 +194,8 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
           <Modal.Body>
             {(mode === "privileged" || mode === "both") && (
               <p>
-                This lab has one or more privileged devices. Kathara needs to restart its backend
-                with administrator privileges to run them.
+                This lab has one or more privileged devices, which run with extended capabilities on
+                your machine. Confirm with your password to start them.
               </p>
             )}
             {mode === "both" && (
@@ -257,8 +235,8 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
                 {error}
               </Alert>
             )}
-            {needsPasswordUi &&
-              (isLinux ? (
+            {mode !== "volumes-no-shell" &&
+              (askPassword ? (
                 <Form.Group className="mt-2">
                   <Form.Label>Password</Form.Label>
                   <Form.Control
@@ -269,6 +247,10 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
                     onChange={(e) => setPassword(e.target.value)}
                   />
                 </Form.Group>
+              ) : isLinux ? (
+                <p className="text-muted small mb-0 mt-2">
+                  sudo doesn't ask this account for a password, so confirming is enough.
+                </p>
               ) : (
                 <p className="text-muted small mb-0 mt-2">
                   Click Continue and enter your password in the system dialog that appears.
@@ -279,12 +261,8 @@ export function ElevationProvider({ children }: { children: ReactNode }) {
             <Button variant="secondary" onClick={() => close("cancelled")} disabled={busy}>
               Cancel
             </Button>
-            <Button
-              variant="primary"
-              type="submit"
-              disabled={busy || (needsPasswordUi && isLinux && !password.trim())}
-            >
-              {busy ? "Elevating…" : OK_LABELS[mode]}
+            <Button variant="primary" type="submit" disabled={busy || (askPassword && !password.trim())}>
+              {busy ? "Verifying…" : "Continue"}
             </Button>
           </Modal.Footer>
         </Form>

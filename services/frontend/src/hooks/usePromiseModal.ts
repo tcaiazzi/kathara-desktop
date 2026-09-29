@@ -32,9 +32,8 @@ export function usePromiseModal<TResult>(cancelValue: TResult) {
     [cancelValue],
   );
 
-  /** Resolve the pending request. Separate from closing the dialog on purpose: the elevation flow
-   * resolves with "elevating" while deliberately leaving the modal up, because the window is about
-   * to reload and a state update on a dying renderer buys nothing. */
+  /** Resolve the pending request. Separate from closing the dialog, which is the provider's own
+   * state: this only answers the caller. */
   const settle = useCallback((value: TResult) => {
     resolveRef.current?.(value);
     resolveRef.current = null;

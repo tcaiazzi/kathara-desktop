@@ -1,6 +1,6 @@
 // Shared handling for a failed privileged operation, used by the two modals that ask for the
-// user's password: ElevationContext (restart the backend as root) and ReclaimLabsDirContext (take
-// back ownership of the labs directory).
+// user's password: ElevationContext (authorize a deploy) and ReclaimLabsDirContext (take back
+// ownership of lab files running devices left owned by root).
 //
 // Both face the same question after a failure — keep the modal open so the user can try again, or
 // give up and close it — and they answer it from this one table rather than each carrying its own
@@ -15,7 +15,7 @@ type SudoRetryMessages = Record<string, ((message: string) => string) | undefine
 /** The three reasons that read the same whatever the operation was, plus the two that do not.
  *
  * `timeout` and `error` are per-operation on purpose — "that took too long" means something
- * different when it is a backend failing to come up as root than when it is a `chown` — so they
+ * different when it is a password check than when it is a `chown` — so they
  * are arguments rather than a shared default nobody would notice was wrong. */
 export function sudoRetryMessages(
   timeout: string,

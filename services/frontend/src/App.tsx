@@ -74,11 +74,11 @@ export function App() {
               including the shell's menu and deep links, hence above DesktopCommandsProvider. */}
           <UnsavedChangesProvider>
           {/* Owns the pre-deploy Docker image flow: the confirmation, the download progress,
-              and the "ready to deploy" message. `deployToggle` awaits it before the privilege
-              prompt below — there is no point elevating the backend and then spending minutes
+              and the "ready to deploy" message. `deployToggle` awaits it before the password
+              prompt below — there is no point asking for a password and then spending minutes
               downloading. */}
           <ImageDownloadProvider>
-            {/* Inert in the browser build (no backend process for the page to elevate) — see
+            {/* In the browser build only a plain confirmation (no OS password to check) — see
                 ElevationContext.tsx. */}
             <ElevationProvider>
               {/* A second, unrelated Linux-only prompt (see ReclaimLabsDirContext.tsx) — kept as

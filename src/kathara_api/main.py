@@ -11,6 +11,7 @@ from . import __version__
 from .config import format_mb, get_settings
 from .dependencies import get_service, is_host_allowed, is_origin_allowed, require_auth_token
 from .errors import ForbiddenHostError, ForbiddenOriginError, error_response, register_exception_handlers
+from .kathara_compat import allow_privileged_devices_without_root
 from .routers import events, labs, links, machines, pairing, stats, system
 from .routers import exec as exec_router
 from .services.docker_tty import shutdown_tty_executor
@@ -63,6 +64,10 @@ def create_app() -> FastAPI:
         description="REST API for the Kathara network emulation framework.",
         lifespan=_lifespan,
     )
+
+    # Privileged devices are authorized by KatharaService.deploy_lab's grant check, not by the
+    # process being root — see kathara_compat.py.
+    allow_privileged_devices_without_root()
 
     # Load the saved Kathara settings, then the environment's overrides on top, before the backend
     # is first used.

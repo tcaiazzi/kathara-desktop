@@ -5,7 +5,10 @@ import type { VolumeMount } from "../services/types";
 
 // The one place that decides whether a deploy needs the user's permission first, shared by every
 // path that can put a container on the host: a full-lab deploy and a single-device deploy. Adding a
-// device never starts it (KatharaService.add_machine), so it has nothing to ask.
+// device never starts it (KatharaService.add_machine), so it has nothing to ask. The backend
+// enforces the same rule on its own (KatharaService._authorize_host_access), refusing a deploy the
+// desktop shell didn't grant — this gate is what asks for the password that grant needs, before
+// the attempt rather than after it.
 //
 // Two things have to be checked together, and only here: the per-device `volumes` and the global
 // `hosthome_mount` setting, which is host exposure of the same kind but belongs to no device and
@@ -17,23 +20,20 @@ interface DeployGateRequest {
   /** Devices whose own `volumes` would be mounted. Entries without volumes are dropped, so
    * callers can pass a device unconditionally without having to pre-filter. */
   volumeMachines?: { name: string; volumes: VolumeMount[] }[];
-  /** Whether any device involved is `privileged` — needs the backend itself running as root, not
-   * just a confirmation. Only the full-lab deploy sets this: the single-device paths have no way
-   * to resume across the reload an elevation triggers. */
+  /** Whether any device involved is `privileged`. */
   privileged?: boolean;
-  /** Where the post-reload URL should land so the SPA can resume on its own; only meaningful when
-   * `privileged` leads to a real elevation. */
-  resumeLab?: string;
+  /** The lab being deployed, which the password grants the deploy of. */
+  labId: string;
 }
 
 /** Returns a function that asks for whatever authorization this deploy needs and reports what the
  * user decided. `"proceed"` also covers "nothing needed asking" — callers only have to handle the
  * three outcomes, not work out whether a prompt was due. */
-export function useDeployGate(): (req?: DeployGateRequest) => Promise<DeployAuthOutcome> {
+export function useDeployGate(): (req: DeployGateRequest) => Promise<DeployAuthOutcome> {
   const requestDeployAuth = useDeployAuthorization();
 
   return useCallback(
-    async ({ volumeMachines = [], privileged = false, resumeLab }: DeployGateRequest = {}) => {
+    async ({ volumeMachines = [], privileged = false, labId }: DeployGateRequest) => {
       // Fetched fresh on every deploy rather than cached: it can change between deploys, and
       // nothing else in this app tracks it. Fail open to "off" — if even reading the settings
       // fails, the deploy attempt itself will surface anything real, and a prompt nobody can
@@ -53,7 +53,7 @@ export function useDeployGate(): (req?: DeployGateRequest) => Promise<DeployAuth
         // triggers the prompt; dropping it keeps the modal from rendering an empty volume list.
         volumeMachines: volumeMachines.filter((m) => m.volumes.length > 0),
         hosthomeMount,
-        resumeLab,
+        labId,
       });
     },
     [requestDeployAuth],

@@ -86,11 +86,12 @@ def require_shell_token(request: Request) -> None:
     config.ApiSettings.shell_token) in the ``X-Kathara-Shell-Token`` header.
 
     Unlike :func:`require_auth_token` this is *not* a no-op when unset: with no shell token
-    configured nothing trusted can supply a host path, so the route is closed to everyone.
+    configured there is no desktop shell to trust — nothing to pick a host folder in a native
+    dialog, nothing to check the user's password — so the route is closed to everyone.
     """
     expected = get_settings().shell_token
     if not expected or not tokens_match(request.headers.get(SHELL_TOKEN_HEADER), expected):
-        raise ShellOnlyError("Only the desktop app can open a folder as a lab.")
+        raise ShellOnlyError("Only the desktop app itself can make this request.")
 
 
 # Names that can only ever mean this machine. `urlsplit(...).hostname` drops IPv6 brackets, hence
