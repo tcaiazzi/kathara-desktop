@@ -146,13 +146,33 @@ let labsDirPromptKey = null;
 function renderLabsDirPrompt(status) {
   if (labsDirPromptKey === status.defaultDir) return;
   labsDirPromptKey = status.defaultDir;
+  const openShortcut = window.katharaDesktop.platform === "darwin" ? "⌘O" : "Ctrl+O";
   app.innerHTML = `
     <h1>Where should Kathara Desktop store your labs?</h1>
     <p class="sub">
       Labs are plain folders on disk, so you can browse and edit them outside the app too.
       You can change this later from Settings.
     </p>
+    <div class="labs-dir-label">Default labs folder</div>
     <p class="detail labs-dir-path">${esc(status.defaultDir)}</p>
+    <ul class="labs-dir-points">
+      <li>
+        <span class="mark">⌂</span>
+        <div>
+          <div class="name">Where the app keeps its labs</div>
+          <div>Labs you create, upload or download from the gallery are saved here, and every
+            folder you put here shows up in the app as a lab.</div>
+        </div>
+      </li>
+      <li>
+        <span class="mark">↗</span>
+        <div>
+          <div class="name">Labs elsewhere work too</div>
+          <div>Open a lab folder from anywhere on disk with File › Open Lab Folder…
+            (${openShortcut}). It stays where it is, and the app remembers it for next time.</div>
+        </div>
+      </li>
+    </ul>
     <div id="labs-dir-error"></div>
     <div class="actions">
       <button class="primary" id="labs-dir-continue">Continue</button>

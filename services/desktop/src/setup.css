@@ -75,7 +75,11 @@ li { display: grid; grid-template-columns: 1.4rem 1fr; gap: .65rem;
 .detail { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
           font-size: .82rem; word-break: break-word; }
 .remedy { margin-top: .3rem; color: var(--warn); }
-.labs-dir-path { margin-bottom: 1.5rem; }
+.labs-dir-label { font-weight: 600; margin-bottom: .2rem; }
+.labs-dir-path { margin: 0 0 1.25rem; font-size: .9rem; color: var(--fg); }
+.labs-dir-points { max-width: 44rem; }
+.labs-dir-points li:last-child { border-bottom: none; }
+.labs-dir-points .mark { color: var(--link); }
 .error-text { color: var(--bad); }
 a { color: var(--link); }
 .actions { display: flex; gap: .6rem; flex-wrap: wrap; }
