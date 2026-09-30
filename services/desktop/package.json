@@ -30,15 +30,19 @@
     "@stryker-mutator/core": "10.0.0",
     "@stryker-mutator/vitest-runner": "10.0.0",
     "@types/node": "^24.0.0",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitest/coverage-v8": "^4.1.11",
     "electron": "^44.0.0",
     "electron-builder": "^26.0.0",
     "esbuild": "^0.28.0",
     "typescript": "^5.5.4",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   },
   "homepage": "https://www.kathara.org/",
   "dependencies": {
     "@vscode/sudo-prompt": "^9.3.2"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "electron-winstaller": false
   }
 }
