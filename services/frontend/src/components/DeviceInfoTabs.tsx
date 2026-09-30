@@ -90,8 +90,8 @@ function saveTab(tab: DeviceInfoTab) {
 }
 
 // The Inspector for one device: a fixed header with its state and the actions on the device
-// as a whole (deploy/undeploy, terminal, options, remove), then four tabs — Overview (options and
-// startup log), Network (interfaces), Scripts (boot scripts and startup log) and Files (the
+// as a whole (deploy/undeploy, terminal, options, remove), then four tabs — Overview (options,
+// connected interfaces and startup log), Network (interfaces), Scripts (boot scripts and startup log) and Files (the
 // device's own folder and the lab's shared one). Mounted per device (keyed by name), so switching
 // device starts afresh.
 // Every tab stays mounted while another is shown, so an editor left open keeps its text; the
@@ -367,7 +367,6 @@ function OverviewTab({ node, machine }: OverviewTabProps) {
     <>
       <Kv k="Type" v={node.typeLabel} />
       <Kv k="Image" v={node.image || "—"} />
-      <Kv k="Ifaces" v={node.ifaces.length} />
       {machine?.bridged && <Kv k="Bridged" v="yes (host bridge)" />}
       {machine?.privileged && <Kv k="Privileged" v="yes" />}
       {machine?.ipv6 != null && <Kv k="IPv6" v={machine.ipv6 ? "enabled" : "disabled"} />}
@@ -377,6 +376,12 @@ function OverviewTab({ node, machine }: OverviewTabProps) {
       {machine?.num_terms != null && <Kv k="Num Terms" v={machine.num_terms} />}
       {machine?.entrypoint && <Kv k="Entrypoint" v={machine.entrypoint} />}
       {machine?.args && <Kv k="Args" v={machine.args} />}
+      <Section title={`Interfaces (${node.ifaces.length})`}>
+        {node.ifaces.length === 0 && <div style={{ fontFamily: "monospace" }}>—</div>}
+        {node.ifaces.map((it) => (
+          <Kv key={it.num} k={`eth${it.num}`} v={[it.link, ...it.ips].join(" · ")} />
+        ))}
+      </Section>
       {machine && machine.ports.length > 0 && (
         <Section title="Ports">
           {machine.ports.map((p) => (
