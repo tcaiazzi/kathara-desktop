@@ -42,7 +42,7 @@ function isMachO(filePath) {
  * writing into Contents/Resources invalidates the seal this signature creates, and the app then
  * refuses to launch.
  *
- * Symlinks (python-build-standalone ships e.g. bin/python3 -> python3.12) are skipped: the real
+ * Symlinks (python-build-standalone ships e.g. bin/python3 -> python3.14) are skipped: the real
  * file they point to is signed anyway when readdir reaches it as its own entry.
  */
 function signMachOTree(dir) {

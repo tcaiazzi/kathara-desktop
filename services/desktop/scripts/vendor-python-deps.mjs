@@ -42,8 +42,8 @@ const vendorDir = path.join(root, "vendor");
 
 // Derived from the interpreter fetch-python.mjs actually ships, so the two can't drift: the wheels
 // vendored here have to match that interpreter's ABI exactly or every C extension fails to import.
-const PY_TAG = PYTHON_VERSION.split(".").slice(0, 2).join("."); // "3.12"
-const ABI_TAG = `cp${PY_TAG.replace(".", "")}`; // "cp312"
+const PY_TAG = PYTHON_VERSION.split(".").slice(0, 2).join("."); // "3.14"
+const ABI_TAG = `cp${PY_TAG.replace(".", "")}`; // "cp314"
 
 /**
  * Wheel tags accepted per (os, arch), most specific first. `--platform` is repeatable and pip
@@ -70,7 +70,7 @@ const TARGETS = {
  * fallback. Anything NOT in this set that has no wheel for a target fails the build, so a genuine
  * gap surfaces in CI instead of on a user's machine.
  *
- * Verified against PyPI for cp312: `httptools` publishes no win_arm64 wheel and has no
+ * Verified against PyPI for cp314: `httptools` publishes no win_arm64 wheel and has no
  * py3-none-any fallback either. backend.ts spawns uvicorn without `--http`, so uvicorn picks its
  * h11 implementation by itself when httptools isn't importable — same behaviour, marginally slower
  * HTTP parsing on a loopback socket. `uvloop` (no Windows wheels at all) is already excluded by its
@@ -120,9 +120,11 @@ function normalize(name) {
   return name.replace(/[-_.]+/g, "-").toLowerCase();
 }
 
-/** The Python running pip here — only its pip matters, not its version: every resolution and
- * install below is pinned to the *target* interpreter with --python-version/--abi. The env
- * override exists for a machine whose default `python3` is too old to have pip's --report. */
+/** The Python running pip here. Its minor version has to be the bundled one's (main() refuses
+ * anything else): --python-version/--abi pin the wheel tags and Requires-Python, but pip evaluates
+ * `python_version` markers against the interpreter running it, so a 3.13 here would drop a
+ * dependency a 3.14 target needs, or keep one it doesn't. `make vendor-deps` points the override
+ * at its `build-python` venv; on CI the default is actions/setup-python's. */
 function hostPython() {
   return process.env.KATHARA_VENDOR_PYTHON || (process.platform === "win32" ? "python" : "python3");
 }
@@ -174,9 +176,10 @@ function pip(args, { capture = false } = {}) {
 }
 
 /**
- * Pass A. `--target` + `--only-binary=:all:` is what unlocks `--python-version`, which makes
- * `python_version` markers resolve for the interpreter this app ships rather than for whatever
- * Python happens to run this script. No `--platform`: the runner's own platform is the target OS,
+ * Pass A. `--target` + `--only-binary=:all:` is what unlocks `--python-version`, which picks wheels
+ * and checks Requires-Python for the interpreter this app ships; `python_version` markers follow
+ * the interpreter running pip, which main() has already checked is that same version. No
+ * `--platform`: the runner's own platform is the target OS,
  * and leaving the arch unconstrained lets the resolver pick the newest coherent set instead of
  * backtracking around a single missing cross-arch wheel — pass B is where a missing wheel is
  * supposed to be reported, one package at a time.
@@ -324,6 +327,16 @@ function main() {
   const major = Number(version.stdout.match(/pip (\d+)/)?.[1] ?? 0);
   if (!version.ok || major < 23) {
     console.error(`pip >= 23 is required for --report (found: ${version.stdout.trim() || "nothing"})`);
+    process.exit(1);
+  }
+  // pip --version ends with "(python X.Y)", the interpreter it runs on (see hostPython()).
+  const running = version.stdout.match(/\(python (\d+\.\d+)\)/)?.[1];
+  if (running !== PY_TAG) {
+    console.error(
+      `pip must run on Python ${PY_TAG}, the version the app bundles, not ${running ?? "an unknown one"} ` +
+        `("${hostPython()}"): it evaluates python_version markers against its own interpreter. ` +
+        `Use \`make vendor-deps\`, or set KATHARA_VENDOR_PYTHON to a Python ${PY_TAG}.`,
+    );
     process.exit(1);
   }
 

@@ -42,15 +42,23 @@ else
   RUN_NODE :=
 endif
 
-# The Python that builds the wheel: the repo's .venv when there is one (the same order the dev app
-# uses), else python3 from PATH. A distro python3 refuses `pip install` outright (PEP 668), so an
-# un-activated shell would otherwise fail at `wheel`. On CI there is no .venv and python3 is
-# actions/setup-python's.
-PYTHON ?= $(or $(wildcard .venv/bin/python),$(wildcard .venv/Scripts/python.exe),python3)
+# The Python every packaging step runs on: a venv made from the interpreter the app bundles, for
+# the host's own arch (see `build-python`). So a local build uses exactly the version the installer
+# ships, whatever the repo's .venv or PATH's python3 happen to be: pip evaluates `python_version`
+# markers against the interpreter running it, not against --python-version.
+HOST_PYTHON_DIR := $(DESKTOP_DIR)/vendor/python-$(PLATFORM)-$(HOST_ARCH)
+BUILD_VENV := $(DESKTOP_DIR)/vendor/python-build-venv
+ifeq ($(PLATFORM),win)
+  HOST_PYTHON := $(HOST_PYTHON_DIR)/python.exe
+  BUILD_PYTHON := $(CURDIR)/$(BUILD_VENV)/Scripts/python.exe
+else
+  HOST_PYTHON := $(HOST_PYTHON_DIR)/bin/python3
+  BUILD_PYTHON := $(CURDIR)/$(BUILD_VENV)/bin/python
+endif
 
 .PHONY: all build dist dist-linux dist-mac dist-win appimage \
         install install-frontend install-desktop \
-        wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell dev-build \
+        build-python wheel fetch-python fetch-python-host vendor-deps vendor-deps-host frontend shell dev-build \
         check lint typecheck test coverage check-frontend check-desktop check-backend \
         mutation mutation-frontend mutation-desktop mutation-backend \
         clean clean-wheel clean-python clean-deps clean-mutation distclean
@@ -146,9 +154,24 @@ mutation-backend:
 	PYTHONPATH=$(CURDIR)/mutants/src mutmut run
 
 ## ---- packaging inputs (wheel + bundled Python interpreter + its dependencies) ----
-## Only needed for `dist`; skip these for plain dev builds. `vendor-deps` needs `wheel` (it installs
-## it) and declares that; it is otherwise independent of `fetch-python`, which it never reads —
-## every version and ABI it resolves against is passed to pip explicitly.
+## Only needed for `dist`; skip these for plain dev builds. `wheel` and `vendor-deps` both run on
+## `build-python`; `vendor-deps` also needs `wheel` (it installs it) and declares that.
+
+# The bundled interpreter ships as it comes out of its tarball, almost without bytecode, and any
+# run of it would write __pycache__ into its lib/ and so into the installer. Every packaging target
+# that runs it — or the venv made from it, which imports the stdlib from there — writes none.
+build-python wheel vendor-deps vendor-deps-host: export PYTHONDONTWRITEBYTECODE := 1
+
+# Rebuilt only when the host's interpreter changes: the venv keeps a copy of the receipt
+# fetch-python.mjs writes next to the interpreter, and a venv made from a different one is
+# replaced (its pyvenv.cfg would point at a Python that is no longer there).
+build-python: fetch-python-host
+	@if ! cmp -s $(HOST_PYTHON_DIR).sha256 $(BUILD_VENV)/python.sha256; then \
+	  echo "[build-python] creating $(BUILD_VENV) from $(HOST_PYTHON)"; \
+	  rm -rf $(BUILD_VENV) && \
+	  $(HOST_PYTHON) -m venv $(BUILD_VENV) && \
+	  cp $(HOST_PYTHON_DIR).sha256 $(BUILD_VENV)/python.sha256; \
+	fi
 
 # Both removals are load-bearing, and each prevents a different way of shipping stale code:
 #   - build/: setuptools' build_py copies changed sources into build/lib but never removes ones
@@ -156,11 +179,11 @@ mutation-backend:
 #     packed into every subsequent wheel.
 #   - vendor/*.whl: vendor-python-deps.mjs installs *the* wheel it finds here, so a leftover from
 #     before a version bump would be the one vendored into the installer.
-wheel:
-	$(PYTHON) -m pip install --upgrade pip build
+wheel: build-python
+	$(BUILD_PYTHON) -m pip install --upgrade pip build
 	rm -rf build *.egg-info
 	rm -f $(DESKTOP_DIR)/vendor/*.whl
-	$(PYTHON) -m build --wheel --outdir $(DESKTOP_DIR)/vendor .
+	$(BUILD_PYTHON) -m build --wheel --outdir $(DESKTOP_DIR)/vendor .
 
 fetch-python:
 	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/fetch-python.mjs $(PLATFORM)
@@ -174,10 +197,10 @@ fetch-python-host:
 # the packaged app downloads and installs nothing on first launch. Must run on the OS it targets:
 # pip reads `sys_platform` markers from this machine (see the script's header).
 vendor-deps: wheel
-	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/vendor-python-deps.mjs $(PLATFORM)
+	$(RUN_NODE) cd $(DESKTOP_DIR) && KATHARA_VENDOR_PYTHON=$(BUILD_PYTHON) node scripts/vendor-python-deps.mjs $(PLATFORM)
 
 vendor-deps-host: wheel
-	$(RUN_NODE) cd $(DESKTOP_DIR) && node scripts/vendor-python-deps.mjs $(PLATFORM) $(HOST_ARCH)
+	$(RUN_NODE) cd $(DESKTOP_DIR) && KATHARA_VENDOR_PYTHON=$(BUILD_PYTHON) node scripts/vendor-python-deps.mjs $(PLATFORM) $(HOST_ARCH)
 
 ## ---- dev builds (no packaging) --------------------------------------------
 
@@ -231,7 +254,8 @@ clean-wheel:
 	rm -rf build *.egg-info
 	rm -f $(DESKTOP_DIR)/vendor/*.whl
 
-# Bundled Python interpreters fetched by `make fetch-python` (large, re-downloaded on demand).
+# Bundled Python interpreters fetched by `make fetch-python` (large, re-downloaded on demand), and
+# the `build-python` venv made from one of them.
 clean-python:
 	rm -rf $(DESKTOP_DIR)/vendor/python-*
 

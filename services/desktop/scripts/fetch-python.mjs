@@ -10,7 +10,7 @@
 // build time, so a compromised or altered upstream asset can't silently substitute itself in.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,16 +27,16 @@ const PBS_RELEASE = "20260901";
 // release's SHA256SUMS.
 const TARGETS = {
   linux: [
-    { arch: "x64", triple: "x86_64-unknown-linux-gnu", sha256: "72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c" },
-    { arch: "arm64", triple: "aarch64-unknown-linux-gnu", sha256: "577b4bec0793ad1ff0cbff9adbd0df078eddde38a4c41bf5d83ad381a85ee39d" },
+    { arch: "x64", triple: "x86_64-unknown-linux-gnu", sha256: "3959f92825141e04adf44982d3a83ee57af0877e893b0796e04c1468749d9b04" },
+    { arch: "arm64", triple: "aarch64-unknown-linux-gnu", sha256: "8a0798baa8a2c27b5751d590aced543eaa85e20b3f73d93c1af049688acdc9c5" },
   ],
   mac: [
-    { arch: "x64", triple: "x86_64-apple-darwin", sha256: "65b195c9cedc1fef6767f044f9822069adbd1bd9204d424ece4628776fdc04bb" },
-    { arch: "arm64", triple: "aarch64-apple-darwin", sha256: "81a359f1cfadd4da11766534c5913791cea55f26e1bb902cacd2a531bb1e4b2b" },
+    { arch: "x64", triple: "x86_64-apple-darwin", sha256: "7e151a7c9028855b61a7d6e78381f2020a1ef185281399f3b1aafc5e1c9a1a64" },
+    { arch: "arm64", triple: "aarch64-apple-darwin", sha256: "4632cb1a6edad9e73d3c81b6d2e69131637d995173e3e85005df14102b0592ba" },
   ],
   win: [
-    { arch: "x64", triple: "x86_64-pc-windows-msvc", sha256: "7c45c9622400d578709a9b2cddbe8124cc21d382409d9f13406d706d28e31b14" },
-    { arch: "arm64", triple: "aarch64-pc-windows-msvc", sha256: "72f4713d056a17961bdba7b43be82a878035040fa1eee30cfd5e43b91a2852d9" },
+    { arch: "x64", triple: "x86_64-pc-windows-msvc", sha256: "ca3c33ca924dfcab3b74205a7a58a88b0255135c53f95497b26b5e60700fd66d" },
+    { arch: "arm64", triple: "aarch64-pc-windows-msvc", sha256: "0a798034b712c34589b90192282dc45534c1fb5c01279e68d3d163df0ed49773" },
   ],
 };
 
@@ -51,10 +51,28 @@ function markerFile(destDir, os) {
   return os === "win" ? path.join(destDir, "python.exe") : path.join(destDir, "bin", "python3");
 }
 
+/** Records the sha256 of the asset destDir was extracted from. The marker file alone can't tell a
+ * 3.12 interpreter from a 3.14 one, and vendor-python-deps.mjs installs wheels for the ABI pinned in
+ * python-version.mjs, so a stale interpreter kept across a version bump would ship with C
+ * extensions it can't import. A sibling of destDir, not a file inside it: electron-builder packs
+ * destDir whole, and `make clean-python`'s `python-*` glob still removes it. */
+function receiptFile(destDir) {
+  return `${destDir}.sha256`;
+}
+
+function isCurrent(destDir, os, sha256) {
+  if (!existsSync(markerFile(destDir, os))) return false;
+  try {
+    return readFileSync(receiptFile(destDir), "utf8").trim() === sha256;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchTarget(os, { arch, triple, sha256 }) {
   const destDir = path.join(vendorDir, `python-${os}-${arch}`);
-  if (existsSync(markerFile(destDir, os))) {
-    console.log(`[fetch-python] ${os}/${arch}: already present, skipping`);
+  if (isCurrent(destDir, os, sha256)) {
+    console.log(`[fetch-python] ${os}/${arch}: CPython ${PYTHON_VERSION} already present, skipping`);
     return;
   }
 
@@ -73,12 +91,16 @@ async function fetchTarget(os, { arch, triple, sha256 }) {
   const tarPath = path.join(tmpDir, "python.tar.gz");
   writeFileSync(tarPath, bytes);
   try {
+    // The receipt goes first and is rewritten last, so an extraction that dies halfway is fetched
+    // again on the next run instead of being taken for current.
+    rmSync(receiptFile(destDir), { force: true });
     rmSync(destDir, { recursive: true, force: true });
     mkdirSync(destDir, { recursive: true });
     // --strip-components=1: every asset's tarball wraps its contents in a single top-level
     // "python/" directory, but destDir itself is already that per-arch identity, so bin/lib/etc.
     // should land directly inside it (matching what paths.ts's bundledPythonPath() expects).
     execFileSync("tar", ["xzf", tarPath, "-C", destDir, "--strip-components=1"], { stdio: "inherit" });
+    writeFileSync(receiptFile(destDir), `${sha256}\n`);
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

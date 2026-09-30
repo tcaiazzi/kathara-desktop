@@ -144,8 +144,10 @@ node scripts/fetch-python.mjs linux            # (or `mac` / `win`)
 # 2. Installs the backend's whole dependency closure for both of that OS's architectures, so the
 #    packaged app installs nothing at runtime. Must run on the OS it targets: pip reads
 #    `sys_platform` markers from the machine it runs on. Needs the wheel from `make wheel` first.
-#    KATHARA_VENDOR_PYTHON picks the host Python that runs pip, for a machine whose default
-#    `python3` is too old for pip's `--report`.
+#    pip has to run on the Python version the app bundles (the script refuses any other, since
+#    pip evaluates `python_version` markers against its own interpreter): KATHARA_VENDOR_PYTHON
+#    picks it when the default `python3` is a different version. `make vendor-deps` sets it to a
+#    venv made from the bundled interpreter.
 node scripts/vendor-python-deps.mjs linux      # (or `mac` / `win`)
 
 npm run dist:linux   # AppImage + deb + rpm (x64 + arm64)
@@ -184,6 +186,7 @@ Makefile is a step of one of them.
 | `dist-linux` / `dist-mac` / `dist-win` | The same, for that OS (each still has to run on it) |
 | `appimage` | Linux AppImage for the host arch only — faster than `dist-linux` |
 | `wheel` | The backend wheel the packaging steps consume |
+| `build-python` | A venv made from the bundled interpreter (host arch), which `wheel` and `vendor-deps` run on instead of the repo's `.venv` |
 | `fetch-python` / `vendor-deps` | The bundled interpreter and its dependency closure (packaging only; `*-host` variants do the host arch alone) |
 | `clean` | Build output. `clean-wheel` / `clean-python` / `clean-deps` are narrower; `distclean` is all of it; `clean-mutation` removes what `mutation` leaves behind |
 
