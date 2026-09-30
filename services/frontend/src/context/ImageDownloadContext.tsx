@@ -308,7 +308,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
                 className="mt-3"
                 checked={dontAskAgain}
                 onChange={(e) => setDontAskAgain(e.currentTarget.checked)}
-                label="If I skip, don't ask again until the app restarts"
+                label="Don't ask again until the app restarts"
               />
             </>
           )}
