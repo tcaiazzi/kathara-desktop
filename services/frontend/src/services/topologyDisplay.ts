@@ -1,12 +1,26 @@
-// The topology canvas's display preferences — which interface label lines show, how big the graph
-// is drawn, how thick its lines are, high contrast, and whether the legend is folded. Per viewer
-// and global across labs, kept in localStorage under TOPO_DISPLAY_KEY. Everything read back from
-// storage goes through parseTopoDisplay, which is the one place that decides what a valid saved
-// value is.
+// The topology canvas's display preferences — how the graph is laid out, which interface label
+// lines and domain names show, how big the graph is drawn, how thick its lines are, high contrast, and whether the
+// legend is folded. Per viewer and global across labs, kept in localStorage under TOPO_DISPLAY_KEY.
+// Everything read back from storage goes through parseTopoDisplay, which is the one place that
+// decides what a valid saved value is.
+
+import type { LayeredDirection } from "./topologyLayout";
+
+// How a fresh arrangement of the graph is made: the force simulation, a layered one by tier, or the
+// force simulation keeping the devices of each name group together (services/topologyLayout.ts).
+export const TOPO_LAYOUTS = ["force", "layered", "grouped"] as const;
+export type TopoLayout = (typeof TOPO_LAYOUTS)[number];
+export const LAYERED_DIRECTIONS: readonly LayeredDirection[] = ["tb", "lr"];
 
 export interface TopoDisplay {
+  layout: TopoLayout;
+  // Which way a layered layout's tiers run.
+  layeredDirection: LayeredDirection;
+  // Point-to-point domains drawn as a straight link between their two devices.
+  collapseP2p: boolean;
   ips: boolean;
   macs: boolean;
+  cdNames: boolean;
   // Nodes and their labels, together (1 = as designed).
   scale: number;
   // Multiplies every edge and border stroke.
@@ -16,8 +30,12 @@ export interface TopoDisplay {
 }
 
 export const DEFAULT_TOPO_DISPLAY: TopoDisplay = {
+  layout: "force",
+  layeredDirection: "tb",
+  collapseP2p: false,
   ips: true,
   macs: false,
+  cdNames: true,
   scale: 1,
   lineWidth: 1,
   highContrast: false,
@@ -71,6 +89,10 @@ function readBool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+function readChoice<T extends string>(value: unknown, choices: readonly T[], fallback: T): T {
+  return choices.find((c) => c === value) ?? fallback;
+}
+
 function readSteps(value: unknown, steps: Steps, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? snapToSteps(value, steps) : fallback;
 }
@@ -93,8 +115,12 @@ export function parseTopoDisplay(
     return { ...d, ips: legacy.ips !== "false", macs: legacy.macs === "true" };
   }
   return {
+    layout: readChoice(data.layout, TOPO_LAYOUTS, d.layout),
+    layeredDirection: readChoice(data.layeredDirection, LAYERED_DIRECTIONS, d.layeredDirection),
+    collapseP2p: readBool(data.collapseP2p, d.collapseP2p),
     ips: readBool(data.ips, d.ips),
     macs: readBool(data.macs, d.macs),
+    cdNames: readBool(data.cdNames, d.cdNames),
     scale: readSteps(data.scale, SCALE_STEPS, d.scale),
     lineWidth: readSteps(data.lineWidth, LINE_STEPS, d.lineWidth),
     highContrast: readBool(data.highContrast, d.highContrast),

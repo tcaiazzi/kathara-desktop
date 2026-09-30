@@ -13,7 +13,18 @@ import {
 
 describe("parseTopoDisplay", () => {
   it("reads back every field that was saved", () => {
-    const saved = { ips: false, macs: true, scale: 1.3, lineWidth: 2, highContrast: true, legendCollapsed: true };
+    const saved = {
+      layout: "layered",
+      layeredDirection: "lr",
+      collapseP2p: true,
+      ips: false,
+      macs: true,
+      cdNames: false,
+      scale: 1.3,
+      lineWidth: 2,
+      highContrast: true,
+      legendCollapsed: true,
+    };
 
     expect(parseTopoDisplay(JSON.stringify(saved))).toEqual(saved);
   });
@@ -30,6 +41,12 @@ describe("parseTopoDisplay", () => {
     const parsed = parseTopoDisplay(JSON.stringify({ macs: true, scale: "big", highContrast: 1, lineWidth: null }));
 
     expect(parsed).toEqual({ ...DEFAULT_TOPO_DISPLAY, macs: true });
+  });
+
+  it("takes the default for a layout or direction it does not know", () => {
+    const parsed = parseTopoDisplay(JSON.stringify({ layout: "spiral", layeredDirection: 3 }));
+
+    expect(parsed).toMatchObject({ layout: "force", layeredDirection: "tb" });
   });
 
   it("brings an out-of-range or off-step number back onto the range's steps", () => {

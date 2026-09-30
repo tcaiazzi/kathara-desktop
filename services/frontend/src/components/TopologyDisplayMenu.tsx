@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { Fragment, useId } from "react";
 import { Button, ButtonGroup, Dropdown, Form } from "react-bootstrap";
 import { Minus, Plus, Settings2 } from "lucide-react";
 import {
@@ -11,7 +11,20 @@ import {
   stepValue,
   type Steps,
   type TopoDisplay,
+  type TopoLayout,
 } from "../services/topologyDisplay";
+import type { LayeredDirection } from "../services/topologyLayout";
+
+const LAYOUT_LABELS: Record<TopoLayout, string> = {
+  force: "Force-directed",
+  layered: "Hierarchical",
+  grouped: "Grouped by name",
+};
+
+const DIRECTION_LABELS: Record<LayeredDirection, string> = {
+  tb: "Top to bottom",
+  lr: "Left to right",
+};
 
 interface TopologyDisplayMenuProps {
   value: TopoDisplay;
@@ -63,7 +76,7 @@ function Stepper({ label, value, steps, format, onChange }: StepperProps) {
   );
 }
 
-// The topology canvas's Display panel: which interface label lines show, and the accessibility
+// The topology canvas's Display panel: the layout, which labels show, and the accessibility
 // options (size, line thickness, high contrast). It holds no state — the graph owns the value and
 // persists it (services/topologyDisplay.ts).
 export function TopologyDisplayMenu({ value, onChange, compact }: TopologyDisplayMenuProps) {
@@ -80,14 +93,53 @@ export function TopologyDisplayMenu({ value, onChange, compact }: TopologyDispla
         size="sm"
         variant="outline-secondary"
         aria-label="Display options"
-        title="Interface labels, size, line thickness and contrast of the graph"
+        title="Layout, labels, size, line thickness and contrast of the graph"
         className="d-inline-flex align-items-center gap-1"
       >
         <Settings2 size={16} aria-hidden />
         {!compact && "Display"}
       </Dropdown.Toggle>
       <Dropdown.Menu className="kt-topo-display-menu">
-        <Dropdown.Header>Interface labels</Dropdown.Header>
+        <Dropdown.Header>Layout</Dropdown.Header>
+        <div className="kt-topo-display-body" role="radiogroup" aria-label="Layout">
+          {(Object.keys(LAYOUT_LABELS) as TopoLayout[]).map((layout) => (
+            <Fragment key={layout}>
+              <Form.Check
+                type="radio"
+                name={`${id}-layout`}
+                id={`${id}-layout-${layout}`}
+                label={LAYOUT_LABELS[layout]}
+                checked={value.layout === layout}
+                onChange={() => set("layout", layout)}
+              />
+              {layout === "layered" && value.layout === "layered" && (
+                <div className="kt-topo-display-sub" role="radiogroup" aria-label="Direction">
+                  {(Object.keys(DIRECTION_LABELS) as LayeredDirection[]).map((dir) => (
+                    <Form.Check
+                      key={dir}
+                      type="radio"
+                      name={`${id}-direction`}
+                      id={`${id}-direction-${dir}`}
+                      label={DIRECTION_LABELS[dir]}
+                      checked={value.layeredDirection === dir}
+                      onChange={() => set("layeredDirection", dir)}
+                    />
+                  ))}
+                </div>
+              )}
+            </Fragment>
+          ))}
+          <Form.Check
+            type="switch"
+            id={`${id}-collapse-p2p`}
+            label="Collapse point-to-point domains"
+            title="Draw a domain joining exactly two devices as a straight link between them"
+            checked={value.collapseP2p}
+            onChange={(e) => set("collapseP2p", e.target.checked)}
+          />
+        </div>
+        <Dropdown.Divider />
+        <Dropdown.Header>Labels</Dropdown.Header>
         <div className="kt-topo-display-body">
           <Form.Check
             type="switch"
@@ -102,6 +154,13 @@ export function TopologyDisplayMenu({ value, onChange, compact }: TopologyDispla
             label="Show MAC addresses"
             checked={value.macs}
             onChange={(e) => set("macs", e.target.checked)}
+          />
+          <Form.Check
+            type="switch"
+            id={`${id}-cd-names`}
+            label="Show collision domain names"
+            checked={value.cdNames}
+            onChange={(e) => set("cdNames", e.target.checked)}
           />
         </div>
         <Dropdown.Divider />

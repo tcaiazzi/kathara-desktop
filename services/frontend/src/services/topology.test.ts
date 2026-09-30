@@ -3,6 +3,8 @@ import { labDetail, machine } from "../test/fixtures";
 import { HOST_BRIDGE } from "./constants";
 import {
   canonicalIpv6,
+  collapsedDomainExtent,
+  collapsibleDomains,
   compareIfaceIps,
   computeTopology,
   deviceIpMismatches,
@@ -514,6 +516,11 @@ describe("nodeExtent", () => {
     expect(nodeExtent({ type: "cd", name: "backbone_lan" }).hw).toBeCloseTo(12 * 3.8, 9);
   });
 
+  it("sizes a domain by its circle alone while domain names are hidden", () => {
+    expect(nodeExtent({ type: "cd", name: "backbone_lan" }, 1, false)).toEqual({ hw: 18, hh: 18 });
+    expect(nodeExtent({ type: "cd", name: "backbone_lan" }, 2, false)).toEqual({ hw: 36, hh: 36 });
+  });
+
   it("scales both half-sizes with the Display size, for devices and domains alike", () => {
     expect(nodeExtent(dev("pc1"), 1.5)).toEqual({ hw: (112 / 2 + 6) * 1.5, hh: 23 * 1.5 });
     expect(nodeExtent({ type: "cd", name: "A" }, 0.8)).toEqual({ hw: 18 * 0.8, hh: 18 * 0.8 });
@@ -646,6 +653,18 @@ describe("edgeLabelPlacement", () => {
   const wide = { hw: 136, hh: 23 };
   const domain = { hw: 18, hh: 18 };
 
+  it("puts the label further along for a larger `along`, needing the same length either way", () => {
+    const a = { x: 0, y: 0 };
+    const b = { x: 0, y: 400 };
+    const ext = { hw: 10, hh: 10 };
+    const box = { left: -10, right: 10, top: -8, bottom: 8 };
+    const near = edgeLabelPlacement(a, ext, b, ext, box);
+    const far = edgeLabelPlacement(a, ext, b, ext, box, 0.64);
+    expect(near.y).toBeCloseTo(400 * 0.38);
+    expect(far.y).toBeCloseTo(400 * 0.64);
+    expect(far.need).toBe(near.need);
+  });
+
   it("keeps the label 38% of the way along when that already clears both ends", () => {
     const { x, y } = edgeLabelPlacement({ x: 0, y: 0 }, small, { x: 400, y: 0 }, domain, box);
     expect([x, y]).toEqual([152, 0]);
@@ -669,5 +688,38 @@ describe("edgeLabelPlacement", () => {
 
   it("leaves a label on a zero-length edge at its device", () => {
     expect(edgeLabelPlacement({ x: 5, y: 5 }, small, { x: 5, y: 5 }, domain, box)).toEqual({ x: 5, y: 5, need: 0 });
+  });
+});
+
+describe("collapsibleDomains", () => {
+  const ifaces = (...links: string[]) => links.map((link, num) => iface(num, link));
+
+  it("maps a domain joining exactly two devices to those two devices", () => {
+    const m = computeTopology(
+      lab([machine({ name: "r1", interfaces: ifaces("P", "L") }), machine({ name: "r2", interfaces: ifaces("P") })]),
+    );
+    expect([...collapsibleDomains(m.nodes, m.edges)]).toEqual([["cd:P", ["dev:r1", "dev:r2"]]]);
+  });
+
+  it("keeps a LAN, a stub, a domain one device has two interfaces on, and an external domain", () => {
+    const m = computeTopology(
+      lab(
+        [
+          machine({ name: "a", interfaces: ifaces("LAN", "S", "T", "T", "X") }),
+          machine({ name: "b", interfaces: ifaces("LAN", "X") }),
+          machine({ name: "c", interfaces: ifaces("LAN") }),
+        ],
+        [{ name: "X", machines: ["a", "b"], external: ["eth9"], running: false, draft: false, network_plugin: null }],
+      ),
+    );
+    expect(collapsibleDomains(m.nodes, m.edges).size).toBe(0);
+  });
+});
+
+describe("collapsedDomainExtent", () => {
+  it("takes the dot's room, and the name's while names show", () => {
+    expect(collapsedDomainExtent("backbone_lan", 1, false)).toEqual({ hw: 6, hh: 6 });
+    expect(collapsedDomainExtent("A")).toEqual({ hw: 6, hh: 16 });
+    expect(collapsedDomainExtent("backbone_lan", 2).hw).toBeCloseTo(2 * 12 * 3.8, 9);
   });
 });

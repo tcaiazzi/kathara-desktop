@@ -181,6 +181,11 @@ export function TopologyGraph({
   }, [draftKey]);
 
   const [savedLayout, setSavedLayout] = useState<NodePositions | null>(null);
+  // The lab whose fixed layout a fresh arrangement leaves out: set when a layout is picked from the
+  // Display menu, so the pick shows even on a lab with a fixed layout — as unsaved moves against it.
+  // Cleared by Re-layout, Save and Unfix; naming the lab keeps it from carrying over to another one.
+  const [ignoreFixedFor, setIgnoreFixedFor] = useState<string | null>(null);
+  const ignoreFixed = ignoreFixedFor === labId;
   const [layoutNonce, setLayoutNonce] = useState(0);
   const [savingLayout, setSavingLayout] = useState(false);
   // Latest positions reported by the engine — what "Save layout" writes to the lab directory.
@@ -213,13 +218,14 @@ export function TopologyGraph({
   // What a *fresh* layout starts from. The draft lives in localStorage, outside React, so it is
   // re-read at each moment it may have changed: a lab switch (`labId`), a new `detail`, Re-layout
   // (`relayoutNonce`) and the fixed layout arriving (`layoutNonce`, `savedLayout`) — which is why
-  // the list names values the body never reads. A rebuild that only carries new data (a device
+  // the list names values the body never reads. Right after a layout is picked, the fixed layout is
+  // left out (`ignoreFixed`) and the draft alone decides. A rebuild that only carries new data (a device
   // added, a startup saved) doesn't depend on it being current: the engine carries its own live
   // positions across those (useForceLayout).
   const initialPositions = useMemo(
-    () => ({ ...(savedLayout ?? {}), ...readDraft() }),
+    () => ({ ...(ignoreFixed ? {} : savedLayout ?? {}), ...readDraft() }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [labId, detail, relayoutNonce, layoutNonce, savedLayout, readDraft],
+    [labId, detail, relayoutNonce, layoutNonce, savedLayout, readDraft, ignoreFixed],
   );
 
   // Called only when the graph comes to rest and when a drag ends, so the draft is written straight
@@ -251,6 +257,7 @@ export function TopologyGraph({
       const map = livePositions.current;
       const { nodes } = await api.saveLayout(labId, map);
       setSavedLayout(nodes);
+      setIgnoreFixedFor(null);
       setDirty(false);
       clearDraft();
       toast.show("Layout fixed — saved to the lab's lab.layout file.", "success");
@@ -267,6 +274,7 @@ export function TopologyGraph({
     await runBusy(setSavingLayout, "Remove layout", async () => {
       await api.deleteLayout(labId);
       setSavedLayout({});
+      setIgnoreFixedFor(null);
       clearDraft();
       setDirty(false);
       setRelayoutNonce((n) => n + 1);
@@ -358,8 +366,12 @@ export function TopologyGraph({
       selectedId,
       scopeKey: labId,
       labelLines: { ips: showIps, macs: showMacs },
+      cdNames: display.cdNames,
       nodeScale: display.scale,
       ipWarnings,
+      layout: display.layout,
+      layeredDirection: display.layeredDirection,
+      collapseP2p: display.collapseP2p,
     },
   );
 
@@ -397,6 +409,22 @@ export function TopologyGraph({
   // from fresh randomized positions and auto-fits.
   function handleRelayout() {
     clearDraft();
+    setIgnoreFixedFor(null);
+    setRelayoutNonce((n) => n + 1);
+  }
+
+  // Picking another layout arranges the graph afresh with it straight away, the lab's fixed layout
+  // included — Re-layout brings that back. So does, for the layered one, another direction or
+  // collapsing the point-to-point domains, which takes their rows away.
+  function handleDisplayChange(next: TopoDisplay) {
+    const rearrange =
+      next.layout !== display.layout ||
+      (next.layout === "layered" &&
+        (next.layeredDirection !== display.layeredDirection || next.collapseP2p !== display.collapseP2p));
+    setDisplay(next);
+    if (!rearrange) return;
+    clearDraft();
+    setIgnoreFixedFor(labId);
     setRelayoutNonce((n) => n + 1);
   }
 
@@ -416,6 +444,7 @@ export function TopologyGraph({
               "kt-topo-svg-mount" +
               (showIps ? "" : " kt-topo-hide-ips") +
               (showMacs ? "" : " kt-topo-hide-macs") +
+              (display.cdNames ? "" : " kt-topo-hide-cd-names") +
               (display.highContrast ? " kt-topo-high-contrast" : "")
             }
             style={{ "--kt-topo-scale": display.scale, "--kt-topo-line": display.lineWidth } as CSSProperties}
@@ -461,7 +490,7 @@ export function TopologyGraph({
                 </Button>
               </>
             )}
-            <TopologyDisplayMenu value={display} onChange={setDisplay} compact={compactToolbar} />
+            <TopologyDisplayMenu value={display} onChange={handleDisplayChange} compact={compactToolbar} />
           </div>
           <div className="kt-topo-layout-toolbar" data-topo-overlay>
             {compactToolbar ? (

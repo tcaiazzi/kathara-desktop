@@ -1,7 +1,9 @@
-// Imperative force-directed SVG topology engine (device + collision-domain nodes, edges =
-// interfaces), no charting library. The simulation/render loop manipulates SVG DOM attributes
-// directly every animation frame rather than going through React state: dozens of position
-// updates per second per node is not a good fit for React re-renders. This hook owns the whole
+// Imperative SVG topology engine (device + collision-domain nodes, edges = interfaces), no charting
+// library. A fresh graph is arranged by a force simulation, or, with the layered layout, placed at
+// once from services/topologyLayout.ts and pinned; either way the simulation still settles any
+// node left free, such as one added later. The simulation/render loop manipulates SVG DOM
+// attributes directly every animation frame rather than going through React state: dozens of
+// position updates per second per node is not a good fit for React re-renders. This hook owns the whole
 // engine (physics, drag/pan/zoom, node DOM); the caller supplies callbacks for the low-frequency
 // events that need component-level context (building context-menu items, opening modals) rather
 // than the hook owning that state itself.
@@ -13,6 +15,10 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from "react";
 import { CATEGORY_ICON } from "../services/deviceIcon";
 import {
+  collapsedDomainExtent,
+  collapsibleDomains,
+  COLLAPSED_DOT_R,
+  COLLAPSED_LABEL_Y,
   deviceNodeWidth,
   EDGE_LABEL_LINE_Y,
   EDGE_WARN_GAP,
@@ -24,6 +30,7 @@ import {
   fitTransform,
   ifaceKey,
   IMAGE_CHAR_W,
+  LABEL_ALONG,
   IMAGE_MARGIN,
   MAX_IMAGE_CHARS,
   NAME_CHAR_W,
@@ -41,9 +48,26 @@ import {
   type TopoModel,
   type TopoNode,
 } from "../services/topology";
+import type { TopoLayout } from "../services/topologyDisplay";
+import {
+  groupBoxes,
+  groupedSeeds,
+  layeredLayout,
+  nodeGroups,
+  staggeredLabelAlong,
+  type LayeredDirection,
+  type LayoutSizes,
+} from "../services/topologyLayout";
 import { ipMismatchTooltipHtml, tooltipHtml } from "../services/topologyTooltip";
 
 const SVGNS = "http://www.w3.org/2000/svg";
+
+// With the grouped layout: how much harder nodes of two groups push each other apart than nodes of
+// one group, and how strongly each grouped node is pulled towards its group's centre.
+const GROUP_REPULSION = 2;
+const GROUP_PULL = 0.12;
+// With the grouped layout, the room kept between two nodes' boxes.
+const GROUP_NODE_GAP = 12;
 
 function svgEl<K extends keyof SVGElementTagNameMap>(
   tag: K,
@@ -69,6 +93,14 @@ interface Engine {
   edges: TopoEdge[];
   byId: Record<string, TopoNode>;
   adj: Record<string, Set<string>>;
+  // The point-to-point domains drawn collapsed (collapsibleDomains), each with its two devices, and
+  // every other node: a collapsed domain has no physics of its own, it sits on its link's middle.
+  collapsed: Map<string, [string, string]>;
+  bodies: TopoNode[];
+  // With the grouped layout, each grouped node's group (nodeGroups) and each group's box: the
+  // simulation keeps a group together and apart from the others. Empty with any other layout.
+  groups: Map<string, string>;
+  groupEls: Map<string, { rect: SVGRectElement; label: SVGTextElement }>;
   tx: number;
   ty: number;
   scale: number;
@@ -89,6 +121,9 @@ interface Engine {
   // where a label can sit without covering either end, and how long its edge has to be for that.
   extents: Record<string, { hw: number; hh: number }>;
   labelBoxes: LabelBox[];
+  // How far along its edge each label sits (edgeLabelPlacement's `along`), by edge index: staggered
+  // with the layered layout, fixed when the engine is built.
+  labelAlong: number[];
   // The Display panel's size every node and label is drawn at, and the label lines' offsets at it.
   nodeScale: number;
   lineY: { name: number; ip: number; mac: number };
@@ -128,12 +163,22 @@ interface UseForceLayoutOptions {
   // Which of an interface label's lines are on show: they decide how much room the label needs,
   // and so where it goes. Its CSS still does the hiding.
   labelLines?: { ips: boolean; macs: boolean };
+  // Whether domain names show: a domain without one takes only its circle's room. Its CSS does the
+  // hiding.
+  cdNames?: boolean;
   // The size nodes and labels are drawn at (1 = as designed): nodes are scaled by their transform,
   // the edge labels by their CSS (`--kt-topo-scale`, set by the caller), and the geometry here.
   nodeScale?: number;
   // Interfaces whose running addresses differ from their startup's, keyed by `ifaceKey`: each
   // gets a warning after its ethN, with the details on hover.
   ipWarnings?: Record<string, IfaceIpMismatch>;
+  // How a graph with no known positions at all is arranged, read at each rebuild: the caller asks
+  // for a rebuild (relayoutNonce) when it changes.
+  layout?: TopoLayout;
+  layeredDirection?: LayeredDirection;
+  // Draw each point-to-point domain as a straight link between its two devices, the domain a dot on
+  // its middle. Changing it rebuilds the engine, carrying the positions over.
+  collapseP2p?: boolean;
 }
 
 // What a rebuild can inherit from the engine it replaces — see `lastStateRef`.
@@ -153,6 +198,29 @@ interface UseForceLayout {
   select: (id: string | null) => void;
   /** Zoom about the canvas center by a factor (>1 in, <1 out). */
   zoom: (factor: number) => void;
+}
+
+// Each node's half-size and each edge's label box at the options' size and label lines: the room
+// both the physics and a computed layout leave for them.
+function measureSizes(
+  nodes: TopoNode[],
+  edges: TopoEdge[],
+  options: UseForceLayoutOptions,
+  collapsed: ReadonlyMap<string, unknown>,
+): LayoutSizes {
+  const lines = options.labelLines ?? { ips: true, macs: false };
+  const s = options.nodeScale ?? 1;
+  const cdNames = options.cdNames ?? true;
+  const warnings = options.ipWarnings ?? {};
+  return {
+    extents: Object.fromEntries(
+      nodes.map((nd) => [
+        nd.id,
+        collapsed.has(nd.id) ? collapsedDomainExtent(nd.name, s, cdNames) : nodeExtent(nd, s, cdNames),
+      ]),
+    ),
+    labelBoxes: edges.map((e) => edgeLabelBox(e, lines, s, ifaceKey(e.device, e.num) in warnings)),
+  };
 }
 
 function applyTransform(engine: Engine): void {
@@ -175,10 +243,14 @@ function overlayFitInsets(engine: Engine): FitInsets {
   return { top: px.top * sy, right: px.right * sx, bottom: px.bottom * sy, left: px.left * sx };
 }
 
-// Fit all nodes into view (scale + center), each counted with its size and clear of the overlays.
-// Shared by the returned fit(), the auto-fit-on-settle and the refit on resize.
+// Fit all nodes into view (scale + center), each counted with its size and clear of the overlays,
+// and the group boxes around them with theirs. Shared by the returned fit(), the auto-fit-on-settle
+// and the refit on resize.
 function fitEngine(engine: Engine): void {
   const nodes = engine.nodes.map((nd) => ({ x: nd.x, y: nd.y, ...engine.extents[nd.id] }));
+  for (const b of groupBoxes(engine.nodes, engine.extents, engine.groups).values()) {
+    nodes.push({ x: b.x + b.width / 2, y: b.y + b.height / 2, hw: b.width / 2, hh: b.height / 2 });
+  }
   const { scale, tx, ty } = fitTransform(nodes, engine.W, engine.H, overlayFitInsets(engine));
   engine.scale = scale;
   engine.tx = tx;
@@ -213,6 +285,7 @@ export function useForceLayout(
   callbacksRef.current = callbacks;
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const collapseP2p = options.collapseP2p ?? false;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -246,7 +319,23 @@ export function useForceLayout(
       carried,
       optionsRef.current.initialPositions || {},
     );
-    let pinnedCount = 0;
+    const collapsed = collapseP2p
+      ? collapsibleDomains(model.nodes, model.edges)
+      : new Map<string, [string, string]>();
+    // Nothing known about where any node goes: the layered layout places them all at once, pinned,
+    // so the graph starts cold.
+    const { layout, layeredDirection } = optionsRef.current;
+    if (layout === "layered" && Object.values(seeds).every((p) => p === null)) {
+      const sizes = measureSizes(model.nodes, model.edges, optionsRef.current, collapsed);
+      const placed = layeredLayout(model.nodes, model.edges, sizes, { x: W / 2, y: H / 2 }, {
+        direction: layeredDirection,
+        collapsed,
+      });
+      for (const nd of model.nodes) seeds[nd.id] = { ...placed[nd.id], fixed: true };
+    }
+    // The grouped layout starts every node it knows nothing about near its group.
+    const groups = layout === "grouped" ? nodeGroups(model.nodes) : new Map<string, string>();
+    const start = groups.size ? groupedSeeds(model.nodes, groups, { x: W / 2, y: H / 2 }, Math.min(W, H) * 0.3) : null;
     const byId: Record<string, TopoNode> = {};
     model.nodes.forEach((nd, i) => {
       const p = seeds[nd.id];
@@ -255,7 +344,9 @@ export function useForceLayout(
         nd.x = p.x;
         nd.y = p.y;
         nd.fixed = p.fixed;
-        if (p.fixed) pinnedCount++;
+      } else if (start) {
+        nd.x = start[nd.id].x;
+        nd.y = start[nd.id].y;
       } else {
         const a = (i / n) * Math.PI * 2;
         const jitter = ((i * 41) % 13) / 13;
@@ -267,7 +358,7 @@ export function useForceLayout(
       nd.dy = 0;
       byId[nd.id] = nd;
     });
-    const allPinned = pinnedCount === n;
+    const allPinned = model.nodes.every((nd) => nd.fixed || collapsed.has(nd.id));
     // Cold start when every node is pinned (nothing left to move); otherwise a full settle — only
     // the unpinned nodes actually move, so there is no need to hold the heat back.
     const temp = allPinned ? 0 : Math.max(W, H) * 0.11;
@@ -302,12 +393,14 @@ export function useForceLayout(
       fill: "url(#kt-topo-grid)",
       "pointer-events": "none",
     });
+    // The group boxes, under everything but the grid.
+    const groupsG = svgEl("g");
     const edgesG = svgEl("g");
     const nodesG = svgEl("g");
     // Edge labels live in their own group drawn AFTER the nodes so a node never covers an interface
     // name (labels also get a background halo in CSS for contrast over lines/nodes).
     const labelsG = svgEl("g");
-    viewport.append(defs, gridRect, edgesG, nodesG, labelsG);
+    viewport.append(defs, gridRect, groupsG, edgesG, nodesG, labelsG);
     svgNode.append(viewport);
     canvas.append(svgNode);
 
@@ -329,6 +422,10 @@ export function useForceLayout(
       edges: model.edges,
       byId,
       adj,
+      collapsed,
+      bodies: model.nodes.filter((nd) => !collapsed.has(nd.id)),
+      groups,
+      groupEls: new Map(),
       tx: carried?.camera.tx ?? 0,
       ty: carried?.camera.ty ?? 0,
       scale: carried?.camera.scale ?? 1,
@@ -346,6 +443,15 @@ export function useForceLayout(
       nodeEls: {},
       extents: {},
       labelBoxes: [],
+      labelAlong:
+        layout === "layered"
+          ? staggeredLabelAlong(
+              model.edges,
+              Object.fromEntries(model.nodes.map((nd) => [nd.id, { x: nd.x, y: nd.y }])),
+              layeredDirection,
+              collapsed,
+            )
+          : model.edges.map(() => LABEL_ALONG),
       nodeScale: 1,
       lineY: edgeLabelLineY(1),
       refreshGeometry: () => {},
@@ -365,6 +471,13 @@ export function useForceLayout(
     };
     engineRef.current = engine;
 
+    for (const g of new Set(groups.values())) {
+      const rect = svgEl("rect", { class: "kt-topo-group", rx: 12 });
+      const label = svgEl("text", { class: "kt-topo-group-label" }, g);
+      groupsG.append(rect, label);
+      engine.groupEls.set(g, { rect, label });
+    }
+
     // Set by this effect's cleanup below. A node/pane drag adds its `move`/`up` listeners
     // straight onto `window` (so the drag tracks the pointer outside the SVG's bounds) and only
     // removes them itself once the drag completes normally via `up()` — if this engine is torn
@@ -378,19 +491,18 @@ export function useForceLayout(
     let activeDragCleanup: (() => void) | null = null;
 
     function measureGeometry() {
-      const lines = optionsRef.current.labelLines ?? { ips: true, macs: false };
       const s = optionsRef.current.nodeScale ?? 1;
       // The spring's natural length (`k`) stays as it is on purpose: a layout that grew in proportion
       // with its nodes would just be refitted back to the same size on screen. Only the room each
       // node and label needs grows, and the springs lengthen an edge as far as its label needs.
       engine.nodeScale = s;
       engine.lineY = edgeLabelLineY(s);
-      engine.extents = Object.fromEntries(engine.nodes.map((nd) => [nd.id, nodeExtent(nd, s)]));
+      const sizes = measureSizes(engine.nodes, engine.edges, optionsRef.current, engine.collapsed);
+      engine.extents = sizes.extents;
+      engine.labelBoxes = [...sizes.labelBoxes];
       const warnings = optionsRef.current.ipWarnings ?? {};
-      engine.labelBoxes = engine.edges.map((e, i) => {
-        const warn = ifaceKey(e.device, e.num) in warnings;
-        engine.edgeWarnEls[i]?.setAttribute("display", warn ? "inline" : "none");
-        return edgeLabelBox(e, lines, s, warn);
+      engine.edges.forEach((e, i) => {
+        engine.edgeWarnEls[i]?.setAttribute("display", ifaceKey(e.device, e.num) in warnings ? "inline" : "none");
       });
     }
     engine.refreshGeometry = () => {
@@ -466,9 +578,16 @@ export function useForceLayout(
       engine.tooltip.style.display = "none";
     }
 
+    // Whether an edge belongs to node `id`: one of its ends, or the far half of a collapsed link
+    // from it — the two halves read as one link, so they light up together.
+    function edgeOf(e: TopoEdge, id: string | null): boolean {
+      if (id == null) return false;
+      return e.source === id || e.target === id || (engine.collapsed.has(e.target) && engine.adj[id].has(e.target));
+    }
+
     function hoverTopo(id: string | null) {
       engine.edges.forEach((e, i) => {
-        const on = id != null && (e.source === id || e.target === id);
+        const on = edgeOf(e, id);
         engine.edgeEls[i].classList.toggle("hi", on);
         engine.edgeLabelEls[i].classList.toggle("hi", on);
         engine.edgeIpEls[i].classList.toggle("hi", on);
@@ -485,7 +604,11 @@ export function useForceLayout(
       const keep = new Set<string>();
       if (id != null) {
         keep.add(id);
-        for (const nb of engine.adj[id]) keep.add(nb);
+        for (const nb of engine.adj[id]) {
+          keep.add(nb);
+          // Across a collapsed link, the device on its other end is a neighbour too.
+          for (const end of engine.collapsed.get(nb) ?? []) keep.add(end);
+        }
       }
       for (const nd of engine.nodes) {
         const g = engine.nodeEls[nd.id];
@@ -493,7 +616,7 @@ export function useForceLayout(
         g.classList.toggle("dim", id != null && !keep.has(nd.id));
       }
       engine.edges.forEach((e, i) => {
-        const on = id != null && (e.source === id || e.target === id);
+        const on = edgeOf(e, id);
         const dim = id != null && !on;
         engine.edgeEls[i].classList.toggle("hi", on);
         engine.edgeEls[i].classList.toggle("dim", dim);
@@ -544,8 +667,48 @@ export function useForceLayout(
       engine.raf = requestAnimationFrame(step);
     }
 
+    // Each collapsed domain back onto the middle of its link.
+    function snapCollapsed() {
+      for (const [cd, [a, b]] of engine.collapsed) {
+        const nd = engine.byId[cd];
+        nd.x = (engine.byId[a].x + engine.byId[b].x) / 2;
+        nd.y = (engine.byId[a].y + engine.byId[b].y) / 2;
+      }
+    }
+
+    // Pulled towards their group's centre, and by their links towards the same devices in other
+    // groups, two nodes of a group end up on top of each other: the repulsion keeps centres only `k`
+    // apart, less than two wide devices take side by side. No force outweighs those springs, so two
+    // boxes that overlap are moved apart outright, along the axis where they overlap least — the
+    // whole way for a free node next to a pinned or dragged one, halfway each otherwise.
+    function separateOverlaps(nodes: TopoNode[]) {
+      const still = (nd: TopoNode) => nd === engine.dragging || !!nd.fixed;
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = nodes[i];
+          const b = nodes[j];
+          if (still(a) && still(b)) continue;
+          const ea = engine.extents[a.id];
+          const eb = engine.extents[b.id];
+          const dx = a.x - b.x;
+          const dy = a.y - b.y;
+          const ox = ea.hw + eb.hw + GROUP_NODE_GAP - Math.abs(dx);
+          const oy = ea.hh + eb.hh + GROUP_NODE_GAP - Math.abs(dy);
+          if (ox <= 0 || oy <= 0) continue;
+          const alongX = ox < oy;
+          const shift = alongX ? ox : oy;
+          const sign = Math.sign(alongX ? dx : dy) || 1;
+          const shareA = still(a) ? 0 : still(b) ? 1 : 0.5;
+          const axis = alongX ? "x" : "y";
+          a[axis] += sign * shift * shareA;
+          b[axis] -= sign * shift * (1 - shareA);
+        }
+      }
+    }
+
     function tick() {
-      const { nodes, edges, byId: ids, adj, k: kk, W: w, H: h } = engine;
+      const { bodies: nodes, edges, byId: ids, adj, k: kk, W: w, H: h } = engine;
+      snapCollapsed();
       for (const nd of nodes) {
         nd.dx = 0;
         nd.dy = 0;
@@ -563,7 +726,9 @@ export function useForceLayout(
             d2 = dx * dx + dy * dy;
           }
           const d = Math.sqrt(d2);
-          const f = (kk * kk) / d;
+          // Two groups push each other off harder than two nodes of one group do.
+          const apart = engine.groups.size > 0 && engine.groups.get(a.id) !== engine.groups.get(b.id);
+          const f = ((kk * kk) / d) * (apart ? GROUP_REPULSION : 1);
           const ux = dx / d;
           const uy = dy / d;
           a.dx += ux * f;
@@ -572,22 +737,13 @@ export function useForceLayout(
           b.dy -= uy * f;
         }
       }
-      edges.forEach((e, i) => {
-        const a = ids[e.source];
-        const b = ids[e.target];
+      // The spring acts on the length beyond what the interface label needs to clear both ends
+      // (edgeLabelPlacement's `need`, which grows with a wide device), so an edge rests at its
+      // natural length or at that, whichever is longer — never with its label on a node.
+      const spring = (a: TopoNode, b: TopoNode, need: number) => {
         const dx = a.x - b.x;
         const dy = a.y - b.y;
         const d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-        // The spring acts on the length beyond what the interface label needs to clear both ends
-        // (edgeLabelPlacement's `need`, which grows with a wide device), so an edge rests at its
-        // natural length or at that, whichever is longer — never with its label on a node.
-        const { need } = edgeLabelPlacement(
-          a,
-          engine.extents[a.id],
-          b,
-          engine.extents[b.id],
-          engine.labelBoxes[i],
-        );
         const slack = Math.max(0, need + 8 - kk);
         const stretch = Math.max(0.01, d - slack);
         const f = (stretch * stretch) / kk;
@@ -597,7 +753,34 @@ export function useForceLayout(
         a.dy -= uy * f;
         b.dx += ux * f;
         b.dy += uy * f;
+      };
+      // A collapsed link is one spring between its two devices, long enough for the label on
+      // either half: its middle splits it evenly.
+      const halfNeed = new Map<string, number>();
+      edges.forEach((e, i) => {
+        const a = ids[e.source];
+        const b = ids[e.target];
+        const { need } = edgeLabelPlacement(a, engine.extents[a.id], b, engine.extents[b.id], engine.labelBoxes[i]);
+        if (engine.collapsed.has(e.target)) halfNeed.set(e.target, Math.max(halfNeed.get(e.target) ?? 0, need));
+        else spring(a, b, need);
       });
+      for (const [cd, [a, b]] of engine.collapsed) spring(ids[a], ids[b], 2 * (halfNeed.get(cd) ?? 0));
+      // Each grouped node towards the centre of its group.
+      if (engine.groups.size) {
+        const sums = new Map<string, { x: number; y: number; n: number }>();
+        for (const nd of nodes) {
+          const g = engine.groups.get(nd.id);
+          if (g === undefined) continue;
+          const c = sums.get(g) ?? { x: 0, y: 0, n: 0 };
+          sums.set(g, { x: c.x + nd.x, y: c.y + nd.y, n: c.n + 1 });
+        }
+        for (const nd of nodes) {
+          const c = sums.get(engine.groups.get(nd.id) ?? "");
+          if (!c || !engine.groups.has(nd.id)) continue;
+          nd.dx += (c.x / c.n - nd.x) * GROUP_PULL;
+          nd.dy += (c.y / c.n - nd.y) * GROUP_PULL;
+        }
+      }
       for (const nd of nodes) {
         // Strong enough to matter on its own: a lightly-connected node (e.g. a single edge into a
         // domain everything else avoids) needs more than the spring force to stay near the rest of
@@ -620,10 +803,12 @@ export function useForceLayout(
         nd.x = Math.max(mx, Math.min(w - mx, nd.x));
         nd.y = Math.max(my, Math.min(h - my, nd.y));
       }
+      if (engine.groups.size) separateOverlaps(nodes);
       engine.temp *= 0.96;
     }
 
     function render() {
+      snapCollapsed();
       applyTransform(engine);
       engine.edges.forEach((e, i) => {
         const a = engine.byId[e.source];
@@ -639,6 +824,7 @@ export function useForceLayout(
           b,
           engine.extents[b.id],
           engine.labelBoxes[i],
+          engine.labelAlong[i],
         );
         const s = engine.nodeScale;
         const wx = mx + (edgeNameHalfWidth(e.label) + EDGE_WARN_GAP) * s;
@@ -658,6 +844,18 @@ export function useForceLayout(
       for (const nd of engine.nodes) {
         engine.nodeEls[nd.id].setAttribute("transform", `translate(${nd.x},${nd.y}) scale(${s})`);
       }
+      if (engine.groups.size) {
+        for (const [g, b] of groupBoxes(engine.nodes, engine.extents, engine.groups)) {
+          const els = engine.groupEls.get(g);
+          if (!els) continue;
+          els.rect.setAttribute("x", String(b.x));
+          els.rect.setAttribute("y", String(b.y));
+          els.rect.setAttribute("width", String(b.width));
+          els.rect.setAttribute("height", String(b.height));
+          els.label.setAttribute("x", String(b.x + 10));
+          els.label.setAttribute("y", String(b.y + 17));
+        }
+      }
     }
 
     function onNodePointerDown(ev: PointerEvent, nd: TopoNode) {
@@ -673,6 +871,8 @@ export function useForceLayout(
       engine.svg.classList.add("dragging");
       const move = (e: PointerEvent) => {
         if (disposed) return;
+        // A collapsed domain goes where its link does: pressing it only selects it.
+        if (engine.collapsed.has(nd.id)) return;
         const p = clientToSim(e.clientX, e.clientY);
         if (Math.abs(p.x - nd.x) > 2 || Math.abs(p.y - nd.y) > 2) engine.moved = true;
         nd.x = p.x;
@@ -782,6 +982,10 @@ export function useForceLayout(
         // Small filled state dot (top-left, the one free corner), repeating the rect's
         // running/stopped border colour.
         g.append(badge(-w / 2 + 3, -14, `b-state${nd.running ? "" : " stopped"}`, ""));
+      } else if (collapsed.has(nd.id)) {
+        g = svgEl("g", { class: "kt-topo-node n-cd collapsed" });
+        g.append(svgEl("circle", { r: COLLAPSED_DOT_R }));
+        g.append(svgEl("text", { class: "n-label", "text-anchor": "middle", y: COLLAPSED_LABEL_Y }, nd.name));
       } else {
         g = svgEl("g", {
           class: `kt-topo-node n-cd${nd.external.length ? " external" : ""}${nd.draft ? " draft" : ""}`,
@@ -896,18 +1100,20 @@ export function useForceLayout(
       engineRef.current = null;
       canvas.replaceChildren();
     };
-  }, [model, relayoutNonce]);
+  }, [model, relayoutNonce, collapseP2p]);
 
-  // Showing or hiding the IP/MAC lines, or changing the size, changes how much room each node and
-  // label needs: re-measure without rebuilding the engine (the layout is carried on, not redone).
+  // Showing or hiding the IP/MAC lines or the domain names, or changing the size, changes how much
+  // room each node and label needs: re-measure without rebuilding the engine (the layout is carried
+  // on, not redone).
   const showIps = options.labelLines?.ips;
   const showMacs = options.labelLines?.macs;
+  const cdNames = options.cdNames;
   const nodeScale = options.nodeScale;
   // Which interfaces carry a warning; its details are read at hover time, so only the set matters.
   const warnedIfaces = Object.keys(options.ipWarnings ?? {}).sort().join("\n");
   useEffect(() => {
     engineRef.current?.refreshGeometry();
-  }, [showIps, showMacs, nodeScale, warnedIfaces]);
+  }, [showIps, showMacs, cdNames, nodeScale, warnedIfaces]);
 
   const fit = useCallback(() => {
     const engine = engineRef.current;

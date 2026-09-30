@@ -478,14 +478,47 @@ export function deviceNodeWidth(node: Pick<DeviceNode, "name" | "image">): numbe
 /** Half the width and height a node takes on the canvas, around its centre. A device is its rect
  *  plus the corner badges, which sit on the rect's edge and stick out by 6px on each side
  *  (r 9, centred 3px inside); a domain is its r-18 circle, or its label where that is wider
- *  (~7.6px per character at the domain label's monospace size). A node is drawn at 1× and scaled
- *  as a whole by the Display panel's size (`scale`), so its extent scales the same way. */
+ *  (~7.6px per character at the domain label's monospace size) — just its circle while the Display
+ *  panel hides domain names (`cdName` false). A node is drawn at 1× and scaled as a whole by the
+ *  Display panel's size (`scale`), so its extent scales the same way. */
 export function nodeExtent(
   node: Pick<DeviceNode, "type" | "name" | "image"> | Pick<DomainNode, "type" | "name">,
   scale = 1,
+  cdName = true,
 ): { hw: number; hh: number } {
   if (node.type === "dev") return { hw: (deviceNodeWidth(node) / 2 + 6) * scale, hh: 23 * scale };
-  return { hw: Math.max(18, node.name.length * 3.8) * scale, hh: 18 * scale };
+  return { hw: Math.max(18, cdName ? node.name.length * 3.8 : 0) * scale, hh: 18 * scale };
+}
+
+/** A collapsed point-to-point domain (collapsibleDomains) is drawn as a dot on the middle of its
+ *  link, with its name just above. */
+export const COLLAPSED_DOT_R = 4;
+export const COLLAPSED_LABEL_Y = -8;
+
+/** nodeExtent for a collapsed point-to-point domain: its dot, and its name above it while domain
+ *  names show. */
+export function collapsedDomainExtent(name: string, scale = 1, cdName = true): { hw: number; hh: number } {
+  const dot = COLLAPSED_DOT_R + 2;
+  if (!cdName) return { hw: dot * scale, hh: dot * scale };
+  return { hw: Math.max(dot, name.length * 3.8) * scale, hh: 16 * scale };
+}
+
+/** The domains the Display panel's "Collapse point-to-point domains" draws as one straight link
+ *  between their two devices, each with those two device ids: exactly two interfaces on it, from
+ *  two different devices, and no external one — a domain reaching out of the lab keeps its circle. */
+export function collapsibleDomains(
+  nodes: readonly TopoNode[],
+  edges: readonly TopoEdge[],
+): Map<string, [string, string]> {
+  const ends = new Map<string, string[]>();
+  for (const e of edges) ends.set(e.target, [...(ends.get(e.target) ?? []), e.source]);
+  const out = new Map<string, [string, string]>();
+  for (const nd of nodes) {
+    if (nd.type !== "cd" || nd.external.length) continue;
+    const devs = ends.get(nd.id) ?? [];
+    if (devs.length === 2 && devs[0] !== devs[1]) out.set(nd.id, [devs[0], devs[1]]);
+  }
+  return out;
 }
 
 /** An interface label's box around its anchor point: the `ethN` line, then the IP and MAC lines
@@ -553,16 +586,26 @@ export function labelClearance(ux: number, uy: number, hw: number, hh: number, b
   return Math.min(tx, ty);
 }
 
+/** How far along its edge an interface's label sits, from the device: as a rule, and on every other
+ *  one of a device's edges fanning out side by side (staggeredLabelAlong, services/topologyLayout.ts)
+ *  — all the way along, up against the far end. A label the device's own clearance pushes out sits
+ *  at that clearance whatever its `along`, so only the far end keeps two neighbours apart, and the
+ *  longer the edges the further apart. */
+export const LABEL_ALONG = 0.38;
+export const LABEL_ALONG_STAGGERED = 1;
+
 /** Where an interface's label goes on the edge from device `a` to domain `b`, and `need`: how long
  *  the edge must be (centre to centre) for the label to clear both nodes. With room to spare the
- *  label sits 38% of the way along, pushed out of either node when that would overlap it; without
- *  room, halfway between the two positions that would clear each node. */
+ *  label sits `along` of the way (LABEL_ALONG), pushed out of either node when that would overlap
+ *  it; without room, halfway between the two positions that would clear each node. `need` does not
+ *  depend on `along`. */
 export function edgeLabelPlacement(
   a: { x: number; y: number },
   aExt: { hw: number; hh: number },
   b: { x: number; y: number },
   bExt: { hw: number; hh: number },
   box: LabelBox,
+  along = LABEL_ALONG,
 ): { x: number; y: number; need: number } {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -573,7 +616,7 @@ export function edgeLabelPlacement(
   const fromA = labelClearance(ux, uy, aExt.hw, aExt.hh, box);
   const fromB = labelClearance(-ux, -uy, bExt.hw, bExt.hh, box);
   const need = fromA + fromB;
-  const t = need <= len ? Math.min(Math.max(len * 0.38, fromA), len - fromB) : (fromA + len - fromB) / 2;
+  const t = need <= len ? Math.min(Math.max(len * along, fromA), len - fromB) : (fromA + len - fromB) / 2;
   return { x: a.x + ux * t, y: a.y + uy * t, need };
 }
 

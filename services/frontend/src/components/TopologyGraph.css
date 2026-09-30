@@ -110,6 +110,13 @@
 .kt-topo-display-body .form-check {
   margin-bottom: 0;
 }
+/* A layout's own options, indented under its radio. */
+.kt-topo-display-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 1.5em;
+}
 .kt-topo-display-row {
   display: flex;
   align-items: center;
@@ -442,6 +449,30 @@
 }
 .n-cd.draft .n-label {
   opacity: 0.7;
+}
+/* The grouped layout's box around each name group (useForceLayout), under the edges and nodes. It
+   never takes the pointer, so a drag on it pans the canvas like the empty background does. */
+.kt-topo-group {
+  fill: var(--kt-panel-muted-bg);
+  fill-opacity: 0.55;
+  stroke: var(--kt-surface-recessed-border);
+  stroke-width: calc(1.5px * var(--kt-topo-line, 1));
+  stroke-dasharray: 6 4;
+  pointer-events: none;
+}
+.kt-topo-group-label {
+  fill: var(--kt-node-sub-text);
+  font-size: var(--kt-topo-fs-sm);
+  font-weight: 600;
+  pointer-events: none;
+}
+/* A collapsed point-to-point domain: a dot on the middle of its link, its name just above. */
+.n-cd.collapsed > circle {
+  fill: var(--kt-domain-border);
+}
+/* The Display panel's "Show collision domain names" off: the name is still in the tooltip. */
+.kt-topo-hide-cd-names .n-cd .n-label {
+  display: none;
 }
 .n-cd .n-label {
   fill: var(--kt-domain-border);
