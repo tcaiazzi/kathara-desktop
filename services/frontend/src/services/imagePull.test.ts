@@ -6,6 +6,7 @@ import {
   notFoundMessage,
   progressPercent,
   pulledMessage,
+  withoutSilencedUpdates,
 } from "./imagePull";
 import type { LabImagesStatus } from "./types";
 
@@ -75,6 +76,24 @@ describe("downloadKind", () => {
 
   it("asks for both when some images are missing and others outdated", () => {
     expect(downloadKind({ ...base, missing: ["a"], outdated: ["b"] })).toBe("both");
+  });
+});
+
+describe("withoutSilencedUpdates", () => {
+  const base: LabImagesStatus = {
+    update_policy: "Prompt",
+    images: [],
+    missing: ["a"],
+    not_found: [],
+    outdated: ["b", "c"],
+  };
+
+  it("drops only the silenced updates", () => {
+    expect(withoutSilencedUpdates(base, new Set(["b"]))).toEqual({ ...base, outdated: ["c"] });
+  });
+
+  it("never drops a missing image", () => {
+    expect(withoutSilencedUpdates(base, new Set(["a", "b", "c"]))).toEqual({ ...base, outdated: [] });
   });
 });
 

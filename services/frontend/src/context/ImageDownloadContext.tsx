@@ -10,6 +10,7 @@ import {
   formatBytes,
   progressPercent,
   pulledMessage,
+  withoutSilencedUpdates,
   type ImageDownloadKind,
 } from "../services/imagePull";
 import type { ImagePullProgress, LabImagesStatus } from "../services/types";
@@ -81,6 +82,10 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>("confirm");
   const [status, setStatus] = useState<LabImagesStatus | null>(null);
   const [includeUpdates, setIncludeUpdates] = useState(false);
+  const [dontAskAgain, setDontAskAgain] = useState(false);
+  // Updates the user skipped with the "don't ask again" box ticked. In memory on purpose: it lasts until
+  // the app restarts, not forever — the `image_update_policy` setting is the permanent switch.
+  const silencedRef = useRef(new Set<string>());
   const [error, setError] = useState<string | null>(null);
   const resolveRef = useRef<((outcome: ImageDownloadOutcome) => void) | null>(null);
   // True when *this* modal started the download, so its own request settling is the authoritative
@@ -162,10 +167,12 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
       resolveRef.current?.("cancelled");
       resolveRef.current = null;
 
+      next = withoutSilencedUpdates(next, silencedRef.current);
       if (!next.missing.length && !next.outdated.length) return "skipped";
 
       setStatus(next);
       setIncludeUpdates(next.update_policy === "Always");
+      setDontAskAgain(false);
       setError(null);
       ownedRef.current = false;
 
@@ -220,6 +227,12 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
   }, [phase, progress, settle, toast]);
 
   const kind = status ? downloadKind(status) : "missing";
+
+  // Declining an optional update, from the Skip button or the header's close button alike.
+  const skipUpdate = () => {
+    if (dontAskAgain) status?.outdated.forEach((name) => silencedRef.current.add(name));
+    settle("skipped");
+  };
   const updateCount = status?.outdated.length ?? 0;
 
   let percent: number | null = null;
@@ -243,14 +256,10 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
   // update, the images on disk are still fine and the deploy should carry on.
   const errorOutcome: ImageDownloadOutcome = mandatoryRef.current ? "cancelled" : "skipped";
 
-  const dismissOutcome: ImageDownloadOutcome =
-    phase === "done"
-      ? "downloaded"
-      : phase === "error"
-        ? errorOutcome
-        : phase === "confirm" && kind === "outdated"
-          ? "skipped"
-          : "cancelled";
+  const dismiss = () => {
+    if (phase === "confirm" && kind === "outdated") skipUpdate();
+    else settle(phase === "done" ? "downloaded" : phase === "error" ? errorOutcome : "cancelled");
+  };
 
   return (
     <ImageDownloadCtx.Provider value={requestImageDownload}>
@@ -258,7 +267,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
       {/* `onHide` covers the header's close button (the backdrop is static). It has to agree
           with the footer buttons: dismissing the success state is still a completed download, and
           dismissing a declined *optional* update is still "carry on and deploy". */}
-      <Modal show={show} onHide={() => settle(dismissOutcome)} centered backdrop="static">
+      <Modal show={show} onHide={dismiss} centered backdrop="static">
         <Modal.Header closeButton>
           <Modal.Title>
             {phase === "done" ? "Images ready" : phase === "error" ? "Download failed" : TITLES[kind]}
@@ -293,6 +302,14 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
                 Devices that are already running keep the image they started with until they are
                 redeployed.
               </p>
+              <Form.Check
+                type="checkbox"
+                id="kt-image-dl-dont-ask"
+                className="mt-3"
+                checked={dontAskAgain}
+                onChange={(e) => setDontAskAgain(e.currentTarget.checked)}
+                label="If I skip, don't ask again until the app restarts"
+              />
             </>
           )}
 
@@ -364,7 +381,7 @@ export function ImageDownloadProvider({ children }: { children: ReactNode }) {
         <Modal.Footer>
           {phase === "confirm" && (
             <>
-              <Button variant="secondary" onClick={() => settle(kind === "outdated" ? "skipped" : "cancelled")}>
+              <Button variant="secondary" onClick={kind === "outdated" ? skipUpdate : () => settle("cancelled")}>
                 {kind === "outdated" ? "Skip" : "Cancel"}
               </Button>
               <Button

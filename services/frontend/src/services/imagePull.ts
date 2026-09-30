@@ -42,6 +42,12 @@ export function downloadKind(status: LabImagesStatus): ImageDownloadKind {
   return status.missing.length ? "missing" : "outdated";
 }
 
+/** `status` without the updates the user asked not to be offered again (see ImageDownloadContext).
+ *  Only `outdated` is filtered: a missing image is still required whatever the user chose. */
+export function withoutSilencedUpdates(status: LabImagesStatus, silenced: ReadonlySet<string>): LabImagesStatus {
+  return { ...status, outdated: status.outdated.filter((name) => !silenced.has(name)) };
+}
+
 /** Why a deploy stops before it starts: images no download can fetch (LabImagesStatus.not_found),
  *  worded as the backend words a refused download of one (ImageNotAvailableError). */
 export function notFoundMessage(names: string[]): string {
