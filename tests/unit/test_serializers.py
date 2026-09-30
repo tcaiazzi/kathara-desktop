@@ -1,5 +1,9 @@
 """Unit tests for model -> schema serialization (no Docker required)."""
 
+from types import SimpleNamespace
+
+from Kathara.setting.Setting import Setting
+
 from kathara_api.schemas.lab import LabCreate
 from kathara_api.services import lab_builder, serializers
 
@@ -54,6 +58,24 @@ def test_a_collision_domain_serializes_its_devices_and_run_state():
     assert link_detail.name == "a"
     assert "r1" in link_detail.machines
     assert link_detail.running is False
+
+
+def test_a_running_collision_domain_reports_the_plugin_its_network_was_created_with(monkeypatch):
+    """The driver of the Docker network wins over the configured plugin, which may have changed
+    since the deploy; its `:<architecture>` suffix is dropped."""
+    lab = _lab()
+    link = lab.links["a"]
+    link.api_object = SimpleNamespace(attrs={"Driver": "kathara/katharanp_vde:arm64"})
+    monkeypatch.setattr(Setting.get_instance(), "network_plugin", "kathara/katharanp")
+
+    assert serializers.link_to_detail(link).network_plugin == "kathara/katharanp_vde"
+
+
+def test_a_stopped_collision_domain_reports_the_configured_plugin(monkeypatch):
+    lab = _lab()
+    monkeypatch.setattr(Setting.get_instance(), "network_plugin", "kathara/katharanp")
+
+    assert serializers.link_to_detail(lab.links["a"]).network_plugin == "kathara/katharanp"
 
 
 def test_machine_to_detail_ignores_none_interfaces_after_disconnect():

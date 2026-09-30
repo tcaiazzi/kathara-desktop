@@ -407,7 +407,7 @@
 }
 
 /* Inspector dock panel: mount point the topology portals its inspector into. Neutralize the
-   inspector's own fixed-width/bordered box so it fills the panel (the inner .kv/.iface/.kt-state
+   inspector's own fixed-width/bordered box so it fills the panel (the inner .kv/.kt-card/.kt-state
    styles, scoped under .kt-topo-side, still apply). */
 .kt-nodeinfo-panel {
   height: 100%;

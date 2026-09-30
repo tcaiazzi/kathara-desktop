@@ -164,9 +164,9 @@ export function DeviceScriptSection({
   const shown = preview ?? fileText ?? "";
 
   return (
-    <div className="iface" ref={rootRef}>
-      <div className="d-flex align-items-center justify-content-between gap-2">
-        <span style={{ fontWeight: 600 }}>{title}</span>
+    <div className="kt-card" ref={rootRef}>
+      <div className="kt-card-head">
+        <span className="kt-card-title">{title}</span>
         {!editing && exists !== null && (
           <Button size="sm" variant="outline-secondary" disabled={busy} onClick={() => void startEditing()}>
             {exists ? (

@@ -31,6 +31,7 @@ function domain(overrides: Partial<DomainNode> = {}): DomainNode {
     external: [],
     running: false,
     draft: false,
+    networkPlugin: null,
     members: ["pc1", "pc2"],
     x: 0,
     y: 0,

@@ -283,10 +283,63 @@
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   word-break: break-word;
 }
-.kt-topo-side .iface {
-  border-top: 1px solid var(--bs-border-color);
+/* One group of the Inspector (General, Interfaces, Startup Log, a script…): a bordered card with a
+   small caps title, and optionally actions or a state pill on the right of its head. */
+.kt-topo-side .kt-card {
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
   margin-top: 8px;
-  padding-top: 8px;
+  /* Lighter than pre.startup's full tertiary background, so a log or script inside stands out. */
+  background: color-mix(in srgb, var(--bs-tertiary-bg) 40%, transparent);
+}
+.kt-topo-side .kt-card:first-child {
+  margin-top: 0;
+}
+.kt-topo-side .kt-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.kt-topo-side .kt-card-title {
+  font-size: var(--kt-topo-fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
+}
+/* An interface as `ethN` badge + the collision domain it is on. */
+.kt-topo-side .kt-iface-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+.kt-topo-side .kt-iface-badge {
+  font-size: var(--kt-topo-fs-xs);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bs-secondary-bg);
+  color: var(--bs-secondary-color);
+}
+.kt-topo-side .kt-iface-link {
+  font-weight: 600;
+  word-break: break-word;
+}
+.kt-topo-side .kt-iface-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 3px 0;
+}
+.kt-topo-side .kt-iface-ips {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--kt-topo-fs-sm);
+  word-break: break-word;
 }
 .kt-topo-side .hint {
   color: var(--bs-secondary-color);

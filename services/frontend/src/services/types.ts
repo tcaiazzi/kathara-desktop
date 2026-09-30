@@ -210,6 +210,9 @@ export interface LinkDetail {
   // No device on it yet, so not in lab.conf: kept for the backend's session only, until a device
   // is connected to it (KatharaService.add_link).
   draft: boolean;
+  // The Docker network plugin: the one its network was created with while it is up, else the
+  // configured one a deploy would use. Null if the backend could not tell.
+  network_plugin: string | null;
 }
 
 export interface LabDetail extends LabSummary {

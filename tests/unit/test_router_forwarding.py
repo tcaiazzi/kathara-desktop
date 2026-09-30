@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from Kathara.setting.Setting import Setting
 
 from kathara_api.dependencies import get_service
 from kathara_api.main import create_app
@@ -347,7 +348,15 @@ def test_add_link_returns_201_and_forwards_external_interfaces(api):
     res = client.post("/api/labs/l/links", json={"name": "A", "external": ["eth0"]})
 
     assert res.status_code == 201
-    assert res.json() == {"name": "A", "machines": ["pc1"], "external": [], "running": False, "draft": False}
+    assert res.json() == {
+        "name": "A",
+        "machines": ["pc1"],
+        "external": [],
+        "running": False,
+        "draft": False,
+        # Not deployed: the plugin the configured kathara.conf would create its network with.
+        "network_plugin": Setting.get_instance().network_plugin,
+    }
     assert service.calls == [("add_link", ("l", "A"), {"external": ["eth0"]})]
 
 

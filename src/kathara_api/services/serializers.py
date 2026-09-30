@@ -10,6 +10,7 @@ from typing import Any, Optional
 from Kathara.model.Lab import Lab
 from Kathara.model.Link import Link
 from Kathara.model.Machine import Machine
+from Kathara.setting.Setting import Setting
 
 from ..lab_conf_options import MODELED_META_KEYS
 from ..schemas.lab import LabDetail, LabMetadata, LabSummary
@@ -99,9 +100,24 @@ def machine_to_detail(machine: Machine) -> MachineDetail:
     )
 
 
+def _link_network_plugin(link: Link) -> Optional[str]:
+    """The network plugin of a collision domain: its Docker network's driver while it is up,
+    else the configured plugin a deploy would create that network with.
+
+    The driver is read from the network itself because the configured plugin can have changed
+    since the network was created. Kathara names the driver `<plugin>:<architecture>`
+    (DockerLink.create); only the plugin part is returned, spelled as in kathara.conf.
+    """
+    attrs = getattr(link.api_object, "attrs", None) or {}
+    driver = attrs.get("Driver")
+    if driver:
+        return driver.rsplit(":", 1)[0]
+    return Setting.get_instance().network_plugin
+
+
 def link_to_detail(link: Link) -> LinkDetail:
-    """Serialize a collision domain: its devices, external interfaces, and whether its network is
-    up or it is only a draft."""
+    """Serialize a collision domain: its devices, external interfaces, network plugin, and whether
+    its network is up or it is only a draft."""
     return LinkDetail(
         name=link.name,
         machines=list(link.machines.keys()),
@@ -110,6 +126,7 @@ def link_to_detail(link: Link) -> LinkDetail:
         # lab.conf holds a domain only through the interfaces on it, so one with none (and no
         # external interface) is not saved anywhere yet — see LabRegistry.add_draft.
         draft=not link.machines and not link.external,
+        network_plugin=_link_network_plugin(link),
     )
 
 

@@ -43,6 +43,8 @@ export interface DomainNode {
   running: boolean;
   // A domain with no device on it, not saved in lab.conf yet (LinkDetail.draft).
   draft: boolean;
+  // LinkDetail.network_plugin; null for a domain known only from a device's interface.
+  networkPlugin: string | null;
   members: string[];
   x: number;
   y: number;
@@ -291,7 +293,14 @@ export function computeTopology(
 ): TopoModel {
   const cds = new Map<
     string,
-    { name: string; external: string[]; running: boolean; draft: boolean; machines: Set<string> }
+    {
+      name: string;
+      external: string[];
+      running: boolean;
+      draft: boolean;
+      networkPlugin: string | null;
+      machines: Set<string>;
+    }
   >();
   for (const lk of detail.links) {
     if (lk.name === HOST_BRIDGE) continue;
@@ -300,6 +309,7 @@ export function computeTopology(
       external: lk.external,
       running: lk.running,
       draft: lk.draft,
+      networkPlugin: lk.network_plugin,
       machines: new Set(lk.machines),
     });
   }
@@ -334,7 +344,14 @@ export function computeTopology(
       const ifIps = ips[it.num] || [];
       node.ifaces.push({ num: it.num, link: it.link, mac: it.mac_address, ips: ifIps });
       if (!cds.has(it.link)) {
-        cds.set(it.link, { name: it.link, external: [], running: node.running, draft: false, machines: new Set() });
+        cds.set(it.link, {
+          name: it.link,
+          external: [],
+          running: node.running,
+          draft: false,
+          networkPlugin: null,
+          machines: new Set(),
+        });
       }
       const cd = cds.get(it.link)!;
       cd.machines.add(m.name);
@@ -360,6 +377,7 @@ export function computeTopology(
       running: cd.running,
       // A device on it makes it saved, whatever the listing said a moment earlier.
       draft: cd.draft && cd.machines.size === 0,
+      networkPlugin: cd.networkPlugin,
       members: [...cd.machines],
       x: 0,
       y: 0,

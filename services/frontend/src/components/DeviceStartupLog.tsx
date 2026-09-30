@@ -15,9 +15,9 @@ export function DeviceStartupLog({ status, hasCommands }: DeviceStartupLogProps)
   const nothingToRun = !hasCommands && status?.finished && !status.log;
 
   return (
-    <div className="iface">
-      <div className="d-flex align-items-center justify-content-between">
-        <span style={{ fontWeight: 600 }}>Startup Log</span>
+    <div className="kt-card">
+      <div className="kt-card-head">
+        <span className="kt-card-title">Startup Log</span>
         {status && !nothingToRun && (
           <span className={`kt-state ${status.finished ? "done" : "pending"}`}>
             {status.finished ? "finished" : "running…"}

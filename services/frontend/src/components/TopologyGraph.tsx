@@ -673,23 +673,41 @@ export function TopologyGraph({
           ) : (
             <>
               <h4>{selectedNode.name}</h4>
-              <Kv k="Type" v={selectedNode.external.length ? "External" : "Internal"} />
-              <div className="kv">
-                <span className="k">State</span>
-                <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
-                  {selectedNode.running ? "up" : "down"}
-                </span>
-              </div>
-              {selectedNode.external.length > 0 && <Kv k="External" v={selectedNode.external.join(", ")} />}
-              {machineNames().length > 0 && (
-                <div className="mt-2">
-                  <Button size="sm" variant="outline-secondary" onClick={() => openConnectExisting(selectedNode)}>
-                    Connect Device
-                  </Button>
+              <div className="kt-card">
+                <div className="kt-card-head">
+                  <span className="kt-card-title">General</span>
                 </div>
-              )}
-              <div className="iface">
-                <div style={{ fontWeight: 600 }}>Devices ({selectedNode.members.length})</div>
+                <Kv
+                  k="Type"
+                  v={
+                    selectedNode.networkPlugin ? (
+                      <>
+                        {selectedNode.networkPlugin}
+                        {/* Stopped, it is the configured plugin: the network does not exist yet. */}
+                        {!selectedNode.running && <span className="hint"> (on deploy)</span>}
+                      </>
+                    ) : (
+                      "—"
+                    )
+                  }
+                />
+                <div className="kv">
+                  <span className="k">State</span>
+                  <span className={`kt-state ${selectedNode.running ? "running" : "stopped"}`}>
+                    {selectedNode.running ? "up" : "down"}
+                  </span>
+                </div>
+                {selectedNode.external.length > 0 && <Kv k="External" v={selectedNode.external.join(", ")} />}
+              </div>
+              <div className="kt-card">
+                <div className="kt-card-head">
+                  <span className="kt-card-title">Devices ({selectedNode.members.length})</span>
+                  {machineNames().length > 0 && (
+                    <Button size="sm" variant="outline-secondary" onClick={() => openConnectExisting(selectedNode)}>
+                      Connect Device
+                    </Button>
+                  )}
+                </div>
                 <div style={{ fontFamily: "monospace" }}>{selectedNode.members.join(", ") || "—"}</div>
               </div>
             </>

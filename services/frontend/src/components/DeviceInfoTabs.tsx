@@ -26,7 +26,7 @@ import { api } from "../services/api";
 import { savedDeviceTab, type DeviceInfoTab } from "../services/deviceInfoTabs";
 import { deviceFilesOnDisk } from "../services/labfs";
 import { hasDeployFailure } from "../services/labRunState";
-import { deviceStateLabel, formatIface, formatPort, type DeviceNode, type IfaceIpMismatch } from "../services/topology";
+import { deviceStateLabel, formatPort, type DeviceNode, type IfaceIpMismatch } from "../services/topology";
 import { IP_MISMATCH_HINT } from "../services/topologyTooltip";
 import type { LabDetail, MachineDetail } from "../services/types";
 import { describeUnsaved } from "../services/unsaved";
@@ -350,10 +350,26 @@ interface SectionProps {
 
 function Section({ title, children }: SectionProps) {
   return (
-    <div className="iface">
-      <div style={{ fontWeight: 600 }}>{title}</div>
+    <div className="kt-card">
+      <div className="kt-card-head">
+        <span className="kt-card-title">{title}</span>
+      </div>
       {children}
     </div>
+  );
+}
+
+interface IfaceLabelProps {
+  num: number;
+  link: string;
+}
+
+function IfaceLabel({ num, link }: IfaceLabelProps) {
+  return (
+    <span className="kt-iface-label">
+      <span className="kt-iface-badge">eth{num}</span>
+      <span className="kt-iface-link">{link}</span>
+    </span>
   );
 }
 
@@ -365,21 +381,26 @@ interface OverviewTabProps {
 function OverviewTab({ node, machine }: OverviewTabProps) {
   return (
     <>
-      <Kv k="Type" v={node.typeLabel} />
-      <Kv k="Image" v={node.image || "—"} />
-      {machine?.bridged && <Kv k="Bridged" v="yes (host bridge)" />}
-      {machine?.privileged && <Kv k="Privileged" v="yes" />}
-      {machine?.ipv6 != null && <Kv k="IPv6" v={machine.ipv6 ? "enabled" : "disabled"} />}
-      {machine?.mem && <Kv k="Mem" v={machine.mem} />}
-      {machine?.cpus != null && <Kv k="CPUs" v={machine.cpus} />}
-      {machine?.shell && <Kv k="Shell" v={machine.shell} />}
-      {machine?.num_terms != null && <Kv k="Num Terms" v={machine.num_terms} />}
-      {machine?.entrypoint && <Kv k="Entrypoint" v={machine.entrypoint} />}
-      {machine?.args && <Kv k="Args" v={machine.args} />}
+      <Section title="General">
+        <Kv k="Type" v={node.typeLabel} />
+        <Kv k="Image" v={node.image || "—"} />
+        {machine?.bridged && <Kv k="Bridged" v="yes (host bridge)" />}
+        {machine?.privileged && <Kv k="Privileged" v="yes" />}
+        {machine?.ipv6 != null && <Kv k="IPv6" v={machine.ipv6 ? "enabled" : "disabled"} />}
+        {machine?.mem && <Kv k="Mem" v={machine.mem} />}
+        {machine?.cpus != null && <Kv k="CPUs" v={machine.cpus} />}
+        {machine?.shell && <Kv k="Shell" v={machine.shell} />}
+        {machine?.num_terms != null && <Kv k="Num Terms" v={machine.num_terms} />}
+        {machine?.entrypoint && <Kv k="Entrypoint" v={machine.entrypoint} />}
+        {machine?.args && <Kv k="Args" v={machine.args} />}
+      </Section>
       <Section title={`Interfaces (${node.ifaces.length})`}>
-        {node.ifaces.length === 0 && <div style={{ fontFamily: "monospace" }}>—</div>}
+        {node.ifaces.length === 0 && <div className="hint">No interfaces.</div>}
         {node.ifaces.map((it) => (
-          <Kv key={it.num} k={`eth${it.num}`} v={[it.link, ...it.ips].join(" · ")} />
+          <div className="kt-iface-row" key={it.num}>
+            <IfaceLabel num={it.num} link={it.link} />
+            {it.ips.length > 0 && <span className="kt-iface-ips hint">{it.ips.join(", ")}</span>}
+          </div>
         ))}
       </Section>
       {machine && machine.ports.length > 0 && (
@@ -477,9 +498,9 @@ function NetworkTab({ node, actions, ipMismatches }: NetworkTabProps) {
       </div>
       {node.ifaces.length === 0 && <div className="hint">No interfaces.</div>}
       {node.ifaces.map((it) => (
-        <div className="iface" key={it.num}>
-          <div className="d-flex align-items-center justify-content-between gap-2">
-            <span style={{ fontWeight: 600, fontFamily: "monospace" }}>{formatIface(it.num, it.link)}</span>
+        <div className="kt-card" key={it.num}>
+          <div className="kt-card-head">
+            <IfaceLabel num={it.num} link={it.link} />
             <Button
               size="sm"
               variant="outline-danger"
