@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { machine } from "../test/fixtures";
-import { HOST_BRIDGE, visibleInterfaces, visibleLinks } from "./constants";
+import { compareByName, HOST_BRIDGE, visibleInterfaces, visibleLinks } from "./constants";
 
 describe("the internal host bridge stays out of sight", () => {
   it("visibleInterfaces drops only the interface on Kathara's host bridge", () => {
@@ -28,4 +28,10 @@ describe("the internal host bridge stays out of sight", () => {
 
 it("the internal host bridge is the network Kathara itself creates", () => {
   expect(HOST_BRIDGE).toBe("kathara_host_bridge");
+});
+
+it("compareByName puts numbered names in reading order", () => {
+  const names = ["pc10", "r1", "pc2", "B", "pc1", "A"].map((name) => ({ name }));
+
+  expect(names.sort(compareByName).map((n) => n.name)).toEqual(["A", "B", "pc1", "pc2", "pc10", "r1"]);
 });

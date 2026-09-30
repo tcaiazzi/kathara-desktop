@@ -97,7 +97,7 @@ import { useIsAdmin } from "../hooks/useIsAdmin";
 import { useTheme } from "../hooks/useTheme";
 import { useLabLifecycleActions } from "../hooks/useLabLifecycleActions";
 import { api, ApiError, isAbortError } from "../services/api";
-import { domainNames, visibleLinks } from "../services/constants";
+import { compareByName, domainNames, visibleLinks } from "../services/constants";
 import { saveBlob } from "../services/download";
 import {
   TERMINAL_DRAG_TYPE,
@@ -1431,8 +1431,8 @@ export function WorkspacePage() {
     setCtxMenu({ x: e.clientX, y: e.clientY, items: domainContextItems(nd) });
   }
 
-  const deviceMachines = detail?.machines ?? [];
-  const nonHostLinks = visibleLinks(detail?.links ?? []);
+  const deviceMachines = [...(detail?.machines ?? [])].sort(compareByName);
+  const nonHostLinks = visibleLinks(detail?.links ?? []).sort(compareByName);
 
   // Guards against the one-render window where the route's `labId` has already changed (e.g.
   // navigating back to /workspace after deleting the open lab) but `detail` still holds the
@@ -1524,7 +1524,7 @@ export function WorkspacePage() {
       {railOpen ? (
         <>
         <aside className="kt-ws-rail" ref={railRef} data-tour="rail" style={{ flexBasis: railWidth }}>
-          <div>
+          <div className="kt-ws-rail-section">
             <div className="kt-ws-rail-head">
               <span>Labs</span>
               <button className="kt-ws-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar" onClick={() => setRailOpen(false)}>
@@ -1631,7 +1631,7 @@ export function WorkspacePage() {
                   autoFocus={labPickerOpen}
                   className="mb-2"
                 />
-                <div className="kt-ws-list">
+                <div className="kt-ws-list kt-ws-list--scroll">
                   {labs == null && labsError ? (
                     <div className="kt-ws-error">
                       <AlertTriangle size={15} className="kt-ws-error-icon" />
@@ -1715,47 +1715,49 @@ export function WorkspacePage() {
           </div>
 
           {detail && (
-            <div>
-              <div className="kt-ws-rail-head">
-                <span>Devices</span>
-              </div>
-              <div className="kt-ws-list">
-                {deviceMachines.length === 0 ? (
-                  <div className="kt-ws-muted">No devices.</div>
-                ) : (
-                  deviceMachines.map((m) => (
-                    <button
-                      key={m.name}
-                      className={`kt-ws-row ${selectedId === `dev:${m.name}` ? "active" : ""}`}
-                      onClick={() => selectNode(`dev:${m.name}`)}
-                      onContextMenu={(e) => openDeviceMenu(e, m.name)}
-                      title="Click to select · right-click for actions"
-                    >
-                      <span className={`kt-ws-dot ${m.running ? "running" : "stopped"}`} />
-                      <span className="kt-ws-row-name">{m.name}</span>
-                      {m.running && (
-                        <span
-                          className="kt-ws-mini-btn"
-                          role="button"
-                          title="Open terminal"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openTerminal(m.name);
-                          }}
-                        >
-                          <SquareTerminal size={14} />
-                        </span>
-                      )}
-                    </button>
-                  ))
-                )}
+            <>
+              <div className="kt-ws-rail-section">
+                <div className="kt-ws-rail-head">
+                  <span>Devices</span>
+                </div>
+                <div className="kt-ws-list kt-ws-list--scroll">
+                  {deviceMachines.length === 0 ? (
+                    <div className="kt-ws-muted">No devices.</div>
+                  ) : (
+                    deviceMachines.map((m) => (
+                      <button
+                        key={m.name}
+                        className={`kt-ws-row ${selectedId === `dev:${m.name}` ? "active" : ""}`}
+                        onClick={() => selectNode(`dev:${m.name}`)}
+                        onContextMenu={(e) => openDeviceMenu(e, m.name)}
+                        title="Click to select · right-click for actions"
+                      >
+                        <span className={`kt-ws-dot ${m.running ? "running" : "stopped"}`} />
+                        <span className="kt-ws-row-name">{m.name}</span>
+                        {m.running && (
+                          <span
+                            className="kt-ws-mini-btn"
+                            role="button"
+                            title="Open terminal"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openTerminal(m.name);
+                            }}
+                          >
+                            <SquareTerminal size={14} />
+                          </span>
+                        )}
+                      </button>
+                    ))
+                  )}
+                </div>
               </div>
               {nonHostLinks.length > 0 && (
-                <>
-                  <div className="kt-ws-rail-head mt-2">
+                <div className="kt-ws-rail-section">
+                  <div className="kt-ws-rail-head">
                     <span>Collision domains</span>
                   </div>
-                  <div className="kt-ws-list">
+                  <div className="kt-ws-list kt-ws-list--scroll">
                     {nonHostLinks.map((lk) => (
                       <button
                         key={lk.name}
@@ -1775,9 +1777,9 @@ export function WorkspacePage() {
                       </button>
                     ))}
                   </div>
-                </>
+                </div>
               )}
-            </div>
+            </>
           )}
         </aside>
           <div

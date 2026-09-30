@@ -88,6 +88,21 @@
   flex-direction: column;
   gap: 2px;
 }
+/* Rail sections share the rail's height: each takes what its content needs, and when they don't
+   all fit they split the room evenly — a short section gives its unused share to the others — and
+   the rest of each list scrolls inside it. */
+.kt-ws-rail-section {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: max-content;
+  display: flex;
+  flex-direction: column;
+}
+.kt-ws-list--scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 .kt-ws-row {
   display: flex;
   align-items: center;

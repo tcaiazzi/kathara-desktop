@@ -25,6 +25,11 @@ export function visibleLinks<T extends { name: string }>(links: T[]): T[] {
   return links.filter((l) => l.name !== HOST_BRIDGE);
 }
 
+// Orders by name the way a person reads it: pc2 before pc10.
+export function compareByName(a: { name: string }, b: { name: string }): number {
+  return a.name.localeCompare(b.name, undefined, { numeric: true });
+}
+
 // The names of the collision domains the user can pick from, alphabetically.
 export function domainNames(links: { name: string }[]): string[] {
   return visibleLinks(links)
