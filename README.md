@@ -79,6 +79,15 @@ To run the app from a checkout, build the installers or run the checks, see
 [docs/DESKTOP.md](docs/DESKTOP.md) (Electron shell) and [docs/BACKEND.md](docs/BACKEND.md)
 (REST API). Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## About this project
+
+Kathara Desktop is built with AI coding agents (Claude Code), guided and reviewed by its
+maintainers. We work in small steps. Each feature starts as a plan that a maintainer approves. The
+agent then carries it out one step at a time and checks each step against the real app and a real
+Docker engine before a maintainer reviews it and commits it. The agent also gets project-specific
+guidance: skills that describe the architecture, coding style and dev workflow, and a set of notes
+on known pitfalls. Every change is still read and approved by a person.
+
 ## License
 
 GPL-3.0

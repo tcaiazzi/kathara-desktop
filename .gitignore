@@ -29,6 +29,5 @@ docs/refactor-plan.md
 docs/[Aa][Uu][Dd][Ii][Tt]*.md
 
 # Local-only editor/agent config, kept on disk but not shared via git
-.claude/
 .vscode/
 .mcp.json
