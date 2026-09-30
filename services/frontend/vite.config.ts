@@ -10,8 +10,28 @@ import { defineConfig } from "vitest/config";
 // (KATHARA_API_STATIC_DIR, see src/kathara_api/spa.py).
 const BACKEND_URL = process.env.VITE_BACKEND_URL || "http://localhost:8000";
 
+// Splits the entry bundle's dependencies into a few chunks so none crosses Vite's 500 kB
+// warning. CodeMirror and Lezer stay out of the catch-all `vendor` chunk, which the entry loads:
+// only the lazy-loaded CodeEditor imports them, so they belong in its chunk.
+const VENDOR_CHUNKS: [chunk: string, packages: RegExp][] = [
+  ["dockview", /^dockview/],
+  ["xterm", /^@xterm\//],
+  ["react", /^(react|react-dom|scheduler|react-router|react-router-dom)$/],
+];
+
+function vendorChunk(id: string): string | undefined {
+  const pkg = id.match(/node_modules\/((?:@[^/]+\/)?[^/]+)/)?.[1];
+  if (!pkg || /^@(codemirror|lezer)\//.test(pkg) || pkg === "codemirror") return undefined;
+  return VENDOR_CHUNKS.find(([, packages]) => packages.test(pkg))?.[0] ?? "vendor";
+}
+
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: { manualChunks: vendorChunk },
+    },
+  },
   server: {
     port: 5173,
     proxy: {
