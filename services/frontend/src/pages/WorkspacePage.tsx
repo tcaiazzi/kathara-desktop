@@ -898,7 +898,7 @@ export function WorkspacePage() {
     return () => registerTourWorkspace(null);
   }, [registerTourWorkspace]);
   // The shell can land the window on a lab this page has never listed — a folder it just opened
-  // (File → Open Lab Folder…, `kathara-desktop <folder>`) — so a route naming an id the list
+  // (File → Open Lab from Folder…, `kathara-desktop <folder>`) — so a route naming an id the list
   // doesn't have refreshes the list — once while it stays missing, and again if it goes missing
   // later: a folder closed and opened again comes back under the same id.
   const refreshedForId = useRef<string | null>(null);
@@ -1307,7 +1307,7 @@ export function WorkspacePage() {
     });
   }
 
-  // File → Open Lab Folder…, from the rail and the welcome screen. The shell picks the folder in
+  // File → Open Lab from Folder…, from the rail and the welcome screen. The shell picks the folder in
   // its own dialog and lands the window on the lab itself (services/desktop's openFolderAsLab), so
   // there is nothing to do here with the result. Desktop only: the browser build has no way to
   // hand the backend a folder it may trust.

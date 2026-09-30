@@ -168,7 +168,7 @@ function renderLabsDirPrompt(status) {
         <span class="mark">↗</span>
         <div>
           <div class="name">Labs elsewhere work too</div>
-          <div>Open a lab folder from anywhere on disk with File › Open Lab Folder…
+          <div>Open a lab folder from anywhere on disk with File › Open Lab from Folder…
             (${openShortcut}). It stays where it is, and the app remembers it for next time.</div>
         </div>
       </li>

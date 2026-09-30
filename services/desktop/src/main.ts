@@ -828,7 +828,7 @@ function registerIpc(): void {
   );
   handleIpc("fs:open-labs-folder", () => openLabsDir());
 
-  // File → Open Lab Folder… (the renderer's own title-bar menu; the native one calls
+  // File → Open Lab from Folder… (the renderer's own title-bar menu; the native one calls
   // pickAndOpenLabFolder directly). Takes no argument on purpose: the folder is always chosen in
   // the main process's own dialog, never named by the renderer — see openFolderAsLab.
   handleIpc("labs:open-folder", () => pickAndOpenLabFolder());
@@ -1030,7 +1030,7 @@ function reclaimPaths(targets: ReclaimTargets): string[] {
   return [...(targets.labsDir ? [targets.labsDir] : []), ...targets.openedDirs];
 }
 
-/** File → Open Lab Folder…: the native dialog, then openFolderAsLab. */
+/** File → Open Lab from Folder…: the native dialog, then openFolderAsLab. */
 async function pickAndOpenLabFolder(): Promise<void> {
   const folder = await pickLabFolder(win);
   if (folder) await openFolderAsLab(folder);

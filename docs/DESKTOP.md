@@ -200,7 +200,7 @@ Two consequences worth knowing:
 - Terminal pop-outs keep an ordinary framed window (titled `Terminal: <device>`): they render only
   the terminal, with no strip of their own to drag or close by.
 - **Native dialogs** for choosing the host directory of a device's `[volume]` bind mount, plus
-  *Show Labs Folder* and reveal-in-file-manager. Importing a lab goes through the in-page upload
+  *Open Default Labs Folder* and reveal-in-file-manager. Importing a lab goes through the in-page upload
   modal and saving a file through the browser's own download, so neither needs a native picker.
   The volume one is desktop-only on purpose (`integrations.ts`'s `pickHostDirectory`): the path
   names a directory on the machine the *backend* runs on, and only this shell — which spawned it
@@ -213,14 +213,14 @@ Two consequences worth knowing:
   `preferences.json`. That override honours a `{cmd}` placeholder that nothing currently fills:
   `spawnTerminal` takes an optional command, and the only entry point — *Open Terminal Here* —
   opens a plain shell. The placeholder is what an "attach to this device" entry point would use.
-- **File → Open Lab Folder…** (Ctrl/Cmd+O; *Import Lab…* is Ctrl/Cmd+Shift+O) opens any folder
+- **File → Open Lab from Folder…** (Ctrl/Cmd+O; *Import Lab…* is Ctrl/Cmd+Shift+O) opens any folder
   as a lab, where it is. The folder is picked in the main process's native dialog and handed to
   the backend from there (`main.ts`'s `openFolderAsLab`); the renderer only asks for the dialog
   (`labs:open-folder`, no arguments). A folder that is not a lab yet is offered to be made one
   (an empty `lab.conf`). **`kathara-desktop <folder>`** does the same from a terminal, in the
   running instance if there is one (`labFolders.ts`'s `folderFromArgv`, relative paths resolved
   against the calling shell's directory). The rail's *Open* button and the welcome screen's
-  *Open Lab Folder…* ask for the same dialog. In the rail, such a lab shows the folder it sits in
+  *Open Lab from Folder…* ask for the same dialog. In the rail, such a lab shows the folder it sits in
   under its name, and its removal is *Close* — forget it, folder untouched — where a lab in the
   labs folder has *Delete*.
 - Running devices write into their lab's `shared/` folder as root (Kathara bind-mounts it), so

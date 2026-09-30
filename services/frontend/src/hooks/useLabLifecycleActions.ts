@@ -198,7 +198,7 @@ export function useLabLifecycleActions() {
       const name = labLabel(lab);
       const ok = await confirm({
         title: `Close ${name}?`,
-        message: `This undeploys "${name}" if it is running and removes it from the list. Its folder and every file in it stay where they are — open it again any time with File → Open Lab Folder.`,
+        message: `This undeploys "${name}" if it is running and removes it from the list. Its folder and every file in it stay where they are — open it again any time with File → Open Lab from Folder.`,
         okLabel: "Close",
       });
       if (!ok) return;

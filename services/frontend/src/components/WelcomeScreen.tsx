@@ -19,7 +19,7 @@ interface WelcomeScreenProps {
   onImportLab: () => void;
   /** Opens the GalleryModal (WorkspacePage's `showGallery`). */
   onBrowseGallery: () => void;
-  /** Open a folder anywhere on disk as a lab (the desktop shell's File → Open Lab Folder…). Absent
+  /** Open a folder anywhere on disk as a lab (the desktop shell's File → Open Lab from Folder…). Absent
    *  in the browser build, which has no way to hand the backend a folder — no button then. */
   onOpenFolder?: () => void;
   /** Same contract as NewLabModal/UploadLabModal's `onCreated`: refresh the lab list and open it. */
@@ -75,7 +75,7 @@ export function WelcomeScreen({
         {onOpenFolder && (
           <Button variant="outline-secondary" onClick={onOpenFolder}>
             <FolderOpen size={16} className="me-1" />
-            Open Lab Folder…
+            Open Lab from Folder…
           </Button>
         )}
         <Button variant="outline-secondary" onClick={onImportLab}>

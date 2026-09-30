@@ -42,7 +42,7 @@ export async function pickLabsDirectory(win: BrowserWindow | null): Promise<stri
 }
 
 /**
- * Let the user pick a folder to open as a lab (File → Open Lab Folder…). Selection only: main.ts
+ * Let the user pick a folder to open as a lab (File → Open Lab from Folder…). Selection only: main.ts
  * hands the pick to the backend, and that path — chosen here, in a native dialog the renderer
  * cannot fake — is the only kind the backend's `POST /api/labs/open` is ever given.
  */

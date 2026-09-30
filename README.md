@@ -48,7 +48,7 @@ there is one, but releases are downloaded and installed manually.
   to live devices, which can pop out into their own window.
 - Start from a bundled example or from a lab of the [Kathara-Labs](https://github.com/KatharaFramework/Kathara-Labs)
   gallery, import a `.zip`, or create an empty lab.
-- **File → Open Lab Folder…** (or `kathara-desktop <folder>` from a terminal) opens an existing lab
+- **File → Open Lab from Folder…** (or `kathara-desktop <folder>` from a terminal) opens an existing lab
   folder where it is, without copying it. Closing it later leaves the folder untouched.
 - A deploy that needs more than an ordinary container, such as a `privileged` device or a host
   folder mounted into one, asks for your password first.

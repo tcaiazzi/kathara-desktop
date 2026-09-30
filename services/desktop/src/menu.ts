@@ -5,7 +5,7 @@
  * renderer, where DesktopCommandsProvider (frontend src/desktop/DesktopCommands.tsx) fans it out
  * to whichever components registered that action through `useDesktopCommand`.
  * Items that act on the shell itself (logs, labs folder, DevTools) are handled here, and so is
- * Open Lab Folder…, through the callback main.ts passes in: the folder is picked and opened on
+ * Open Lab from Folder…, through the callback main.ts passes in: the folder is picked and opened on
  * this side, never by the renderer (see main.ts's openFolderAsLab).
  */
 import { app, BrowserWindow, Menu, shell, type MenuItemConstructorOptions } from "electron";
@@ -45,7 +45,7 @@ function item(label: string, action: MenuAction, accelerator?: string): MenuItem
 }
 
 interface MenuHandlers {
-  /** File → Open Lab Folder…: main.ts's native dialog and open flow. */
+  /** File → Open Lab from Folder…: main.ts's native dialog and open flow. */
   openLabFolder: () => void;
 }
 
@@ -83,7 +83,7 @@ export function buildMenu(handlers: MenuHandlers): void {
       label: "File",
       submenu: [
         item("New Lab…", "lab:new", "CmdOrCtrl+N"),
-        { label: "Open Lab Folder…", accelerator: "CmdOrCtrl+O", click: () => handlers.openLabFolder() },
+        { label: "Open Lab from Folder…", accelerator: "CmdOrCtrl+O", click: () => handlers.openLabFolder() },
         item("Import Lab (.zip)…", "lab:import", "CmdOrCtrl+Shift+O"),
         item("Browse Kathara Labs…", "lab:browse"),
         { type: "separator" },
@@ -92,7 +92,7 @@ export function buildMenu(handlers: MenuHandlers): void {
         // keystroke before the page ever saw it, breaking in-editor saving.
         { ...item("Save", "lab:save", "CmdOrCtrl+S"), registerAccelerator: false },
         { type: "separator" },
-        { label: "Show Labs Folder", click: () => openLabsDir() },
+        { label: "Open Default Labs Folder", click: () => openLabsDir() },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },
       ],

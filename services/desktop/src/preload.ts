@@ -117,7 +117,7 @@ const api = {
     ipcRenderer.invoke("fs:pick-host-dir", current),
   revealLab: (labId: string) => ipcRenderer.invoke("fs:reveal-lab", labId),
   openLabsFolder: () => ipcRenderer.invoke("fs:open-labs-folder"),
-  /** File → Open Lab Folder…: the shell shows its own folder dialog, opens the pick as a lab and
+  /** File → Open Lab from Folder…: the shell shows its own folder dialog, opens the pick as a lab and
    * navigates there. No argument — the renderer never names the folder. */
   openLabFolder: (): Promise<void> => ipcRenderer.invoke("labs:open-folder"),
 

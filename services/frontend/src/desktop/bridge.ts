@@ -113,7 +113,7 @@ export interface DesktopApi {
   pickHostDirectory(current?: string): Promise<string | null>;
   revealLab(labId: string): Promise<void>;
   openLabsFolder(): Promise<void>;
-  /** File → Open Lab Folder…: the shell picks a folder in its own dialog, opens it as a lab and
+  /** File → Open Lab from Folder…: the shell picks a folder in its own dialog, opens it as a lab and
    * navigates the window there. The renderer never names the folder — see main.ts's
    * openFolderAsLab. */
   openLabFolder(): Promise<void>;

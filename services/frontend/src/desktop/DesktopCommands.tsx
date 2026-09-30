@@ -24,7 +24,7 @@ interface Registry {
 const DesktopCommandsContext = createContext<Registry | null>(null);
 
 export function DesktopCommandsProvider({ children }: { children: ReactNode }) {
-  // Settings and deep links (a kathara:// link, File → Open Lab Folder…) both leave the open lab,
+  // Settings and deep links (a kathara:// link, File → Open Lab from Folder…) both leave the open lab,
   // so they ask about unsaved edits first, like every in-app navigation.
   const navigate = useGuardedNavigate();
   const { toggle: toggleTheme } = useTheme();
