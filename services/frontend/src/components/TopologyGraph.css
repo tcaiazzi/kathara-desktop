@@ -863,6 +863,34 @@
 .kt-devinfo-head {
   flex: 0 0 auto;
 }
+/* The header's actions collapsed into one dropdown (narrow Inspector): each item an icon and its
+   label, the icon in the colour of the button it stands for. */
+.kt-devinfo-actions-menu {
+  min-width: 13rem;
+  padding-block: 0.375rem;
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+}
+.kt-devinfo-actions-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.375rem 0.875rem;
+  font-size: 0.875rem;
+}
+.kt-devinfo-actions-menu .dropdown-item svg {
+  flex-shrink: 0;
+  color: var(--bs-secondary-color);
+}
+.kt-devinfo-actions-menu .dropdown-item.text-danger svg {
+  color: inherit;
+}
+.kt-devinfo-actions-menu .dropdown-item.text-danger:hover,
+.kt-devinfo-actions-menu .dropdown-item.text-danger:focus {
+  background-color: var(--bs-danger-bg-subtle);
+}
+.kt-devinfo-actions-menu .dropdown-divider {
+  margin-block: 0.25rem;
+}
 .kt-devinfo-tabs {
   flex: 1;
   min-height: 0;

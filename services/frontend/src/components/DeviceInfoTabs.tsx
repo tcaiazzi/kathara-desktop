@@ -2,11 +2,13 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { Button, Dropdown, OverlayTrigger, SplitButton, Tab, Tabs, Tooltip } from "react-bootstrap";
 import {
   AlertTriangle,
+  AppWindow,
   FileTerminal,
   Folder,
   FolderOpen,
   Info,
   Loader2,
+  MoreHorizontal,
   Network,
   Play,
   Plug,
@@ -72,6 +74,12 @@ interface DeviceInfoTabsProps {
 const LS_TAB = "kt-device-info-tab";
 // Below this width the Files tab puts the editor under the tree instead of beside it.
 const FILES_SIDE_BY_SIDE_WIDTH = 640;
+// Below this header width, the device's actions collapse from a row of buttons into a single
+// "Actions" dropdown instead of wrapping and squeezing — the Inspector is a user-resizable dock
+// panel. Each is the row's natural width with a ~9-character name (a longer one ellipsizes first)
+// and the buttons' widest labels, "Deploying…"/"Undeploying…", so a deploy in flight doesn't flip
+// the header; a running device also has Open Terminal.
+const HEAD_ACTIONS_COMPACT_WIDTH = { running: 720, stopped: 540 };
 
 function readSavedTab(): DeviceInfoTab {
   try {
@@ -208,48 +216,103 @@ export function DeviceInfoTabs({
   // While one runs its button stays and spins, even once the refresh has flipped `running`.
   const pending = actions.pendingDevices[device];
   const showUndeploy = pending ? pending === "undeploy" : node.running;
+  const { ref: headRef, width: headWidth } = useElementSize<HTMLDivElement>();
+  const compactActions =
+    headWidth > 0 && headWidth < HEAD_ACTIONS_COMPACT_WIDTH[node.running ? "running" : "stopped"];
 
   return (
     <div className="kt-devinfo">
       <div className="kt-devinfo-head">
-        <div className="d-flex align-items-center gap-2 mb-2 flex-wrap">
-          <h4 className="mb-0 me-1">{device}</h4>
-          <span className={`kt-state ${node.running ? "running" : "stopped"}`}>{deviceStateLabel(node)}</span>
-          <div className="d-flex gap-2 ms-auto flex-wrap">
-            {node.running && (
-              <SplitButton
-                size="sm"
-                variant="dark"
-                title={
-                  <span className="d-inline-flex align-items-center">
-                    <SquareTerminal size={14} className="me-1" />
-                    Open Terminal
-                  </span>
-                }
-                onClick={() => actions.openWorkspaceTerminal(node)}
-              >
-                <Dropdown.Item onClick={() => actions.openTerminalPopup(node)}>Open in a popup window</Dropdown.Item>
-              </SplitButton>
-            )}
-            {showUndeploy ? (
-              <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.undeployDevice(node)}>
-                {pending ? <Loader2 size={13} className="me-1 kt-explorer-spin" /> : <Square size={13} className="me-1" />}
-                {pending ? "Undeploying…" : "Undeploy"}
-              </Button>
+        <div className="d-flex align-items-center gap-2 mb-2" ref={headRef}>
+          <h4 className="mb-0 me-1 text-truncate" style={{ minWidth: 0 }} title={device}>
+            {device}
+          </h4>
+          <span className={`kt-state flex-shrink-0 ${node.running ? "running" : "stopped"}`}>{deviceStateLabel(node)}</span>
+          <div className="d-flex gap-2 ms-auto flex-shrink-0">
+            {compactActions ? (
+              <Dropdown align="end">
+                <Dropdown.Toggle size="sm" variant="outline-secondary" className="d-inline-flex align-items-center gap-1">
+                  {pending ? <Loader2 size={14} className="kt-explorer-spin" /> : <MoreHorizontal size={14} />}
+                  Actions
+                </Dropdown.Toggle>
+                <Dropdown.Menu className="kt-devinfo-actions-menu">
+                  {node.running && (
+                    <>
+                      <Dropdown.Item onClick={() => actions.openWorkspaceTerminal(node)}>
+                        <SquareTerminal size={14} />
+                        Open Terminal
+                      </Dropdown.Item>
+                      <Dropdown.Item onClick={() => actions.openTerminalPopup(node)}>
+                        <AppWindow size={14} />
+                        Open in a popup window
+                      </Dropdown.Item>
+                      <Dropdown.Divider />
+                    </>
+                  )}
+                  {showUndeploy ? (
+                    <Dropdown.Item disabled={!!pending} onClick={() => void actions.undeployDevice(node)}>
+                      {pending ? (
+                        <Loader2 size={14} className="kt-explorer-spin" />
+                      ) : (
+                        <Square size={14} className="text-danger" />
+                      )}
+                      {pending ? "Undeploying…" : "Undeploy"}
+                    </Dropdown.Item>
+                  ) : (
+                    <Dropdown.Item disabled={!!pending} onClick={() => void actions.deployDevice(node)}>
+                      {pending ? <Loader2 size={14} className="kt-explorer-spin" /> : <Play size={14} className="text-success" />}
+                      {pending ? "Deploying…" : "Deploy"}
+                    </Dropdown.Item>
+                  )}
+                  <Dropdown.Item onClick={() => actions.openOptions(node)}>
+                    <SlidersHorizontal size={14} />
+                    {node.running ? "View Options" : "Edit Options"}
+                  </Dropdown.Item>
+                  <Dropdown.Divider />
+                  <Dropdown.Item className="text-danger" disabled={!!pending} onClick={() => void actions.removeDevice(node)}>
+                    <Trash2 size={14} />
+                    Remove
+                  </Dropdown.Item>
+                </Dropdown.Menu>
+              </Dropdown>
             ) : (
-              <Button size="sm" variant="outline-success" disabled={!!pending} onClick={() => void actions.deployDevice(node)}>
-                {pending ? <Loader2 size={13} className="me-1 kt-explorer-spin" /> : <Play size={13} className="me-1" />}
-                {pending ? "Deploying…" : "Deploy"}
-              </Button>
+              <>
+                {node.running && (
+                  <SplitButton
+                    size="sm"
+                    variant="dark"
+                    title={
+                      <span className="d-inline-flex align-items-center">
+                        <SquareTerminal size={14} className="me-1" />
+                        Open Terminal
+                      </span>
+                    }
+                    onClick={() => actions.openWorkspaceTerminal(node)}
+                  >
+                    <Dropdown.Item onClick={() => actions.openTerminalPopup(node)}>Open in a popup window</Dropdown.Item>
+                  </SplitButton>
+                )}
+                {showUndeploy ? (
+                  <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.undeployDevice(node)}>
+                    {pending ? <Loader2 size={13} className="me-1 kt-explorer-spin" /> : <Square size={13} className="me-1" />}
+                    {pending ? "Undeploying…" : "Undeploy"}
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline-success" disabled={!!pending} onClick={() => void actions.deployDevice(node)}>
+                    {pending ? <Loader2 size={13} className="me-1 kt-explorer-spin" /> : <Play size={13} className="me-1" />}
+                    {pending ? "Deploying…" : "Deploy"}
+                  </Button>
+                )}
+                <Button size="sm" variant="outline-secondary" onClick={() => actions.openOptions(node)}>
+                  <SlidersHorizontal size={13} className="me-1" />
+                  {node.running ? "View Options" : "Edit Options"}
+                </Button>
+                <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.removeDevice(node)}>
+                  <Trash2 size={13} className="me-1" />
+                  Remove
+                </Button>
+              </>
             )}
-            <Button size="sm" variant="outline-secondary" onClick={() => actions.openOptions(node)}>
-              <SlidersHorizontal size={13} className="me-1" />
-              {node.running ? "View Options" : "Edit Options"}
-            </Button>
-            <Button size="sm" variant="outline-danger" disabled={!!pending} onClick={() => void actions.removeDevice(node)}>
-              <Trash2 size={13} className="me-1" />
-              Remove
-            </Button>
           </div>
         </div>
         {deployFailed && <div className="kt-topo-deploy-error">Not started — {detail.deploy_error}</div>}
