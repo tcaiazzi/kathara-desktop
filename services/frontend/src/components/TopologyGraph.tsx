@@ -98,6 +98,9 @@ const LIVE_ADDRESSES_BOOT_POLL_MS = 3_000;
 // actions" dropdown (see the ResizeObserver effect below) — the panel is user-resizable (dockview),
 // so the buttons must react to it shrinking, not just the browser window.
 const TOOLBAR_COMPACT_WIDTH = 480;
+// The canvas height the Display menu can't use: the toolbar above it and a margin below, so on a
+// short canvas the menu ends inside it (the canvas clips) and scrolls instead.
+const DISPLAY_MENU_TOP_SPACE = 48;
 
 // The Topology panel: the graph canvas with its toolbars and legend, and the Inspector portaled
 // into its own dock panel. The graph itself — physics, drag/pan/zoom, the node DOM, updated every
@@ -144,6 +147,7 @@ export function TopologyGraph({
   const [relayoutNonce, setRelayoutNonce] = useState(0);
   const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const [compactToolbar, setCompactToolbar] = useState(false);
+  const [canvasHeight, setCanvasHeight] = useState(0);
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -384,13 +388,14 @@ export function TopologyGraph({
   }, [display]);
 
   // Collapse each toolbar into a single dropdown once the (user-resizable) canvas gets too narrow
-  // to show its buttons in a row.
+  // to show its buttons in a row, and keep the Display menu within the canvas's height.
   useEffect(() => {
     const el = canvasWrapRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width ?? el.clientWidth;
-      setCompactToolbar(width < TOOLBAR_COMPACT_WIDTH);
+      const rect = entries[0]?.contentRect;
+      setCompactToolbar((rect?.width ?? el.clientWidth) < TOOLBAR_COMPACT_WIDTH);
+      setCanvasHeight(Math.round(rect?.height ?? el.clientHeight));
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -490,7 +495,12 @@ export function TopologyGraph({
                 </Button>
               </>
             )}
-            <TopologyDisplayMenu value={display} onChange={handleDisplayChange} compact={compactToolbar} />
+            <TopologyDisplayMenu
+              value={display}
+              onChange={handleDisplayChange}
+              compact={compactToolbar}
+              maxHeight={canvasHeight > 0 ? canvasHeight - DISPLAY_MENU_TOP_SPACE : undefined}
+            />
           </div>
           <div className="kt-topo-layout-toolbar" data-topo-overlay>
             {compactToolbar ? (

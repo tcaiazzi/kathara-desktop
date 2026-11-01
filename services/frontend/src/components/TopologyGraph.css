@@ -97,9 +97,12 @@
   max-width: calc(100% - 16px);
 }
 
-/* The Display panel (TopologyDisplayMenu): switches and − value + steppers, not menu items. */
+/* The Display panel (TopologyDisplayMenu): switches and − value + steppers, not menu items. Its
+   height is capped to the canvas (which clips), so on a short canvas it scrolls on its own. */
 .kt-topo-display-menu {
   min-width: 270px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .kt-topo-display-body {
   display: flex;

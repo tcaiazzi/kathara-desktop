@@ -31,6 +31,8 @@ interface TopologyDisplayMenuProps {
   onChange: (next: TopoDisplay) => void;
   // A narrow canvas: the toggle shows only its icon.
   compact: boolean;
+  // The menu's height cap, in px: the room the canvas leaves below the toggle. Unset, no cap.
+  maxHeight?: number;
 }
 
 interface StepperProps {
@@ -79,7 +81,7 @@ function Stepper({ label, value, steps, format, onChange }: StepperProps) {
 // The topology canvas's Display panel: the layout, which labels show, and the accessibility
 // options (size, line thickness, high contrast). It holds no state — the graph owns the value and
 // persists it (services/topologyDisplay.ts).
-export function TopologyDisplayMenu({ value, onChange, compact }: TopologyDisplayMenuProps) {
+export function TopologyDisplayMenu({ value, onChange, compact, maxHeight }: TopologyDisplayMenuProps) {
   const id = useId();
   const set = <K extends keyof TopoDisplay>(key: K, v: TopoDisplay[K]) => onChange({ ...value, [key]: v });
   const isDefault = (Object.keys(DEFAULT_TOPO_DISPLAY) as (keyof TopoDisplay)[]).every(
@@ -99,7 +101,7 @@ export function TopologyDisplayMenu({ value, onChange, compact }: TopologyDispla
         <Settings2 size={16} aria-hidden />
         {!compact && "Display"}
       </Dropdown.Toggle>
-      <Dropdown.Menu className="kt-topo-display-menu">
+      <Dropdown.Menu className="kt-topo-display-menu" style={{ maxHeight }}>
         <Dropdown.Header>Layout</Dropdown.Header>
         <div className="kt-topo-display-body" role="radiogroup" aria-label="Layout">
           {(Object.keys(LAYOUT_LABELS) as TopoLayout[]).map((layout) => (
