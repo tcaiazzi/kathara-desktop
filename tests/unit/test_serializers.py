@@ -66,14 +66,16 @@ def test_a_running_collision_domain_reports_the_plugin_its_network_was_created_w
     lab = _lab()
     link = lab.links["a"]
     link.api_object = SimpleNamespace(attrs={"Driver": "kathara/katharanp_vde:arm64"})
-    monkeypatch.setattr(Setting.get_instance(), "network_plugin", "kathara/katharanp")
+    # The addon holds the value: `Setting` forwards it there through `__getattr__`/`__setattr__`,
+    # so patching `Setting` itself leaves `monkeypatch` unable to restore it on teardown.
+    monkeypatch.setattr(Setting.get_instance().addons, "network_plugin", "kathara/katharanp")
 
     assert serializers.link_to_detail(link).network_plugin == "kathara/katharanp_vde"
 
 
 def test_a_stopped_collision_domain_reports_the_configured_plugin(monkeypatch):
     lab = _lab()
-    monkeypatch.setattr(Setting.get_instance(), "network_plugin", "kathara/katharanp")
+    monkeypatch.setattr(Setting.get_instance().addons, "network_plugin", "kathara/katharanp")
 
     assert serializers.link_to_detail(lab.links["a"]).network_plugin == "kathara/katharanp"
 

@@ -67,7 +67,9 @@ def shell(monkeypatch):
 
 @pytest.fixture
 def hosthome(monkeypatch):
-    setting = Setting.get_instance()
+    # The addon holds these values: `Setting` forwards them there through `__getattr__`/`__setattr__`,
+    # so patching `Setting` itself leaves `monkeypatch` unable to restore them on teardown.
+    setting = Setting.get_instance().addons
     monkeypatch.setattr(setting, "hosthome_mount", True)
     monkeypatch.setattr(setting, "remote_url", None)
 
@@ -178,7 +180,7 @@ def test_a_refused_deploy_starts_nothing_and_leaves_the_lab_deployable(service, 
 def test_the_host_home_mount_of_a_remote_daemon_needs_no_grant(service, facade, shell, monkeypatch):
     """Kathara mounts /hosthome only for a local daemon: on a remote one the setting reaches no
     directory of this host."""
-    setting = Setting.get_instance()
+    setting = Setting.get_instance().addons
     monkeypatch.setattr(setting, "hosthome_mount", True)
     monkeypatch.setattr(setting, "remote_url", "tcp://elsewhere:2376")
 
